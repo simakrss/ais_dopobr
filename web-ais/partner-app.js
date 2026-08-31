@@ -546,7 +546,7 @@
       ? `<a href="mailto:${escapeAttr(content)}">${escapeHtml(content)}</a>`
       : field.kind === "phone" && !empty
         ? `<a href="tel:${escapeAttr(content.replace(/[^+\d]/gu, ""))}">${escapeHtml(content)}</a>`
-        : escapeHtml(content).replaceAll("\n", "<br>");
+        : (window.AISFieldHtmlLinks?.renderLinks(content) || escapeHtml(content)).replaceAll("\n", "<br>");
     return `<div class="partner-profile-field ${field.kind === "multiline" ? "is-wide" : ""} ${empty ? "is-empty" : ""}"><span>${escapeHtml(field.label)}</span><strong>${display}</strong></div>`;
   }
 

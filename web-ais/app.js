@@ -165,10 +165,31 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.371",
-    releasedAt: "2026-08-30"
+    version: "1.7.374",
+    releasedAt: "2026-08-31"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.374",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Исправлено отображение подсвеченных ссылок в текстовых полях: обычный текст больше не становится невидимым, а исправленный модуль загружается без устаревшего кэша."
+      ]
+    },
+    {
+      version: "1.7.373",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Ссылки HTTP и HTTPS подсвечиваются во всех текстовых полях и открываются по Ctrl + щелчку непосредственно по адресу под курсором."
+      ]
+    },
+    {
+      version: "1.7.372",
+      releasedAt: "2026-08-31",
+      changes: [
+        "Перед формированием приказа об отчислении система предупреждает об отсутствии реквизитов документа об образовании и предлагает заполнить их автоматически либо продолжить без выдачи документа."
+      ]
+    },
     {
       version: "1.7.371",
       releasedAt: "2026-08-30",
@@ -6270,6 +6291,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let fieldEditHistoryBound = false;
   let globalEscapeKeyBound = false;
   let unsavedChangesDialogSession = null;
+  let studentExpulsionEducationDocumentDialogSession = null;
   let profileClosePending = false;
   let recordFormSavePending = false;
   let documentTemplateSavePending = false;
@@ -19307,14 +19329,15 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function renderBulkToolbar(config, rows, configId) {
+  function renderBulkToolbar(config, rows, configId, inlineSummaryHtml = "") {
     const selected = getSelected(configId);
     const selectedRows = getRowsByIds(config.collection, selected);
     const statusField = config.fields.find((item) => item.key === "status");
     const statusOptions = statusField ? (statusField.options || state.data.dictionaries[statusField.dict] || getFilterOptions(config)) : [];
     return `
-      <div class="bulk-toolbar ${selected.length ? "active" : ""}">
-        <span>Выбрано: <strong>${selected.length}</strong></span>
+      <div class="bulk-toolbar ${selected.length ? "active" : ""} ${inlineSummaryHtml ? "has-inline-summary" : ""}">
+        <span class="bulk-toolbar-selection-count">Выбрано: <strong>${selected.length}</strong></span>
+        ${inlineSummaryHtml}
         ${statusOptions.length ? `
           <select id="bulkStatusSelect" class="select-control" ${statusField?.dict ? `data-settings-dictionary="${escapeAttr(statusField.dict)}"` : ""} ${selected.length ? "" : "disabled"}>
             ${configId === "students"
@@ -20592,19 +20615,24 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderDocumentConstructor() {
     const documents = getDocumentTemplates();
     const activeDocument = getActiveDocumentTemplate(documents);
-    const fields = activeDocument.fields;
-    const customCount = fields.filter((field) => field.custom).length;
     return `
       <section class="panel document-constructor-panel" data-main-registry>
-        <div class="section-head section-head--headingless">
-          <div class="contract-template-summary">
-            <span>${documents.length} документов</span>
-            <span>${fields.length} полей</span>
-            <span>${customCount} пользовательских</span>
-          </div>
-        </div>
         ${renderDocumentTemplatesTable(documents, activeDocument.id)}
       </section>
+    `;
+  }
+
+  function renderDocumentTemplateSummary(documents, activeDocumentId) {
+    const activeDocument = documents.find((item) => item.id === activeDocumentId)
+      || getActiveDocumentTemplate(documents);
+    const fields = Array.isArray(activeDocument?.fields) ? activeDocument.fields : [];
+    const customCount = fields.filter((field) => field.custom).length;
+    return `
+      <div class="contract-template-summary" data-document-template-summary aria-label="Сводка по шаблонам документов">
+        <span data-document-template-count>${documents.length} документов</span>
+        <span data-document-template-field-count>${fields.length} полей</span>
+        <span data-document-template-custom-field-count>${customCount} пользовательских</span>
+      </div>
     `;
   }
 
@@ -21485,7 +21513,8 @@ MAX - https://bizvmax.ru/zifra_plus
         : line.slice(firstComma + 1, secondComma);
       const note = secondComma < 0 ? "" : line.slice(secondComma + 1);
       const invalid = !type.trim() || !formula.trim() ? " is-invalid" : "";
-      return `<span class="payment-assignment-rule-line${invalid}"><span class="payment-assignment-rule-type">${escapeHtml(type)}</span><span class="payment-assignment-rule-separator">,</span><span class="payment-assignment-rule-formula">${renderAutomaticExpenseRuleFormula(formula)}</span>${secondComma < 0 ? "" : `<span class="payment-assignment-rule-separator">,</span>${renderAutomaticExpenseRuleNote(note)}`}</span>`;
+      const renderedType = globalThis.window?.AISFieldHtmlLinks?.renderLinks(type) || escapeHtml(type);
+      return `<span class="payment-assignment-rule-line${invalid}"><span class="payment-assignment-rule-type">${renderedType}</span><span class="payment-assignment-rule-separator">,</span><span class="payment-assignment-rule-formula">${renderAutomaticExpenseRuleFormula(formula)}</span>${secondComma < 0 ? "" : `<span class="payment-assignment-rule-separator">,</span>${renderAutomaticExpenseRuleNote(note)}`}</span>`;
     }).join("<br>");
   }
 
@@ -21498,7 +21527,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .split(/(\[[^\[\]\r\n]+\])/gu)
       .map((part) => {
         const match = part.match(/^\[([^\[\]\r\n]+)\]$/u);
-        if (!match) return escapeHtml(part);
+        if (!match) return globalThis.window?.AISFieldHtmlLinks?.renderLinks(part) || escapeHtml(part);
         const marker = normalizePaymentConstantMarker(match[1]);
         const setting = constants.get(marker.toLocaleLowerCase("ru-RU"));
         const title = setting
@@ -21517,7 +21546,8 @@ MAX - https://bizvmax.ru/zifra_plus
         const className = part.trim().startsWith("-")
           ? "payment-assignment-rule-exclusion"
           : "payment-assignment-rule-note";
-        return `<span class="${className}">${escapeHtml(part)}</span>`;
+        const renderedPart = globalThis.window?.AISFieldHtmlLinks?.renderLinks(part) || escapeHtml(part);
+        return `<span class="${className}">${renderedPart}</span>`;
       })
       .join("");
   }
@@ -22386,6 +22416,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderDocumentTemplatesTable(documents, activeDocumentId) {
     const visibleDocuments = getVisibleDocumentTemplateRows(documents);
+    const inlineSummaryHtml = renderDocumentTemplateSummary(documents, activeDocumentId);
     return `
       <section class="document-template-registry">
         <div class="document-template-toolbar">
@@ -22405,7 +22436,7 @@ MAX - https://bizvmax.ru/zifra_plus
             </button>
           </div>
         </div>
-        ${renderBulkToolbar(configs.documentTemplates, visibleDocuments, "documentTemplates")}
+        ${renderBulkToolbar(configs.documentTemplates, visibleDocuments, "documentTemplates", inlineSummaryHtml)}
         ${renderTable(configs.documentTemplates, visibleDocuments, "documentTemplates")}
         ${renderDocumentTemplateLinkDialog()}
       </section>
@@ -22697,7 +22728,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(template || "")
       .split(/(#[^#\r\n]+#)/g)
       .map((part) => {
-        if (!availableTokens.has(part)) return escapeHtml(part);
+        if (!availableTokens.has(part)) {
+          return globalThis.window?.AISFieldHtmlLinks?.renderLinks(part) || escapeHtml(part);
+        }
         return `<span class="document-save-folder-token" contenteditable="false" data-template-token="${escapeAttr(part)}" data-document-save-folder-token><span>${escapeHtml(part)}</span><button data-action="remove-document-save-folder-token" type="button" title="Удалить поле" aria-label="Удалить поле ${escapeAttr(part)}">×</button></span>`;
       })
       .join("");
@@ -23012,7 +23045,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return String(template || "")
       .split(/(\{[^{}]+\})/g)
       .map((part) => {
-        if (!availableTokens.has(part)) return escapeHtml(part).replace(/\n/g, "<br>");
+        if (!availableTokens.has(part)) {
+          const renderedPart = globalThis.window?.AISFieldHtmlLinks?.renderLinks(part) || escapeHtml(part);
+          return renderedPart.replace(/\n/g, "<br>");
+        }
         return `<span class="communication-template-block data-formula-block" contenteditable="false" data-template-token="${escapeAttr(part)}" draggable="true">${escapeHtml(part)}</span>`;
       })
       .join("");
@@ -23045,24 +23081,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderCommunicationTemplateLinks(value) {
-    const source = String(value || "");
-    const urlPattern = /\bhttps?:\/\/[^\s<>"']+/giu;
-    let result = "";
-    let offset = 0;
-    for (const match of source.matchAll(urlPattern)) {
-      let url = match[0];
-      let trailing = "";
-      while (/[),.;:!?]$/.test(url)) {
-        trailing = `${url.slice(-1)}${trailing}`;
-        url = url.slice(0, -1);
-      }
-      result += escapeHtml(source.slice(offset, match.index));
-      result += url
-        ? `<span class="communication-template-html-link" data-template-external-url="${escapeAttr(url)}" title="${escapeAttr(`Ctrl + щелчок: открыть ${url}`)}">${escapeHtml(url)}</span>${escapeHtml(trailing)}`
-        : escapeHtml(match[0]);
-      offset = Number(match.index) + match[0].length;
-    }
-    return `${result}${escapeHtml(source.slice(offset))}`;
+    return window.AISFieldHtmlLinks?.renderLinks(value) || escapeHtml(value);
   }
 
   function openTemplateEditorLink(event) {
@@ -23084,7 +23103,9 @@ MAX - https://bizvmax.ru/zifra_plus
         const syntax = renderCommunicationTemplateSyntax(part);
         if (syntax) return syntax;
         const fieldName = part.slice(1, -1);
-        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) return escapeHtml(part);
+        if (!/^\{[^{}]+\}$/.test(part) || !availableFields.has(fieldName)) {
+          return globalThis.window?.AISFieldHtmlLinks?.renderLinks(part) || escapeHtml(part);
+        }
         return `<span class="communication-template-block" contenteditable="false" data-template-token="${escapeAttr(part)}" data-template-field-name="${escapeAttr(fieldName)}" draggable="true" title="Нажмите правой кнопкой мыши для настройки поля">${escapeHtml(part)}</span>`;
       })
       .join("");
@@ -23616,8 +23637,11 @@ MAX - https://bizvmax.ru/zifra_plus
       else if (ADMIN_SQL_KEYWORDS.has(normalizedToken)) tone = "keyword";
       else if (/^\s*\(/.test(source.slice(Number(match.index) + token.length))) tone = "function";
       const keywordHelp = tone === "keyword" ? ADMIN_SQL_KEYWORD_HELP[normalizedToken] : "";
+      const renderedToken = ["comment", "string"].includes(tone)
+        ? (globalThis.window?.AISFieldHtmlLinks?.renderLinks(token) || escapeHtml(token))
+        : escapeHtml(token);
       result += tone
-        ? `<span class="admin-sql-token is-${tone}"${keywordHelp ? ` data-sql-keyword-help="${escapeAttr(keywordHelp)}"` : ""}>${escapeHtml(token)}</span>`
+        ? `<span class="admin-sql-token is-${tone}"${keywordHelp ? ` data-sql-keyword-help="${escapeAttr(keywordHelp)}"` : ""}>${renderedToken}</span>`
         : escapeHtml(token);
       offset = Number(match.index) + token.length;
     }
@@ -29139,7 +29163,7 @@ MAX - https://bizvmax.ru/zifra_plus
       normalizePaymentConstantMarker(setting.marker).toLocaleLowerCase("ru-RU"),
       setting
     ]));
-    return String(formula || "")
+    const renderFormulaSegment = (value) => String(value || "")
       .split(/([A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)/gu)
       .map((part) => {
         if (!/^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*$/u.test(part)) {
@@ -29152,6 +29176,16 @@ MAX - https://bizvmax.ru/zifra_plus
         return `<span class="communication-template-block payment-formula-constant ${setting ? "is-known" : "is-unresolved"}" contenteditable="false" data-template-token="${escapeAttr(part)}" data-payment-constant-marker="${escapeAttr(part)}" title="${escapeAttr(title)}">${escapeHtml(part)}</span>`;
       })
       .join("");
+    const source = String(formula || "");
+    const links = globalThis.window?.AISFieldHtmlLinks?.getMatches(source) || [];
+    let result = "";
+    let offset = 0;
+    links.forEach((link) => {
+      result += renderFormulaSegment(source.slice(offset, link.start));
+      result += globalThis.window?.AISFieldHtmlLinks?.renderLinks(link.url) || escapeHtml(link.url);
+      offset = link.end;
+    });
+    return `${result}${renderFormulaSegment(source.slice(offset))}`;
   }
 
   function renderProgramTrainingPlanSection(record) {
@@ -30303,9 +30337,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizeEducationProgramType(program?.type || record?.educationType);
   }
 
-  function getNextEducationBlankNumber(programType, currentId = "") {
+  function getNextEducationBlankNumber(programType, currentId = "", records = null) {
     const typeCode = normalizeEducationProgramType(programType);
-    const numbers = (state.data.collections.students || [])
+    const sourceRecords = Array.isArray(records)
+      ? records
+      : (state.data.collections.students || []);
+    const numbers = sourceRecords
       .filter((record) => !currentId || String(record.id || "") !== String(currentId))
       .filter((record) => getStudentProgramTypeCode(record) === typeCode)
       .map((record) => String(record.diplomaBlankNo || "").trim())
@@ -30315,8 +30352,11 @@ MAX - https://bizvmax.ru/zifra_plus
     return String((numbers.length ? Math.max(...numbers) : 0) + 1).padStart(10, "0");
   }
 
-  function getNextEducationProtocolNo(issueDate, currentId = "") {
-    const numbers = (state.data.collections.students || [])
+  function getNextEducationProtocolNo(issueDate, currentId = "", records = null) {
+    const sourceRecords = Array.isArray(records)
+      ? records
+      : (state.data.collections.students || []);
+    const numbers = sourceRecords
       .filter((record) => !currentId || String(record.id || "") !== String(currentId))
       .filter((record) => getStudentProgramTypeCode(record) === "ППП")
       .filter((record) => String(record.diplomaIssueDate || record.protocolDate || "").trim() === issueDate)
@@ -30338,21 +30378,23 @@ MAX - https://bizvmax.ru/zifra_plus
     ).trim();
     if (!program || !programType || !parseOrdersSdoDate(issueDate)) return null;
     const currentId = String(options.currentId || source.id || "").trim();
+    const sequenceRecords = Array.isArray(options.records) ? options.records : null;
     return {
-      diplomaBlankNo: getNextEducationBlankNumber(programType, currentId),
+      diplomaBlankNo: getNextEducationBlankNumber(programType, currentId, sequenceRecords),
       registrationNo: getGeneratedNumberFromDataFormula(
         "educationRegistrationNumber",
         parseOrdersSdoDate(issueDate),
         currentId,
         {
           programType,
-          programTypeCode: getEducationRegistrationTypeCode(programType)
+          programTypeCode: getEducationRegistrationTypeCode(programType),
+          records: sequenceRecords
         }
       ).value,
       diplomaIssueDate: issueDate,
       frdoDate: isFrdoProgramType(programType) ? source.frdoDate || "" : "",
       protocolNo: programType === "ППП"
-        ? getNextEducationProtocolNo(issueDate, currentId)
+        ? getNextEducationProtocolNo(issueDate, currentId, sequenceRecords)
         : "",
       qualification: programType === "ППП"
         ? String(program.qualification || "").trim()
@@ -30362,14 +30404,14 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function autoFillEducationDocument() {
     const context = getEducationDocumentAutofillContext();
-    if (!context) return;
+    if (!context) return null;
     const values = getEducationDocumentAutofillValues(context.record, {
       program: context.program,
       programType: context.programType,
       issueDate: context.issueDate,
       currentId: context.form.dataset.id
     });
-    if (!values) return;
+    if (!values) return null;
     Object.entries(values).forEach(([fieldName, value]) => {
       setOrdersSdoFieldValue(context.form, fieldName, value);
     });
@@ -30380,6 +30422,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     state.modal.hasDraftChanges = true;
     context.form.elements.diplomaBlankNo?.focus({ preventScroll: true });
+    return values;
   }
 
   function getOrdersSdoAutofillContext() {
@@ -30551,9 +30594,12 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
-  function getDataFormulaTargetRecords(formula, currentId = "") {
-    return ["students", "contracts"]
-      .flatMap((collection) => state.data.collections[collection] || [])
+  function getDataFormulaTargetRecords(formula, currentId = "", context = {}) {
+    const records = Array.isArray(context.records)
+      ? context.records
+      : ["students", "contracts"]
+        .flatMap((collection) => state.data.collections[collection] || []);
+    return records
       .filter((record) => !currentId || String(record.id || "") !== String(currentId))
       .filter((record) => Object.prototype.hasOwnProperty.call(record, formula.targetField));
   }
@@ -30561,7 +30607,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getNextDataFormulaSequence(formula, date, currentId = "", context = {}) {
     const pattern = buildDataFormulaSequencePattern(formula.template, date, "ПорядковыйНомерЗаДату", context);
     if (!pattern) return 1;
-    const sequences = getDataFormulaTargetRecords(formula, currentId)
+    const sequences = getDataFormulaTargetRecords(formula, currentId, context)
       .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
       .filter(Boolean)
       .map((match) => Number(match[1]))
@@ -30577,7 +30623,7 @@ MAX - https://bizvmax.ru/zifra_plus
       context
     );
     if (!pattern) return 1;
-    const issuedDocumentNumbers = getDataFormulaTargetRecords(formula, currentId)
+    const issuedDocumentNumbers = getDataFormulaTargetRecords(formula, currentId, context)
       .map((record) => pattern.exec(String(record[formula.targetField] || "").trim()))
       .filter(Boolean)
       .map((match) => Number(match[1]))
@@ -36968,6 +37014,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const studentExpulsionEducationDocumentDialog = document.querySelector(
+      "[data-student-expulsion-education-document-dialog]"
+    );
+    if (studentExpulsionEducationDocumentDialog) {
+      studentExpulsionEducationDocumentDialog.cancelStudentExpulsionEducationDocumentDialog?.();
+      return true;
+    }
     const unsavedChangesDialog = document.querySelector("[data-unsaved-changes-dialog]");
     if (unsavedChangesDialog) {
       unsavedChangesDialog.cancelUnsavedChangesDialog?.();
@@ -63402,6 +63455,223 @@ MAX - https://bizvmax.ru/zifra_plus
     return false;
   }
 
+  function chooseStudentExpulsionEducationDocumentAction(record, missingFields = []) {
+    if (studentExpulsionEducationDocumentDialogSession?.backdrop?.isConnected) {
+      studentExpulsionEducationDocumentDialogSession.backdrop
+        .querySelector("[data-action='fill-student-expulsion-education-document']")
+        ?.focus({ preventScroll: true });
+      return Promise.resolve("cancel");
+    }
+    const studentName = String(record?.name || "").trim() || "слушателя без ФИО";
+    const missing = Array.isArray(missingFields) && missingFields.length
+      ? missingFields
+      : getMissingStudentEducationDocumentIssueFields(record);
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop student-document-data-check-backdrop";
+    backdrop.dataset.studentExpulsionEducationDocumentDialog = "";
+    backdrop.innerHTML = `
+      <section class="modal student-document-data-check-dialog" role="alertdialog" aria-modal="true" aria-labelledby="student-expulsion-education-document-title" aria-describedby="student-expulsion-education-document-description">
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Приказ об отчислении</p>
+            <h2 id="student-expulsion-education-document-title">Не заполнены данные для выдачи документа</h2>
+          </div>
+          <button class="icon-button" data-action="cancel-student-expulsion-education-document" type="button" title="Отмена" aria-label="Отмена">×</button>
+        </header>
+        <div id="student-expulsion-education-document-description" class="student-document-data-check-body has-missing-fields">
+          <p>Для слушателя <strong>${escapeHtml(studentName)}</strong> не заполнены обязательные реквизиты документа об образовании:</p>
+          <p>Если программа освоена, заполните реквизиты автоматически. Если программа не освоена, пропустите заполнение — слушатель попадёт в приказ без выдачи документа.</p>
+          <ol class="student-document-data-check-list">
+            ${missing.map((item) => `<li><span>${escapeHtml(item.label)}</span></li>`).join("")}
+          </ol>
+        </div>
+        <footer class="modal-actions">
+          <button class="ghost-button" data-action="skip-student-expulsion-education-document" type="button">Пропустить заполнение</button>
+          <button class="primary-button" data-action="fill-student-expulsion-education-document" type="button">Заполнить реквизиты</button>
+        </footer>
+      </section>
+    `;
+    let settled = false;
+    let resolveDecision = null;
+    const promise = new Promise((resolve) => {
+      resolveDecision = resolve;
+    });
+    const finish = (decision) => {
+      if (settled) return;
+      settled = true;
+      backdrop.remove();
+      studentExpulsionEducationDocumentDialogSession = null;
+      if (decision === "cancel" && previousFocus?.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+      resolveDecision(decision);
+    };
+    backdrop.cancelStudentExpulsionEducationDocumentDialog = () => finish("cancel");
+    backdrop.addEventListener("pointerdown", (event) => {
+      if (event.target === backdrop) finish("cancel");
+    });
+    backdrop.querySelector("[data-action='cancel-student-expulsion-education-document']")
+      ?.addEventListener("click", () => finish("cancel"));
+    backdrop.querySelector("[data-action='skip-student-expulsion-education-document']")
+      ?.addEventListener("click", () => finish("skip"));
+    backdrop.querySelector("[data-action='fill-student-expulsion-education-document']")
+      ?.addEventListener("click", () => finish("fill"));
+    document.body.appendChild(backdrop);
+    studentExpulsionEducationDocumentDialogSession = { backdrop, promise };
+    requestAnimationFrame(() => {
+      backdrop.querySelector("[data-action='fill-student-expulsion-education-document']")
+        ?.focus({ preventScroll: true });
+    });
+    return promise;
+  }
+
+  function getStudentEducationDocumentSequenceRecords(record, currentRecordId = "") {
+    const recordId = String(record?.id || currentRecordId || "").trim();
+    let currentRecordIncluded = false;
+    const records = (state.data.collections.students || []).map((item) => {
+      const isCurrent = recordId && String(item?.id || "").trim() === recordId;
+      if (!isCurrent) return { ...item };
+      currentRecordIncluded = true;
+      return { ...item, ...record };
+    });
+    if (!currentRecordIncluded) records.push({ ...record });
+    return records;
+  }
+
+  function updateStudentEducationDocumentSequenceRecords(records, record, values, currentRecordId = "") {
+    if (!Array.isArray(records)) return;
+    const recordId = String(record?.id || currentRecordId || "").trim();
+    const recordUid = String(record?.uid || "").trim();
+    const index = records.findIndex((item) => (
+      (recordId && String(item?.id || "").trim() === recordId)
+      || (!recordId && recordUid && String(item?.uid || "").trim() === recordUid)
+    ));
+    const updatedRecord = { ...record, ...values };
+    if (index >= 0) records[index] = { ...records[index], ...updatedRecord };
+    else records.push(updatedRecord);
+  }
+
+  function autoFillStudentExpulsionEducationDocument(
+    record,
+    currentRecordId = "",
+    sequenceRecords = null
+  ) {
+    const recordId = String(record?.id || "").trim();
+    const isCurrentRecord = !recordId || (currentRecordId && recordId === currentRecordId);
+    let sourceRecord = { ...record };
+    let form = null;
+    let program = null;
+    let programType = "";
+    let issueDate = "";
+    if (isCurrentRecord) {
+      const context = getEducationDocumentAutofillContext();
+      if (!context) return null;
+      form = context.form;
+      sourceRecord = { ...record, ...context.record };
+      program = context.program;
+      programType = context.programType;
+      issueDate = context.issueDate;
+    } else {
+      program = findProgramByName(record?.program);
+      programType = normalizeEducationProgramType(program?.type || record?.educationType);
+      issueDate = String(record?.expulsionDate || record?.expulsionOrderDate || "").trim();
+    }
+    const missingFields = getMissingStudentEducationDocumentIssueFields(sourceRecord);
+    if (!missingFields.length) {
+      updateStudentEducationDocumentSequenceRecords(
+        sequenceRecords,
+        sourceRecord,
+        {},
+        currentRecordId
+      );
+      return sourceRecord;
+    }
+    const generatedValues = getEducationDocumentAutofillValues(sourceRecord, {
+      program,
+      programType,
+      issueDate,
+      currentId: recordId || currentRecordId,
+      records: sequenceRecords
+    });
+    if (!generatedValues) {
+      const studentName = String(record?.name || "").trim() || "слушателя без ФИО";
+      alert(`Не удалось автоматически заполнить реквизиты документа для «${studentName}». Проверьте программу и дату отчисления.`);
+      return null;
+    }
+    const values = Object.fromEntries(
+      missingFields.map((item) => [item.key, generatedValues[item.key]])
+    );
+    const updatedRecord = { ...sourceRecord, ...values };
+    const remainingMissing = getMissingStudentEducationDocumentIssueFields(updatedRecord);
+    if (remainingMissing.length) {
+      const studentName = String(record?.name || "").trim() || "слушателя без ФИО";
+      alert(`Для «${studentName}» не удалось заполнить поля:\n${formatStudentDocumentMissingFields(remainingMissing)}`);
+      if (isCurrentRecord) {
+        focusStudentDocumentField(
+          remainingMissing[0].focusKey || remainingMissing[0].key,
+          updatedRecord
+        );
+      }
+      return null;
+    }
+    if (isCurrentRecord) {
+      Object.entries(values).forEach(([fieldName, value]) => {
+        setOrdersSdoFieldValue(form, fieldName, value);
+      });
+      state.modal.draft = {
+        ...(state.modal.draft || {}),
+        ...collectStudentFormDraft(),
+        ...values
+      };
+      state.modal.hasDraftChanges = true;
+      form.elements[missingFields[0]?.key]?.focus({ preventScroll: true });
+      updateStudentEducationDocumentSequenceRecords(
+        sequenceRecords,
+        updatedRecord,
+        {},
+        currentRecordId
+      );
+      return updatedRecord;
+    }
+    const targetRecord = (state.data.collections.students || [])
+      .find((item) => String(item?.id || "").trim() === recordId);
+    if (!targetRecord) {
+      alert(`Не удалось найти карточку слушателя «${String(record?.name || recordId).trim()}».`);
+      return null;
+    }
+    const labels = new Map(
+      getStudentEducationDocumentIssueFields(updatedRecord)
+        .map((item) => [item.key, item.label])
+    );
+    const changes = Object.entries(values)
+      .filter(([key, value]) => String(targetRecord[key] ?? "") !== String(value ?? ""))
+      .map(([key, value]) => ({
+        field: key,
+        label: labels.get(key) || key,
+        before: targetRecord[key] ?? "",
+        after: value ?? ""
+      }));
+    Object.assign(targetRecord, values);
+    if (changes.length) {
+      addAudit("Заполнены реквизиты документа об образовании", configs.students.title, targetRecord.name || targetRecord.id, {
+        entityType: "students",
+        entityId: targetRecord.id,
+        entityLabel: targetRecord.name || targetRecord.id,
+        source: "expulsion-order-education-document",
+        changes
+      });
+      persist();
+    }
+    updateStudentEducationDocumentSequenceRecords(
+      sequenceRecords,
+      targetRecord,
+      {},
+      currentRecordId
+    );
+    return { ...targetRecord };
+  }
+
   async function openStudentEnrollmentOrderDocument(event) {
     const record = collectStudentFormDraft();
     const orderRecords = getStudentOrderDocumentRecords(record, "enrollmentOrderNo");
@@ -63435,8 +63705,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function openStudentExpulsionOrderDocument(event) {
-    const record = collectStudentFormDraft();
-    const orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
+    let record = collectStudentFormDraft();
     const documentTemplate = getStudentCardDocumentTemplate("expulsionOrder");
     if (documentTemplate && !validateStudentDocumentRequiredFields(record, documentTemplate)) return;
     if (!ensureStudentOrderDocumentDate(
@@ -63447,6 +63716,34 @@ MAX - https://bizvmax.ru/zifra_plus
       "В приказ об отчислении попадает слушатель без даты отчисления"
     )) return;
     if (!ensureStudentOrderNumber(record, "expulsionOrderNo", "Укажите номер приказа об отчислении.")) return;
+    let orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
+    const currentRecordId = String(record?.id || state.modal?.id || "").trim();
+    const educationDocumentSequenceRecords = getStudentEducationDocumentSequenceRecords(
+      record,
+      currentRecordId
+    );
+    for (const orderRecord of orderRecords) {
+      const missingFields = getMissingStudentEducationDocumentIssueFields(orderRecord);
+      if (!missingFields.length) continue;
+      const educationDocumentAction = await chooseStudentExpulsionEducationDocumentAction(
+        orderRecord,
+        missingFields
+      );
+      if (educationDocumentAction === "cancel") return null;
+      if (educationDocumentAction === "fill") {
+        const filledRecord = autoFillStudentExpulsionEducationDocument(
+          orderRecord,
+          currentRecordId,
+          educationDocumentSequenceRecords
+        );
+        if (!filledRecord) return null;
+        const orderRecordId = String(orderRecord?.id || "").trim();
+        if (!orderRecordId || (currentRecordId && orderRecordId === currentRecordId)) {
+          record = collectStudentFormDraft();
+        }
+      }
+    }
+    orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
     const result = await openStudentCardBoundDocument(
       event,
       "expulsionOrder",
@@ -64161,6 +64458,37 @@ MAX - https://bizvmax.ru/zifra_plus
     );
   }
 
+  function getStudentEducationDocumentIssueFields(record) {
+    const programType = getStudentProgramTypeCode(record);
+    const fields = [
+      { key: "diplomaBlankNo", label: "Номер бланка" },
+      { key: "registrationNo", label: "Регистрационный номер" },
+      { key: "diplomaIssueDate", label: "Дата выдачи" }
+    ];
+    if (programType === "ППП") {
+      const program = findProgramByName(record?.program);
+      fields.push(
+        { key: "protocolNo", label: "Номер протокола" },
+        {
+          key: "qualification",
+          label: "Квалификация",
+          value: String(record?.qualification || program?.qualification || "").trim()
+        }
+      );
+    }
+    return fields;
+  }
+
+  function getMissingStudentEducationDocumentIssueFields(record) {
+    return getStudentEducationDocumentIssueFields(record).filter((item) => (
+      !String(item.value ?? record?.[item.key] ?? "").trim()
+    ));
+  }
+
+  function hasStudentEducationDocumentIssueData(record) {
+    return getMissingStudentEducationDocumentIssueFields(record).length === 0;
+  }
+
   function formatExpulsionOrderStudentListItem(record) {
     const name = String(record.name || "").trim();
     const programText = getOrderDocumentProgramText(record);
@@ -64171,7 +64499,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getExpulsionOrderDocumentRecords(record, issuedFilter = null) {
     return getStudentOrderDocumentRecords(record, "expulsionOrderNo")
-      .filter((item) => issuedFilter === null || hasStudentEducationDocumentIssued(item) === issuedFilter);
+      .filter((item) => issuedFilter === null || hasStudentEducationDocumentIssueData(item) === issuedFilter);
   }
 
   function formatExpulsionOrderStudentList(record, issuedFilter = null) {

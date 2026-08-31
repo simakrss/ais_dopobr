@@ -58,6 +58,7 @@ function Test-DeployablePath([string]$PathValue) {
     "auth-bootstrap.js",
     "auth-lib.php",
     "favicon.ico",
+    "field-html-links.js",
     "gateway.php",
     "index.html",
     "partner-app.js",
@@ -88,6 +89,7 @@ function Get-TrackedDeployablePaths {
   $tracked = @(& (Get-GitPath) -c core.quotepath=false -c safe.directory=* -C $repositoryRoot ls-files -- web-ais)
   if ($LASTEXITCODE -ne 0) { throw "Could not read the Git tracked-file list." }
   $generatedSafePaths = @(
+    "field-html-links.js",
     "vendor/mysql2-bundle.cjs",
     "storage/document-templates/employee-contract-education-no-stamp.docx",
     "storage/document-templates/employee-contract-general-no-stamp.docx"

@@ -3120,9 +3120,17 @@ button.mobile-registry-filters-toggle {
   background: #eef8f4;
 }
 
-.bulk-toolbar span {
+.bulk-toolbar > .bulk-toolbar-selection-count {
   margin-right: auto;
   color: var(--muted);
+}
+
+.bulk-toolbar.has-inline-summary > .bulk-toolbar-selection-count {
+  margin-right: 0;
+}
+
+.document-template-registry .bulk-toolbar > .contract-template-summary {
+  margin-right: auto;
 }
 
 .student-list-advanced-filters {
@@ -5834,6 +5842,50 @@ body.long-press-dragging * {
   text-decoration-color: #2563eb;
 }
 
+.native-html-link-field-host {
+  position: relative;
+}
+
+.native-html-link-highlight {
+  position: absolute;
+  z-index: 4;
+  overflow: hidden;
+  border-color: transparent !important;
+  background: transparent;
+  -webkit-text-fill-color: currentColor;
+  pointer-events: none;
+  user-select: none;
+}
+
+.native-html-link-highlight-content {
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  transform-origin: left top;
+}
+
+.native-html-link-highlight.is-single-line .native-html-link-highlight-content {
+  white-space: pre;
+}
+
+.native-html-link-highlight.is-textarea .native-html-link-highlight-content {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.native-html-link-highlight .communication-template-html-link {
+  cursor: inherit;
+  -webkit-text-fill-color: currentColor;
+}
+
+.has-native-html-links {
+  color: transparent !important;
+  caret-color: var(--text);
+  text-shadow: none !important;
+  -webkit-text-fill-color: transparent;
+}
+
 .communication-template-editor.is-drop-target {
   border-color: var(--teal);
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.14);
@@ -5977,17 +6029,6 @@ body.long-press-dragging * {
 
 .document-constructor-panel {
   min-height: min(760px, calc(100vh - 126px));
-}
-
-.document-constructor-panel .section-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: start;
-}
-
-.document-constructor-panel .section-head.section-head--headingless {
-  display: flex;
-  justify-content: flex-end;
 }
 
 .document-constructor-title {
@@ -13221,7 +13262,10 @@ body.card-window-moving {
 
 .program-modal {
   width: min(1280px, 100%);
-  max-height: min(820px, 94vh);
+  height: min(820px, calc(100vh - 48px));
+  height: min(820px, calc(100dvh - 48px));
+  max-height: min(820px, calc(100vh - 48px));
+  max-height: min(820px, calc(100dvh - 48px));
 }
 
 .program-modal-body {
@@ -22136,11 +22180,22 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     -webkit-overflow-scrolling: touch;
   }
 
-  .bulk-toolbar > span {
+  .bulk-toolbar > .bulk-toolbar-selection-count {
     flex: 0 0 auto;
     margin-right: 2px;
     font-size: 11px;
     white-space: nowrap;
+  }
+
+  .document-template-registry .bulk-toolbar > .contract-template-summary {
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-right: 2px;
+    font-size: 11px;
+  }
+
+  .document-template-registry .bulk-toolbar > .contract-template-summary span {
+    padding: 3px 6px;
   }
 
   .bulk-toolbar .select-control {

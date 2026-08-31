@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260831-compact-communications-v1";
+  const AUTH_BUILD = "20260831-html-links-visible-text-v2";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
   const baseUrl = new URL(".", document.currentScript?.src || window.location.href);
   const app = document.getElementById("app");
@@ -729,6 +729,7 @@
 
   async function initialize() {
     renderLoading("Проверка доступа...");
+    await loadScript("field-html-links.js");
     const navigationUrl = new URL(window.location.href);
     const partnerConfirmationToken = String(navigationUrl.searchParams.get("partner-confirm") || "").trim();
     if (partnerConfirmationToken) {

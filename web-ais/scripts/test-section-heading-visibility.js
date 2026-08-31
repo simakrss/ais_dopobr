@@ -45,10 +45,25 @@ assert.doesNotMatch(recycleBinSource, /Защита от случайного у
 assert.doesNotMatch(recycleBinSource, /<h2>Корзина<\/h2>/u);
 assert.match(recycleBinSource, /recycle-bin-description/u);
 
-const constructorSource = functionBlock("renderDocumentConstructor", "renderSimpleDictionaryEditor");
+const constructorSource = functionBlock("renderDocumentConstructor", "renderDocumentTemplateSummary");
 assert.doesNotMatch(constructorSource, /Шаблоны и формулы/u);
 assert.doesNotMatch(constructorSource, /document-constructor-title/u);
-assert.match(constructorSource, /contract-template-summary/u);
+assert.doesNotMatch(constructorSource, /contract-template-summary/u);
+assert.doesNotMatch(constructorSource, /section-head/u);
+
+const documentSummarySource = functionBlock("renderDocumentTemplateSummary", "renderSimpleDictionaryEditor");
+assert.match(documentSummarySource, /data-document-template-summary/u);
+assert.match(documentSummarySource, /documents\.length/u);
+assert.match(documentSummarySource, /fields\.length/u);
+assert.match(documentSummarySource, /customCount/u);
+
+const documentTableSource = functionBlock("renderDocumentTemplatesTable", "renderDocumentTemplateActionIcon");
+assert.match(documentTableSource, /renderDocumentTemplateSummary\(documents, activeDocumentId\)/u);
+assert.match(documentTableSource, /renderBulkToolbar\(configs\.documentTemplates, visibleDocuments, "documentTemplates", inlineSummaryHtml\)/u);
+
+const bulkToolbarSource = functionBlock("renderBulkToolbar", "getRowsForConfig");
+assert.match(bulkToolbarSource, /bulk-toolbar-selection-count/u);
+assert.match(bulkToolbarSource, /\$\{inlineSummaryHtml\}/u);
 
 const settingsSource = functionBlock("renderSettings", "renderAdminExternalServicesPanel");
 assert.doesNotMatch(settingsSource, /<p class="eyebrow">Настройки<\/p>/u);
@@ -57,9 +72,9 @@ assert.match(settingsSource, /settings-page-actions/u);
 
 assert.match(stylesSource, /\.section-head--headingless\s*\{[\s\S]*?justify-content:\s*flex-end/u);
 assert.match(stylesSource, /\.section-head--headingless\s*>\s*\.toolbar\s*\{[\s\S]*?width:\s*100%/u);
-assert.match(
-  stylesSource,
-  /\.document-constructor-panel\s+\.section-head\.section-head--headingless\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*flex-end/u
-);
+assert.doesNotMatch(stylesSource, /\.bulk-toolbar\s+span\s*\{/u);
+assert.match(stylesSource, /\.bulk-toolbar\s*>\s*\.bulk-toolbar-selection-count\s*\{[\s\S]*?margin-right:\s*auto/u);
+assert.match(stylesSource, /\.bulk-toolbar\.has-inline-summary\s*>\s*\.bulk-toolbar-selection-count\s*\{[\s\S]*?margin-right:\s*0/u);
+assert.match(stylesSource, /\.document-template-registry\s+\.bulk-toolbar\s*>\s*\.contract-template-summary\s*\{[\s\S]*?margin-right:\s*auto/u);
 
 console.log("Section heading visibility tests passed.");
