@@ -19921,7 +19921,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <input type="checkbox" data-action="toggle-all-selection" data-config="${configId}" ${allVisibleSelected ? "checked" : ""} aria-label="${selectAllLabel}">
               </th>
               ${fields.map((fieldItem) => `
-                <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} ${columnStyleAttr(configId, fieldItem.key)} draggable="true" title="Перетащите заголовок для смены порядка">
+                <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} ${columnStyleAttr(configId, fieldItem.key)} data-table-header-full-label="${escapeAttr(fieldItem.fullLabel || fieldItem.label)}" draggable="true" title="Перетащите заголовок для смены порядка">
                   <div class="table-head-cell">
                     <button data-action="sort" data-config="${escapeAttr(configId)}" data-key="${fieldItem.key}" type="button">
                       ${escapeHtml(fieldItem.label)}
@@ -20036,9 +20036,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function getTableFields(config, configId) {
     return getTableKeys(config, configId).map((key) => {
       const item = config.fields.find((fieldItem) => fieldItem.key === key);
-      if (!item) return { key, label: key };
+      if (!item) return { key, label: key, fullLabel: key };
       return {
         ...item,
+        fullLabel: String(item.label || key),
         label: String(item.options?.tableLabel || item.label || key)
       };
     });
@@ -35639,8 +35640,68 @@ MAX - https://bizvmax.ru/zifra_plus
     return tooltip;
   }
 
+  function normalizeTableHeaderTooltipLabel(value) {
+    return String(value || "")
+      .replace(/\s+/gu, " ")
+      .replace(/\s*[↕↑↓⇅]+\s*$/u, "")
+      .trim();
+  }
+
+  function getTableHeaderVisibleLabelElement(header) {
+    const explicit = header.querySelector("[data-table-header-label]");
+    if (explicit) return explicit;
+    return Array.from(header.querySelectorAll("button > span, .table-head-cell > span")).find((element) => (
+      !element.matches("[aria-hidden='true'], .column-resize-handle")
+      && normalizeTableHeaderTooltipLabel(element.textContent)
+    )) || null;
+  }
+
+  function getTableHeaderVisibleLabel(header) {
+    const source = getTableHeaderVisibleLabelElement(header) || header.querySelector("button") || header;
+    const clone = source.cloneNode(true);
+    clone.querySelectorAll([
+      "[aria-hidden='true']",
+      ".column-resize-handle",
+      "input",
+      "select",
+      "textarea",
+      "svg",
+      "script",
+      "style"
+    ].join(",")).forEach((element) => element.remove());
+    return normalizeTableHeaderTooltipLabel(clone.textContent);
+  }
+
+  function isTableHeaderLabelClipped(header) {
+    const label = getTableHeaderVisibleLabelElement(header);
+    const button = label?.closest("button") || header.querySelector("button");
+    const layout = header.querySelector(".table-head-cell");
+    return [...new Set([label, button, layout, header].filter(Boolean))].some((element) => (
+      element.clientWidth > 0 && element.scrollWidth > element.clientWidth + 1
+    ));
+  }
+
+  function getTableHeaderTooltipTarget(node) {
+    if (!(node instanceof Element) || node.closest(".column-resize-handle")) return null;
+    const header = node.closest("table thead th");
+    if (!header) return null;
+    const visibleLabel = getTableHeaderVisibleLabel(header);
+    const fullLabel = normalizeTableHeaderTooltipLabel(
+      header.dataset.tableHeaderFullLabel || visibleLabel
+    );
+    const shortened = Boolean(fullLabel && visibleLabel && fullLabel !== visibleLabel);
+    if (!fullLabel || (!shortened && !isTableHeaderLabelClipped(header))) {
+      delete header.dataset.tableHeaderTooltip;
+      return null;
+    }
+    header.dataset.tableHeaderTooltip = fullLabel;
+    return header;
+  }
+
   function getSystemHelpTarget(node) {
     if (!(node instanceof Element)) return null;
+    const tableHeader = getTableHeaderTooltipTarget(node);
+    if (tableHeader) return tableHeader;
     return node.closest("[data-mobile-field-help-source], [title], [data-system-help-source], [data-tooltip]");
   }
 
@@ -35652,7 +35713,8 @@ MAX - https://bizvmax.ru/zifra_plus
       target.removeAttribute("title");
     }
     return parseSystemHelpTooltip(
-      target.dataset.mobileFieldHelpSource
+      target.dataset.tableHeaderTooltip
+      || target.dataset.mobileFieldHelpSource
       || target.dataset.systemHelpSource
       || target.dataset.tooltip
     );
