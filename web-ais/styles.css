@@ -20101,7 +20101,35 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-communications-tab {
   align-content: start;
   min-width: 0;
+  gap: 6px;
+  padding: 6px;
   overflow-x: hidden;
+}
+
+.student-communications-tab > .form-section {
+  padding: 6px;
+}
+
+.student-communications-tab > .form-section > .form-section-head {
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.student-communications-tab > .form-section h3 {
+  font-size: 14px;
+}
+
+.student-communications-tab .communication-message-grid {
+  gap: 6px;
+}
+
+.student-communications-tab .communication-message-card {
+  gap: 4px;
+  padding: 6px;
+}
+
+.student-communications-tab .communication-message-card textarea {
+  min-height: 110px;
 }
 
 .communication-message-grid {
