@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.385",
+    version: "1.7.386",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.386",
+      releasedAt: "2026-09-07",
+      changes: [
+        "После подтверждённой отправки сертификата ДОП или ПРО автоматически восстанавливается и отмечается событие «Отправлен электронный документ об образовании»; для КПК и ППП сохраняется отметка отправки макета."
+      ]
+    },
     {
       version: "1.7.385",
       releasedAt: "2026-09-07",
@@ -5856,7 +5863,8 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "signedDocsReceived", label: "Получен подписанный пакет документов" },
     { key: "portalCredentialsSent", label: "Отправлены данные для доступа к порталу" },
     { key: "expulsionOrderPrepared", label: "Сформирован приказ об отчислении" },
-    { key: "educationDocMaketSent", label: "Отправлен макет документа об образовании на согласование" },
+    { key: "educationDocMaketSent", label: "Отправлен макет документа об образовании на согласование", excludeTypes: ["ДОП", "ПРО"] },
+    { key: "macro_hb0dir", label: "Отправлен электронный документ об образовании", includeTypes: ["ДОП", "ПРО"] },
     { key: "educationDocMaketApproved", label: "Макет документа об образовании согласован" },
     { key: "educationDocOriginalSent", label: "Отправлен оригинал документа об образовании" },
     { key: "reviewRequested", label: "Запрошен отзыв о прохождении обучения" },
@@ -34236,10 +34244,58 @@ MAX - https://bizvmax.ru/zifra_plus
     row.classList.add("is-selected", "has-date");
   }
 
-  function markStudentEventsCompleted(records, eventKey, dateValue = "") {
+  function ensureStudentEventVisibleForCompletion(record, eventKey) {
+    const key = String(eventKey || "").trim();
+    if (!record || !key) return false;
+    let changed = false;
+    const deletedKeys = csvList(record.eventDeleted);
+    const activeDeletedKeys = deletedKeys.filter((item) => item !== key);
+    if (activeDeletedKeys.length !== deletedKeys.length) {
+      record.eventDeleted = activeDeletedKeys.join(",");
+      changed = true;
+    }
+    const eventOrder = csvList(record.eventOrder);
+    if (!eventOrder.includes(key)) {
+      record.eventOrder = [...eventOrder, key].join(",");
+      changed = true;
+    }
+    const configured = getStudentEventTemplates().some((event) => event.key === key);
+    const customKeys = csvList(record.eventCustomKeys);
+    const normalizedCustomKeys = configured
+      ? customKeys.filter((item) => item !== key)
+      : unique([...customKeys, key]);
+    if (normalizedCustomKeys.join(",") !== customKeys.join(",")) {
+      record.eventCustomKeys = normalizedCustomKeys.join(",");
+      changed = true;
+    }
+    return changed;
+  }
+
+  function restoreStudentEventCompletionInCard(record, eventKey, label) {
+    if (state.modal?.config !== "students") return;
+    const key = String(eventKey || "").trim();
+    const list = document.querySelector("[data-student-events-list]");
+    if (!key || !list) return;
+    const orderInput = document.querySelector("[data-event-order]");
+    const deletedInput = document.querySelector("[data-event-deleted]");
+    const customKeysInput = document.querySelector("[data-event-custom-keys]");
+    if (orderInput) orderInput.value = String(record.eventOrder || "");
+    if (deletedInput) deletedInput.value = String(record.eventDeleted || "");
+    if (customKeysInput) customKeysInput.value = String(record.eventCustomKeys || "");
+    if (list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`)) return;
+    const configuredEvent = getStudentEventTemplates()
+      .find((event) => event.key === key);
+    const eventTemplate = configuredEvent || { key, label, custom: true };
+    list.insertAdjacentHTML("beforeend", renderStudentEventRow(eventTemplate, record));
+    const row = list.querySelector(`.student-event-row[data-event-key="${CSS.escape(key)}"]`);
+    if (row) bindStudentEventRow(row);
+  }
+
+  function markStudentEventsCompleted(records, eventKey, dateValue = "", options = {}) {
     const key = String(eventKey || "").trim();
     if (!key) return 0;
     const date = String(dateValue || "").trim() || todayIso();
+    const ensureVisible = options.ensureVisible === true;
     const label = getStudentEventTemplates().find((event) => event.key === key)?.label
       || studentEventTemplates.find((event) => event.key === key)?.label
       || key;
@@ -34260,31 +34316,53 @@ MAX - https://bizvmax.ru/zifra_plus
         .find((item) => String(item.id || "") === recordId);
       if (!record) return;
       const previous = getEventAuditSnapshot(record, key, label);
-      if (!applyStudentEventCompletion(record, key, date, label)) return;
+      const visibilityChanged = ensureVisible
+        ? ensureStudentEventVisibleForCompletion(record, key)
+        : false;
+      const completionChanged = applyStudentEventCompletion(record, key, date, label);
+      if (!completionChanged && !visibilityChanged) return;
       changedCount += 1;
-      addAudit("Автоматически отмечено событие", configs.students.title, record.name || record.id, {
-        entityType: "students",
-        entityId: record.id,
-        entityLabel: record.name || record.id,
-        source: "automatic-student-event",
-        changes: [{
-          field: "cardEventDate",
-          eventKey: key,
-          label: `Событие: ${label}`,
-          before: previous.value,
-          after: `Выполнено · ${dateRu(date)}`
-        }]
-      });
+      if (completionChanged) {
+        addAudit("Автоматически отмечено событие", configs.students.title, record.name || record.id, {
+          entityType: "students",
+          entityId: record.id,
+          entityLabel: record.name || record.id,
+          source: "automatic-student-event",
+          changes: [{
+            field: "cardEventDate",
+            eventKey: key,
+            label: `Событие: ${label}`,
+            before: previous.value,
+            after: `Выполнено · ${dateRu(date)}`
+          }]
+        });
+      }
     });
     if (updateCurrentCard) {
       const draft = { ...(state.modal.draft || {}) };
+      if (ensureVisible) ensureStudentEventVisibleForCompletion(draft, key);
       applyStudentEventCompletion(draft, key, date, label);
       state.modal.draft = draft;
       if (!currentId) state.modal.hasDraftChanges = true;
+      if (ensureVisible) restoreStudentEventCompletionInCard(draft, key, label);
       updateStudentEventCompletionInCard(key, date, label);
     }
     if (changedCount) persist();
     return changedCount;
+  }
+
+  function markStudentEducationDocumentEmailSent(record, result = {}) {
+    if (result?.emailed !== true || result.emailRecipientMode === "system") return 0;
+    const programType = getStudentProgramTypeCode(record);
+    if (!["ДОП", "ПРО"].includes(programType)) {
+      return markStudentEventsCompleted(record, "educationDocMaketSent");
+    }
+    const electronicDocumentEventLabel = "Отправлен электронный документ об образовании";
+    const normalizedEventLabel = normalizeEventTemplateLabel(electronicDocumentEventLabel);
+    const configuredEvent = getStudentEventTemplates()
+      .find((event) => normalizeEventTemplateLabel(event.label) === normalizedEventLabel);
+    const eventKey = configuredEvent?.key || buildMacroEventKey(electronicDocumentEventLabel);
+    return markStudentEventsCompleted(record, eventKey, "", { ensureVisible: true });
   }
 
   function isExplicitUncheckedEventState(stateValue) {
@@ -52699,12 +52777,8 @@ MAX - https://bizvmax.ru/zifra_plus
         } else if (operation === "expulsionOrder") {
           const orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
           markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "expulsionOrderPrepared");
-        } else if (
-          operation === "education"
-          && generated.emailed === true
-          && generated.emailRecipientMode !== "system"
-        ) {
-          markStudentEventsCompleted(record, "educationDocMaketSent");
+        } else if (operation === "education") {
+          markStudentEducationDocumentEmailSent(record, generated);
         }
         if (
           effectiveTemplate.openAfterGeneration
@@ -64852,9 +64926,7 @@ MAX - https://bizvmax.ru/zifra_plus
       button,
       "Не удалось сформировать документ об образовании"
     );
-    if (result?.emailed === true && result.emailRecipientMode !== "system") {
-      markStudentEventsCompleted(record, "educationDocMaketSent");
-    }
+    markStudentEducationDocumentEmailSent(record, result);
     return result;
   }
 

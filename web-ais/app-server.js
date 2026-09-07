@@ -1308,6 +1308,7 @@ const STUDENT_EVENT_IMPORT_TEMPLATES = Object.freeze([
   { key: "portalCredentialsSent", label: "Отправлены данные для доступа к порталу" },
   { key: "expulsionOrderPrepared", label: "Сформирован приказ об отчислении" },
   { key: "educationDocMaketSent", label: "Отправлен макет документа об образовании на согласование" },
+  { key: "macro_hb0dir", label: "Отправлен электронный документ об образовании" },
   { key: "educationDocMaketApproved", label: "Макет документа об образовании согласован" },
   { key: "educationDocOriginalSent", label: "Отправлен оригинал документа об образовании" },
   { key: "reviewRequested", label: "Запрошен отзыв о прохождении обучения" },
