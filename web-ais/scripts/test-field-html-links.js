@@ -200,6 +200,9 @@ const defaultFieldStyle = {
   fontWeight: "400",
   lineHeight: "20px",
   letterSpacing: "normal",
+  whiteSpace: "pre-wrap",
+  overflowWrap: "break-word",
+  wordBreak: "break-word",
   color: "rgb(1, 2, 3)",
   webkitTextFillColor: "rgb(1, 2, 3)",
   opacity: "1",
@@ -221,6 +224,7 @@ const window = {
     }
     return {
       ...defaultFieldStyle,
+      ...(element.computedStyleOverrides || {}),
       get color() {
         return element.forceTransparentColor || element.classList.contains("has-native-html-links")
           ? "rgba(0, 0, 0, 0)"
@@ -380,6 +384,12 @@ assert.equal(resizeObservers[0].observed.has(linkedField), false);
 
 const dynamicHost = new MockHost();
 const dynamicField = new MockTextarea("Текст " + firstUrl);
+dynamicField.clientWidth = 283;
+dynamicField.computedStyleOverrides = {
+  whiteSpace: "pre-line",
+  overflowWrap: "anywhere",
+  wordBreak: "normal"
+};
 dynamicField.parentElement = dynamicHost;
 mutationObservers[0].callback([{
   removedNodes: [],
@@ -387,6 +397,11 @@ mutationObservers[0].callback([{
 }]);
 assert.equal(dynamicField.classList.contains("has-native-html-links"), true);
 assert.equal(dynamicHost.children[0].classList.contains("is-textarea"), true);
+assert.equal(dynamicHost.children[0].content.style.width, "265px");
+assert.equal(dynamicHost.children[0].content.style.minWidth, "0px");
+assert.equal(dynamicHost.children[0].content.style.whiteSpace, "pre-line");
+assert.equal(dynamicHost.children[0].content.style.overflowWrap, "anywhere");
+assert.equal(dynamicHost.children[0].content.style.wordBreak, "normal");
 mutationObservers[0].callback([{
   removedNodes: [dynamicField],
   addedNodes: []
@@ -476,6 +491,10 @@ assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?text-shadow:\s*n
 assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link/u);
 assert.match(stylesSource, /\.native-html-link-highlight[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
 assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
+assert.match(
+  stylesSource,
+  /\.native-html-link-highlight\.is-textarea \.native-html-link-highlight-content\s*\{[\s\S]*?min-width:\s*0/u
+);
 
 const styleBuild = /styles\.css\?v=([^"']+)/u.exec(indexSource)?.[1] || "";
 const indexBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1] || "";

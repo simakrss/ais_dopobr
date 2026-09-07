@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.383",
+    version: "1.7.384",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.384",
+      releasedAt: "2026-09-07",
+      changes: [
+        "Исправлено совмещение подсветки гиперссылок с текстом в многострочных полях: слой учитывает ширину вертикальной полосы прокрутки и фактические правила переноса строк."
+      ]
+    },
     {
       version: "1.7.383",
       releasedAt: "2026-09-07",

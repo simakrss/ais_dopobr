@@ -241,11 +241,23 @@
     overlay.classList.toggle("is-textarea", isTextarea);
     overlay.classList.toggle("is-single-line", !isTextarea);
     if (isTextarea) {
+      Object.assign(content.style, {
+        minWidth: "0px",
+        whiteSpace: computedFieldStyle.whiteSpace || "pre-wrap",
+        overflowWrap: computedFieldStyle.overflowWrap || "break-word",
+        wordBreak: computedFieldStyle.wordBreak || "break-word"
+      });
       const contentWidth = field.clientWidth
         - (Number.parseFloat(fieldStyle.paddingLeft) || 0)
         - (Number.parseFloat(fieldStyle.paddingRight) || 0);
       content.style.width = `${Math.max(0, contentWidth)}px`;
     } else {
+      Object.assign(content.style, {
+        minWidth: "100%",
+        whiteSpace: "pre",
+        overflowWrap: "normal",
+        wordBreak: "normal"
+      });
       content.style.width = "max-content";
     }
     content.style.transform = `translate(${-Number(field.scrollLeft || 0)}px, ${-Number(field.scrollTop || 0)}px)`;

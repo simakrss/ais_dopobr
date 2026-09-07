@@ -6089,6 +6089,7 @@ body.long-press-dragging * {
 }
 
 .native-html-link-highlight.is-textarea .native-html-link-highlight-content {
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: break-word;
