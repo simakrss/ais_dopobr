@@ -251,9 +251,15 @@ async function main() {
   const dateHelpersStart = clientSource.indexOf("  const studentDocumentRecognitionDisplayDateKeys");
   const dateHelpersEnd = clientSource.indexOf("\n\n  function getDocumentRecognitionAlternativeValues", dateHelpersStart);
   assert.ok(dateHelpersStart >= 0 && dateHelpersEnd > dateHelpersStart);
+  const inputDateHelpersStart = clientSource.indexOf("  function normalizeDateInputFormat");
+  const inputDateHelpersEnd = clientSource.indexOf("\n\n  function getDateTextInputFormat", inputDateHelpersStart);
+  assert.ok(inputDateHelpersStart >= 0 && inputDateHelpersEnd > inputDateHelpersStart);
+  const inputDateHelpersSource = clientSource.slice(inputDateHelpersStart, inputDateHelpersEnd);
   const dateHelpersSource = clientSource.slice(dateHelpersStart, dateHelpersEnd);
   const dateHelpers = new Function(
-    dateHelpersSource + "\nreturn { normalizeStudentDocumentRecognitionDate, formatStudentDocumentRecognitionDate, normalizeRecognitionComparisonValue };"
+    inputDateHelpersSource
+      + dateHelpersSource
+      + "\nreturn { normalizeStudentDocumentRecognitionDate, formatStudentDocumentRecognitionDate, normalizeRecognitionComparisonValue };"
   )();
   assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05"), "05.03.2016");
   assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05T00:00:00.000Z"), "05.03.2016");
@@ -265,7 +271,22 @@ async function main() {
     dateHelpers.normalizeRecognitionComparisonValue("educationDocumentDate", "05.03.2016"),
     dateHelpers.normalizeRecognitionComparisonValue("educationDocumentDate", "2016-03-05")
   );
-  assert.match(clientSource, /studentDocumentRecognitionDisplayDateKeys\.has\(key\)[\s\S]*?normalizeStudentDocumentRecognitionDate\(value\)/u);
+  assert.strictEqual(
+    dateHelpers.normalizeRecognitionComparisonValue("birthDate", "5/3/2016"),
+    dateHelpers.normalizeRecognitionComparisonValue("birthDate", "2016-03-05")
+  );
+  assert.strictEqual(
+    dateHelpers.normalizeRecognitionComparisonValue("passportDate", "05.03.2016"),
+    dateHelpers.normalizeRecognitionComparisonValue("passportDate", "2016-03-05")
+  );
+  assert.match(
+    clientSource,
+    /const dateInputFormat = getStudentDocumentRecognitionDateInputFormat\(key\)[\s\S]*?parseCalendarDateParts\(source, dateInputFormat\)[\s\S]*?formatCalendarDateParts\(dateParts, "iso"\)/u
+  );
+  assert.match(
+    clientSource,
+    /const dateInputFormat = getStudentDocumentRecognitionDateInputFormat\(key\)[\s\S]*?parseCalendarDateParts\(value, dateInputFormat\)[\s\S]*?formatCalendarDateParts\(dateParts, "iso"\)/u
+  );
   assert.match(clientSource, /value="\$\{escapeAttr\(displayValue\)\}"/u);
   assert.match(clientSource, /Сейчас в карточке:[\s\S]*?escapeHtml\(currentDisplayValue\)/u);
   assert.match(clientSource, /data-ocr-field-preview-text/u);

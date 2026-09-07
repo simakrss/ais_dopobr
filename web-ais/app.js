@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.387",
+    version: "1.7.388",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.388",
+      releasedAt: "2026-09-07",
+      changes: [
+        "В полях дат разделители подставляются автоматически в формате конкретного поля; при обычном и контекстном копировании дата сохраняет тот же вид, который показан пользователю."
+      ]
+    },
     {
       version: "1.7.387",
       releasedAt: "2026-09-07",
@@ -43548,14 +43555,241 @@ MAX - https://bizvmax.ru/zifra_plus
     return isFieldEditHistoryControl(control) ? control : null;
   }
 
+  function normalizeDateInputFormat(value) {
+    const normalized = String(value || "").trim().toLocaleLowerCase("ru-RU");
+    return ["iso", "yyyy-mm-dd", "ymd"].includes(normalized) ? "iso" : "ru";
+  }
+
+  function isValidCalendarDateParts(parts) {
+    const year = Number(parts?.year);
+    const month = Number(parts?.month);
+    const day = Number(parts?.day);
+    if (!Number.isInteger(year) || year < 1 || year > 9999) return false;
+    if (!Number.isInteger(month) || month < 1 || month > 12) return false;
+    if (!Number.isInteger(day) || day < 1 || day > 31) return false;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year
+      && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day;
+  }
+
+  function parseCalendarDateParts(value, preferredFormat = "auto") {
+    const source = String(value || "").trim();
+    if (!source) return null;
+    let parts = null;
+    const iso = /^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})$/u.exec(source);
+    const ru = /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/u.exec(source);
+    if (iso) {
+      parts = { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
+    } else if (ru) {
+      parts = { year: Number(ru[3]), month: Number(ru[2]), day: Number(ru[1]) };
+    } else if (/^\d{8}$/u.test(source)) {
+      const format = preferredFormat === "auto" ? "auto" : normalizeDateInputFormat(preferredFormat);
+      const isoParts = {
+        year: Number(source.slice(0, 4)),
+        month: Number(source.slice(4, 6)),
+        day: Number(source.slice(6, 8))
+      };
+      const ruParts = {
+        year: Number(source.slice(4, 8)),
+        month: Number(source.slice(2, 4)),
+        day: Number(source.slice(0, 2))
+      };
+      parts = format === "iso"
+        ? isoParts
+        : format === "ru"
+          ? ruParts
+          : (isValidCalendarDateParts(isoParts) ? isoParts : ruParts);
+    }
+    return isValidCalendarDateParts(parts) ? parts : null;
+  }
+
+  function formatCalendarDateParts(parts, format = "ru") {
+    if (!isValidCalendarDateParts(parts)) return "";
+    const year = String(parts.year).padStart(4, "0");
+    const month = String(parts.month).padStart(2, "0");
+    const day = String(parts.day).padStart(2, "0");
+    return normalizeDateInputFormat(format) === "iso"
+      ? `${year}-${month}-${day}`
+      : `${day}.${month}.${year}`;
+  }
+
+  function formatDateTextInputValue(value, format = "ru") {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    const normalizedFormat = normalizeDateInputFormat(format);
+    const hasCompleteDateShape = /^\d{8}$/u.test(source)
+      || /^\d{1,4}[.\/-]\d{1,2}[.\/-]\d{1,4}$/u.test(source);
+    const parsed = hasCompleteDateShape
+      ? parseCalendarDateParts(source, /^\d{8}$/u.test(source) ? normalizedFormat : "auto")
+      : null;
+    if (parsed) return formatCalendarDateParts(parsed, normalizedFormat);
+    const digits = source.replace(/\D/gu, "").slice(0, 8);
+    if (!digits) return "";
+    const groupLengths = normalizedFormat === "iso" ? [4, 2, 2] : [2, 2, 4];
+    const separator = normalizedFormat === "iso" ? "-" : ".";
+    const groups = [];
+    let offset = 0;
+    groupLengths.forEach((length) => {
+      if (offset >= digits.length) return;
+      groups.push(digits.slice(offset, offset + length));
+      offset += length;
+    });
+    let result = groups.join(separator);
+    const firstBoundary = groupLengths[0];
+    const secondBoundary = groupLengths[0] + groupLengths[1];
+    if (digits.length === firstBoundary || digits.length === secondBoundary) result += separator;
+    return result;
+  }
+
+  function formatDateInputClipboardValue(value, format = "ru") {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    const parts = parseCalendarDateParts(source, "auto");
+    return parts ? formatCalendarDateParts(parts, format) : source;
+  }
+
+  function getDateTextInputFormat(control) {
+    if (!control || String(control.tagName || "").toUpperCase() !== "INPUT") return "";
+    const declaredFormat = control.getAttribute?.("data-date-input-format")
+      ?? control.dataset?.dateInputFormat;
+    if (declaredFormat === null || declaredFormat === undefined) return "";
+    return normalizeDateInputFormat(declaredFormat);
+  }
+
+  function getDateTextCaretOffset(value, digitCount) {
+    const source = String(value || "");
+    if (!digitCount) return 0;
+    let seen = 0;
+    let offset = 0;
+    while (offset < source.length && seen < digitCount) {
+      if (/\d/u.test(source[offset])) seen += 1;
+      offset += 1;
+    }
+    while (offset < source.length && /\D/u.test(source[offset])) offset += 1;
+    return offset;
+  }
+
+  function applyDateTextInputMask(control) {
+    const format = getDateTextInputFormat(control);
+    if (!format || control.dataset?.dateInputComposing === "true") return false;
+    const previousValue = String(control.value || "");
+    const selectionStart = typeof control.selectionStart === "number"
+      ? control.selectionStart
+      : previousValue.length;
+    const selectionEnd = typeof control.selectionEnd === "number"
+      ? control.selectionEnd
+      : selectionStart;
+    const startDigits = previousValue.slice(0, selectionStart).replace(/\D/gu, "").length;
+    const endDigits = previousValue.slice(0, selectionEnd).replace(/\D/gu, "").length;
+    const nextValue = formatDateTextInputValue(previousValue, format);
+    if (nextValue === previousValue) return false;
+    control.value = nextValue;
+    if (typeof control.setSelectionRange === "function") {
+      try {
+        control.setSelectionRange(
+          getDateTextCaretOffset(nextValue, startDigits),
+          getDateTextCaretOffset(nextValue, endDigits)
+        );
+      } catch (error) {
+        // Some browser input types do not expose a text selection API.
+      }
+    }
+    return true;
+  }
+
+  function initializeDateTextInputMasks(root = document) {
+    root?.querySelectorAll?.("input[data-date-input-format]").forEach((control) => {
+      applyDateTextInputMask(control);
+    });
+  }
+
+  function initializeNativeDateInputFormats(root = document) {
+    root?.querySelectorAll?.("input[type='date']").forEach((control) => {
+      control.lang = "ru-RU";
+      if (!control.hasAttribute("data-date-copy-format")) {
+        control.setAttribute("data-date-copy-format", "ru");
+      }
+    });
+  }
+
+  function handleDateTextInputKeydown(event) {
+    if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return false;
+    if (!["Backspace", "Delete"].includes(event.key)) return false;
+    const control = getFieldHistoryControlFromEvent(event);
+    const format = getDateTextInputFormat(control);
+    if (!format || typeof control.selectionStart !== "number" || control.selectionStart !== control.selectionEnd) {
+      return false;
+    }
+    const separator = format === "iso" ? "-" : ".";
+    const offset = control.selectionStart;
+    const nextOffset = event.key === "Backspace" && control.value[offset - 1] === separator
+      ? offset - 1
+      : event.key === "Delete" && control.value[offset] === separator
+        ? offset + 1
+        : offset;
+    if (nextOffset === offset) return false;
+    event.preventDefault();
+    control.setSelectionRange(nextOffset, nextOffset);
+    return true;
+  }
+
+  function isNativeDateInputControl(control) {
+    return String(control?.tagName || "").toUpperCase() === "INPUT"
+      && String(control?.type || "").toLowerCase() === "date";
+  }
+
+  function getDateControlCopyValue(control) {
+    if (!isNativeDateInputControl(control)) return null;
+    const format = control.getAttribute?.("data-date-copy-format") || "ru";
+    return formatDateInputClipboardValue(control.value, format);
+  }
+
+  function handleDateControlClipboardEvent(event) {
+    const directTarget = event?.target?.closest?.("input[type='date']")
+      || (isNativeDateInputControl(event?.target) ? event.target : null);
+    if (!directTarget || !event.clipboardData?.setData) return false;
+    const value = getDateControlCopyValue(directTarget);
+    if (value === null) return false;
+    event.clipboardData.setData("text/plain", value);
+    lastKnownClipboardText = value;
+    event.preventDefault();
+    return true;
+  }
+
   function bindFieldEditHistory() {
+    initializeNativeDateInputFormats(document);
+    initializeDateTextInputMasks(document);
     initializeFieldEditHistories(document);
     if (fieldEditHistoryBound) return;
     fieldEditHistoryBound = true;
     document.addEventListener("paste", (event) => {
       const value = event.clipboardData?.getData("text/plain");
       if (typeof value === "string") lastKnownClipboardText = value;
+      const control = getFieldHistoryControlFromEvent(event);
+      const isMaskedDate = Boolean(getDateTextInputFormat(control));
+      if (!control || (!isNativeDateInputControl(control) && !isMaskedDate)) return;
+      const normalizedValue = normalizePastedInputValue(control, value);
+      if (isNativeDateInputControl(control) && !parseCalendarDateParts(normalizedValue, "iso")) return;
+      event.preventDefault();
+      pasteTextIntoControl(control, normalizedValue);
     });
+    document.addEventListener("copy", handleDateControlClipboardEvent, true);
+    document.addEventListener("compositionstart", (event) => {
+      const control = getFieldHistoryControlFromEvent(event);
+      if (getDateTextInputFormat(control)) control.dataset.dateInputComposing = "true";
+    });
+    document.addEventListener("compositionend", (event) => {
+      const control = getFieldHistoryControlFromEvent(event);
+      if (!getDateTextInputFormat(control)) return;
+      delete control.dataset.dateInputComposing;
+      if (applyDateTextInputMask(control)) {
+        control.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    document.addEventListener("input", (event) => {
+      applyDateTextInputMask(getFieldHistoryControlFromEvent(event));
+    }, true);
     document.addEventListener("focusin", (event) => {
       initializeFieldControlHistory(getFieldHistoryControlFromEvent(event));
     });
@@ -43576,6 +43810,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (control && !isContentEditableTextControl(control)) recordFieldControlHistoryChange(control);
     });
     document.addEventListener("keydown", (event) => {
+      if (handleDateTextInputKeydown(event)) return;
       if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
       const control = getFieldHistoryControlFromEvent(event);
       if (!control) return;
@@ -43631,6 +43866,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function getControlCopyValue(control) {
     const selectedText = getSelectedControlText(control);
     if (selectedText) return selectedText;
+    const visibleDateValue = getDateControlCopyValue(control);
+    if (visibleDateValue !== null) return visibleDateValue;
     if (control.type === "checkbox") return control.checked ? (control.value || "Да") : "Нет";
     if (control.tagName === "SELECT") return control.selectedOptions?.[0]?.textContent || control.value || "";
     if (isContentEditableTextControl(control)) return serializeCommunicationTemplateEditor(control);
@@ -43684,12 +43921,13 @@ MAX - https://bizvmax.ru/zifra_plus
   function normalizePastedInputValue(control, value) {
     const source = String(value ?? "");
     if (control.type === "number") return source.trim().replace(",", ".");
-    if (control.type === "date") {
+    if (isNativeDateInputControl(control)) {
       const normalized = source.trim();
-      const match = /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/u.exec(normalized);
-      if (!match) return normalized;
-      return `${match[3]}-${String(match[2]).padStart(2, "0")}-${String(match[1]).padStart(2, "0")}`;
+      const parts = parseCalendarDateParts(normalized, "auto");
+      return parts ? formatCalendarDateParts(parts, "iso") : normalized;
     }
+    const dateTextFormat = getDateTextInputFormat(control);
+    if (dateTextFormat) return formatDateTextInputValue(source, dateTextFormat);
     return source;
   }
 
@@ -48304,6 +48542,21 @@ MAX - https://bizvmax.ru/zifra_plus
     "birthDate",
     "educationDocumentDate"
   ]);
+  const studentDocumentRecognitionIsoDateKeys = new Set([
+    "passportDate",
+    "identityIssueDate",
+    "applicationDate",
+    "startDate",
+    "endDate",
+    "contractDate"
+  ]);
+
+  function getStudentDocumentRecognitionDateInputFormat(key) {
+    const normalizedKey = String(key || "");
+    if (studentDocumentRecognitionDisplayDateKeys.has(normalizedKey)) return "ru";
+    if (studentDocumentRecognitionIsoDateKeys.has(normalizedKey)) return "iso";
+    return "";
+  }
 
   function normalizeStudentDocumentRecognitionDate(value) {
     const text = String(value || "").trim();
@@ -48333,8 +48586,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function normalizeRecognitionComparisonValue(key, value) {
     const source = String(value || "").trim();
-    if (studentDocumentRecognitionDisplayDateKeys.has(String(key || ""))) {
-      return normalizeStudentDocumentRecognitionDate(source) || source;
+    const dateInputFormat = getStudentDocumentRecognitionDateInputFormat(key);
+    if (dateInputFormat) {
+      const dateParts = parseCalendarDateParts(source, dateInputFormat);
+      return formatCalendarDateParts(dateParts, "iso") || source;
     }
     if (["inn", "snils", "passportNumber", "passportCode", "identityDocument", "identityDepartmentCode"].includes(key)) {
       return source.replace(/\D/g, "");
@@ -48432,17 +48687,17 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderStudentDocumentRecognitionField(field, currentRecord, options = {}) {
     const key = String(field.key || "");
-    const isDisplayDate = studentDocumentRecognitionDisplayDateKeys.has(key);
-    const displayValue = isDisplayDate
-      ? formatStudentDocumentRecognitionDate(field.value)
+    const dateInputFormat = getStudentDocumentRecognitionDateInputFormat(key);
+    const displayValue = dateInputFormat
+      ? formatDateTextInputValue(field.value, dateInputFormat)
       : String(field.value || "");
     const listControl = getDocumentRecognitionListControl(field, options.isContract === true);
     const manualEntry = field.manualEntry === true && !String(field.value || "").trim();
     const recognitionMissing = field.recognitionMissing === true;
     const isIdentityNumber = ["inn", "snils"].includes(key);
     const currentValue = String(currentRecord[key] || "").trim();
-    const currentDisplayValue = isDisplayDate
-      ? formatStudentDocumentRecognitionDate(currentValue)
+    const currentDisplayValue = dateInputFormat
+      ? formatDateTextInputValue(currentValue, dateInputFormat)
       : currentValue;
     const sameValue = Boolean(
       currentValue
@@ -48478,8 +48733,8 @@ MAX - https://bizvmax.ru/zifra_plus
               type="text"
               data-ocr-field-value
               value="${escapeAttr(displayValue)}"
-              ${isDisplayDate
-                ? 'inputmode="numeric" placeholder="ДД.ММ.ГГГГ"'
+              ${dateInputFormat
+                ? `data-date-input-format="${dateInputFormat}" inputmode="numeric" placeholder="${dateInputFormat === "iso" ? "ГГГГ-ММ-ДД" : "ДД.ММ.ГГГГ"}"`
                 : (manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : "")}
               ${listId ? `list="${escapeAttr(listId)}"` : ""}
               aria-label="${escapeAttr(field.label || key)}"
@@ -50147,8 +50402,9 @@ MAX - https://bizvmax.ru/zifra_plus
             sourceLabel.textContent = `Источник: ${sourceFile}, стр. ${page}`;
             sourceLabel.title = field.evidence;
           }
-          const controlValue = studentDocumentRecognitionDisplayDateKeys.has(field.key)
-            ? formatStudentDocumentRecognitionDate(recognizedValue)
+          const recognizedDateFormat = getStudentDocumentRecognitionDateInputFormat(field.key);
+          const controlValue = recognizedDateFormat
+            ? formatDateTextInputValue(recognizedValue, recognizedDateFormat)
             : recognizedValue;
           const checkbox = row.querySelector("[data-ocr-field-enabled]");
           if (checkbox) checkbox.checked = true;
@@ -51319,22 +51575,18 @@ MAX - https://bizvmax.ru/zifra_plus
         value = matchDocumentRecognitionCitizenship(value);
         row.querySelector("[data-ocr-field-value]").value = value;
       }
-      if (studentDocumentRecognitionDisplayDateKeys.has(key)) {
-        const normalizedDate = normalizeStudentDocumentRecognitionDate(value);
-        if (normalizedDate) value = normalizedDate;
-        else invalidRow ||= row;
-      }
-      if ([
-        "birthDate",
-        "passportDate",
-        "identityIssueDate",
-        "educationDocumentDate",
-        "applicationDate",
-        "startDate",
-        "endDate",
-        "contractDate"
-      ].includes(key) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        invalidRow ||= row;
+      const dateInputFormat = getStudentDocumentRecognitionDateInputFormat(key);
+      if (dateInputFormat) {
+        const dateParts = parseCalendarDateParts(value, dateInputFormat);
+        const normalizedDate = formatCalendarDateParts(dateParts, "iso");
+        if (normalizedDate) {
+          value = normalizedDate;
+          row.querySelector("[data-ocr-field-value]").value = dateInputFormat === "ru"
+            ? formatCalendarDateParts(dateParts, "ru")
+            : normalizedDate;
+        } else {
+          invalidRow ||= row;
+        }
       }
       updates[key] = value;
     });
