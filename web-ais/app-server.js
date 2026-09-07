@@ -170,6 +170,7 @@ const TRAINING_END_NOTIFICATION_SHARED_META_KEYS = new Set([
 const TRAINING_END_NOTIFICATION_FREQUENCIES = new Set(["daily", "weekdays", "weekly"]);
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
 const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 1000;
+const AUTOMATIC_CONTRACT_EXPIRATION_CHECK_INTERVAL_MS = 60 * 1000;
 const TRAINING_END_NOTIFICATION_RUNNING_STALE_MS = 20 * 60 * 1000;
 const TRAINING_END_NOTIFICATION_FAILED_RETRY_MS = 30 * 60 * 1000;
 const DEFAULT_STUDENT_ORDER_ADMIN_URL_TEMPLATE = "https://zifra-plus.ru/wp-admin/post.php?post={НомерЗаказа}&action=edit&classic-editor";
@@ -626,6 +627,9 @@ let advertisingMoodleMySqlPool = null;
 let advertisingMoodleMySqlInitialization = null;
 let trainingEndNotificationJobPromise = null;
 let trainingEndNotificationSchedulerTimer = null;
+let automaticContractExpirationCheckPromise = null;
+let automaticContractExpirationSchedulerTimer = null;
+let automaticContractExpirationLastCheckedDate = "";
 let scheduledJobRunsTableInitialization = null;
 let sharedStateMirrorRefreshPromise = null;
 let sharedStateMirrorInitialized = false;
@@ -2075,8 +2079,13 @@ async function getRequestAuthUser(req) {
         }
       : null;
   }
-  const users = await loadAuthUsers();
-  const user = users.find((item) => item.id === session.userId && item.status === "active");
+  let users = await loadAuthUsers();
+  let user = users.find((item) => item.id === session.userId && item.status === "active");
+  if (user && String(user.authSource || "") === "employee") {
+    await maybeRunAutomaticContractExpiration();
+    users = await loadAuthUsers();
+    user = users.find((item) => item.id === session.userId && item.status === "active");
+  }
   return user
     ? {
         ...publicAuthUser(user),
@@ -6590,6 +6599,84 @@ function sharedApplicationDataNeedsCitizenshipMigration(data) {
   ));
 }
 
+function getMoscowCalendarDateKey(value = new Date()) {
+  return getMoscowCalendarDate(value)?.key || "";
+}
+
+function normalizeSharedApplicationContractDateKey(value) {
+  const text = String(value || "").trim();
+  if (!/^(?:\d{4}-\d{1,2}-\d{1,2})(?:$|[T\s])|^\d{1,2}\.\d{1,2}\.\d{4}$/u.test(text)) {
+    return "";
+  }
+  const timestamp = parseTrainingEndNotificationDate(text);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : "";
+}
+
+function isSharedApplicationContractPastEndDate(
+  contract = {},
+  todayKey = getMoscowCalendarDateKey()
+) {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) return false;
+  const section = normalizeContractDatabaseSection(contract.section || contract.status)
+    || CONTRACT_DATABASE_SECTIONS.active;
+  if (section !== CONTRACT_DATABASE_SECTIONS.active) return false;
+  const endDateKey = normalizeSharedApplicationContractDateKey(contract.endDate);
+  const comparisonDateKey = normalizeSharedApplicationContractDateKey(todayKey);
+  return Boolean(endDateKey && comparisonDateKey && endDateKey < comparisonDateKey);
+}
+
+function normalizeSharedApplicationContractExpirationRecord(
+  contract,
+  todayKey = getMoscowCalendarDateKey()
+) {
+  if (!isSharedApplicationContractPastEndDate(contract, todayKey)) return contract;
+  return {
+    ...contract,
+    section: CONTRACT_DATABASE_SECTIONS.expired,
+    status: "Истек"
+  };
+}
+
+function normalizeSharedApplicationContractExpirationRows(
+  rows,
+  todayKey = getMoscowCalendarDateKey()
+) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((contract) => (
+    normalizeSharedApplicationContractExpirationRecord(contract, todayKey)
+  ));
+}
+
+function normalizeSharedApplicationContractCollectionRows(
+  collectionName,
+  rows,
+  todayKey = getMoscowCalendarDateKey()
+) {
+  return collectionName === "contracts"
+    ? normalizeSharedApplicationContractExpirationRows(rows, todayKey)
+    : rows;
+}
+
+function normalizeSharedApplicationContractExpirations(
+  data,
+  todayKey = getMoscowCalendarDateKey()
+) {
+  if (!data?.collections || typeof data.collections !== "object") return data;
+  data.collections.contracts = normalizeSharedApplicationContractExpirationRows(
+    data.collections.contracts,
+    todayKey
+  );
+  return data;
+}
+
+function sharedApplicationDataNeedsContractExpiration(
+  data,
+  todayKey = getMoscowCalendarDateKey()
+) {
+  const rows = Array.isArray(data?.collections?.contracts) ? data.collections.contracts : [];
+  return rows.some((contract) => isSharedApplicationContractPastEndDate(contract, todayKey));
+}
+
 function normalizeSharedApplicationData(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Общая база передана в некорректном формате.");
@@ -6610,6 +6697,7 @@ function normalizeSharedApplicationData(value) {
     : {};
   normalizeSharedApplicationCitizenships(normalized);
   normalizeSharedApplicationPersonPhotoPaths(normalized);
+  normalizeSharedApplicationContractExpirations(normalized);
   if (Number(normalized.meta.frdoUploadDeadlinePolicyVersion || 0) < FRDO_UPLOAD_DEADLINE_POLICY_VERSION) {
     const settings = Array.isArray(normalized.dictionaries.issuedDocumentSettings)
       ? normalized.dictionaries.issuedDocumentSettings.map((setting) => ({ ...setting }))
@@ -6645,17 +6733,23 @@ function normalizeSharedApplicationStatePatch(value) {
     if (!/^[A-Za-z0-9_-]{1,120}$/.test(collectionName) || !rawChange || typeof rawChange !== "object") continue;
     if (Array.isArray(rawChange.replace)) {
       patch.collections[collectionName] = {
-        replace: normalizeSharedApplicationPersonPhotoRows(
+        replace: normalizeSharedApplicationContractCollectionRows(
           collectionName,
-          normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.replace)
+          normalizeSharedApplicationPersonPhotoRows(
+            collectionName,
+            normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.replace)
+          )
         )
       };
       continue;
     }
     const upserts = Array.isArray(rawChange.upserts)
-      ? normalizeSharedApplicationPersonPhotoRows(
+      ? normalizeSharedApplicationContractCollectionRows(
         collectionName,
-        normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.upserts)
+        normalizeSharedApplicationPersonPhotoRows(
+          collectionName,
+          normalizeSharedApplicationCitizenshipRows(collectionName, rawChange.upserts)
+        )
       )
         .filter((record) => record && typeof record === "object" && !Array.isArray(record) && String(record.id || "").trim())
       : [];
@@ -10806,6 +10900,7 @@ async function readSharedApplicationStateMySqlDocument(pool, connection = null) 
     }
     for (const [name, value] of collectionReplacements) data.collections[name] = value;
     const needsCitizenshipMigration = sharedApplicationDataNeedsCitizenshipMigration(data);
+    const needsContractExpiration = sharedApplicationDataNeedsContractExpiration(data);
     const meta = metaRows[0];
     const updatedAt = meta.updated_at instanceof Date
       ? meta.updated_at.toISOString()
@@ -10822,6 +10917,7 @@ async function readSharedApplicationStateMySqlDocument(pool, connection = null) 
       exists: true,
       document,
       needsCitizenshipMigration,
+      needsContractExpiration,
       versionTag: sharedApplicationStateMySqlVersionTag(revisionBefore),
       source: "mysql",
       offline: false
@@ -11005,16 +11101,18 @@ async function applySharedApplicationStateMySqlPatch(connection, patch) {
 async function ensureSharedApplicationStateMySqlDocument(pool) {
   let current = await readSharedApplicationStateMySqlDocument(pool);
   if (current.exists) {
-    if (current.needsCitizenshipMigration && current.document) {
+    if ((current.needsCitizenshipMigration || current.needsContractExpiration) && current.document) {
       try {
         await saveSharedApplicationStateMySqlOperation(pool, {
           baseRevision: current.document.revision,
           data: current.document.data,
-          updatedBy: "citizenship-migration"
+          updatedBy: current.needsContractExpiration
+            ? "automatic-contract-expiration"
+            : "citizenship-migration"
         }, null, { skipCache: true });
         current = await readSharedApplicationStateMySqlDocument(pool);
       } catch (error) {
-        console.warn(`Не удалось сохранить миграцию гражданства общей базы: ${error.message}`);
+        console.warn(`Не удалось сохранить автоматическое обновление общей базы: ${error.message}`);
       }
     }
     return current;
@@ -11088,8 +11186,8 @@ async function writeSharedApplicationStatePendingDocument(document) {
 
 async function saveSharedApplicationStateMySqlOperation(pool, operation, authUser = null, options = {}) {
   const requestedRevision = Math.max(0, Math.floor(Number(operation.baseRevision) || 0));
-  const patch = normalizeSharedApplicationStatePatch(operation.patch);
-  const suppliedData = operation.data ? normalizeSharedApplicationData(operation.data) : null;
+  let patch = normalizeSharedApplicationStatePatch(operation.patch);
+  let suppliedData = operation.data ? normalizeSharedApplicationData(operation.data) : null;
   const clientId = operation.clientId
     ? normalizeRecordLockIdentifier(operation.clientId, "Идентификатор клиента")
     : "";
@@ -11148,6 +11246,10 @@ async function saveSharedApplicationStateMySqlOperation(pool, operation, authUse
     if (!metaRows.length && !suppliedData) {
       throw new Error("Общая база ещё не создана.");
     }
+    // Reapply time-sensitive rules after the revision lock. A request that
+    // crosses Moscow midnight must not write yesterday's active contract state.
+    patch = patch ? normalizeSharedApplicationStatePatch(patch) : null;
+    suppliedData = suppliedData ? normalizeSharedApplicationData(suppliedData) : null;
     if (metaRows.length && sharedApplicationStateOperationCanChangeRecycleBin({
       patch,
       data: suppliedData
@@ -26027,6 +26129,48 @@ function startTrainingEndNotificationScheduler() {
   trainingEndNotificationSchedulerTimer.unref?.();
 }
 
+function maybeRunAutomaticContractExpiration() {
+  const todayKey = getMoscowCalendarDateKey();
+  if (!todayKey || automaticContractExpirationLastCheckedDate === todayKey) {
+    return automaticContractExpirationCheckPromise || Promise.resolve();
+  }
+  if (automaticContractExpirationCheckPromise) return automaticContractExpirationCheckPromise;
+  automaticContractExpirationCheckPromise = (async () => {
+    if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
+      await synchronizeStoredAuthUsersWithEmployees();
+      automaticContractExpirationLastCheckedDate = todayKey;
+      return;
+    }
+    const pool = await getSharedRecordLocksMySqlPool();
+    if (!pool) return;
+    const current = await ensureSharedApplicationStateMySqlDocument(pool);
+    if (current?.needsContractExpiration) {
+      throw new Error("изменение раздела договоров не сохранено в MySQL");
+    }
+    await synchronizeStoredAuthUsersWithEmployees();
+    automaticContractExpirationLastCheckedDate = todayKey;
+  })().finally(() => {
+    automaticContractExpirationCheckPromise = null;
+  });
+  return automaticContractExpirationCheckPromise;
+}
+
+function startAutomaticContractExpirationScheduler() {
+  if (automaticContractExpirationSchedulerTimer) return;
+  const run = () => {
+    maybeRunAutomaticContractExpiration().catch((error) => {
+      console.warn(`Не удалось проверить сроки договоров сотрудников: ${error.message}`);
+    });
+  };
+  const initialTimer = setTimeout(run, 10 * 1000);
+  initialTimer.unref?.();
+  automaticContractExpirationSchedulerTimer = setInterval(
+    run,
+    AUTOMATIC_CONTRACT_EXPIRATION_CHECK_INTERVAL_MS
+  );
+  automaticContractExpirationSchedulerTimer.unref?.();
+}
+
 function quoteImapValue(value) {
   return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -35650,7 +35794,10 @@ function resolveDatabaseDemoPhotoAccess(req, localDemoModeEnabled = isDatabaseDe
   };
 }
 
-function getEmployeeAuthAccess(employee = {}) {
+function getEmployeeAuthAccess(employee = {}, todayKey = getMoscowCalendarDateKey()) {
+  if (isSharedApplicationContractPastEndDate(employee, todayKey)) {
+    return { role: "partner", status: "blocked" };
+  }
   const section = String(employee.section || employee.status || "")
     .trim()
     .toLocaleLowerCase("ru-RU");
@@ -35664,6 +35811,7 @@ function getEmployeeAuthAccess(employee = {}) {
 }
 
 function normalizeEmployeeAuthRecord(employee = {}) {
+  employee = normalizeSharedApplicationContractExpirationRecord(employee);
   const name = Array.from(String(employee.name || "").trim()).slice(0, 120).join("");
   const password = String(employee.password || "");
   let login = "";
@@ -36794,7 +36942,8 @@ function normalizePartnerDate(value) {
 }
 
 function getPartnerEmployeeRank(employee = {}) {
-  const section = normalizePartnerIdentity(employee.section || employee.status);
+  const normalizedEmployee = normalizeSharedApplicationContractExpirationRecord(employee);
+  const section = normalizePartnerIdentity(normalizedEmployee.section || normalizedEmployee.status);
   const sectionScore = section.includes("действующ") || section === "действует"
     ? 3
     : section.includes("партнер") || section.includes("партнёр")
@@ -36856,7 +37005,9 @@ async function readPartnerSharedData() {
 async function readEmployeeAuthContracts() {
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") {
     const data = await readPartnerSharedData();
-    return Array.isArray(data.collections?.contracts) ? data.collections.contracts : [];
+    return normalizeSharedApplicationContractExpirationRows(
+      Array.isArray(data.collections?.contracts) ? data.collections.contracts : []
+    );
   }
   let syncResult = null;
   let offlineSyncError = null;
@@ -36874,7 +37025,7 @@ async function readEmployeeAuthContracts() {
     if (!Array.isArray(contracts)) {
       throw new Error("В локальном снимке общей базы отсутствует раздел сотрудников.");
     }
-    return contracts;
+    return normalizeSharedApplicationContractExpirationRows(contracts);
   };
   let pending = await readSharedApplicationStatePendingDocument();
   if (pending.operations.length) return readPendingContracts();
@@ -36906,14 +37057,18 @@ async function readEmployeeAuthContracts() {
       const ensured = await ensureSharedApplicationStateMySqlDocument(pool);
       if (ensured.document) {
         const contracts = ensured.document.data?.collections?.contracts;
-        if (Array.isArray(contracts)) return contracts;
+        if (Array.isArray(contracts)) {
+          return normalizeSharedApplicationContractExpirationRows(contracts);
+        }
       }
       throw new Error("Общая база АИС ещё не создана.");
     }
     if (!metaRows.length) {
       const ensured = await ensureSharedApplicationStateMySqlDocument(pool);
       const contracts = ensured.document?.data?.collections?.contracts;
-      if (Array.isArray(contracts)) return contracts;
+      if (Array.isArray(contracts)) {
+        return normalizeSharedApplicationContractExpirationRows(contracts);
+      }
       throw new Error("Общая база АИС ещё не создана.");
     }
     const revisionBefore = Math.max(0, Number(metaRows[0].revision) || 0);
@@ -36942,9 +37097,11 @@ async function readEmployeeAuthContracts() {
     if (!hasCollectionMarker) {
       throw new Error("В общей базе отсутствует раздел сотрудников.");
     }
-    if (replacement) return replacement;
-    return items.sort((left, right) => left.order - right.order || left.key.localeCompare(right.key, "ru"))
-      .map((item) => item.value);
+    if (replacement) return normalizeSharedApplicationContractExpirationRows(replacement);
+    return normalizeSharedApplicationContractExpirationRows(
+      items.sort((left, right) => left.order - right.order || left.key.localeCompare(right.key, "ru"))
+        .map((item) => item.value)
+    );
   }
   throw new Error("Общая база изменилась во время проверки реквизитов СДО. Повторите вход.");
 }
@@ -39176,6 +39333,7 @@ if (isMainThread && require.main === module) {
       .then(() => ensureStorage())
       .then(() => {
         startSharedApplicationStateMirror();
+        startAutomaticContractExpirationScheduler();
         startTrainingEndNotificationScheduler();
         const server = http.createServer((req, res) => {
           route(req, res).catch((error) => sendError(res, 500, error.message));
@@ -39198,6 +39356,10 @@ if (isMainThread && require.main === module) {
 module.exports = {
   ensureStorage,
   getEmployeeAuthAccess,
+  getMoscowCalendarDateKey,
+  isSharedApplicationContractPastEndDate,
+  normalizeSharedApplicationContractExpirationRows,
+  sharedApplicationDataNeedsContractExpiration,
   buildEmployeeAuthDirectory,
   publicAuthEmployee,
   authEmployeeCredentialFingerprint,

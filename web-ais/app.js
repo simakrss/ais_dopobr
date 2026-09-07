@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.384",
+    version: "1.7.385",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.385",
+      releasedAt: "2026-09-07",
+      changes: [
+        "Действующие договоры автоматически переносятся в раздел истекших со следующего московского календарного дня после даты «Срок по».",
+        "В карточке сотрудника добавлена команда «Новый договор»: персональные, банковские и СДО-данные переносятся в новую карточку без реквизитов, событий и сообщений прежнего договора."
+      ]
+    },
     {
       version: "1.7.384",
       releasedAt: "2026-09-07",
@@ -8348,8 +8356,49 @@ MAX - https://bizvmax.ru/zifra_plus
     return CONTRACT_SECTIONS[0];
   }
 
-  function normalizeContractRecord(contract = {}) {
-    const section = normalizeContractSection(contract.section, contract.status);
+  function getMoscowCalendarDateKey(value = new Date()) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Moscow",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(value).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    return parts.year && parts.month && parts.day
+      ? `${parts.year}-${parts.month}-${parts.day}`
+      : "";
+  }
+
+  function normalizeContractCalendarDateKey(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const match = /^(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})\.(\d{1,2})\.(\d{4}))(?:$|[T\s])/u.exec(text);
+    if (!match) return "";
+    const year = Number(match[1] || match[6]);
+    const month = Number(match[2] || match[5]);
+    const day = Number(match[3] || match[4]);
+    const timestamp = Date.UTC(year, month - 1, day);
+    const date = new Date(timestamp);
+    if (
+      year < 1900
+      || date.getUTCFullYear() !== year
+      || date.getUTCMonth() !== month - 1
+      || date.getUTCDate() !== day
+    ) return "";
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  function isContractPastEndDate(contract = {}, todayKey = getMoscowCalendarDateKey()) {
+    if (normalizeContractSection(contract.section, contract.status) !== CONTRACT_SECTIONS[0]) return false;
+    const endDateKey = normalizeContractCalendarDateKey(contract.endDate);
+    const normalizedTodayKey = normalizeContractCalendarDateKey(todayKey);
+    return Boolean(endDateKey && normalizedTodayKey && endDateKey < normalizedTodayKey);
+  }
+
+  function normalizeContractRecord(contract = {}, todayKey = getMoscowCalendarDateKey()) {
+    let section = normalizeContractSection(contract.section, contract.status);
+    if (section === CONTRACT_SECTIONS[0] && isContractPastEndDate(contract, todayKey)) {
+      section = CONTRACT_SECTIONS[2];
+    }
     const status = section === CONTRACT_SECTIONS[0]
       ? "Действует"
       : section === CONTRACT_SECTIONS[1]
@@ -8367,6 +8416,46 @@ MAX - https://bizvmax.ru/zifra_plus
       agencyAmount: Number(contract.agencyAmount || 0),
       balance: Number(contract.balance || 0)
     };
+  }
+
+  function buildEmployeeContractDuplicateDraft(source = {}) {
+    const fields = [
+      "name", "position", "degree", "academicTitle",
+      "phone", "whatsapp", "email", "telegram", "preferredMessenger",
+      "photoPath", "photoUrl", "photoData",
+      "coupon", "couponId", "notificationEmail",
+      "bank", "settlementAccount", "correspondentAccount", "bic",
+      "citizenship", "birthDate", "identityDocumentType", "identityDocument",
+      "identityIssueDate", "identityDepartmentCode", "identityIssuer", "address", "snils", "inn",
+      "courtCertificateDate", "courtCertificateNo", "fluorographyDate",
+      "employmentCertificateDate", "employmentRecordCopyDate",
+      "educationType", "educationLevel", "educationSeries", "educationNumber",
+      "educationIssueDate", "educationIssuer", "educationSpecialty", "educationQualification",
+      "login", "password", "sourceStudentId", "sourceStudentUid",
+      "city", "partnerDirections", "additionalInfo"
+    ];
+    const draft = {};
+    fields.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(source, key)) draft[key] = source[key];
+    });
+    return normalizeContractRecord({
+      ...draft,
+      section: CONTRACT_SECTIONS[0],
+      status: "Действует",
+      contractNo: "",
+      contractDate: "",
+      type: "",
+      startDate: "",
+      endDate: "",
+      subject: "",
+      paymentTerms: "",
+      accountingRecorded: "",
+      amount: 0,
+      paid: 0,
+      agencyAmount: 0,
+      balance: 0,
+      portalCredentials: ""
+    });
   }
 
   function getDirectExpenseEntriesFromCollections(collections = {}) {
@@ -28012,6 +28101,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function getContractCardTitle(record = {}) {
     const name = String(record.name || "").trim();
     const contractNo = String(record.contractNo || "").trim();
+    if (state.modal?.config === "contracts" && !state.modal.id && state.modal.duplicateSourceId) {
+      return name ? `Новый договор · ${name}` : "Новый договор";
+    }
     if (!name && !contractNo) return "Новый договор";
     if (name && contractNo) return `${name} [${contractNo}]`;
     return name || `Договор ${contractNo}`;
@@ -29726,6 +29818,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const activeTab = tabs.find((tab) => tab.id === state.contractCardTab) || tabs[0];
     const navigation = getContractCardNavigation(record);
+    const canDuplicateEmployeeContract = Boolean(state.modal?.id)
+      && normalizeContractSection(record.section, record.status) !== CONTRACT_SECTIONS[1];
     const subtitle = [record.section, record.type].map((value) => String(value || "").trim()).filter(Boolean).join(" · ");
     const cardWindowClass = getCardWindowClassName();
     return `
@@ -29752,6 +29846,18 @@ MAX - https://bizvmax.ru/zifra_plus
                   >
                     ${renderOrdersSdoIcon("history")}
                   </button>
+                  ${canDuplicateEmployeeContract ? `
+                    <button
+                      class="ghost-button compact-button student-card-header-action"
+                      data-action="copy-employee-new-contract"
+                      type="button"
+                      title="Создать новый договор с данными этого сотрудника"
+                      aria-label="Создать новый договор с данными этого сотрудника"
+                    >
+                      ${renderOrdersSdoIcon("copy")}
+                      <span>Новый договор</span>
+                    </button>
+                  ` : ""}
                   <button class="primary-button" type="submit">Сохранить</button>
                   ${renderCardWindowControls()}
                   <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
@@ -39071,6 +39177,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='navigate-contract-card']").forEach((button) => {
       button.addEventListener("click", () => navigateContractCard(button.dataset.direction));
     });
+    document.querySelector("[data-action='copy-employee-new-contract']")
+      ?.addEventListener("click", copyEmployeeForNewContract);
     const contractForm = document.querySelector("#recordForm[data-config='contracts']");
     contractForm?.addEventListener("invalid", (event) => {
       const panel = event.target.closest("[data-contract-tab-panel]");
@@ -40743,6 +40851,54 @@ MAX - https://bizvmax.ru/zifra_plus
     const target = getContractNavigationTarget(currentId, direction);
     if (!target) return;
     await openContractCardById(target.id);
+  }
+
+  async function copyEmployeeForNewContract() {
+    if (recordFormSavePending) return;
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "contracts" || !state.modal?.id) return;
+    let sourceId = state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед созданием нового договора?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement, { flush: true });
+        if (!savedId) return;
+        sourceId = savedId;
+      }
+    }
+    const source = (state.data.collections.contracts || []).find((record) => record.id === sourceId);
+    if (!source) {
+      alert("Исходная карточка сотрудника больше не найдена. Обновите раздел и повторите действие.");
+      return;
+    }
+    if (normalizeContractSection(source.section, source.status) === CONTRACT_SECTIONS[1]) {
+      alert("Для участника партнёрской программы новый трудовой договор создайте через команду «Добавить».");
+      return;
+    }
+    const lock = activeRecordLock;
+    discardEmployeePaymentTransaction();
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
+    state.employeeExpenseEditor = null;
+    state.openPaymentRows = [];
+    state.contractCardTab = "contract";
+    state.modal = {
+      config: "contracts",
+      id: "",
+      draft: buildEmployeeContractDuplicateDraft(source),
+      duplicateSourceId: sourceId,
+      hasDraftChanges: true
+    };
+    render();
+    window.requestAnimationFrame(() => {
+      document.querySelector("#recordForm[data-config='contracts'] [name='contractNo']")
+        ?.focus({ preventScroll: false });
+    });
+    if (lock) releaseRecordLock(lock).catch(() => {});
   }
 
   function findDiscountOptionByKey(key) {

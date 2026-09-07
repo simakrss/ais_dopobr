@@ -376,6 +376,24 @@ function gateway_store_completed_job(string $kind, array $nodeResponse, string $
 function gateway_require_user(): array
 {
     $user = ais_auth_current_user();
+    if (
+        $user !== null
+        && (string) ($user['authSource'] ?? '') === 'employee'
+        && !gateway_database_demo_mode_enabled()
+    ) {
+        $todayKey = gateway_moscow_calendar_date_key();
+        $checkedDate = (string) ($_SESSION['ais_employee_contract_checked_date'] ?? '');
+        if ($checkedDate !== $todayKey) {
+            try {
+                gateway_sync_employee_auth_users();
+            } catch (Throwable $error) {
+                error_log('Employee contract access check failed: ' . $error->getMessage());
+                gateway_fail(503, 'Не удалось проверить срок договора сотрудника. Повторите запрос.');
+            }
+            $_SESSION['ais_employee_contract_checked_date'] = $todayKey;
+            $user = ais_auth_current_user();
+        }
+    }
     if ($user === null) {
         gateway_fail(401, 'Требуется вход в систему.');
     }
@@ -407,9 +425,87 @@ function gateway_verify_admin_password(array $user, string $password): void
     gateway_fail(403, 'Текущий пароль администратора указан неверно.');
 }
 
+function gateway_contract_calendar_date_key(mixed $value): string
+{
+    $text = trim((string) $value);
+    if ($text === '') {
+        return '';
+    }
+    $year = 0;
+    $month = 0;
+    $day = 0;
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])/u', $text, $match)) {
+        $year = (int) $match[1];
+        $month = (int) $match[2];
+        $day = (int) $match[3];
+    } elseif (preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/u', $text, $match)) {
+        $year = (int) $match[3];
+        $month = (int) $match[2];
+        $day = (int) $match[1];
+    }
+    if ($year < 1900 || !checkdate($month, $day, $year)) {
+        return '';
+    }
+    return sprintf('%04d-%02d-%02d', $year, $month, $day);
+}
+
+function gateway_moscow_calendar_date_key(): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone('Europe/Moscow')))->format('Y-m-d');
+}
+
+function gateway_employee_contract_section_text(array $employee): string
+{
+    $section = trim((string) ($employee['section'] ?? ''));
+    if ($section === '') {
+        $section = trim((string) ($employee['status'] ?? ''));
+    }
+    return mb_strtolower($section, 'UTF-8');
+}
+
+function gateway_employee_contract_past_end_date(array $employee, ?string $todayKey = null): bool
+{
+    $section = gateway_employee_contract_section_text($employee);
+    if (
+        str_contains($section, 'партнер')
+        || str_contains($section, 'партнёр')
+        || str_contains($section, 'истек')
+    ) {
+        return false;
+    }
+    $endDateKey = gateway_contract_calendar_date_key($employee['endDate'] ?? '');
+    $comparisonDateKey = gateway_contract_calendar_date_key($todayKey ?? gateway_moscow_calendar_date_key());
+    return $endDateKey !== '' && $comparisonDateKey !== '' && $endDateKey < $comparisonDateKey;
+}
+
+function gateway_normalize_employee_contract_expiration(
+    array $employee,
+    ?string $todayKey = null
+): array {
+    if (!gateway_employee_contract_past_end_date($employee, $todayKey)) {
+        return $employee;
+    }
+    $employee['section'] = 'ИСТЕКШИЕ ДОГОВОРА';
+    $employee['status'] = 'Истек';
+    return $employee;
+}
+
+function gateway_normalize_employee_contract_expiration_rows(
+    array $rows,
+    ?string $todayKey = null
+): array {
+    return array_values(array_map(
+        static fn (mixed $row): mixed => is_array($row)
+            ? gateway_normalize_employee_contract_expiration($row, $todayKey)
+            : $row,
+        $rows
+    ));
+}
+
 function gateway_partner_record_rank(array $employee): int
 {
-    $section = mb_strtolower(trim((string) ($employee['section'] ?? $employee['status'] ?? '')), 'UTF-8');
+    $employee = gateway_normalize_employee_contract_expiration($employee);
+    $section = gateway_employee_contract_section_text($employee);
     $sectionScore = str_contains($section, 'действующ') || $section === 'действует'
         ? 3000000000
         : (str_contains($section, 'партнер') || str_contains($section, 'партнёр')
@@ -437,7 +533,10 @@ function gateway_compare_partner_records(array $left, array $right): int
 
 function gateway_employee_auth_access(array $employee): array
 {
-    $section = mb_strtolower(trim((string) ($employee['section'] ?? $employee['status'] ?? '')), 'UTF-8');
+    if (gateway_employee_contract_past_end_date($employee)) {
+        return ['role' => 'partner', 'status' => 'blocked'];
+    }
+    $section = gateway_employee_contract_section_text($employee);
     if (str_contains($section, 'действующ') || $section === 'действует') {
         return ['role' => 'manager', 'status' => 'active'];
     }
@@ -449,6 +548,7 @@ function gateway_employee_auth_access(array $employee): array
 
 function gateway_normalize_employee_auth_record(array $employee): ?array
 {
+    $employee = gateway_normalize_employee_contract_expiration($employee);
     $name = mb_substr(trim((string) ($employee['name'] ?? '')), 0, 120, 'UTF-8');
     $password = (string) ($employee['password'] ?? '');
     try {
@@ -556,7 +656,9 @@ function gateway_sync_employee_auth_users(): array
         throw new RuntimeException('Не удалось заблокировать синхронизацию пользователей.');
     }
     try {
-        $contracts = gateway_shared_state_read_collection(gateway_record_locks_pdo(), 'contracts');
+        $pdo = gateway_record_locks_pdo();
+        gateway_shared_state_ensure_contract_expiration($pdo);
+        $contracts = gateway_shared_state_read_collection($pdo, 'contracts');
         $directory = gateway_build_employee_auth_directory($contracts);
         $users = ais_auth_load_users();
         $stats = [
@@ -762,7 +864,9 @@ function gateway_find_partner_employee(string $login, string $password): ?array
     if ($normalizedLogin === '' || $password === '') {
         return null;
     }
-    $contracts = gateway_shared_state_read_collection(gateway_record_locks_pdo(), 'contracts');
+    $pdo = gateway_record_locks_pdo();
+    gateway_shared_state_ensure_contract_expiration($pdo);
+    $contracts = gateway_shared_state_read_collection($pdo, 'contracts');
     $matches = [];
     foreach ($contracts as $employee) {
         if (!is_array($employee)
@@ -905,10 +1009,7 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         ]);
     }
     if ($method === 'GET' && $path === '/api/auth/me') {
-        $user = ais_auth_current_user();
-        if ($user === null) {
-            gateway_fail(401, 'Требуется вход в систему.');
-        }
+        $user = gateway_require_user();
         gateway_database_demo_mode_clear_http_cache();
         gateway_json(200, [
             'ok' => true,
@@ -2255,15 +2356,20 @@ SQL;
             }
         }
         if (is_array($replacement)) {
-            return $replacement;
+            return $collection === 'contracts'
+                ? gateway_normalize_employee_contract_expiration_rows($replacement)
+                : $replacement;
         }
         usort($items, static fn (array $left, array $right): int =>
             $left['order'] <=> $right['order'] ?: strcmp((string) $left['key'], (string) $right['key'])
         );
-        return array_values(array_map(
+        $result = array_values(array_map(
             static fn (array $item): mixed => $item['value'],
             $items
         ));
+        return $collection === 'contracts'
+            ? gateway_normalize_employee_contract_expiration_rows($result)
+            : $result;
     }
     throw new RuntimeException('Общая база изменилась во время проверки реквизитов СДО. Повторите вход.');
 }
@@ -2892,13 +2998,155 @@ SQL);
     return null;
 }
 
+function gateway_normalize_shared_state_contract_data(array $data): array
+{
+    if (is_array($data['collections']['contracts'] ?? null)) {
+        $data['collections']['contracts'] = gateway_normalize_employee_contract_expiration_rows(
+            $data['collections']['contracts']
+        );
+    }
+    return $data;
+}
+
+function gateway_normalize_shared_state_contract_patch(array $patch): array
+{
+    $change = is_array($patch['collections']['contracts'] ?? null)
+        ? $patch['collections']['contracts']
+        : null;
+    if ($change === null) {
+        return $patch;
+    }
+    if (is_array($change['replace'] ?? null)) {
+        $patch['collections']['contracts']['replace'] =
+            gateway_normalize_employee_contract_expiration_rows($change['replace']);
+    }
+    if (is_array($change['upserts'] ?? null)) {
+        $patch['collections']['contracts']['upserts'] =
+            gateway_normalize_employee_contract_expiration_rows($change['upserts']);
+    }
+    return $patch;
+}
+
+function gateway_shared_state_contract_expiration_checked_date(PDO $pdo): string
+{
+    $statement = $pdo->prepare(<<<'SQL'
+SELECT data_json
+FROM ais_shared_state_entries
+WHERE state_key = ? AND entry_type = 'meta' AND group_name = ''
+  AND item_key = 'automaticContractExpirationCheckedDate'
+LIMIT 1
+SQL);
+    $statement->execute([gateway_shared_state_key()]);
+    $row = $statement->fetch();
+    if (!is_array($row)) {
+        return '';
+    }
+    try {
+        return gateway_contract_calendar_date_key(
+            gateway_shared_state_decode_value($row['data_json'] ?? '""')
+        );
+    } catch (Throwable) {
+        return '';
+    }
+}
+
+function gateway_shared_state_ensure_contract_expiration(PDO $pdo): bool
+{
+    if ($pdo->inTransaction()) {
+        return false;
+    }
+    $todayKey = gateway_moscow_calendar_date_key();
+    $metaBefore = gateway_shared_state_meta($pdo);
+    if (
+        $metaBefore === null
+        || gateway_shared_state_contract_expiration_checked_date($pdo) === $todayKey
+    ) {
+        return false;
+    }
+    $changedContracts = [];
+    $savedMeta = null;
+    $nextRevision = 0;
+    $pdo->beginTransaction();
+    try {
+        $meta = gateway_shared_state_meta($pdo, true);
+        if ($meta === null) {
+            $pdo->commit();
+            return false;
+        }
+        if (gateway_shared_state_contract_expiration_checked_date($pdo) === $todayKey) {
+            $pdo->commit();
+            return false;
+        }
+        $data = gateway_shared_state_read_data($pdo);
+        $contracts = is_array($data['collections']['contracts'] ?? null)
+            ? array_values($data['collections']['contracts'])
+            : [];
+        $normalizedContracts = gateway_normalize_employee_contract_expiration_rows(
+            $contracts,
+            $todayKey
+        );
+        foreach ($contracts as $index => $contract) {
+            $normalized = $normalizedContracts[$index] ?? $contract;
+            if (
+                is_array($contract)
+                && is_array($normalized)
+                && json_encode($contract) !== json_encode($normalized)
+            ) {
+                $changedContracts[] = $normalized;
+            }
+        }
+        $patch = [
+            'collections' => [],
+            'meta' => ['automaticContractExpirationCheckedDate' => $todayKey],
+        ];
+        if ($changedContracts !== []) {
+            $patch['collections']['contracts'] = ['replace' => $normalizedContracts];
+        }
+        gateway_shared_state_apply_patch($pdo, $patch);
+        $nextRevision = max(0, (int) ($meta['revision'] ?? 0)) + 1;
+        $upsertMeta = $pdo->prepare(<<<'SQL'
+INSERT INTO ais_shared_state_meta (state_key, revision, updated_at, updated_by)
+VALUES (?, ?, UTC_TIMESTAMP(3), ?)
+ON DUPLICATE KEY UPDATE
+  revision = VALUES(revision), updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)
+SQL);
+        $upsertMeta->execute([
+            gateway_shared_state_key(),
+            $nextRevision,
+            'automatic-contract-expiration',
+        ]);
+        $savedMeta = gateway_shared_state_meta($pdo);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $error;
+    }
+    gateway_shared_state_snapshot_invalidate($nextRevision, false, $savedMeta);
+    foreach ($changedContracts as $contract) {
+        ais_audit_try_append([
+            'action' => 'Договор автоматически перенесён в истекшие',
+            'area' => 'Сотрудники',
+            'entityType' => 'contracts',
+            'entityId' => (string) ($contract['id'] ?? ''),
+            'entityLabel' => (string) ($contract['name'] ?? ''),
+            'details' => 'Наступил следующий день после даты «Срок по».',
+            'source' => 'automatic-contract-expiration',
+        ]);
+    }
+    return true;
+}
+
 function gateway_handle_shared_state(string $method, string $body, array $currentUser): void
 {
     $pdo = gateway_record_locks_pdo();
     if ($method === 'GET') {
+        $expirationRevisionChanged = gateway_shared_state_ensure_contract_expiration($pdo);
         $metadataOnly = ($_GET['metadata'] ?? '') === '1';
         $expectedRevision = max(0, (int) ($_GET['revision'] ?? 0));
-        $usePreparedSnapshot = !$metadataOnly
+        $usePreparedSnapshot = !$expirationRevisionChanged
+            && !$metadataOnly
             && ($_GET['snapshot'] ?? '') === '1'
             && $expectedRevision > 0;
         $snapshot = $usePreparedSnapshot
@@ -2929,6 +3177,12 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
     if ($patch === null && $data === null) {
         gateway_fail(400, 'Не переданы изменения общей базы.');
     }
+    if ($patch !== null) {
+        $patch = gateway_normalize_shared_state_contract_patch($patch);
+    }
+    if ($data !== null) {
+        $data = gateway_normalize_shared_state_contract_data($data);
+    }
     $requestedRevision = max(0, (int) ($payload['baseRevision'] ?? 0));
     $clientId = substr(trim((string) ($payload['clientId'] ?? '')), 0, 160);
     if ($patch !== null) {
@@ -2955,6 +3209,14 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
         }
         if ($meta === null && $data === null) {
             throw new RuntimeException('Общая база ещё не создана.');
+        }
+        // Re-evaluate dates after acquiring the revision lock. A request can wait here
+        // across Moscow midnight or behind the daily expiration transaction.
+        if ($patch !== null) {
+            $patch = gateway_normalize_shared_state_contract_patch($patch);
+        }
+        if ($data !== null) {
+            $data = gateway_normalize_shared_state_contract_data($data);
         }
         $recycleBinChange = is_array($patch['collections']['recycleBin'] ?? null)
             ? $patch['collections']['recycleBin']
@@ -3261,7 +3523,10 @@ function gateway_handle_trash_route(
         [$nextData, $summary] = $permanentDelete
             ? gateway_trash_permanent_delete_mutation($data, $request['id'])
             : gateway_trash_restore_mutation($data, $request['id']);
-        gateway_shared_state_replace_data($pdo, $nextData);
+        gateway_shared_state_replace_data(
+            $pdo,
+            gateway_normalize_shared_state_contract_data($nextData)
+        );
         $nextRevision = $currentRevision + 1;
         $updatedBy = substr(
             (string) ($currentUser['login'] ?? $currentUser['name'] ?? 'system'),
@@ -3461,6 +3726,10 @@ SQL);
         }
         throw $error;
     }
+}
+
+if (defined('AIS_GATEWAY_LIBRARY_ONLY') && AIS_GATEWAY_LIBRARY_ONLY === true) {
+    return;
 }
 
 set_time_limit(AIS_GATEWAY_TIMEOUT_SECONDS + 20);
