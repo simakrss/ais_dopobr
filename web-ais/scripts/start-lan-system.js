@@ -908,8 +908,11 @@ function startRemoteServicesSupervisor() {
       [
         "-NoLogo",
         "-NoProfile",
+        "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
+        "-WindowStyle",
+        "Hidden",
         "-File",
         remoteServicesScriptPath,
         "-ParentProcessId",

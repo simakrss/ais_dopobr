@@ -42,7 +42,9 @@ $programDataRoot = [IO.Path]::GetFullPath((Join-Path $commonProgramData "AisDopo
 $serviceConfigPath = Join-Path $programDataRoot "service-config.json"
 $protectedStopPath = Join-Path $programDataRoot "stop-lan-system.ps1"
 $protectedTrayPath = Join-Path $programDataRoot "ais-service-tray.ps1"
+$protectedHiddenProcessPath = Join-Path $programDataRoot "ais-hidden-process.vbs"
 $powerShellPath = Join-Path $systemDirectory "WindowsPowerShell\v1.0\powershell.exe"
+$wscriptPath = Join-Path $systemDirectory "wscript.exe"
 $runningFromProtectedRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -ieq $programDataRoot.TrimEnd('\')
 $installedConfig = $null
 if ($runningFromProtectedRoot -and (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf)) {
@@ -70,6 +72,13 @@ $trayPath = if ($runningFromProtectedRoot -and (Test-Path -LiteralPath $protecte
   $protectedTrayPath
 } else {
   Join-Path $PSScriptRoot "ais-service-tray.ps1"
+}
+$sourceHiddenProcessPath = Join-Path $PSScriptRoot "ais-hidden-process.vbs"
+$hiddenProcessPath = if ($runningFromProtectedRoot -and
+  (Test-Path -LiteralPath $protectedHiddenProcessPath -PathType Leaf)) {
+  $protectedHiddenProcessPath
+} else {
+  $sourceHiddenProcessPath
 }
 $logViewerPath = Join-Path $PSScriptRoot "show-ais-service-log.ps1"
 $legacyStopPath = Join-Path $PSScriptRoot "stop-lan-system.ps1"
@@ -138,7 +147,7 @@ function Get-ControlElevationArguments {
   $arguments.Add("-InteractiveUser")
   $arguments.Add($interactiveUserName)
   $arguments.Add("-SourceAppRoot")
-  $arguments.Add($appRoot)
+  $arguments.Add((Resolve-ElevationSafePath $appRoot))
   if ($InstallIfMissing) { $arguments.Add("-InstallIfMissing") }
   if ($OpenBrowser) { $arguments.Add("-OpenBrowser") }
   if ($ShowTray) { $arguments.Add("-ShowTray") }
@@ -171,8 +180,13 @@ function Wait-AisProcessWithProgress(
 }
 
 function Invoke-ElevatedControl {
-  $argumentLine = (Get-ControlElevationArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-  $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
+  $elevationHiddenProcessPath = Resolve-ElevationSafePath $hiddenProcessPath
+  $elevationWorkingDirectory = Resolve-ElevationSafePath $scriptAppRoot
+  $elevatedArguments = @(
+    "//B", "//NoLogo", $elevationHiddenProcessPath, $elevationWorkingDirectory, $powerShellPath
+  ) + @(Get-ControlElevationArguments)
+  $argumentLine = ($elevatedArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+  $process = Start-Process -FilePath $wscriptPath -ArgumentList $argumentLine `
     -Verb RunAs -WindowStyle Hidden -PassThru
   $exitCode = Wait-AisProcessWithProgress $process "Выполняется команда с правами администратора"
   exit $exitCode
@@ -180,6 +194,47 @@ function Invoke-ElevatedControl {
 
 function Get-AisService {
   return Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+}
+
+function Test-AisScheduledTaskUsesHiddenHost($Task) {
+  if (-not $Task) { return $false }
+  $taskActions = @($Task.Actions)
+  if ($taskActions.Count -ne 1) { return $false }
+  $taskAction = $taskActions[0]
+  try {
+    $executePath = [IO.Path]::GetFullPath([string]$taskAction.Execute)
+    if ($executePath -ine [IO.Path]::GetFullPath($wscriptPath)) { return $false }
+    $argumentText = [string]$taskAction.Arguments
+    foreach ($requiredToken in @(
+      "//B",
+      "//NoLogo",
+      $protectedHiddenProcessPath,
+      $powerShellPath
+    )) {
+      $tokenPattern = '(?:^|\s)"?' + [regex]::Escape($requiredToken) + '"?(?=\s|$)'
+      if (-not [regex]::IsMatch(
+        $argumentText,
+        $tokenPattern,
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+      )) { return $false }
+    }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Write-ControlFailureLog($ErrorRecord) {
+  try {
+    $logDirectory = Split-Path -Parent $workerLogPath
+    [void][IO.Directory]::CreateDirectory($logDirectory)
+    $failureLogPath = Join-Path $logDirectory "launcher-error.log"
+    $timestamp = (Get-Date).ToUniversalTime().ToString("o")
+    $details = "[$timestamp] Action=$Action`r`n$($ErrorRecord.Exception.ToString())`r`n$($ErrorRecord.ScriptStackTrace)`r`n"
+    [IO.File]::AppendAllText($failureLogPath, $details, $utf8)
+  } catch {
+    # The original controller failure remains authoritative.
+  }
 }
 
 function Test-AisHealth {
@@ -468,17 +523,21 @@ function Stop-IncompatibleAisTrayProcesses {
 
 function Start-AisTrayDirect {
   Stop-IncompatibleAisTrayProcesses
+  if (-not (Test-Path -LiteralPath $hiddenProcessPath -PathType Leaf)) {
+    throw "Не найден безоконный хост трея: $hiddenProcessPath"
+  }
   $argumentLine = @(
+    "//B", "//NoLogo", $hiddenProcessPath, $appRoot, $powerShellPath,
     "-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-WindowStyle", "Hidden", "-File", $trayPath, "-AppRoot", $appRoot
   ) | ForEach-Object { Quote-ProcessArgument $_ }
   $startInfo = New-Object Diagnostics.ProcessStartInfo
-  $startInfo.FileName = $powerShellPath
+  $startInfo.FileName = $wscriptPath
   $startInfo.Arguments = $argumentLine -join " "
   $startInfo.WorkingDirectory = $appRoot
-  # Detach the long-lived tray from redirected controller output streams.
+  # WScript is a GUI host, so the tray is detached without inheriting the
+  # controller's redirected console pipes.
   $startInfo.UseShellExecute = $true
-  $startInfo.CreateNoWindow = $true
   $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
   $trayProcess = [Diagnostics.Process]::Start($startInfo)
   if ($null -eq $trayProcess) { throw "Не удалось запустить значок АИС в трее." }
@@ -491,6 +550,10 @@ function Start-AisTray([bool]$RequireRunning = $false) {
   }
   Write-Host "Запуск значка АИС в системном трее..."
   $task = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
+  if ($task -and -not (Test-AisScheduledTaskUsesHiddenHost $task)) {
+    Write-Warning "Устаревшая задача трея не запускается, чтобы не открывать командное окно. Используется безоконный прямой запуск."
+    $task = $null
+  }
   $trayStartRequested = $false
   if ($task) {
     try {
@@ -535,6 +598,7 @@ function Install-AisService {
   }
   $elevationInstallerPath = Resolve-ElevationSafePath $installerPath
   $elevationAppRoot = Resolve-ElevationSafePath $scriptAppRoot
+  $elevationHiddenProcessPath = Resolve-ElevationSafePath $hiddenProcessPath
   $arguments = @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $elevationInstallerPath,
     "-Action", "Install", "-AppRoot", $elevationAppRoot, "-InteractiveAppRoot", $appRoot,
@@ -544,8 +608,11 @@ function Install-AisService {
     & $powerShellPath @arguments
     if ($LASTEXITCODE -ne 0) { throw "Установка службы завершилась с кодом $LASTEXITCODE." }
   } else {
-    $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
+    $elevatedArguments = @(
+      "//B", "//NoLogo", $elevationHiddenProcessPath, $elevationAppRoot, $powerShellPath
+    ) + $arguments
+    $argumentLine = ($elevatedArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+    $process = Start-Process -FilePath $wscriptPath -ArgumentList $argumentLine `
       -Verb RunAs -WindowStyle Hidden -PassThru
     $exitCode = Wait-AisProcessWithProgress $process "Установка и настройка службы АИС"
     if ($exitCode -ne 0) { throw "Установка службы завершилась с кодом $exitCode." }
@@ -558,6 +625,7 @@ function Uninstall-AisService {
   }
   $elevationInstallerPath = Resolve-ElevationSafePath $installerPath
   $elevationAppRoot = Resolve-ElevationSafePath $scriptAppRoot
+  $elevationHiddenProcessPath = Resolve-ElevationSafePath $hiddenProcessPath
   $arguments = @(
     "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $elevationInstallerPath,
     "-Action", "Uninstall", "-AppRoot", $elevationAppRoot, "-InteractiveAppRoot", $appRoot,
@@ -567,8 +635,11 @@ function Uninstall-AisService {
     & $powerShellPath @arguments
     if ($LASTEXITCODE -ne 0) { throw "Удаление службы завершилось с кодом $LASTEXITCODE." }
   } else {
-    $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentLine `
+    $elevatedArguments = @(
+      "//B", "//NoLogo", $elevationHiddenProcessPath, $elevationAppRoot, $powerShellPath
+    ) + $arguments
+    $argumentLine = ($elevatedArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+    $process = Start-Process -FilePath $wscriptPath -ArgumentList $argumentLine `
       -Verb RunAs -WindowStyle Hidden -PassThru
     $exitCode = Wait-AisProcessWithProgress $process "Удаление службы АИС"
     if ($exitCode -ne 0) { throw "Удаление службы завершилось с кодом $exitCode." }
@@ -587,12 +658,25 @@ function Start-AisService {
   }
   $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
   $trayTask = Get-ScheduledTask -TaskName $trayTaskName -ErrorAction SilentlyContinue
-  if ((-not $workerTask -or -not $trayTask) -and $serviceWasPresent -and $InstallIfMissing) {
+  $workerTaskCompatible = Test-AisScheduledTaskUsesHiddenHost $workerTask
+  $trayTaskCompatible = Test-AisScheduledTaskUsesHiddenHost $trayTask
+  if (
+    (
+      -not $workerTask -or
+      -not $trayTask -or
+      -not $workerTaskCompatible -or
+      -not $trayTaskCompatible
+    ) -and
+    $serviceWasPresent -and
+    $InstallIfMissing
+  ) {
     $missingTasks = @(
       $(if (-not $workerTask) { $workerTaskName }),
-      $(if (-not $trayTask) { $trayTaskName })
+      $(if (-not $trayTask) { $trayTaskName }),
+      $(if ($workerTask -and -not $workerTaskCompatible) { "$workerTaskName (устаревший запуск)" }),
+      $(if ($trayTask -and -not $trayTaskCompatible) { "$trayTaskName (устаревший запуск)" })
     ) | Where-Object { $_ }
-    Write-Host "Отсутствуют задачи автозапуска: $($missingTasks -join ', '). Выполняется восстановление установки АИС."
+    Write-Host "Требуется восстановление задач автозапуска: $($missingTasks -join ', '). Выполняется обновление установки АИС."
     Install-AisService
     $service = Get-AisService
     $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
@@ -600,6 +684,9 @@ function Start-AisService {
   }
   if (-not $workerTask) {
     throw "Не найдена фоновая задача $workerTaskName. Переустановите службу АИС через этот BAT-файл."
+  }
+  if (-not (Test-AisScheduledTaskUsesHiddenHost $workerTask)) {
+    throw "Фоновая задача $workerTaskName использует устаревший запуск с командным окном. Запустите АИС через основной BAT-файл для обновления установки."
   }
   if (-not $trayTask) {
     Write-Warning "Не найдена задача автозапуска $trayTaskName. Значок будет запущен напрямую в текущем сеансе."
@@ -616,7 +703,7 @@ function Start-AisService {
   Wait-ServiceState "Running" 60
   [void](Request-AisWorkerStart)
   Write-Host "Служба запущена. Ожидание готовности локального адреса..."
-  Write-Host "Ход запуска GitHub, FTP, Docker и серверов будет показан в этом окне."
+  Write-Host "Ход запуска GitHub, FTP, Docker и серверов записывается в журнал запуска."
   if (-not (Wait-AisHealth $TimeoutSeconds ([ref]$startupLogOffset))) {
     throw "Служба работает, но АИС не ответила на $healthUrl за $TimeoutSeconds сек. Откройте окно журнала запуска."
   }
@@ -667,6 +754,7 @@ function Stop-AisService {
   Write-Host "Служба остановлена. Контейнеры Docker оставлены работающими."
 }
 
+try {
 switch ($Action) {
   "Install" {
     Install-AisService
@@ -737,4 +825,8 @@ switch ($Action) {
       Write-Host "Адрес: $localUrl"
     }
   }
+}
+} catch {
+  Write-ControlFailureLog $_
+  throw
 }

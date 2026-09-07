@@ -14,8 +14,10 @@ $serviceName = "AisDopobrWeb"
 $localUrl = "http://127.0.0.1:8081/"
 $healthUrl = "http://127.0.0.1:8081/api/health"
 $powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
+$wscriptPath = Join-Path ([Environment]::SystemDirectory) "wscript.exe"
 $controlScript = Join-Path $PSScriptRoot "control-ais-service.ps1"
 $logViewerScript = Join-Path $PSScriptRoot "show-ais-service-log.ps1"
+$hiddenProcessPath = Join-Path $PSScriptRoot "ais-hidden-process.vbs"
 $resolvedAppRoot = if ([string]::IsNullOrWhiteSpace($AppRoot)) {
   Split-Path -Parent $PSScriptRoot
 } else {
@@ -34,12 +36,33 @@ function Quote-ProcessArgument([string]$Value) {
   return '"' + $escaped + '"'
 }
 
+function Start-HiddenPowerShell([string[]]$Arguments) {
+  if (-not (Test-Path -LiteralPath $hiddenProcessPath -PathType Leaf)) {
+    throw "Не найден безоконный хост: $hiddenProcessPath"
+  }
+  $launcherArguments = @(
+    "//B", "//NoLogo", $hiddenProcessPath, $resolvedAppRoot, $powerShellPath
+  ) + @($Arguments)
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $wscriptPath
+  $startInfo.Arguments = (@($launcherArguments) | ForEach-Object {
+    Quote-ProcessArgument ([string]$_)
+  }) -join " "
+  $startInfo.WorkingDirectory = $resolvedAppRoot
+  $startInfo.UseShellExecute = $true
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $process = [Diagnostics.Process]::Start($startInfo)
+  if ($null -eq $process) { throw "Не удалось запустить скрытый процесс PowerShell." }
+  return $process
+}
+
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne [Threading.ApartmentState]::STA) {
   $relaunchArguments = @(
     "-NoLogo", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
     "-File", $PSCommandPath, "-AppRoot", $resolvedAppRoot
-  ) | ForEach-Object { Quote-ProcessArgument $_ }
-  Start-Process -FilePath $powerShellPath -ArgumentList ($relaunchArguments -join " ") -WindowStyle Hidden | Out-Null
+  )
+  $relaunchProcess = Start-HiddenPowerShell $relaunchArguments
+  $relaunchProcess.Dispose()
   exit 0
 }
 
@@ -233,6 +256,7 @@ function Start-DetachedPowerShell(
   $processArguments.Add("-ExecutionPolicy")
   $processArguments.Add("Bypass")
   if ($Hidden) {
+    $processArguments.Add("-NonInteractive")
     $processArguments.Add("-WindowStyle")
     $processArguments.Add("Hidden")
   }
@@ -240,16 +264,18 @@ function Start-DetachedPowerShell(
   $processArguments.Add($ScriptPath)
   foreach ($argument in $Arguments) { $processArguments.Add($argument) }
 
+  if ($Hidden) {
+    $process = Start-HiddenPowerShell @($processArguments)
+    $process.Dispose()
+    return
+  }
+
   $startInfo = New-Object Diagnostics.ProcessStartInfo
   $startInfo.FileName = $powerShellPath
   $startInfo.Arguments = (@($processArguments) | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
   $startInfo.WorkingDirectory = $resolvedAppRoot
   $startInfo.UseShellExecute = $true
-  $startInfo.WindowStyle = if ($Hidden) {
-    [Diagnostics.ProcessWindowStyle]::Hidden
-  } else {
-    [Diagnostics.ProcessWindowStyle]::Normal
-  }
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Normal
   [Diagnostics.Process]::Start($startInfo) | Out-Null
 }
 

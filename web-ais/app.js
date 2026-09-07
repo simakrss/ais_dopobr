@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.391",
+    version: "1.7.392",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.392",
+      releasedAt: "2026-09-07",
+      changes: [
+        "Запуск, остановка, перезапуск, фоновый обработчик, трей и внешний туннель переведены на безоконный WSH-хост: командные окна больше не остаются открытыми, а ошибки записываются в журнал и показываются отдельным сообщением."
+      ]
+    },
     {
       version: "1.7.391",
       releasedAt: "2026-09-07",

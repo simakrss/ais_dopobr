@@ -49,13 +49,34 @@ $serviceTrayPath = Join-Path $programDataRoot "ais-service-tray.ps1"
 $serviceLogViewerPath = Join-Path $programDataRoot "show-ais-service-log.ps1"
 $serviceInstallerPath = Join-Path $programDataRoot "setup-ais-windows-service.ps1"
 $serviceSourceCopyPath = Join-Path $programDataRoot "ais-windows-service.cs"
+$serviceHiddenProcessPath = Join-Path $programDataRoot "ais-hidden-process.vbs"
 $cscPath = Join-Path $windowsDirectory "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $powerShellPath = Join-Path $systemDirectory "WindowsPowerShell\v1.0\powershell.exe"
+$wscriptPath = Join-Path $systemDirectory "wscript.exe"
 $scPath = Join-Path $systemDirectory "sc.exe"
 $icaclsPath = Join-Path $systemDirectory "icacls.exe"
 
 function Write-InstallStep([string]$Message) {
   Write-Host "[Служба АИС] $Message"
+}
+
+function Write-InstallerFailureLog($ErrorRecord) {
+  $candidateDirectories = @(
+    [IO.Path]::Combine($sourceAppRoot, "tmp\lan-system"),
+    [IO.Path]::Combine([IO.Path]::GetTempPath(), "AisDopobrWeb")
+  )
+  foreach ($directory in $candidateDirectories) {
+    try {
+      [void][IO.Directory]::CreateDirectory($directory)
+      $logPath = Join-Path $directory "installer-error.log"
+      $timestamp = (Get-Date).ToUniversalTime().ToString("o")
+      $details = "[$timestamp] Action=$Action`r`n$($ErrorRecord.Exception.ToString())`r`n$($ErrorRecord.ScriptStackTrace)`r`n"
+      [IO.File]::AppendAllText($logPath, $details, $utf8)
+      return
+    } catch {
+      # Try the next local fallback without masking the installation error.
+    }
+  }
 }
 
 function Test-IsAdministrator {
@@ -89,6 +110,10 @@ function Invoke-SelfElevated {
       $elevationInteractiveRoot = $pathInfo.SourceAppRoot
     }
   }
+  $elevationHiddenProcessPath = Join-Path (Split-Path -Parent $elevationScriptPath) "ais-hidden-process.vbs"
+  if (-not (Test-Path -LiteralPath $elevationHiddenProcessPath -PathType Leaf)) {
+    throw "Не найден безоконный хост установщика: $elevationHiddenProcessPath"
+  }
   $parts = New-Object Collections.Generic.List[string]
   $parts.Add("& $(Quote-PowerShellLiteral $elevationScriptPath)")
   $parts.Add("-Action $(Quote-PowerShellLiteral $Action)")
@@ -103,9 +128,16 @@ function Invoke-SelfElevated {
   if ($AsJson) { $parts.Add("-AsJson") }
   $command = $parts -join " "
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-  $process = Start-Process -FilePath $powerShellPath -ArgumentList @(
-    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded
-  ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+  $elevatedArguments = @(
+    "//B", "//NoLogo", $elevationHiddenProcessPath, $elevationAppRoot, $powerShellPath,
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-WindowStyle", "Hidden", "-EncodedCommand", $encoded
+  )
+  $argumentLine = ($elevatedArguments | ForEach-Object {
+    Quote-WindowsArgument ([string]$_)
+  }) -join " "
+  $process = Start-Process -FilePath $wscriptPath -ArgumentList $argumentLine `
+    -Verb RunAs -WindowStyle Hidden -Wait -PassThru
   exit $process.ExitCode
 }
 
@@ -480,7 +512,8 @@ function Install-ProtectedStopScript([pscustomobject]$PathInfo) {
     @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\ais-service-tray.ps1"); Destination = $serviceTrayPath },
     @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\show-ais-service-log.ps1"); Destination = $serviceLogViewerPath },
     @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\setup-ais-windows-service.ps1"); Destination = $serviceInstallerPath },
-    @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\ais-windows-service.cs"); Destination = $serviceSourceCopyPath }
+    @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\ais-windows-service.cs"); Destination = $serviceSourceCopyPath },
+    @{ Source = [IO.Path]::Combine($PathInfo.ServiceAppRoot, "scripts\ais-hidden-process.vbs"); Destination = $serviceHiddenProcessPath }
   )
   foreach ($file in $protectedFiles) {
     $sourcePath = [IO.Path]::GetFullPath([string]$file.Source)
@@ -574,10 +607,11 @@ function Register-TrayTask([pscustomobject]$PathInfo) {
     throw "Не найден контроллер трея: $trayPath"
   }
   $argumentLine = (@(
-    "-NoLogo", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-    "-File", $trayPath, "-AppRoot", $PathInfo.ServiceAppRoot
+    "//B", "//NoLogo", $serviceHiddenProcessPath, $PathInfo.ServiceAppRoot, $powerShellPath,
+    "-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-WindowStyle", "Hidden", "-File", $trayPath, "-AppRoot", $PathInfo.ServiceAppRoot
   ) | ForEach-Object { Quote-WindowsArgument ([string]$_) }) -join " "
-  $taskAction = New-ScheduledTaskAction -Execute $powerShellPath -Argument $argumentLine -WorkingDirectory $PathInfo.ServiceAppRoot
+  $taskAction = New-ScheduledTaskAction -Execute $wscriptPath -Argument $argumentLine -WorkingDirectory $PathInfo.ServiceAppRoot
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $interactiveUserName
   $principal = New-ScheduledTaskPrincipal -UserId $interactiveUserName -LogonType Interactive -RunLevel Limited
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -593,7 +627,8 @@ function Register-WorkerTask([pscustomobject]$PathInfo) {
   }
   $argumentValues = New-Object Collections.Generic.List[string]
   foreach ($part in @(
-    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+    "//B", "//NoLogo", $serviceHiddenProcessPath, $PathInfo.ServiceAppRoot, $powerShellPath,
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
     "-File", $workerPath, "-AppRoot", $PathInfo.SourceAppRoot
   )) { $argumentValues.Add([string]$part) }
   if ($PathInfo.MappedDrive) {
@@ -603,7 +638,7 @@ function Register-WorkerTask([pscustomobject]$PathInfo) {
     $argumentValues.Add([string]$PathInfo.MappedTarget)
   }
   $argumentLine = @($argumentValues | ForEach-Object { Quote-WindowsArgument ([string]$_) }) -join " "
-  $taskAction = New-ScheduledTaskAction -Execute $powerShellPath `
+  $taskAction = New-ScheduledTaskAction -Execute $wscriptPath `
     -Argument $argumentLine -WorkingDirectory $PathInfo.ServiceAppRoot
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $interactiveUserName
   $principal = New-ScheduledTaskPrincipal -UserId $interactiveUserName -LogonType Interactive -RunLevel Limited
@@ -621,6 +656,7 @@ function Remove-AisScheduledTasks {
   }
 }
 
+try {
 if ($env:AIS_SERVICE_TEST_MODE -eq "1" -and $Action -ne "Validate") {
   throw "В тестовом режиме запрещены изменения Windows SCM и планировщика."
 }
@@ -676,11 +712,13 @@ $validation = [ordered]@{
   compiler = $cscPath
   trayTaskName = $trayTaskName
   workerTaskName = $workerTaskName
+  hiddenProcessHost = Join-Path $pathInfo.ServiceAppRoot "scripts\ais-hidden-process.vbs"
   interactiveUser = $interactiveUserName
 }
 foreach ($requiredPath in @(
   $validation.serviceSource,
   $validation.serviceHostScript,
+  $validation.hiddenProcessHost,
   (Join-Path $pathInfo.ServiceAppRoot $trayScriptName),
   (Join-Path $pathInfo.ServiceAppRoot $stopScriptName),
   $cscPath
@@ -751,6 +789,7 @@ $configuration = [ordered]@{
   protectedController = $serviceControllerPath
   protectedTray = $serviceTrayPath
   protectedInstaller = $serviceInstallerPath
+  protectedHiddenProcessHost = $serviceHiddenProcessPath
   mappedDrive = $pathInfo.MappedDrive
   mappedTarget = $pathInfo.MappedTarget
   binaryPath = $binaryPath
@@ -769,3 +808,7 @@ if ($StartTray) {
   Start-ScheduledTask -TaskName $trayTaskName
 }
 Write-InstallStep "Служба установлена. Автозапуск Windows и иконка в трее настроены."
+} catch {
+  Write-InstallerFailureLog $_
+  throw
+}

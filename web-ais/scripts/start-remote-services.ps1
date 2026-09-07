@@ -22,22 +22,45 @@ $secretPath = Join-Path $runtimeRoot "tunnel-secret.txt"
 $onlyOfficeSecretPath = Join-Path $appRoot "tmp\lan-system\onlyoffice-jwt-secret.txt"
 $runtimeConfigPath = Join-Path $runtimeRoot "tunnel-runtime.json"
 $deployScriptPath = Join-Path $PSScriptRoot "deploy-lms.ps1"
+$hiddenProcessPath = Join-Path $PSScriptRoot "ais-hidden-process.vbs"
+$wscriptPath = Join-Path ([Environment]::SystemDirectory) "wscript.exe"
 $appPort = 19081
 $localPort = 8081
 
+function Quote-ProcessArgument([string]$Value) {
+  if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+  $escaped = [regex]::Replace($Value, '(\\*)"', '${1}${1}\"')
+  $escaped = [regex]::Replace($escaped, '(\\+)$', '${1}${1}')
+  return '"' + $escaped + '"'
+}
+
 if (-not $Supervisor) {
+  if (-not (Test-Path -LiteralPath $hiddenProcessPath -PathType Leaf)) {
+    throw "Не найден безоконный хост внешних сервисов: $hiddenProcessPath"
+  }
   $shellPath = (Get-Process -Id $PID).Path
   $supervisorArguments = @(
-    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-    "-File", "`"$scriptPath`"", "-Supervisor",
+    "//B", "//NoLogo", $hiddenProcessPath, $appRoot, $shellPath,
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-WindowStyle", "Hidden", "-File", $scriptPath, "-Supervisor",
     "-CheckIntervalSeconds", $CheckIntervalSeconds
   )
   if ($ParentProcessId -gt 0) {
     $supervisorArguments += @("-ParentProcessId", $ParentProcessId)
   }
-  $process = Start-Process -FilePath $shellPath -ArgumentList $supervisorArguments `
-    -WindowStyle Hidden -PassThru
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $wscriptPath
+  $startInfo.Arguments = (@($supervisorArguments) | ForEach-Object {
+    Quote-ProcessArgument ([string]$_)
+  }) -join " "
+  $startInfo.WorkingDirectory = $appRoot
+  $startInfo.UseShellExecute = $true
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $process = [Diagnostics.Process]::Start($startInfo)
+  if ($null -eq $process) { throw "Не удалось запустить скрытый супервизор внешних сервисов." }
   Write-Host "Службы АИС запускаются в фоновом режиме (PID $($process.Id))."
+  $process.Dispose()
   exit 0
 }
 
