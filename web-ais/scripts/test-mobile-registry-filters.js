@@ -10,6 +10,7 @@ const stylesSource = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
 assert.match(appSource, /mobileRegistryFiltersOpen:\s*\{\}/u);
 assert.match(appSource, /function getMainRegistryActiveFilterCount\(view = state\.view\)/u);
+assert.match(appSource, /function getIssuedDocumentActiveFilterCount\(filters = state\.issuedDocumentFilters \|\| \{\}\)/u);
 assert.match(appSource, /data-action="toggle-mobile-registry-filters"/u);
 assert.match(appSource, /class="collection-primary-filters"/u);
 assert.match(appSource, /<summary title="Фильтр по виду программы">\s*<span>Вид<\/span>/u);
@@ -18,6 +19,15 @@ assert.match(appSource, /<summary title="Фильтр по типу програ
 assert.doesNotMatch(appSource, /<summary title="Фильтр по типу программы">\s*<span>Тип программы<\/span>/u);
 assert.match(appSource, /toggleMobileRegistryFilters\(event\.currentTarget\)/u);
 assert.match(appSource, /mobile-registry-filters-open[\s\S]{0,500}setMobileRegistryFiltersOpen/u);
+assert.match(
+  appSource,
+  /class="panel issued-documents-register \$\{mobileFiltersOpen \? "mobile-registry-filters-open" : ""\}"[\s\S]{0,240}data-registry-view="\$\{escapeAttr\(ISSUED_DOCUMENT_TABLE_CONFIG_ID\)\}"/u
+);
+assert.match(
+  appSource,
+  /class="issued-documents-filter-actions"[\s\S]{0,900}data-action="toggle-mobile-registry-filters"[\s\S]{0,420}aria-controls="\$\{escapeAttr\(filterControlsId\)\}"/u
+);
+assert.match(appSource, /class="issued-documents-filters" id="\$\{escapeAttr\(filterControlsId\)\}" data-issued-document-filters/u);
 assert.match(stylesSource, /\.collection-primary-filters\s*\{\s*display: contents;/u);
 assert.match(stylesSource, /button\.mobile-registry-filters-toggle\s*\{\s*display: none;/u);
 assert.match(stylesSource, /@media \(min-width: 721px\)[\s\S]*?\.collection-register \.collection-primary-filters > \.search-box\s*\{[\s\S]*?flex:\s*1 1 140px;[\s\S]*?min-width:\s*120px;/u);
@@ -31,6 +41,18 @@ assert.match(stylesSource, /@media \(max-width: 720px\)[\s\S]*button\.mobile-reg
 assert.match(stylesSource, /\.mobile-registry-filters-toggle strong\s*\{[\s\S]*?margin-left:\s*2px;/u);
 assert.match(stylesSource, /:not\(\.mobile-registry-filters-open\)[^\{]*\.collection-primary-filters,[\s\S]{0,180}\.student-list-advanced-filters\s*\{\s*display: none;/u);
 assert.match(stylesSource, /\.mobile-registry-filters-open \.collection-primary-filters\s*\{\s*display: grid;/u);
+assert.match(
+  stylesSource,
+  /\.issued-documents-register:not\(\.mobile-registry-filters-open\) > \.issued-documents-filters\s*\{\s*display: none;/u
+);
+assert.match(
+  stylesSource,
+  /\.issued-documents-register\.mobile-registry-filters-open > \.issued-documents-filters\s*\{\s*display: grid;/u
+);
+assert.match(
+  stylesSource,
+  /\.issued-documents-filter-actions\s*\{[\s\S]{0,300}flex-wrap:\s*nowrap;[\s\S]{0,180}overflow-x:\s*auto;/u
+);
 assert.match(appSource, /data-action="open-student-bulk-operations" data-mobile-label="Гр\. операции"/u);
 assert.match(stylesSource, /\[data-action="open-student-bulk-operations"\]::after\s*\{[\s\S]*content: attr\(data-mobile-label\);/u);
 assert.match(stylesSource, /@media \(min-width: 721px\) and \(max-width: 1180px\)[\s\S]*\.student-list-advanced-filters > button\s*\{[\s\S]*grid-column: 3 \/ 5;/u);

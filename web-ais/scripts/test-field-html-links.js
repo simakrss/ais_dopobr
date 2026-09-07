@@ -477,10 +477,12 @@ assert.match(stylesSource, /\.native-html-link-highlight \.communication-templat
 assert.match(stylesSource, /\.native-html-link-highlight[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
 assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
 
-const buildToken = "20260831-html-links-visible-text-v2";
-assert.ok(indexSource.includes("styles.css?v=" + buildToken));
-assert.ok(indexSource.includes('const build = "' + buildToken + '"'));
-assert.ok(authSource.includes('const AUTH_BUILD = "' + buildToken + '"'));
+const styleBuild = /styles\.css\?v=([^"']+)/u.exec(indexSource)?.[1] || "";
+const indexBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1] || "";
+const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
+assert.ok(styleBuild, "index.html должен версионировать styles.css");
+assert.equal(indexBuild, styleBuild, "Версии styles.css и auth-bootstrap.js в index.html должны совпадать");
+assert.equal(authBuild, styleBuild, "AUTH_BUILD должен совпадать с версией styles.css");
 assert.match(authSource, /async function initialize\(\) \{\s+renderLoading\("Проверка доступа\.\.\."\);\s+await loadScript\("field-html-links\.js"\);/u);
 assert.match(authSource, /if \(user\?\.role === "partner"\) \{\s+await loadScript\("partner-app\.js"\);/u);
 assert.equal((deploySource.match(/"field-html-links\.js"/gu) || []).length, 2);

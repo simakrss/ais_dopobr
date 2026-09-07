@@ -185,10 +185,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.381",
-    releasedAt: "2026-08-31"
+    version: "1.7.382",
+    releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.382",
+      releasedAt: "2026-09-07",
+      changes: [
+        "В реестре выданных документов на мобильных устройствах фильтры собраны под отдельной кнопкой, чтобы таблица оставалась видна без прокрутки всей панели."
+      ]
+    },
     {
       version: "1.7.381",
       releasedAt: "2026-08-31",
@@ -17180,6 +17187,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return Object.values(filters).some((value) => String(value || "").trim());
   }
 
+  function getIssuedDocumentActiveFilterCount(filters = state.issuedDocumentFilters || {}) {
+    const registryFilterCount = Object.values(filters)
+      .filter((value) => String(value || "").trim())
+      .length;
+    return registryFilterCount + getTableValueFilterEntries(ISSUED_DOCUMENT_TABLE_CONFIG_ID).length;
+  }
+
   function issuedDocumentRowMatchesFilters(row, filters = state.issuedDocumentFilters || {}) {
     const contains = (value, query) => !query
       || normalizeIssuedDocumentFilterText(value).includes(normalizeIssuedDocumentFilterText(query));
@@ -17391,13 +17405,39 @@ MAX - https://bizvmax.ru/zifra_plus
     const columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID);
     const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
     const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
+    const mobileFiltersOpen = Boolean(state.mobileRegistryFiltersOpen?.[ISSUED_DOCUMENT_TABLE_CONFIG_ID]);
+    const activeFilterCount = getIssuedDocumentActiveFilterCount(filters);
+    const filterControlsId = "issuedDocumentFilters";
     return `
-      <section class="panel issued-documents-register" data-issued-documents-register data-main-registry>
+      <section
+        class="panel issued-documents-register ${mobileFiltersOpen ? "mobile-registry-filters-open" : ""}"
+        data-issued-documents-register
+        data-main-registry
+        data-registry-view="${escapeAttr(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}"
+      >
         <div class="issued-documents-summary" aria-label="Сводка реестра">
           <span>Всего: <strong>${allRows.length}</strong></span>
           <span class="is-success">Выгружено: <strong>${exportedCount}</strong></span>
           <span class="${pendingCount ? "is-warning" : ""}">Ожидают: <strong>${pendingCount}</strong></span>
           <div class="issued-documents-filter-actions">
+            <button
+              class="ghost-button mobile-registry-filters-toggle ${activeFilterCount ? "is-active" : ""}"
+              data-action="toggle-mobile-registry-filters"
+              data-registry-view="${escapeAttr(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}"
+              type="button"
+              aria-expanded="${mobileFiltersOpen ? "true" : "false"}"
+              aria-controls="${escapeAttr(filterControlsId)}"
+              title="${mobileFiltersOpen ? "Свернуть фильтры" : "Развернуть фильтры"}"
+            >
+              <svg class="mobile-registry-filter-icon" viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M3 4h14l-5.4 6.1v4.7l-3.2 1.6v-6.3L3 4Z"></path>
+              </svg>
+              <span>Фильтры</span>
+              ${activeFilterCount ? `<strong>${activeFilterCount}</strong>` : ""}
+              <svg class="mobile-registry-filter-chevron" viewBox="0 0 12 8" aria-hidden="true">
+                <path d="m1 1.5 5 5 5-5"></path>
+              </svg>
+            </button>
             <button class="primary-button issued-documents-frdo-export-button" data-action="export-issued-documents-frdo" type="button" ${pendingCount && !state.issuedDocumentExportRunning ? "" : "disabled"}>Экспорт в ФРДО</button>
             ${filters.frdo === "pending" ? `<button class="ghost-button" data-action="mark-issued-documents-exported" type="button" ${rows.length && !state.issuedDocumentMarkRunning ? "" : "disabled"}>Отметить как выгруженные</button>` : ""}
             <span>Показано <strong>${rows.length}</strong> из ${allRows.length}</span>
@@ -17411,7 +17451,7 @@ MAX - https://bizvmax.ru/zifra_plus
             Документов для выгрузки в ФРДО нет. Показаны ранее выгруженные документы, начиная с последних выданных.
           </div>
         ` : ""}
-        <div class="issued-documents-filters" data-issued-document-filters>
+        <div class="issued-documents-filters" id="${escapeAttr(filterControlsId)}" data-issued-document-filters>
           <label>
             <span>Номер документа</span>
             <input data-issued-document-filter="documentNumber" value="${escapeAttr(filters.documentNumber || "")}" placeholder="Номер бланка или рег. номер">

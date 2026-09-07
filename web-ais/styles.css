@@ -24512,6 +24512,14 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     justify-content: flex-start;
   }
 
+  .issued-documents-register:not(.mobile-registry-filters-open) > .issued-documents-filters {
+    display: none;
+  }
+
+  .issued-documents-register.mobile-registry-filters-open > .issued-documents-filters {
+    display: grid;
+  }
+
   .issued-documents-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -24522,7 +24530,17 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .issued-documents-filter-actions {
     width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .issued-documents-filter-actions > * {
+    flex: 0 0 auto;
   }
 }
 
