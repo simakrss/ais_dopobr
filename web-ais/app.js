@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.388",
+    version: "1.7.389",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.389",
+      releasedAt: "2026-09-07",
+      changes: [
+        "Точечное распознавание автоматически проверяет горизонтальное и вертикальное направление текста; команда «Источник, область и распознать» перенесена в контекстное меню поля и доступна через компактную кнопку действий."
+      ]
+    },
     {
       version: "1.7.388",
       releasedAt: "2026-09-07",
@@ -38550,6 +38557,10 @@ MAX - https://bizvmax.ru/zifra_plus
       hideStudentDocumentRecognitionFieldMenu();
       return true;
     }
+    if (document.querySelector("[data-field-copy-popup]")) {
+      hideFieldCopyPopup({ restoreFocus: true });
+      return true;
+    }
     if (document.querySelector("[data-system-mailbox-email-menu]")) {
       closeSystemMailboxEmailMenu({ restoreFocus: true });
       return true;
@@ -38598,10 +38609,6 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (document.querySelector("[data-communication-template-field-menu]")) {
       hideCommunicationTemplateFieldMenu();
-      return true;
-    }
-    if (document.querySelector("[data-field-copy-popup]")) {
-      hideFieldCopyPopup();
       return true;
     }
     if (document.querySelector(".postal-index-popup")) {
@@ -42833,11 +42840,24 @@ MAX - https://bizvmax.ru/zifra_plus
       ? options.onSelectRecognitionArea
       : null;
     const recognitionActionLabel = String(
-      options.recognitionActionLabel || "Указать область в документе"
+      options.recognitionActionLabel || "Источник, область и распознать"
     ).trim();
+    const opener = options.opener?.matches?.("button") ? options.opener : null;
+    const requestedX = Number(x);
+    const requestedY = Number(y);
+    const keyboardOpen = !Number.isFinite(requestedX)
+      || !Number.isFinite(requestedY)
+      || (requestedX === 0 && requestedY === 0);
+    const controlRect = control?.getBoundingClientRect?.();
+    const popupX = keyboardOpen && controlRect ? controlRect.left : requestedX;
+    const popupY = keyboardOpen && controlRect ? controlRect.bottom + 4 : requestedY;
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
     popup.dataset.fieldCopyPopup = "";
+    popup.setAttribute("role", "menu");
+    popup.setAttribute("aria-label", String(options.menuLabel || "Действия с полем"));
+    popup.fieldCopyPopupOpener = opener;
+    popup.fieldCopyPopupReturnTarget = opener || control;
     popup.innerHTML = `
       <button data-action="copy-field-value" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -42906,12 +42926,61 @@ MAX - https://bizvmax.ru/zifra_plus
         </button>
       ` : ""}
     `;
+    const menuItems = Array.from(popup.querySelectorAll("button"));
+    menuItems.forEach((button, index) => {
+      button.setAttribute("role", "menuitem");
+      button.tabIndex = index === 0 ? 0 : -1;
+      button.addEventListener("focus", () => {
+        menuItems.forEach((item) => {
+          item.tabIndex = item === button ? 0 : -1;
+        });
+      });
+    });
+    const focusMenuItem = (index) => {
+      const enabledItems = menuItems.filter((button) => !button.disabled);
+      if (!enabledItems.length) return;
+      const normalizedIndex = ((index % enabledItems.length) + enabledItems.length) % enabledItems.length;
+      enabledItems[normalizedIndex].focus({ preventScroll: true });
+    };
+    popup.addEventListener("keydown", (event) => {
+      const enabledItems = menuItems.filter((button) => !button.disabled);
+      const currentIndex = enabledItems.indexOf(document.activeElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        focusMenuItem(currentIndex + 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        focusMenuItem(currentIndex - 1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        focusMenuItem(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        focusMenuItem(-1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        hideFieldCopyPopup({ restoreFocus: true });
+      }
+    });
+    popup.addEventListener("focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget && (popup.contains(nextTarget) || opener?.contains?.(nextTarget))) return;
+      window.setTimeout(() => {
+        if (
+          popup.isConnected
+          && !popup.contains(document.activeElement)
+          && !opener?.contains?.(document.activeElement)
+        ) hideFieldCopyPopup();
+      }, 0);
+    });
+    if (opener) opener.setAttribute("aria-expanded", "true");
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
     const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
     const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
-    popup.style.left = `${clamp(x, 8, maxLeft)}px`;
-    popup.style.top = `${clamp(y, 8, maxTop)}px`;
+    popup.style.left = `${clamp(Number.isFinite(popupX) ? popupX : 8, 8, maxLeft)}px`;
+    popup.style.top = `${clamp(Number.isFinite(popupY) ? popupY : 8, 8, maxTop)}px`;
+    if (opener || keyboardOpen) focusMenuItem(0);
     const copyButton = popup.querySelector("[data-action='copy-field-value']");
     let copyStarted = false;
     const copyNow = (event) => {
@@ -43836,16 +43905,25 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function handleFieldCopyPopupOutside(event) {
-    if (event.target.closest("[data-field-copy-popup]")) {
+    const popup = document.querySelector("[data-field-copy-popup]");
+    const opener = popup?.fieldCopyPopupOpener;
+    if (
+      event.target.closest("[data-field-copy-popup]")
+      || (opener && (event.target === opener || opener.contains(event.target)))
+    ) {
       document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
       return;
     }
     hideFieldCopyPopup();
   }
 
-  function hideFieldCopyPopup() {
+  function hideFieldCopyPopup(options = {}) {
     document.removeEventListener("pointerdown", handleFieldCopyPopupOutside);
-    document.querySelector("[data-field-copy-popup]")?.remove();
+    const popup = document.querySelector("[data-field-copy-popup]");
+    const returnTarget = popup?.fieldCopyPopupReturnTarget;
+    popup?.fieldCopyPopupOpener?.setAttribute?.("aria-expanded", "false");
+    popup?.remove();
+    if (options.restoreFocus) returnTarget?.focus?.({ preventScroll: true });
   }
 
   function isCopyableControl(control) {
@@ -48728,18 +48806,29 @@ MAX - https://bizvmax.ru/zifra_plus
           <span>${escapeHtml(field.label || key)}</span>
         </label>
         <div class="student-document-recognition-field-value">
-          ${listControl?.markup || `
-            <input
-              type="text"
-              data-ocr-field-value
-              value="${escapeAttr(displayValue)}"
-              ${dateInputFormat
-                ? `data-date-input-format="${dateInputFormat}" inputmode="numeric" placeholder="${dateInputFormat === "iso" ? "ГГГГ-ММ-ДД" : "ДД.ММ.ГГГГ"}"`
-                : (manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : "")}
-              ${listId ? `list="${escapeAttr(listId)}"` : ""}
-              aria-label="${escapeAttr(field.label || key)}"
-            >
-          `}
+          <div class="student-document-recognition-field-control">
+            ${listControl?.markup || `
+              <input
+                type="text"
+                data-ocr-field-value
+                value="${escapeAttr(displayValue)}"
+                ${dateInputFormat
+                  ? `data-date-input-format="${dateInputFormat}" inputmode="numeric" placeholder="${dateInputFormat === "iso" ? "ГГГГ-ММ-ДД" : "ДД.ММ.ГГГГ"}"`
+                  : (manualEntry ? 'placeholder="Введите адрес по фрагменту паспорта"' : "")}
+                ${listId ? `list="${escapeAttr(listId)}"` : ""}
+                aria-label="${escapeAttr(field.label || key)}"
+              >
+            `}
+            <button
+              class="icon-button student-document-recognition-field-menu-button"
+              data-action="open-student-document-field-menu"
+              type="button"
+              title="Действия с полем «${escapeAttr(field.label || key)}»: копирование, вставка и повторное распознавание"
+              aria-label="Действия с полем «${escapeAttr(field.label || key)}»"
+              aria-haspopup="menu"
+              aria-expanded="false"
+            ><span aria-hidden="true">⋯</span></button>
+          </div>
           ${listId ? `
             <datalist id="${escapeAttr(listId)}">
               ${alternatives.map((item) => `<option value="${escapeAttr(item.value || "")}"></option>`).join("")}
@@ -48758,14 +48847,6 @@ MAX - https://bizvmax.ru/zifra_plus
               title="${escapeAttr(field.evidence || "")}"
             >Источник: ${escapeHtml(field.sourceFile || "не определён")}</span>
           </div>
-          <button
-            class="ghost-button student-document-recognition-field-region-button"
-            data-action="recognize-student-document-field-region"
-            type="button"
-            title="Повторно распознать поле «${escapeAttr(field.label || key)}»: выбрать документ, страницу и область"
-          >
-            Источник, область и распознать
-          </button>
           ${currentValue ? `<small>Сейчас в карточке: <strong>${escapeHtml(currentDisplayValue)}</strong></small>` : ""}
           ${field.recognitionOriginalValue ? `<small>Распознано: <strong>${escapeHtml(field.recognitionOriginalValue)}</strong> · Подставлено из списка: <strong>${escapeHtml(field.value)}</strong></small>` : ""}
           ${listControl ? `<small>${listControl.mode === "combo" ? "Выберите значение из списка или введите своё." : "Выберите значение из списка."}</small>` : ""}
@@ -49673,7 +49754,10 @@ MAX - https://bizvmax.ru/zifra_plus
           label: String(result.label || "").trim(),
           value,
           confidence: clamp(Number(result.confidence) || 0, 0, 1),
-          evidence: String(result.evidence || result.rawText || "").trim().slice(0, 280)
+          evidence: String(result.evidence || result.rawText || "").trim().slice(0, 280),
+          recognitionRotation: normalizeStudentPhotoRotation(
+            result.recognitionRotation ?? result.rotation ?? 0
+          )
         };
       }
     );
@@ -50360,6 +50444,7 @@ MAX - https://bizvmax.ru/zifra_plus
           field.value = recognizedValue;
           field.confidence = recognized.confidence;
           field.evidence = recognized.evidence || "Поле повторно распознано по выбранной области";
+          field.recognitionRotation = normalizeStudentPhotoRotation(recognized.recognitionRotation);
           field.recognitionMissing = false;
           field.manualEntry = false;
           if (recognizedSourceValue !== recognizedValue) {
@@ -50428,14 +50513,31 @@ MAX - https://bizvmax.ru/zifra_plus
         : null;
       const input = row?.querySelector("[data-ocr-field-value]");
       if (!input) return;
-      row.querySelector("[data-action='recognize-student-document-field-region']")
-        ?.addEventListener("click", () => selectFieldDocumentArea(field, input, row));
+      row.querySelector("[data-action='open-student-document-field-menu']")
+        ?.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const opener = event.currentTarget;
+          const openPopup = document.querySelector("[data-field-copy-popup]");
+          if (openPopup?.fieldCopyPopupOpener === opener) {
+            hideFieldCopyPopup({ restoreFocus: true });
+            return;
+          }
+          const openerRect = opener.getBoundingClientRect();
+          showFieldCopyPopup(input, openerRect.left, openerRect.bottom + 4, {
+            onSelectRecognitionArea: () => selectFieldDocumentArea(field, input, row),
+            recognitionActionLabel: "Источник, область и распознать",
+            menuLabel: `Действия с полем «${field.label || key}»`,
+            opener
+          });
+        });
       input.addEventListener("focus", () => showFieldPreview(field, input));
       input.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         event.stopPropagation();
         showFieldCopyPopup(input, event.clientX, event.clientY, {
-          onSelectRecognitionArea: () => selectFieldDocumentArea(field, input, row)
+          onSelectRecognitionArea: () => selectFieldDocumentArea(field, input, row),
+          recognitionActionLabel: "Источник, область и распознать"
         });
       });
       input.addEventListener("blur", () => {
@@ -50475,7 +50577,8 @@ MAX - https://bizvmax.ru/zifra_plus
       event.stopPropagation();
       const row = activeInput.closest("[data-ocr-recognition-field]");
       showFieldCopyPopup(activeInput, event.clientX, event.clientY, {
-        onSelectRecognitionArea: () => selectFieldDocumentArea(activeField, activeInput, row)
+        onSelectRecognitionArea: () => selectFieldDocumentArea(activeField, activeInput, row),
+        recognitionActionLabel: "Источник, область и распознать"
       });
     });
     image.addEventListener("load", () => {

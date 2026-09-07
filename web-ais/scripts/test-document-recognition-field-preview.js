@@ -303,7 +303,9 @@ async function main() {
   assert.match(clientSource, /const recognitionFiles = getStudentDocumentRecognitionPreviewFiles\(payload\);/u);
   assert.match(clientSource, /const previewPayload = \{ \.\.\.payload, files: recognitionFiles \};/u);
   assert.match(clientSource, /data-action="select-student-photo-area-any"/u);
-  assert.match(clientSource, /data-action="recognize-student-document-field-region"/u);
+  assert.doesNotMatch(clientSource, /data-action="recognize-student-document-field-region"/u);
+  assert.match(clientSource, /data-action="open-student-document-field-menu"/u);
+  assert.match(clientSource, /Источник, область и распознать/u);
   const fieldContextMenuStart = clientSource.indexOf("  function showFieldCopyPopup");
   const fieldContextMenuEnd = clientSource.indexOf("\n\n  function openSettingsDictionary", fieldContextMenuStart);
   assert.ok(fieldContextMenuStart >= 0 && fieldContextMenuEnd > fieldContextMenuStart);

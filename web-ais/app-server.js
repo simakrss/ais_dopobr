@@ -14175,6 +14175,9 @@ function normalizeOcrFieldRegionResponse(value, expectedKey) {
   if (!normalizedValue) {
     throw new Error(`Не удалось распознать поле «${OCR_DOCUMENT_FIELD_LABELS[key]}» в выбранной области.`);
   }
+  const recognitionRotation = (((Math.round(
+    (Number(value.recognitionRotation ?? value.rotation) || 0) / 90
+  ) * 90) % 360) + 360) % 360;
   return {
     ok: true,
     key,
@@ -14182,7 +14185,8 @@ function normalizeOcrFieldRegionResponse(value, expectedKey) {
     value: normalizedValue,
     confidence: Math.round(Math.max(0, Math.min(1, Number(value.confidence) || 0)) * 100) / 100,
     evidence: String(value.evidence || "").replace(/\s+/g, " ").trim().slice(0, 280),
-    rawText: String(value.rawText || "").trim().slice(0, 3000)
+    rawText: String(value.rawText || "").trim().slice(0, 3000),
+    recognitionRotation
   };
 }
 

@@ -3116,37 +3116,127 @@ def recognize_field(payload: dict[str, Any]) -> dict[str, Any]:
             whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-@,"
         primary_psm = 7 if key in SINGLE_LINE_FIELD_KEYS else 6
         secondary_psm = 6 if primary_psm == 7 else 11
-        primary = tesseract_text(
-            prepared_path,
-            primary_psm,
-            languages=languages,
-            whitelist=whitelist,
-            timeout=60,
+        orientation_candidates: list[dict[str, Any]] = []
+        orientation_errors: list[Exception] = []
+        recognition_deadline = started_at + 225
+
+        def remaining_timeout(limit: int) -> int:
+            remaining = int(recognition_deadline - time.perf_counter())
+            if remaining < 5:
+                raise TimeoutError("Истёк общий лимит времени распознавания выбранной области.")
+            return max(5, min(limit, remaining))
+
+        def recognize_orientation(angle: int, timeout_limit: int) -> None:
+            try:
+                candidate_path = prepared_path
+                if angle:
+                    candidate_path = workdir / f"field-region-prepared-{angle}.png"
+                    run_command(
+                        [
+                            CONVERT_BINARY,
+                            str(prepared_path),
+                            "-rotate",
+                            str(angle),
+                            str(candidate_path),
+                        ],
+                        timeout=remaining_timeout(15),
+                    )
+            except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
+                orientation_errors.append(error)
+                return
+            primary = ""
+            secondary = ""
+            try:
+                primary = tesseract_text(
+                    candidate_path,
+                    primary_psm,
+                    languages=languages,
+                    whitelist=whitelist,
+                    timeout=remaining_timeout(timeout_limit),
+                )
+            except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
+                orientation_errors.append(error)
+            try:
+                secondary = tesseract_text(
+                    candidate_path,
+                    secondary_psm,
+                    languages=languages,
+                    whitelist=whitelist,
+                    timeout=remaining_timeout(timeout_limit),
+                )
+            except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
+                orientation_errors.append(error)
+            if not primary and not secondary:
+                return
+            raw_text = merge_ocr_text(primary, secondary)[:MAX_TEXT_CHARS]
+            seen_texts: set[str] = set()
+            normalized_candidates = []
+            for candidate_text in (primary, secondary):
+                normalized_text = normalize_text(candidate_text)
+                if not normalized_text or normalized_text in seen_texts:
+                    continue
+                seen_texts.add(normalized_text)
+                candidate_value, candidate_confidence = normalize_recognized_field_value(
+                    key,
+                    normalized_text,
+                )
+                if not candidate_value:
+                    continue
+                normalized_candidates.append((
+                    candidate_confidence + min(len(candidate_value), 200) / 10_000,
+                    candidate_value,
+                    candidate_confidence,
+                ))
+            if not normalized_candidates:
+                merged_value, merged_confidence = normalize_recognized_field_value(key, raw_text)
+                if not merged_value:
+                    return
+                normalized_candidates.append((
+                    merged_confidence + min(len(merged_value), 200) / 10_000,
+                    merged_value,
+                    merged_confidence,
+                ))
+            score, candidate_value, candidate_confidence = max(
+                normalized_candidates,
+                key=lambda item: item[0],
+            )
+            orientation_candidates.append({
+                "score": score,
+                "value": candidate_value,
+                "confidence": candidate_confidence,
+                "quality": ocr_text_orientation_score(candidate_value),
+                "rawText": raw_text,
+                "recognitionRotation": angle,
+            })
+
+        recognize_orientation(0, 50)
+        upright_candidate = next(
+            (item for item in orientation_candidates if item["recognitionRotation"] == 0),
+            None,
         )
-        secondary = tesseract_text(
-            prepared_path,
-            secondary_psm,
-            languages=languages,
-            whitelist=whitelist,
-            timeout=60,
-        )
-        raw_text = merge_ocr_text(primary, secondary)[:MAX_TEXT_CHARS]
-        normalized_candidates = []
-        for candidate_text in (primary, secondary):
-            candidate_value, candidate_confidence = normalize_recognized_field_value(key, candidate_text)
-            if not candidate_value:
-                continue
-            normalized_candidates.append((
-                candidate_confidence + min(len(candidate_value), 200) / 10_000,
-                candidate_value,
-                candidate_confidence,
-            ))
-        if normalized_candidates:
-            _, value, confidence = max(normalized_candidates, key=lambda item: item[0])
-        else:
-            value, confidence = normalize_recognized_field_value(key, raw_text)
-        if not value:
+        vertical_region = height > width * 1.35
+        if vertical_region or not upright_candidate or float(upright_candidate["confidence"]) < 0.9:
+            for angle in (90, 270):
+                recognize_orientation(angle, 30)
+        if not orientation_candidates:
+            recognize_orientation(180, 20)
+        if not orientation_candidates:
+            if orientation_errors:
+                raise RuntimeError("Не удалось завершить распознавание выбранной области.") from orientation_errors[-1]
             raise ValueError(f"Не удалось распознать поле «{FIELD_LABELS[key]}» в выбранной области.")
+        winner = max(
+            orientation_candidates,
+            key=lambda item: (
+                item["confidence"],
+                item["quality"],
+                item["recognitionRotation"] == 0,
+                item["score"],
+            ),
+        )
+        value = str(winner["value"])
+        confidence = float(winner["confidence"])
+        raw_text = str(winner["rawText"])
+        recognition_rotation = int(winner["recognitionRotation"])
         return {
             "ok": True,
             "key": key,
@@ -3155,6 +3245,7 @@ def recognize_field(payload: dict[str, Any]) -> dict[str, Any]:
             "confidence": round(max(0.0, min(1.0, confidence)), 2),
             "evidence": re.sub(r"\s+", " ", raw_text).strip()[:280],
             "rawText": raw_text[:3000],
+            "recognitionRotation": recognition_rotation,
             "durationMs": round((time.perf_counter() - started_at) * 1000),
         }
 

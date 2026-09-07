@@ -40,6 +40,7 @@ async function main() {
     "resolveDocumentProcessingOrigin",
     "documentProcessingApiUrl",
     "clamp",
+    "normalizeStudentPhotoRotation",
     `${recognizeSource}\nreturn recognizeStudentDocumentFieldRegion;`
   )(
     getOcrFieldKey,
@@ -53,13 +54,18 @@ async function main() {
           label: "Серия и номер паспорта",
           value: "12 34 567890",
           confidence: 0.91,
-          evidence: "OCR fragment"
+          evidence: "OCR fragment",
+          recognitionRotation: 270
         })
       });
     },
     async () => "http://127.0.0.1:8081",
     (pathname, origin) => `${origin}${pathname}`,
-    (value, min, max) => Math.max(min, Math.min(max, value))
+    (value, min, max) => Math.max(min, Math.min(max, value)),
+    (value) => {
+      const normalized = Math.round((Number(value) || 0) / 90) * 90;
+      return ((normalized % 360) + 360) % 360;
+    }
   );
   const requestController = new AbortController();
   const recognized = await recognizeField("identityDocument", {
@@ -68,6 +74,7 @@ async function main() {
   }, requestController.signal);
   assert.strictEqual(recognized.key, "passportNumber");
   assert.strictEqual(recognized.value, "12 34 567890");
+  assert.strictEqual(recognized.recognitionRotation, 270);
   assert.strictEqual(
     capturedRequest.url,
     "http://127.0.0.1:8081/api/students/recognize-documents/field-region"
@@ -134,7 +141,19 @@ async function main() {
 
   assert.match(appSource, /const alwaysVisibleKeys = new Set\(groups\.flatMap\(\(group\) => group\.keys\)\)/u);
   assert.match(appSource, /data-action="select-student-photo-area-any"/u);
-  assert.match(appSource, /data-action="recognize-student-document-field-region"/u);
+  const recognitionFieldRenderer = extractSource(
+    appSource,
+    "  function renderStudentDocumentRecognitionField",
+    "\n\n  function getStudentDocumentRecognitionPreviewFiles"
+  );
+  assert.doesNotMatch(
+    recognitionFieldRenderer,
+    /data-action="recognize-student-document-field-region"/u,
+    "Большая кнопка точечного OCR не должна занимать место под каждым полем."
+  );
+  assert.match(recognitionFieldRenderer, /data-action="open-student-document-field-menu"/u);
+  assert.match(recognitionFieldRenderer, /(?:aria-label|title)="Действия с полем/u);
+  assert.match(recognitionFieldRenderer, /aria-haspopup="menu"/u);
   assert.match(appSource, /findStudentRecognitionRecommendedSourceFilePosition\(files, field\)/u);
   assert.match(appSource, /Поле: \$\{escapeHtml\(options\.fieldLabel\)\}/u);
   assert.match(appSource, /— рекомендуется/u);
@@ -156,6 +175,49 @@ async function main() {
   assert.match(appSource, /error\?\.name !== "AbortError"/u);
   assert.match(appSource, /const checkbox = row\.querySelector\("\[data-ocr-field-enabled\]"\);[\s\S]*?checkbox\.checked = true;[\s\S]*?setStudentDocumentRecognitionFieldControlValue/u);
   assert.match(appSource, /aria-live="polite"/u);
+
+  const fieldPopupSource = extractSource(
+    appSource,
+    "  function showFieldCopyPopup",
+    "\n\n  function openSettingsDictionary"
+  );
+  assert.match(fieldPopupSource, /data-action="select-student-document-field-area"/u);
+  assert.match(fieldPopupSource, /Источник, область и распознать/u);
+  const previewBindingSource = extractSource(
+    appSource,
+    "  function bindStudentDocumentRecognitionFieldPreviews",
+    "\n\n  function addStudentDocumentPhotoCandidate"
+  );
+  assert.doesNotMatch(previewBindingSource, /recognize-student-document-field-region/u);
+  assert.match(
+    previewBindingSource,
+    /querySelector\("\[data-action='open-student-document-field-menu'\]"\)[\s\S]*?addEventListener\("click"/u
+  );
+  assert.match(previewBindingSource, /recognitionActionLabel:\s*"Источник, область и распознать"/u);
+  assert.match(previewBindingSource, /input\.addEventListener\("contextmenu"/u);
+  assert.match(previewBindingSource, /popup\.addEventListener\("contextmenu"/u);
+  assert.ok(
+    (previewBindingSource.match(
+      /onSelectRecognitionArea:\s*\(\)\s*=>\s*selectFieldDocumentArea/gu
+    ) || []).length >= 3,
+    "Компактная кнопка, поле и предпросмотр должны запускать выбор области одного активного поля."
+  );
+  const escapeSource = extractSource(
+    appSource,
+    "  function closeTopmostWindowByEscape",
+    "\n\n  function bindEvents"
+  );
+  assert.ok(
+    escapeSource.indexOf('document.querySelector("[data-field-copy-popup]")')
+      < escapeSource.indexOf('document.querySelector("[data-student-document-recognition-dialog]")'),
+    "Escape должен закрывать меню поля раньше диалога распознавания."
+  );
+  assert.match(
+    appSource,
+    /event\.target === opener \|\| opener\.contains\(event\.target\)/u,
+    "Триггер должен считаться частью открытого меню, чтобы повторный щелчок закрывал его."
+  );
+  assert.match(appSource, /popup\.addEventListener\("focusout"/u);
 
   const sourcePreferenceBlock = extractSource(
     appSource,

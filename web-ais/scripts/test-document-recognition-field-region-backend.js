@@ -141,11 +141,13 @@ function main() {
     value: " 12  34  567890 ",
     confidence: 5,
     evidence: " OCR   evidence ",
-    rawText: "12 34 567890"
+    rawText: "12 34 567890",
+    recognitionRotation: 270
   }, "passportNumber");
   assert.strictEqual(response.label, "Серия и номер паспорта");
   assert.strictEqual(response.value, "12 34 567890");
   assert.strictEqual(response.confidence, 1);
+  assert.strictEqual(response.recognitionRotation, 270);
   assert.throws(
     () => server.normalizeOcrFieldRegionResponse({ ...response, key: "inn" }, "passportNumber"),
     /для другого поля/u

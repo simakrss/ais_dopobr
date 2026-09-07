@@ -18303,18 +18303,30 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   gap: 3px;
 }
 
-.student-document-recognition-field-region-button {
-  justify-self: start;
-  min-height: 32px;
-  padding: 5px 10px;
-  font-size: 0.82rem;
+.student-document-recognition-field-control {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 4px;
 }
 
-.student-document-recognition-field-value > input,
-.student-document-recognition-field-value > select {
+.student-document-recognition-field-control > input,
+.student-document-recognition-field-control > select {
   width: 100%;
+  min-width: 0;
   min-height: 28px;
   padding: 3px 6px;
+}
+
+.student-document-recognition-field-menu-button {
+  width: 32px;
+  min-width: 32px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .student-document-recognition-field-value .combo-input-wrap > input {
@@ -18323,7 +18335,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   padding: 3px 40px 3px 6px;
 }
 
-.student-document-recognition-field-value .combo-field {
+.student-document-recognition-field-control .combo-field {
   width: 100%;
   min-width: 0;
 }
@@ -18403,17 +18415,17 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #fef0c7;
 }
 
-.student-document-recognition-field-value > input.field-valid {
+.student-document-recognition-field-control > input.field-valid {
   border-color: var(--green);
   background: #f5fbf1;
 }
 
-.student-document-recognition-field-value > input.field-invalid {
+.student-document-recognition-field-control > input.field-invalid {
   border-color: var(--red);
   background: #fff5f3;
 }
 
-.student-document-recognition-field-value > input.field-incomplete {
+.student-document-recognition-field-control > input.field-incomplete {
   border-color: var(--amber);
   background: #fffaf0;
 }
@@ -19553,10 +19565,20 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     flex-direction: column;
   }
 
-  .student-document-photo-group-actions .ghost-button,
-  .student-document-recognition-field-region-button {
+  .student-document-photo-group-actions .ghost-button {
     width: 100%;
     justify-content: center;
+  }
+
+  .student-document-recognition-field-menu-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .student-document-recognition-field-control {
+    grid-template-columns: minmax(0, 1fr) 44px;
   }
 
   .student-document-photo-candidates {
@@ -20748,6 +20770,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .field-copy-popup {
   position: fixed;
   z-index: 90;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 6px;
