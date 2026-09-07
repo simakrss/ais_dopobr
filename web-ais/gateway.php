@@ -8,7 +8,7 @@ const AIS_GATEWAY_JOB_TTL_SECONDS = 3600;
 const AIS_TUNNEL_CONNECT_TIMEOUT_SECONDS = 5;
 const AIS_TUNNEL_RUNTIME_MAX_AGE_SECONDS = 8 * 60 * 60;
 const AIS_TUNNEL_RUNTIME_CLOCK_SKEW_SECONDS = 5 * 60;
-const AIS_DOCUMENT_PREVIEW_AFFINITY_TTL_SECONDS = 3 * 60 * 60;
+const AIS_DOCUMENT_PREVIEW_AFFINITY_TTL_SECONDS = 12 * 60 * 60;
 const AIS_DOCUMENT_PREVIEW_AFFINITY_MAX_TOKENS = 8;
 
 final class GatewayTunnelUnavailableException extends RuntimeException
@@ -1574,12 +1574,22 @@ function gateway_document_tunnel_handles(string $method, string $path): bool
         '/api/contracts/student-document-preview/editor-start' => ['POST'],
         '/api/contracts/student-document-preview/editor-save' => ['POST'],
         '/api/contracts/student-document-preview/editor-discard' => ['POST'],
+        '/api/contracts/student-document-preview/editor-refresh' => ['POST'],
         '/api/contracts/student-document-preview/cancel' => ['POST'],
         '/api/contracts/student-document-preview/editor-page' => ['GET'],
         '/api/contracts/student-document-preview/editor-file' => ['GET', 'HEAD'],
         '/api/contracts/student-document-preview/editor-callback' => ['POST'],
     ];
     return in_array($method, $previewMethods[$path] ?? [], true);
+}
+
+function gateway_document_editor_control_requires_tunnel(string $method, string $path): bool
+{
+    return $method === 'POST' && in_array($path, [
+        '/api/contracts/student-document-preview/editor-save',
+        '/api/contracts/student-document-preview/editor-discard',
+        '/api/contracts/student-document-preview/editor-refresh',
+    ], true);
 }
 
 function gateway_response_header(array $response, string $expectedName): string
@@ -3744,6 +3754,7 @@ $isPreviewControlRequest = in_array($requestPath, [
     '/api/contracts/student-document-preview/editor-start',
     '/api/contracts/student-document-preview/editor-save',
     '/api/contracts/student-document-preview/editor-discard',
+    '/api/contracts/student-document-preview/editor-refresh',
     '/api/contracts/student-document-preview/cancel',
 ], true);
 $requestBodyLimit = $isPreviewControlRequest ? 4096 : AIS_GATEWAY_MAX_REQUEST_BYTES;
@@ -3817,6 +3828,7 @@ try {
     $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
     $authenticatedHeaders['x-ais-employee-id'] = (string) ($currentUser['employeeId'] ?? '');
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
+    $authenticatedHeaders['x-ais-session-expires-at'] = (string) ais_auth_session_expires_at_ms();
     unset($authenticatedHeaders['x-ais-document-backend']);
     unset($authenticatedHeaders['x-ais-demo-mode-reauthenticated']);
     unset($authenticatedHeaders['x-ais-demo-mode-id-secret']);
@@ -3919,6 +3931,7 @@ try {
     }
 
     $documentTunnelRoute = gateway_document_tunnel_handles($method, $path);
+    $documentEditorControlRoute = gateway_document_editor_control_requires_tunnel($method, $path);
     $previewRequestToken = gateway_document_preview_request_token(
         $method,
         $path,
@@ -3978,6 +3991,14 @@ try {
                 . 'Проверьте, что компьютер включён и туннель запущен.'
             );
         }
+    }
+
+    if ($documentEditorControlRoute) {
+        gateway_fail(
+            503,
+            'Сессия онлайн-редактора привязана к локальному сервису, который сейчас недоступен. '
+            . 'Запустите локальные сервисы и обновите сессию редактирования.'
+        );
     }
 
     if ($method === 'POST' && $path === '/api/students/recognize-documents/start') {

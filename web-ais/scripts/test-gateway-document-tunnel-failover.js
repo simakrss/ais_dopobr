@@ -36,6 +36,21 @@ assert.ok(
   affinityTtlHours > editorTtlHours,
   "Gateway affinity TTL должен с запасом перекрывать двухчасовую editor session."
 );
+assert.equal(
+  affinityTtlHours,
+  12,
+  "Gateway affinity должна храниться 12 часов, чтобы переживать recovery grace editor session."
+);
+assert.match(
+  gatewaySource,
+  /\$authenticatedHeaders\['x-ais-session-expires-at'\]\s*=\s*\(string\) ais_auth_session_expires_at_ms\(\)/u,
+  "Gateway должен передавать Node фактический срок исходной auth-сессии."
+);
+assert.match(
+  appServerSource,
+  /function generatedDocumentEditorInitialRecoveryExpiresAt\(authUser, now = Date\.now\(\)\)[\s\S]+authSessionExpiresAt > now[\s\S]+Math\.min\(policyExpiresAt, authSessionExpiresAt\)/u,
+  "Recovery editor capability не должен переживать срок исходной auth-сессии."
+);
 assert.match(
   supervisorSource,
   /TotalHours -ge 6[\s\S]+Publish-TunnelRuntime/u,
@@ -85,6 +100,19 @@ assert.match(documentRouteSource, /'\/api\/contracts\/student-document'/u);
 assert.match(documentRouteSource, /student-document-preview\/editor-page' => \['GET'\]/u);
 assert.match(documentRouteSource, /student-document-preview\/editor-file' => \['GET', 'HEAD'\]/u);
 assert.match(documentRouteSource, /student-document-preview\/editor-callback' => \['POST'\]/u);
+assert.match(documentRouteSource, /student-document-preview\/editor-refresh' => \['POST'\]/u);
+
+const editorControlRouteSource = sourceBlock(
+  gatewaySource,
+  "function gateway_document_editor_control_requires_tunnel",
+  "\n\nfunction gateway_response_header"
+);
+for (const route of ["editor-save", "editor-discard", "editor-refresh"]) {
+  assert.ok(
+    editorControlRouteSource.includes(`student-document-preview/${route}`),
+    `${route} должен быть fail-closed без tunnel даже при потерянной affinity.`
+  );
+}
 
 assert.doesNotMatch(
   gatewaySource,
@@ -115,6 +143,25 @@ assert.match(
   affinitySource,
   /student-document-preview\/finalize[\s\S]+student-document-preview\/cancel[\s\S]+gateway_clear_document_preview_affinity/u,
   "Завершённые preview не должны оставлять affinity в сессии."
+);
+const affinityTrackingSource = sourceBlock(
+  gatewaySource,
+  "function gateway_track_document_preview_affinity",
+  "\n\nfunction gateway_tunnel_handles"
+);
+const affinityClearStart = affinityTrackingSource.indexOf("if (in_array($path, [");
+const affinityClearEnd = affinityTrackingSource.indexOf(
+  "gateway_clear_document_preview_affinity",
+  affinityClearStart
+);
+assert.ok(affinityClearStart >= 0 && affinityClearEnd > affinityClearStart);
+const affinityClearCondition = affinityTrackingSource.slice(affinityClearStart, affinityClearEnd);
+assert.match(affinityClearCondition, /student-document-preview\/finalize/u);
+assert.match(affinityClearCondition, /student-document-preview\/cancel/u);
+assert.doesNotMatch(
+  affinityClearCondition,
+  /student-document-preview\/editor-refresh/u,
+  "Refresh должен продлевать affinity, а не очищать её."
 );
 
 const transportSource = sourceBlock(
@@ -158,6 +205,10 @@ const dispatchSource = sourceBlock(
   "$documentTunnelRoute = gateway_document_tunnel_handles($method, $path);",
   "\n\n    if ($method === 'POST' && $path === '/api/students/recognize-documents/start')"
 );
+assert.match(
+  dispatchSource,
+  /\$documentEditorControlRoute\s*=\s*gateway_document_editor_control_requires_tunnel\(\$method, \$path\)/u
+);
 assert.match(dispatchSource, /gateway_run_tunnel/u);
 assert.match(
   dispatchSource,
@@ -188,6 +239,23 @@ assert.match(
   unavailableCatchSource,
   /if \(!\$documentTunnelRoute \|\| \$previewRequestToken !== ''\)[\s\S]+gateway_fail/u,
   "Transport failover разрешён для создания документа, но не для уже созданного preview."
+);
+const unavailableEditorControlStart = dispatchSource.indexOf("if ($documentEditorControlRoute)");
+assert.ok(unavailableEditorControlStart >= 0, "Не найден fail-closed для editor control routes.");
+const unavailableEditorControlSource = dispatchSource.slice(unavailableEditorControlStart);
+assert.match(
+  unavailableEditorControlSource,
+  /gateway_fail\(\s*503,[\s\S]+Сессия онлайн-редактора привязана к локальному сервису/u,
+  "Потерянная affinity и недоступный tunnel должны дать понятный 503 до SERVER."
+);
+assert.ok(
+  dispatchSource.indexOf("gateway_run_tunnel") < unavailableEditorControlStart,
+  "После возврата tunnel editor control route без affinity должен снова выполняться через tunnel."
+);
+assert.doesNotMatch(
+  unavailableEditorControlSource,
+  /gateway_run_node/u,
+  "Editor save/discard/refresh нельзя отправлять на SERVER после отсутствующего tunnel."
 );
 
 const finalServerDispatch = gatewaySource.slice(gatewaySource.lastIndexOf(
@@ -221,7 +289,14 @@ assert.ok(
     < editorStartSource.indexOf("beginGeneratedDocumentPreviewEditor"),
   "SERVER editor-start должен отклоняться до создания editor session и iframe URL."
 );
-for (const handler of ["EditorPage", "EditorFile", "EditorCallback"]) {
+for (const handler of [
+  "EditorRefresh",
+  "EditorPage",
+  "EditorFile",
+  "EditorCallback",
+  "EditorSave",
+  "EditorDiscard"
+]) {
   const handlerStart = appServerSource.indexOf(`async function handleGeneratedDocumentPreview${handler}`);
   assert.ok(handlerStart >= 0);
   assert.match(

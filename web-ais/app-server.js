@@ -659,6 +659,8 @@ const GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES = 4 * 1024;
 const GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/u;
 const GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS = 30 * 60 * 1000;
 const GENERATED_DOCUMENT_EDITOR_TTL_MS = 2 * 60 * 60 * 1000;
+const GENERATED_DOCUMENT_EDITOR_RECOVERY_TTL_MS = 12 * 60 * 60 * 1000;
+const GENERATED_DOCUMENT_EDITOR_HEARTBEAT_MS = 60 * 1000;
 const GENERATED_DOCUMENT_EDITOR_SAVE_WAIT_MS = 60 * 1000;
 const GENERATED_DOCUMENT_EDITOR_COOKIE_NAME = "AIS_DOCUMENT_EDITOR";
 const ONLYOFFICE_PROXY_PREFIX = "/onlyoffice";
@@ -2057,6 +2059,7 @@ async function getRequestAuthUser(req) {
       employeeId: role === "partner"
         ? String(req.headers["x-ais-employee-id"] || "").slice(0, 160)
         : "",
+      sessionExpiresAt: Math.max(0, Number(req.headers["x-ais-session-expires-at"] || 0)),
       authSessionKey: `gateway:${gatewaySessionId}`
     };
   }
@@ -33433,6 +33436,8 @@ function encodeGeneratedDocumentPreviewMetadata(preview) {
         key: String(preview.editorSession.key || ""),
         createdAt: Number(preview.editorSession.createdAt || 0),
         expiresAt: Number(preview.editorSession.expiresAt || 0),
+        recoveryExpiresAt: Number(preview.editorSession.recoveryExpiresAt || 0),
+        lastRefreshedAt: Number(preview.editorSession.lastRefreshedAt || 0),
         userId: String(preview.editorSession.userId || "").slice(0, 160),
         userName: String(preview.editorSession.userName || "").slice(0, 240),
         lastSavedAt: Number(preview.editorSession.lastSavedAt || 0),
@@ -33666,7 +33671,7 @@ async function pruneGeneratedDocumentPreviewFiles(now = Date.now()) {
     .filter(({ metadata }) => (
       String(metadata?.state || "pending") === "finalizing"
         ? Number(metadata?.finalizingAt || 0) + GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS <= now
-        : Number(metadata?.expiresAt || 0) <= now
+        : generatedDocumentPreviewEffectiveExpiresAt(metadata) <= now
     ))
     .map(({ token }) => removeGeneratedDocumentPreviewFiles(token)));
   const names = await fs.readdir(root).catch(() => []);
@@ -33910,12 +33915,24 @@ function normalizeGeneratedDocumentPreviewToken(token) {
   return GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN.test(normalized) ? normalized : "";
 }
 
+function generatedDocumentPreviewEffectiveExpiresAt(preview) {
+  const expiresAt = Number(preview?.expiresAt || 0);
+  if (
+    String(preview?.state || "pending") !== "pending"
+    || !preview?.editorSession
+  ) return expiresAt;
+  return Math.max(
+    expiresAt,
+    generatedDocumentEditorRecoveryExpiresAt(preview.editorSession)
+  );
+}
+
 function pruneGeneratedDocumentPreviews(now = Date.now()) {
   pruneDocumentConversionSources(now);
   for (const [token, preview] of generatedDocumentPreviews) {
     const expired = preview?.state === "finalizing"
       ? Number(preview?.finalizingAt || 0) + GENERATED_DOCUMENT_PREVIEW_FINALIZE_TTL_MS <= now
-      : Number(preview?.expiresAt || 0) <= now;
+      : generatedDocumentPreviewEffectiveExpiresAt(preview) <= now;
     if (expired) removeGeneratedDocumentPreview(token, preview);
   }
   const cutoff = now - GENERATED_DOCUMENT_PREVIEW_RATE_WINDOW_MS;
@@ -34236,15 +34253,65 @@ function generatedDocumentEditorTokenHash(value) {
   return crypto.createHash("sha256").update(String(value || ""), "utf8").digest("hex");
 }
 
-function generatedDocumentEditorSessionMatches(session, editorToken, now = Date.now()) {
+function generatedDocumentEditorTokenMatches(session, editorToken) {
   const storedHash = String(session?.tokenHash || "");
   const suppliedHash = generatedDocumentEditorTokenHash(editorToken);
   const stored = Buffer.from(storedHash, "hex");
   const supplied = Buffer.from(suppliedHash, "hex");
   return stored.length === supplied.length
     && stored.length === 32
-    && crypto.timingSafeEqual(stored, supplied)
+    && crypto.timingSafeEqual(stored, supplied);
+}
+
+function generatedDocumentEditorSessionMatches(session, editorToken, now = Date.now()) {
+  return generatedDocumentEditorTokenMatches(session, editorToken)
     && Number(session?.expiresAt || 0) > now;
+}
+
+function generatedDocumentEditorRecoveryExpiresAt(session) {
+  const createdAt = Number(session?.createdAt || 0);
+  const storedRecoveryExpiresAt = Number(session?.recoveryExpiresAt || 0);
+  return storedRecoveryExpiresAt > 0
+    ? storedRecoveryExpiresAt
+    : (createdAt > 0 ? createdAt + GENERATED_DOCUMENT_EDITOR_RECOVERY_TTL_MS : 0);
+}
+
+function generatedDocumentEditorInitialRecoveryExpiresAt(authUser, now = Date.now()) {
+  const policyExpiresAt = now + GENERATED_DOCUMENT_EDITOR_RECOVERY_TTL_MS;
+  const authSessionExpiresAt = Number(authUser?.sessionExpiresAt || 0);
+  return authSessionExpiresAt > now
+    ? Math.min(policyExpiresAt, authSessionExpiresAt)
+    : policyExpiresAt;
+}
+
+function extendGeneratedDocumentEditorSession(metadata, authUser = null, now = Date.now()) {
+  const session = metadata?.editorSession;
+  if (!session || typeof session !== "object") {
+    throw generatedDocumentPreviewError("Сессия редактирования недействительна или завершена.", 403);
+  }
+  if (authUser) {
+    const owner = generatedDocumentPreviewOwner(authUser);
+    const userId = String(authUser.id || authUser.login || "").slice(0, 160);
+    if (!owner || !userId) throw generatedDocumentPreviewError("Требуется вход в систему.", 401);
+    if (String(session.userId || "") !== userId) {
+      throw generatedDocumentPreviewError("Сессия редактирования принадлежит другому пользователю.", 403);
+    }
+    if (String(metadata.owner || "") !== owner) {
+      throw generatedDocumentPreviewError("Предварительный просмотр принадлежит другой сессии.", 403);
+    }
+  }
+  const recoveryExpiresAt = generatedDocumentEditorRecoveryExpiresAt(session);
+  if (recoveryExpiresAt <= now) {
+    throw generatedDocumentPreviewError(
+      "Срок восстановления сессии редактирования истёк. Сформируйте документ заново.",
+      403
+    );
+  }
+  session.recoveryExpiresAt = recoveryExpiresAt;
+  session.expiresAt = Math.min(now + GENERATED_DOCUMENT_EDITOR_TTL_MS, recoveryExpiresAt);
+  session.lastRefreshedAt = now;
+  metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), recoveryExpiresAt);
+  return session;
 }
 
 function assertGeneratedDocumentEditorDocx(bytes) {
@@ -34340,6 +34407,7 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
     }
     const editorToken = crypto.randomBytes(32).toString("base64url");
     const now = Date.now();
+    const recoveryExpiresAt = generatedDocumentEditorInitialRecoveryExpiresAt(authUser, now);
     const editorSession = {
       tokenHash: generatedDocumentEditorTokenHash(editorToken),
       key: crypto
@@ -34348,7 +34416,9 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
         .digest("hex")
         .slice(0, 40),
       createdAt: now,
-      expiresAt: now + GENERATED_DOCUMENT_EDITOR_TTL_MS,
+      expiresAt: Math.min(now + GENERATED_DOCUMENT_EDITOR_TTL_MS, recoveryExpiresAt),
+      recoveryExpiresAt,
+      lastRefreshedAt: now,
       userId: String(authUser?.id || authUser?.login || "user").slice(0, 160),
       userName: String(authUser?.name || authUser?.login || "Пользователь").slice(0, 240),
       lastSavedAt: 0,
@@ -34356,11 +34426,12 @@ async function beginGeneratedDocumentPreviewEditor(token, authUser) {
       baseline: generatedDocumentEditorBaselineMetadata(metadata, editableBytes)
     };
     metadata.editorSession = editorSession;
-    metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), editorSession.expiresAt);
+    metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), recoveryExpiresAt);
     return {
       editorToken,
       editorKey: editorSession.key,
       editRevision: Math.max(0, Number(metadata.editRevision || 0)),
+      expiresAt: Number(editorSession.expiresAt || 0),
       fileName: String(metadata.fileName || "документ.docx"),
       outputFormat: normalizeGeneratedDocumentFormat(metadata.outputFormat)
     };
@@ -34437,6 +34508,93 @@ async function readGeneratedDocumentPreviewEditorContext(token, editorToken, opt
   return { previewToken: normalizedToken, metadata: preview, editableBytes };
 }
 
+function refreshGeneratedDocumentPreviewEditorMetadata(
+  metadata,
+  editorToken,
+  authUser = null,
+  now = Date.now()
+) {
+  if (!metadata || String(metadata.state || "pending") !== "pending") {
+    throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  }
+  if (!generatedDocumentEditorTokenMatches(metadata.editorSession, editorToken)) {
+    throw generatedDocumentPreviewError("Сессия редактирования недействительна или завершена.", 403);
+  }
+  assertGeneratedDocumentEditorBaseline(metadata);
+  const session = extendGeneratedDocumentEditorSession(metadata, authUser, now);
+  return {
+    editorToken: String(editorToken),
+    editRevision: Math.max(0, Number(metadata.editRevision || 0)),
+    expiresAt: Number(session.expiresAt || 0),
+    recoveryExpiresAt: Number(session.recoveryExpiresAt || 0),
+    fileName: String(metadata.fileName || "документ.docx"),
+    outputFormat: normalizeGeneratedDocumentFormat(metadata.outputFormat)
+  };
+}
+
+async function refreshGeneratedDocumentPreviewEditor(token, editorToken, authUser = null) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  const normalizedEditorToken = String(editorToken || "").trim();
+  if (!normalizedToken || !normalizedEditorToken) {
+    throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  }
+  if (useGeneratedDocumentPreviewFileStore()) {
+    return withGeneratedDocumentPreviewFileLock(async () => {
+      let metadata;
+      try {
+        metadata = JSON.parse(await fs.readFile(
+          generatedDocumentPreviewMetadataPath(normalizedToken),
+          "utf8"
+        ));
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+        }
+        throw error;
+      }
+      if (!generatedDocumentEditorTokenMatches(metadata.editorSession, normalizedEditorToken)) {
+        throw generatedDocumentPreviewError("Сессия редактирования недействительна или завершена.", 403);
+      }
+      const baseline = assertGeneratedDocumentEditorBaseline(metadata);
+      const baselineStat = await fs.stat(
+        generatedDocumentPreviewEditorBaselineFilePath(normalizedToken)
+      ).catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!baselineStat?.isFile() || baselineStat.size <= 0 || baseline.editableSize <= 0) {
+        throw generatedDocumentPreviewError(
+          "Исходная версия документа для восстановления недоступна. Сформируйте документ заново.",
+          409
+        );
+      }
+      const refreshed = refreshGeneratedDocumentPreviewEditorMetadata(
+        metadata,
+        normalizedEditorToken,
+        authUser
+      );
+      await writeJsonAtomic(generatedDocumentPreviewMetadataPath(normalizedToken), metadata, true);
+      return refreshed;
+    });
+  }
+  const preview = generatedDocumentPreviews.get(normalizedToken);
+  if (!preview) throw generatedDocumentPreviewError("Сессия редактирования не найдена.", 404);
+  if (!generatedDocumentEditorTokenMatches(preview.editorSession, normalizedEditorToken)) {
+    throw generatedDocumentPreviewError("Сессия редактирования недействительна или завершена.", 403);
+  }
+  if (!Buffer.isBuffer(preview?.editorBaselineBytes) || !preview.editorBaselineBytes.length) {
+    throw generatedDocumentPreviewError(
+      "Исходная версия документа для восстановления недоступна. Сформируйте документ заново.",
+      409
+    );
+  }
+  return refreshGeneratedDocumentPreviewEditorMetadata(
+    preview,
+    normalizedEditorToken,
+    authUser
+  );
+}
+
 async function storeGeneratedDocumentPreviewEditorError(token, editorToken, message) {
   const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
   const errorMessage = String(message || "Ошибка сохранения документа.").slice(0, 1000);
@@ -34487,9 +34645,10 @@ async function storeGeneratedDocumentPreviewEditedDocx(token, editorToken, docxB
       metadata.size = editedBytes.length;
       metadata.renderedRevision = metadata.editRevision;
     }
-    metadata.editorSession.lastSavedAt = Date.now();
+    const savedAt = Date.now();
+    metadata.editorSession.lastSavedAt = savedAt;
     metadata.editorSession.lastError = "";
-    metadata.expiresAt = Math.max(Number(metadata.expiresAt || 0), Date.now() + GENERATED_DOCUMENT_EDITOR_TTL_MS);
+    extendGeneratedDocumentEditorSession(metadata, null, savedAt);
     return metadata.editRevision;
   };
   if (useGeneratedDocumentPreviewFileStore()) {
@@ -34910,7 +35069,46 @@ async function handleGeneratedDocumentPreviewEditorStart(req, res, authUser) {
       ok: true,
       editorUrl,
       editorToken: session.editorToken,
-      editRevision: session.editRevision
+      editRevision: session.editRevision,
+      expiresAt: session.expiresAt
+    });
+  } catch (error) {
+    sendError(res, Number(error?.statusCode) || 400, error.message);
+  }
+}
+
+async function handleGeneratedDocumentPreviewEditorRefresh(req, res, authUser = null) {
+  try {
+    const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    assertGeneratedDocumentEditorBackendAvailable(req);
+    const previewToken = String(body.previewToken || "");
+    const editorToken = String(body.editorToken || "");
+    const refreshed = await refreshGeneratedDocumentPreviewEditor(
+      previewToken,
+      editorToken,
+      authUser
+    );
+    const editorBaseUrl = await resolveGeneratedDocumentEditorBrowserBaseUrl(req);
+    const editorUrl = generatedDocumentEditorServiceUrl(
+      editorBaseUrl,
+      "/api/contracts/student-document-preview/editor-page",
+      { previewToken, editorToken }
+    );
+    const settings = await getOnlyOfficeConverterSettings();
+    const proxyCookie = signGeneratedDocumentEditorProxyCookie(
+      editorToken,
+      refreshed.expiresAt,
+      settings.jwtSecret
+    );
+    sendJson(res, 200, {
+      ok: true,
+      editorUrl,
+      editorOrigin: new URL(editorUrl).origin,
+      editorToken: refreshed.editorToken,
+      editRevision: refreshed.editRevision,
+      expiresAt: refreshed.expiresAt
+    }, {
+      "Set-Cookie": generatedDocumentEditorProxyCookieHeader(req, proxyCookie)
     });
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 400, error.message);
@@ -34922,6 +35120,7 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
     assertGeneratedDocumentEditorBackendAvailable(req);
     const previewToken = String(requestUrl.searchParams.get("previewToken") || "");
     const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
+    await refreshGeneratedDocumentPreviewEditor(previewToken, editorToken);
     const context = await readGeneratedDocumentPreviewEditorContext(
       previewToken,
       editorToken,
@@ -34939,6 +35138,7 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
       editorType
     );
     const safeConfig = JSON.stringify(config).replace(/</gu, "\\u003c");
+    const safePreviewToken = JSON.stringify(previewToken).replace(/</gu, "\\u003c");
     const safeSession = JSON.stringify(editorToken).replace(/</gu, "\\u003c");
     const proxyCookie = signGeneratedDocumentEditorProxyCookie(
       editorToken,
@@ -34963,6 +35163,7 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
   <script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
   <script>
     (() => {
+      const previewToken = ${safePreviewToken};
       const editorSession = ${safeSession};
       const notify = (type, details = {}) => parent.postMessage({
         source: "ais-generated-document-editor",
@@ -34970,6 +35171,52 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
         type,
         ...details
       }, "*");
+      let sessionRefreshPending = false;
+      const refreshSession = async () => {
+        if (sessionRefreshPending) return;
+        sessionRefreshPending = true;
+        let responseStatus = 0;
+        try {
+          const response = await fetch("/api/contracts/student-document-preview/editor-refresh", {
+            method: "POST",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ previewToken, editorToken: editorSession })
+          });
+          responseStatus = response.status;
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const error = new Error(payload.error || ("Ошибка сервера: " + response.status));
+            error.status = response.status;
+            throw error;
+          }
+          if (payload.editorToken && payload.editorToken !== editorSession) {
+            throw new Error("Сервер вернул данные другой сессии редактирования.");
+          }
+          notify("session", {
+            expiresAt: Math.max(0, Number(payload.expiresAt || 0)),
+            editRevision: Math.max(0, Number(payload.editRevision || 0))
+          });
+        } catch (error) {
+          notify("session-error", {
+            message: String(error?.message || "Не удалось обновить сессию редактирования."),
+            status: Math.max(0, Number(error?.status || responseStatus || 0))
+          });
+        } finally {
+          sessionRefreshPending = false;
+        }
+      };
+      const sessionHeartbeat = window.setInterval(
+        refreshSession,
+        ${GENERATED_DOCUMENT_EDITOR_HEARTBEAT_MS}
+      );
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refreshSession();
+      });
+      window.addEventListener("online", refreshSession);
+      window.addEventListener("pageshow", refreshSession);
+      window.addEventListener("beforeunload", () => window.clearInterval(sessionHeartbeat), { once: true });
       const config = ${safeConfig};
       config.events = {
         onDocumentReady() {
@@ -35076,6 +35323,7 @@ async function handleGeneratedDocumentPreviewEditorCallback(req, res, requestUrl
   const editorToken = String(requestUrl.searchParams.get("editorToken") || "");
   try {
     assertGeneratedDocumentEditorBackendAvailable(req);
+    await refreshGeneratedDocumentPreviewEditor(previewToken, editorToken);
     const context = await readGeneratedDocumentPreviewEditorContext(
       previewToken,
       editorToken,
@@ -35173,9 +35421,11 @@ async function waitForGeneratedDocumentEditorSave(previewToken, editorToken, pre
 
 async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
   try {
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
     const previewToken = String(body.previewToken || "");
     const editorToken = String(body.editorToken || "");
+    await refreshGeneratedDocumentPreviewEditor(previewToken, editorToken, authUser);
     const context = await readGeneratedDocumentPreviewEditorContext(
       previewToken,
       editorToken,
@@ -35212,7 +35462,9 @@ async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
 
 async function handleGeneratedDocumentPreviewEditorDiscard(req, res, authUser) {
   try {
+    assertGeneratedDocumentEditorBackendAvailable(req);
     const body = await readJsonBody(req, GENERATED_DOCUMENT_PREVIEW_CONTROL_MAX_JSON_BYTES);
+    await refreshGeneratedDocumentPreviewEditor(body.previewToken, body.editorToken, authUser);
     const discarded = await discardGeneratedDocumentPreviewEditor(
       body.previewToken,
       body.editorToken,
@@ -38779,6 +39031,14 @@ async function route(req, res) {
     return;
   }
   if (
+    req.method === "POST"
+    && requestUrl.pathname === "/api/contracts/student-document-preview/editor-refresh"
+  ) {
+    const optionalAuthUser = await getRequestAuthUser(req).catch(() => null);
+    await handleGeneratedDocumentPreviewEditorRefresh(req, res, optionalAuthUser);
+    return;
+  }
+  if (
     ["GET", "HEAD"].includes(req.method)
     && requestUrl.pathname === "/api/contracts/student-document-preview/editor-file"
   ) {
@@ -39519,8 +39779,10 @@ module.exports = {
   sanitizeOnlyOfficeEditorSaveError,
   generatedDocumentRequestBackend,
   assertGeneratedDocumentEditorBackendAvailable,
+  generatedDocumentEditorTokenMatches,
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
+  refreshGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,
   discardGeneratedDocumentPreviewEditor,
   completeGeneratedDocumentPreviewEditor,

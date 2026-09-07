@@ -3,6 +3,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
@@ -21,6 +22,7 @@ function getCssRule(source, selector, fromIndex = 0) {
 const {
   registerGeneratedDocumentPreview,
   beginGeneratedDocumentPreviewEditor,
+  refreshGeneratedDocumentPreviewEditor,
   storeGeneratedDocumentPreviewEditedDocx,
   discardGeneratedDocumentPreviewEditor,
   completeGeneratedDocumentPreviewEditor,
@@ -163,6 +165,205 @@ const editorChangedBytes = fs.readFileSync(path.join(
   "document-templates",
   "employee-contract-education-no-stamp.docx"
 ));
+
+const realDateNow = Date.now;
+let simulatedEditorNow = realDateNow();
+Date.now = () => simulatedEditorNow;
+try {
+  const slidingEditorPreviewToken = await registerGeneratedDocumentPreview({
+    bytes: editorSourceBytes,
+    editableBytes: editorSourceBytes,
+    outputFormat: "docx",
+    fileName: "Продление активности редактора.docx",
+    extraHeaders: {}
+  }, owner);
+  const slidingEditorSession = await beginGeneratedDocumentPreviewEditor(
+    slidingEditorPreviewToken,
+    owner
+  );
+  simulatedEditorNow += 90 * 60 * 1000;
+  assert.equal(
+    await storeGeneratedDocumentPreviewEditedDocx(
+      slidingEditorPreviewToken,
+      slidingEditorSession.editorToken,
+      editorChangedBytes
+    ),
+    slidingEditorSession.editRevision + 1,
+    "Автосохранение через 90 минут должно продлить срок editor session"
+  );
+  simulatedEditorNow += 60 * 60 * 1000;
+  assert.equal(
+    await storeGeneratedDocumentPreviewEditedDocx(
+      slidingEditorPreviewToken,
+      slidingEditorSession.editorToken,
+      editorSourceBytes
+    ),
+    slidingEditorSession.editRevision + 2,
+    "Повторное сохранение через 150 минут от старта должно работать благодаря sliding TTL"
+  );
+  await discardGeneratedDocumentPreviewEditor(
+    slidingEditorPreviewToken,
+    slidingEditorSession.editorToken,
+    owner
+  );
+  assert.equal(await cancelGeneratedDocumentPreview(slidingEditorPreviewToken, owner), true);
+} finally {
+  Date.now = realDateNow;
+}
+
+simulatedEditorNow = realDateNow();
+Date.now = () => simulatedEditorNow;
+try {
+  const authSessionExpiresAt = simulatedEditorNow + 3 * 60 * 60 * 1000;
+  const authBoundOwner = { ...owner, sessionExpiresAt: authSessionExpiresAt };
+  const authBoundPreviewToken = await registerGeneratedDocumentPreview({
+    bytes: editorSourceBytes,
+    editableBytes: editorSourceBytes,
+    outputFormat: "docx",
+    fileName: "Сессия редактора в пределах авторизации.docx",
+    extraHeaders: {}
+  }, authBoundOwner);
+  const authBoundEditorSession = await beginGeneratedDocumentPreviewEditor(
+    authBoundPreviewToken,
+    authBoundOwner
+  );
+  simulatedEditorNow = authSessionExpiresAt + 60 * 1000;
+  await assert.rejects(
+    refreshGeneratedDocumentPreviewEditor(
+      authBoundPreviewToken,
+      authBoundEditorSession.editorToken,
+      authBoundOwner
+    ),
+    (error) => error?.statusCode === 403,
+    "Editor capability не должна восстанавливаться после окончания исходной auth-сессии"
+  );
+  pruneGeneratedDocumentPreviews(simulatedEditorNow);
+  assert.equal(
+    await cancelGeneratedDocumentPreview(authBoundPreviewToken, authBoundOwner),
+    false,
+    "Cleaner должен удалить preview после ограниченного auth-сессией recovery TTL"
+  );
+} finally {
+  Date.now = realDateNow;
+}
+
+simulatedEditorNow = realDateNow();
+Date.now = () => simulatedEditorNow;
+try {
+  const recoverableEditorPreviewToken = await registerGeneratedDocumentPreview({
+    bytes: editorSourceBytes,
+    editableBytes: editorSourceBytes,
+    outputFormat: "docx",
+    fileName: "Восстановление сессии редактора.docx",
+    extraHeaders: {}
+  }, owner);
+  const recoverableEditorSession = await beginGeneratedDocumentPreviewEditor(
+    recoverableEditorPreviewToken,
+    owner
+  );
+  await assert.rejects(
+    refreshGeneratedDocumentPreviewEditor(
+      recoverableEditorPreviewToken,
+      recoverableEditorSession.editorToken,
+      ownerOtherSession
+    ),
+    (error) => error?.statusCode === 403,
+    "Другая авторизационная сессия того же пользователя не должна обновлять editor session"
+  );
+  await assert.rejects(
+    refreshGeneratedDocumentPreviewEditor(
+      recoverableEditorPreviewToken,
+      "wrong-editor-token",
+      owner
+    ),
+    (error) => error?.statusCode === 403,
+    "Неверный editor token не должен обновлять или заменять editor session"
+  );
+  assert.ok(
+    await refreshGeneratedDocumentPreviewEditor(
+      recoverableEditorPreviewToken,
+      recoverableEditorSession.editorToken,
+      owner
+    ),
+    "Отказы чужой сессии и неверного token не должны повреждать исходную editor session"
+  );
+  simulatedEditorNow += 2 * 60 * 60 * 1000 + 60 * 1000;
+  assert.ok(
+    await refreshGeneratedDocumentPreviewEditor(
+      recoverableEditorPreviewToken,
+      recoverableEditorSession.editorToken,
+      owner
+    ),
+    "Та же editor session должна восстанавливаться после основного TTL в пределах recovery grace"
+  );
+  pruneGeneratedDocumentPreviews(simulatedEditorNow);
+  assert.equal(
+    await storeGeneratedDocumentPreviewEditedDocx(
+      recoverableEditorPreviewToken,
+      recoverableEditorSession.editorToken,
+      editorChangedBytes
+    ),
+    recoverableEditorSession.editRevision + 1,
+    "Обновлённая просроченная editor session должна принимать последующее сохранение"
+  );
+  await discardGeneratedDocumentPreviewEditor(
+    recoverableEditorPreviewToken,
+    recoverableEditorSession.editorToken,
+    owner
+  );
+  assert.equal(await cancelGeneratedDocumentPreview(recoverableEditorPreviewToken, owner), true);
+} finally {
+  Date.now = realDateNow;
+}
+
+simulatedEditorNow = realDateNow();
+Date.now = () => simulatedEditorNow;
+try {
+  const replacementEditorPreviewToken = await registerGeneratedDocumentPreview({
+    bytes: editorSourceBytes,
+    editableBytes: editorSourceBytes,
+    outputFormat: "docx",
+    fileName: "Конфликт сессий редактора.docx",
+    extraHeaders: {}
+  }, owner);
+  const expiredEditorSession = await beginGeneratedDocumentPreviewEditor(
+    replacementEditorPreviewToken,
+    owner
+  );
+  simulatedEditorNow += 2 * 60 * 60 * 1000 + 60 * 1000;
+  const activeReplacementSession = await beginGeneratedDocumentPreviewEditor(
+    replacementEditorPreviewToken,
+    owner
+  );
+  assert.notEqual(activeReplacementSession.editorToken, expiredEditorSession.editorToken);
+  await assert.rejects(
+    refreshGeneratedDocumentPreviewEditor(
+      replacementEditorPreviewToken,
+      expiredEditorSession.editorToken,
+      owner
+    ),
+    (error) => [403, 409, 423].includes(Number(error?.statusCode || 0)),
+    "Старая вкладка не должна перехватывать preview после открытия новой активной editor session"
+  );
+  assert.equal(
+    await storeGeneratedDocumentPreviewEditedDocx(
+      replacementEditorPreviewToken,
+      activeReplacementSession.editorToken,
+      editorChangedBytes
+    ),
+    activeReplacementSession.editRevision + 1,
+    "Неудачный refresh старой вкладки не должен повреждать новую активную editor session"
+  );
+  await discardGeneratedDocumentPreviewEditor(
+    replacementEditorPreviewToken,
+    activeReplacementSession.editorToken,
+    owner
+  );
+  assert.equal(await cancelGeneratedDocumentPreview(replacementEditorPreviewToken, owner), true);
+} finally {
+  Date.now = realDateNow;
+}
+
 const editorPreviewToken = await registerGeneratedDocumentPreview({
   bytes: editorSourceBytes,
   editableBytes: editorSourceBytes,
@@ -193,6 +394,15 @@ const completedEditor = await completeGeneratedDocumentPreviewEditor(
   storedEditorRevision
 );
 assert.deepEqual(completedEditor, { completed: true, editRevision: storedEditorRevision });
+await assert.rejects(
+  refreshGeneratedDocumentPreviewEditor(
+    editorPreviewToken,
+    editorSession.editorToken,
+    owner
+  ),
+  (error) => [403, 409].includes(Number(error?.statusCode || 0)),
+  "Уже завершённая editor session не должна восстанавливаться"
+);
 await assert.rejects(
   storeGeneratedDocumentPreviewEditedDocx(
     editorPreviewToken,
@@ -359,6 +569,11 @@ const editorGenerated = {
     process.stdout.write(JSON.stringify(await api.beginGeneratedDocumentPreviewEditor(token, owner)));
     return;
   }
+  if (action === "refresh-editor") {
+    await api.refreshGeneratedDocumentPreviewEditor(token, editorToken, owner);
+    process.stdout.write("refreshed");
+    return;
+  }
   if (action === "store-editor") {
     process.stdout.write(String(await api.storeGeneratedDocumentPreviewEditedDocx(
       token,
@@ -447,6 +662,52 @@ const crossProcessEditorToken = runPreviewChild("register-editor");
 assert.match(crossProcessEditorToken, /^[A-Za-z0-9_-]{32}$/u);
 const crossProcessEditorSession = JSON.parse(runPreviewChild("begin-editor", crossProcessEditorToken));
 assert.match(crossProcessEditorSession.editorToken, /^[A-Za-z0-9_-]{43}$/u);
+const crossProcessEditorMetadataPath = path.join(
+  crossProcessStorageRoot,
+  `${crossProcessEditorToken}.json`
+);
+const staleCrossProcessEditorMetadata = JSON.parse(
+  fs.readFileSync(crossProcessEditorMetadataPath, "utf8")
+);
+const crossProcessEditorKey = staleCrossProcessEditorMetadata.editorSession.key;
+const crossProcessEditorBaseline = staleCrossProcessEditorMetadata.editorSession.baseline;
+staleCrossProcessEditorMetadata.editorSession.expiresAt = Date.now() - 60 * 1000;
+fs.writeFileSync(
+  crossProcessEditorMetadataPath,
+  JSON.stringify(staleCrossProcessEditorMetadata),
+  "utf8"
+);
+assert.equal(
+  runPreviewChild(
+    "refresh-editor",
+    crossProcessEditorToken,
+    crossProcessEditorSession.editorToken
+  ),
+  "refreshed",
+  "Просроченная собственная editor session должна обновляться из другого процесса"
+);
+const refreshedCrossProcessEditorMetadata = JSON.parse(
+  fs.readFileSync(crossProcessEditorMetadataPath, "utf8")
+);
+assert.ok(
+  Number(refreshedCrossProcessEditorMetadata.editorSession.expiresAt || 0) > Date.now(),
+  "Cross-process refresh должен продлить editorSession.expiresAt"
+);
+assert.ok(
+  Number(refreshedCrossProcessEditorMetadata.expiresAt || 0)
+    >= Number(refreshedCrossProcessEditorMetadata.editorSession.expiresAt || 0),
+  "Cross-process refresh должен сохранить preview не меньше срока editor session"
+);
+assert.equal(
+  refreshedCrossProcessEditorMetadata.editorSession.key,
+  crossProcessEditorKey,
+  "Refresh не должен менять ONLYOFFICE document key"
+);
+assert.deepEqual(
+  refreshedCrossProcessEditorMetadata.editorSession.baseline,
+  crossProcessEditorBaseline,
+  "Refresh не должен менять baseline для отмены правок"
+);
 assert.equal(
   runPreviewChild("store-editor", crossProcessEditorToken, crossProcessEditorSession.editorToken),
   String(crossProcessEditorSession.editRevision + 1)
@@ -643,9 +904,11 @@ assert.match(appSource, /skipOpenAfterGeneration:\s*true/u, "Групповые 
 assert.match(appSource, /student-document-preview\/finalize/u);
 assert.match(appSource, /student-document-preview\/cancel/u);
 assert.match(appSource, /student-document-preview\/editor-start/u);
+assert.match(appSource, /student-document-preview\/editor-refresh/u);
 assert.match(appSource, /student-document-preview\/editor-save/u);
 assert.match(appSource, /student-document-preview\/editor-discard/u);
 assert.match(appSource, /data-action="edit-generated-document-preview"/u);
+assert.match(appSource, /data-action="refresh-generated-document-editor"[^>]*>Обновить сессию</u);
 assert.match(appSource, /data-action="save-generated-document-editor"/u);
 assert.match(appSource, /data-action="cancel-generated-document-editor-or-preview"/u);
 assert.match(appSource, /ais-generated-document-editor/u);
@@ -671,6 +934,154 @@ assert.match(
   appSource,
   /4 \* 60 \* 1000, "ONLYOFFICE не завершил сохранение документа за 4 минуты/u,
   "Клиент должен ждать дольше максимального серверного цикла сохранения и конвертации"
+);
+
+const editorClientApiStart = appSource.indexOf("  function generatedDocumentEditorResponseError");
+const editorClientApiEnd = appSource.indexOf(
+  "  function showGeneratedDocumentPreview",
+  editorClientApiStart
+);
+assert.ok(editorClientApiStart >= 0 && editorClientApiEnd > editorClientApiStart);
+const editorClientApiSource = appSource
+  .slice(editorClientApiStart, editorClientApiEnd)
+  .replace(/^  /gmu, "");
+const clientRequestLog = [];
+let clientResponseQueue = [];
+const editorClientApiContext = {
+  Boolean,
+  Error,
+  Math,
+  Number,
+  String,
+  URL,
+  documentProcessingApiUrl: (pathname) => pathname,
+  fetchWithTimeout: async (url, request, _timeoutMs, _timeoutMessage, parseResponse) => {
+    clientRequestLog.push({ url, request });
+    const specification = clientResponseQueue.shift();
+    assert.ok(specification, `Не подготовлен тестовый ответ для ${url}`);
+    const headers = new Map(Object.entries(specification.headers || {}).map(([name, value]) => [
+      name.toLowerCase(),
+      String(value)
+    ]));
+    const response = {
+      ok: specification.status >= 200 && specification.status < 300,
+      status: specification.status,
+      headers: { get: (name) => headers.get(String(name).toLowerCase()) || null },
+      json: async () => specification.payload || {},
+      blob: async () => specification.blob || { kind: "pdf" }
+    };
+    return parseResponse(response);
+  }
+};
+vm.createContext(editorClientApiContext);
+vm.runInContext(
+  `${editorClientApiSource}\nthis.saveGeneratedDocumentEditor = saveGeneratedDocumentEditor;`,
+  editorClientApiContext
+);
+const makeClientEditorSession = () => ({
+  editorUrl: "https://editor.example/session",
+  editorOrigin: "https://editor.example",
+  editorToken: "editor-token",
+  editRevision: 0,
+  expiresAt: 0
+});
+
+clientResponseQueue = [
+  { status: 404, payload: { error: "Сессия редактирования не найдена." } },
+  {
+    status: 200,
+    payload: {
+      ok: true,
+      editorToken: "editor-token",
+      editorUrl: "https://editor.example/session",
+      editRevision: 0,
+      expiresAt: Date.now() + 60 * 60 * 1000
+    }
+  },
+  {
+    status: 200,
+    headers: {
+      "Content-Type": "application/pdf",
+      "X-Document-Preview-Revision": "1"
+    }
+  }
+];
+clientRequestLog.length = 0;
+const recoveredClientSave = await editorClientApiContext.saveGeneratedDocumentEditor(
+  "preview-token",
+  makeClientEditorSession(),
+  "https://processing.example",
+  true
+);
+assert.equal(recoveredClientSave.editRevision, 1);
+assert.deepEqual(
+  clientRequestLog.map(({ url }) => url),
+  [
+    "/api/contracts/student-document-preview/editor-save",
+    "/api/contracts/student-document-preview/editor-refresh",
+    "/api/contracts/student-document-preview/editor-save"
+  ],
+  "404 сохранения должен вызвать ровно один refresh и ровно один повтор save"
+);
+
+clientResponseQueue = [
+  { status: 404, payload: { error: "Сессия редактирования не найдена." } },
+  {
+    status: 200,
+    payload: {
+      ok: true,
+      editorToken: "editor-token",
+      editorUrl: "https://editor.example/session",
+      editRevision: 0,
+      expiresAt: Date.now() + 60 * 60 * 1000
+    }
+  },
+  { status: 404, payload: { error: "Сессия редактирования не найдена." } }
+];
+clientRequestLog.length = 0;
+await assert.rejects(
+  Promise.race([
+    editorClientApiContext.saveGeneratedDocumentEditor(
+      "preview-token",
+      makeClientEditorSession(),
+      "https://processing.example",
+      true
+    ),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("Повтор сохранения зациклился.")),
+      250
+    ))
+  ]),
+  /Сессия редактирования не найдена/u
+);
+assert.equal(
+  clientRequestLog.filter(({ url }) => url.endsWith("/editor-save")).length,
+  2,
+  "Постоянный 404 допускает не больше двух save-запросов"
+);
+assert.equal(
+  clientRequestLog.filter(({ url }) => url.endsWith("/editor-refresh")).length,
+  1,
+  "Постоянный 404 допускает только одну попытку refresh"
+);
+
+clientResponseQueue = [
+  { status: 409, payload: { error: "Документ изменился во время сохранения." } }
+];
+clientRequestLog.length = 0;
+await assert.rejects(
+  editorClientApiContext.saveGeneratedDocumentEditor(
+    "preview-token",
+    makeClientEditorSession(),
+    "https://processing.example",
+    true
+  ),
+  /Документ изменился/u
+);
+assert.deepEqual(
+  clientRequestLog.map(({ url }) => url),
+  ["/api/contracts/student-document-preview/editor-save"],
+  "409 конфликта нельзя лечить refresh или автоматическим перехватом"
 );
 
 const previewModalStart = appSource.indexOf("function showGeneratedDocumentPreview");
@@ -730,6 +1141,41 @@ assert.match(
   /finally \{\s+if \(startSequence === editorStartSequence\) editorStartPending = false;\s+if \(!settled && startSequence === editorStartSequence\)/u,
   "Завершение устаревшего editor-start не должно менять состояние нового или закрытого предпросмотра"
 );
+assert.match(
+  previewModalSource,
+  /const refreshCurrentEditorSession = async \(\) => \{[\s\S]+refreshGeneratedDocumentEditor\([\s\S]+if \(settled \|\| editorSession !== sessionToRefresh\) return false;[\s\S]+frame\.src = refreshedEditorFrameUrl\(sessionToRefresh\)/u,
+  "Кнопка обновления должна продлить ту же сессию и перезагрузить iframe только пока открыт тот же редактор"
+);
+const manualRefreshStart = previewModalSource.indexOf("const refreshCurrentEditorSession = async () =>");
+const manualRefreshEnd = previewModalSource.indexOf("const saveCurrentEditorChanges = async () =>", manualRefreshStart);
+const manualRefreshSource = previewModalSource.slice(manualRefreshStart, manualRefreshEnd);
+const manualRefreshRequest = manualRefreshSource.indexOf("await refreshGeneratedDocumentEditor(");
+const manualRefreshReload = manualRefreshSource.indexOf("frame.src = refreshedEditorFrameUrl");
+const pendingRecheck = manualRefreshSource.indexOf("if (editorChangesPending)", manualRefreshRequest);
+assert.ok(manualRefreshRequest >= 0 && pendingRecheck > manualRefreshRequest);
+assert.ok(manualRefreshReload > pendingRecheck);
+assert.match(manualRefreshSource, /frame\.setAttribute\("inert", ""\)[\s\S]+frame\.style\.pointerEvents = "none"/u);
+assert.match(manualRefreshSource, /frame\.removeAttribute\("inert"\)[\s\S]+frame\.style\.pointerEvents = previousFramePointerEvents/u);
+assert.match(
+  previewModalSource,
+  /refreshButton\?\.addEventListener\("click", refreshCurrentEditorSession\)/u,
+  "Кнопка «Обновить сессию» должна иметь обработчик"
+);
+assert.match(
+  previewModalSource,
+  /refreshBeforeSave:\s*sessionExpiresSoon[\s\S]+\[403, 404\]\.includes\(editorSessionRefreshStatus\)/u,
+  "Сохранение должно предварительно обновлять истекающую или ранее потерянную сессию"
+);
+assert.match(
+  previewModalSource,
+  /catch \(error\) \{[\s\S]+\[403, 404\]\.includes\(Number\(error\?\.status \|\| 0\)\)[\s\S]+markEditorSessionRefreshError/u,
+  "После исчерпания bounded retry UI должен предложить ручное обновление сессии"
+);
+assert.match(
+  previewModalSource,
+  /finally \{[\s\S]+editorActionPending = false;[\s\S]+saveButton\.disabled = !editorReady \|\| editorChangesPending;[\s\S]+refreshButton\.disabled = editorChangesPending;[\s\S]+cancelButton\.disabled = false;/u,
+  "Неудачное сохранение или обновление не должно навсегда блокировать действия окна"
+);
 
 const pipelineStart = appSource.indexOf("async function downloadStudentDocumentFromTemplate");
 const pipelineEnd = appSource.indexOf("async function openStudentEducationDocument", pipelineStart);
@@ -765,6 +1211,55 @@ assert.match(serverSource, /await registerDocumentConversionSource\(docxBytes\)/
 assert.match(serverSource, /await readDocumentConversionSource\(token\)/u);
 assert.match(serverSource, /editableBytes:\s*docxResult/u);
 assert.match(serverSource, /handleGeneratedDocumentPreviewEditorStart/u);
+assert.match(serverSource, /handleGeneratedDocumentPreviewEditorRefresh/u);
+assert.match(
+  serverSource,
+  /const GENERATED_DOCUMENT_EDITOR_RECOVERY_TTL_MS = 12 \* 60 \* 60 \* 1000;/u,
+  "Recovery grace editor session должен составлять 12 часов"
+);
+assert.match(
+  serverSource,
+  /const GENERATED_DOCUMENT_EDITOR_HEARTBEAT_MS = 60 \* 1000;/u,
+  "Iframe должен обновлять editor session раз в минуту"
+);
+assert.match(
+  serverSource,
+  /function generatedDocumentEditorTokenMatches[\s\S]+crypto\.timingSafeEqual/u,
+  "Refresh должен сверять editor token constant-time"
+);
+assert.match(
+  serverSource,
+  /function refreshGeneratedDocumentPreviewEditorMetadata[\s\S]+generatedDocumentEditorTokenMatches\(metadata\.editorSession, editorToken\)[\s\S]+extendGeneratedDocumentEditorSession\(metadata, authUser, now\)/u,
+  "Refresh должен продлевать только ту же editor session и проверять владельца"
+);
+assert.match(
+  serverSource,
+  /async function storeGeneratedDocumentPreviewEditedDocx[\s\S]+extendGeneratedDocumentEditorSession\(metadata, null, savedAt\)/u,
+  "Успешный callback/autosave должен продлевать editorSession.expiresAt"
+);
+const editorRefreshHandlerSource = serverSource.slice(
+  serverSource.indexOf("async function handleGeneratedDocumentPreviewEditorRefresh"),
+  serverSource.indexOf("async function handleGeneratedDocumentPreviewEditorPage")
+);
+assert.match(editorRefreshHandlerSource, /assertGeneratedDocumentEditorBackendAvailable\(req\)/u);
+assert.match(editorRefreshHandlerSource, /refreshGeneratedDocumentPreviewEditor\(/u);
+assert.match(editorRefreshHandlerSource, /Set-Cookie/u, "Refresh должен продлевать proxy-cookie ONLYOFFICE");
+const editorPageHandlerSource = serverSource.slice(
+  serverSource.indexOf("async function handleGeneratedDocumentPreviewEditorPage"),
+  serverSource.indexOf("async function handleGeneratedDocumentPreviewEditorFile")
+);
+assert.match(editorPageHandlerSource, /let sessionRefreshPending = false/u);
+assert.match(
+  editorPageHandlerSource,
+  /if \(sessionRefreshPending\) return;[\s\S]+sessionRefreshPending = true;[\s\S]+finally \{\s*sessionRefreshPending = false;/u,
+  "Heartbeat не должен запускать перекрывающиеся refresh-запросы"
+);
+assert.match(editorPageHandlerSource, /student-document-preview\/editor-refresh/u);
+assert.match(editorPageHandlerSource, /window\.setInterval\([\s\S]+GENERATED_DOCUMENT_EDITOR_HEARTBEAT_MS/u);
+assert.match(editorPageHandlerSource, /document\.addEventListener\("visibilitychange"[\s\S]+visibilityState === "visible"[\s\S]+refreshSession/u);
+assert.match(editorPageHandlerSource, /window\.addEventListener\("online", refreshSession\)/u);
+assert.match(editorPageHandlerSource, /window\.addEventListener\("pageshow", refreshSession\)/u);
+assert.match(editorPageHandlerSource, /beforeunload[\s\S]+clearInterval\(sessionHeartbeat\)/u);
 assert.match(
   serverSource,
   /function assertGeneratedDocumentEditorBackendAvailable[\s\S]+generatedDocumentRequestBackend\(req\) !== "server"[\s\S]+Онлайн-редактор доступен только через локальный сервис[\s\S]+503/u,
