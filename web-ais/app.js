@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.394",
+    version: "1.7.395",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.395",
+      releasedAt: "2026-09-07",
+      changes: [
+        "При удержании Ctrl над подсвеченной гиперссылкой в поле курсор меняется на руку и показывает, что ссылка доступна для перехода."
+      ]
+    },
     {
       version: "1.7.394",
       releasedAt: "2026-09-07",

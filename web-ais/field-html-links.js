@@ -11,6 +11,7 @@
   let resizeObserver = null;
   let mutationObserver = null;
   let layoutSyncFrame = 0;
+  let linkModifierActive = false;
 
   function escapeHtml(value) {
     return String(value || "")
@@ -334,6 +335,20 @@
     if (url) openExternalHttpUrl(url);
   }
 
+  function setLinkModifierActive(active) {
+    const nextActive = Boolean(active);
+    if (linkModifierActive === nextActive) return;
+    linkModifierActive = nextActive;
+    document.documentElement?.classList?.toggle(
+      "native-html-link-modifier-active",
+      linkModifierActive
+    );
+  }
+
+  function syncLinkModifierState(event) {
+    setLinkModifierActive(Boolean(event?.ctrlKey || event?.metaKey));
+  }
+
   function getFields(root = document) {
     const fields = [];
     if (isNativeField(root)) fields.push(root);
@@ -374,7 +389,14 @@
       const overlay = fieldOverlays.get(event.target);
       if (overlay) positionFieldHighlight(event.target, overlay);
     }, true);
+    document.addEventListener("keydown", syncLinkModifierState, true);
+    document.addEventListener("keyup", syncLinkModifierState, true);
+    document.addEventListener("pointermove", syncLinkModifierState, true);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) setLinkModifierActive(false);
+    });
     document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("blur", () => setLinkModifierActive(false));
     window.addEventListener("resize", () => {
       document.querySelectorAll("[data-native-html-link-field]").forEach(syncFieldHighlight);
     });

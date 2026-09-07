@@ -6100,6 +6100,13 @@ body.long-press-dragging * {
   -webkit-text-fill-color: currentColor;
 }
 
+.native-html-link-modifier-active
+  .native-html-link-highlight
+  .communication-template-html-link {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 .has-native-html-links {
   color: transparent !important;
   caret-color: var(--text);

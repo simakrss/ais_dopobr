@@ -145,11 +145,16 @@ class MockOverlay {
 }
 
 const documentListeners = new Map();
+const windowListeners = new Map();
 const opened = [];
 const resizeObservers = [];
 const mutationObservers = [];
 const animationFrames = [];
 const document = {
+  hidden: false,
+  documentElement: {
+    classList: new MockClassList()
+  },
   body: {
     appendChild(element) {
       element.parentElement = this;
@@ -232,7 +237,9 @@ const window = {
       }
     };
   },
-  addEventListener() {},
+  addEventListener(name, listener) {
+    windowListeners.set(name, listener);
+  },
   requestAnimationFrame(callback) {
     animationFrames.push(callback);
     return animationFrames.length;
@@ -279,6 +286,10 @@ assert.equal(typeof api.bind, "function");
 assert.equal(documentListeners.get("click").capture, true);
 assert.equal(documentListeners.get("input").capture, true);
 assert.equal(documentListeners.get("scroll").capture, true);
+assert.equal(documentListeners.get("keydown").capture, true);
+assert.equal(documentListeners.get("keyup").capture, true);
+assert.equal(documentListeners.get("pointermove").capture, true);
+assert.ok(documentListeners.has("visibilitychange"));
 assert.equal(mutationObservers.length, 1);
 assert.deepEqual(
   JSON.parse(JSON.stringify(mutationObservers[0].options)),
@@ -313,6 +324,23 @@ assert.match(rendered, /&lt;b&gt;/u);
 assert.match(rendered, /data-template-external-url="https:\/\/example\.test\/a\?x=1&amp;y=2"/u);
 assert.match(rendered, />https:\/\/example\.test\/a\?x=1&amp;y=2<\/span>\),/u);
 assert.match(rendered, />https:\/\/two\.test\/b<\/span>!&lt;\/b&gt;/u);
+
+documentListeners.get("keydown").listener({ ctrlKey: true, metaKey: false });
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), true);
+documentListeners.get("keyup").listener({ ctrlKey: false, metaKey: false });
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), false);
+documentListeners.get("pointermove").listener({ ctrlKey: false, metaKey: true });
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), true);
+documentListeners.get("pointermove").listener({ ctrlKey: false, metaKey: false });
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), false);
+documentListeners.get("keydown").listener({ ctrlKey: true, metaKey: false });
+document.hidden = true;
+documentListeners.get("visibilitychange").listener();
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), false);
+document.hidden = false;
+documentListeners.get("keydown").listener({ ctrlKey: true, metaKey: false });
+windowListeners.get("blur")();
+assert.equal(document.documentElement.classList.contains("native-html-link-modifier-active"), false);
 
 function createClickEvent(target, options = {}) {
   const calls = { preventDefault: 0, stopImmediatePropagation: 0, stopPropagation: 0 };
@@ -489,6 +517,14 @@ assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?color:\s*transpa
 assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?caret-color:/u);
 assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?text-shadow:\s*none\s*!important/u);
 assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link/u);
+assert.match(
+  stylesSource,
+  /\.native-html-link-highlight \.communication-template-html-link\s*\{[\s\S]*?cursor:\s*inherit;/u
+);
+assert.match(
+  stylesSource,
+  /\.native-html-link-modifier-active[\s\S]*?\.native-html-link-highlight[\s\S]*?\.communication-template-html-link\s*\{[\s\S]*?cursor:\s*pointer;[\s\S]*?pointer-events:\s*auto;/u
+);
 assert.match(stylesSource, /\.native-html-link-highlight[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
 assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
 assert.match(
