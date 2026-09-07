@@ -16541,6 +16541,75 @@ function pairStudentDatabaseFieldMergeRecords(beforeRows, afterRows, definition)
   };
 }
 
+function materializeStudentDatabaseMissingAdditionalStatuses(
+  targetData,
+  sourceData,
+  defaultStatus = DEFAULT_STUDENT_ADDITIONAL_STATUS
+) {
+  const targetStudents = Array.isArray(targetData?.students) ? targetData.students : [];
+  if (!targetStudents.length) {
+    return { updatedCount: 0, preservedCount: 0, defaultedCount: 0 };
+  }
+  const sourceStudents = Array.isArray(sourceData?.students) ? sourceData.students : [];
+  const writeLayout = sourceData?.studentDatabaseWriteLayout;
+  const buildStatusQueueMap = (valuesByUid) => new Map(
+    Object.entries(valuesByUid && typeof valuesByUid === "object" ? valuesByUid : {})
+      .map(([uid, values]) => [
+        normalizeStudentDatabaseSyncValue(uid, "uid"),
+        (Array.isArray(values) ? values : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      ])
+      .filter(([uid, values]) => uid && values.length)
+  );
+  const fixedStatusesByUid = buildStatusQueueMap(writeLayout?.fixedStatusesByUid);
+  const sourceStatusesByUid = buildStatusQueueMap(writeLayout?.movableStatusesByUid);
+  if (!writeLayout) {
+    sourceStudents.forEach((student) => {
+      const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
+      const additionalStatus = String(student?.additionalStatus || "").trim();
+      if (!uid || !additionalStatus) return;
+      if (!sourceStatusesByUid.has(uid)) sourceStatusesByUid.set(uid, []);
+      sourceStatusesByUid.get(uid).push(additionalStatus);
+    });
+  }
+  const fallbackStatus = String(defaultStatus || "").trim()
+    || DEFAULT_STUDENT_ADDITIONAL_STATUS;
+  let preservedCount = 0;
+  let defaultedCount = 0;
+  targetStudents.forEach((student) => {
+    const uid = normalizeStudentDatabaseSyncValue(student?.uid, "uid");
+    const fixedStatuses = fixedStatusesByUid.get(uid);
+    if (fixedStatuses?.length) {
+      const fixedStatus = fixedStatuses.shift();
+      const resolvedStatus = fixedStatus || fallbackStatus;
+      if (
+        !resolvedStatus
+        || !student
+        || typeof student !== "object"
+        || String(student.additionalStatus || "").trim() === resolvedStatus
+      ) return;
+      student.additionalStatus = resolvedStatus;
+      if (fixedStatus) preservedCount += 1;
+      else defaultedCount += 1;
+      return;
+    }
+    if (String(student?.additionalStatus || "").trim()) return;
+    const sourceStatuses = sourceStatusesByUid.get(uid);
+    const sourceStatus = sourceStatuses?.length ? sourceStatuses.shift() : "";
+    const resolvedStatus = sourceStatus || fallbackStatus;
+    if (!resolvedStatus || !student || typeof student !== "object") return;
+    student.additionalStatus = resolvedStatus;
+    if (sourceStatus) preservedCount += 1;
+    else defaultedCount += 1;
+  });
+  return {
+    updatedCount: preservedCount + defaultedCount,
+    preservedCount,
+    defaultedCount
+  };
+}
+
 function summarizeStudentDatabaseEventLabel(value) {
   const source = String(value || "")
     .replace(/<[^>]*>/gu, " ")
@@ -23140,7 +23209,9 @@ function detectStudentDatabaseSections(worksheet, rows, headerRowIndex, uidColum
       });
     }
   }
-  if (firstStudentRowIndex < 0) return [];
+  if (firstStudentRowIndex < 0) {
+    return { sections: [], firstSectionRowIndex: -1, lastMovableRowIndex: -1 };
+  }
 
   const firstSection = candidates
     .filter((candidate) => (
@@ -23148,7 +23219,9 @@ function detectStudentDatabaseSections(worksheet, rows, headerRowIndex, uidColum
       && candidate.height >= 17
     ))
     .at(-1);
-  if (!firstSection) return [];
+  if (!firstSection) {
+    return { sections: [], firstSectionRowIndex: -1, lastMovableRowIndex: -1 };
+  }
 
   const lastSection = candidates
     .filter((candidate) => (
@@ -23156,12 +23229,24 @@ function detectStudentDatabaseSections(worksheet, rows, headerRowIndex, uidColum
       && candidate.height >= 17
     ))
     .at(-1);
-  if (!lastSection) return [];
+  if (!lastSection) {
+    return { sections: [], firstSectionRowIndex: -1, lastMovableRowIndex: -1 };
+  }
 
-  return candidates.filter((candidate) => (
+  const sections = candidates.filter((candidate) => (
     candidate.rowIndex >= firstSection.rowIndex
     && candidate.rowIndex <= lastSection.rowIndex
   ));
+  const boundaryAfterLastSection = candidates.find(
+    (candidate) => candidate.rowIndex > lastSection.rowIndex
+  );
+  return {
+    sections,
+    firstSectionRowIndex: firstSection.rowIndex,
+    lastMovableRowIndex: boundaryAfterLastSection
+      ? boundaryAfterLastSection.rowIndex - 1
+      : rows.length - 1
+  };
 }
 
 function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}) {
@@ -23207,13 +23292,17 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
   const uidColumn = headers.indexOf("uid");
   const nameColumn = headers.indexOf("ФИО");
   const eventSettingsColumn = headers.indexOf("ДопНастрСлушат");
-  const studentSections = detectStudentDatabaseSections(
+  const studentSectionLayout = detectStudentDatabaseSections(
     worksheet,
     rows,
     headerRowIndex,
     uidColumn,
     nameColumn
   );
+  const studentSections = studentSectionLayout.sections;
+  const studentDatabaseWriteLayout = options?.includeStudentWriteLayout
+    ? { fixedStatusesByUid: {}, movableStatusesByUid: {} }
+    : null;
   let currentSectionIndex = -1;
   const students = [];
   const usedIds = new Map();
@@ -23290,6 +23379,16 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
     student.name = name;
     student.additionalStatus = studentSections[currentSectionIndex]?.title
       || DEFAULT_STUDENT_ADDITIONAL_STATUS;
+    if (studentDatabaseWriteLayout) {
+      const valuesByUid = (
+        rowIndex < studentSectionLayout.firstSectionRowIndex
+        || rowIndex > studentSectionLayout.lastMovableRowIndex
+      )
+        ? studentDatabaseWriteLayout.fixedStatusesByUid
+        : studentDatabaseWriteLayout.movableStatusesByUid;
+      if (!Array.isArray(valuesByUid[uid])) valuesByUid[uid] = [];
+      valuesByUid[uid].push(student.additionalStatus);
+    }
     if (student.enrollmentDate) student.enrollmentOrderDate = student.enrollmentDate;
     if (student.expulsionDate) student.expulsionOrderDate = student.expulsionDate;
     students.push(student);
@@ -23344,6 +23443,7 @@ function parseStudentDatabaseWorkbook(bytes, onProgress = () => {}, options = {}
     ],
     sheetName: "База",
     studentSectionTitles: studentSections.map((section) => section.title),
+    ...(studentDatabaseWriteLayout ? { studentDatabaseWriteLayout } : {}),
     sourceRows: sourceRowCount,
     skippedRows: Math.max(0, sourceRowCount - students.length),
     ...agentPaymentRatesResult,
@@ -29914,6 +30014,7 @@ async function parseStudentDatabaseInWorker(bytes, onProgress = () => {}, option
         options: {
           includeCommunicationTemplateNamedRangeValues:
             options?.includeCommunicationTemplateNamedRangeValues !== false,
+          includeStudentWriteLayout: options?.includeStudentWriteLayout === true,
           syncMetadataRows
         }
       }
@@ -31105,8 +31206,24 @@ async function buildStudentDatabaseExport(body, onProgress = () => {}) {
             stage: "compare",
             message: parseProgress.message || "Сравнение критичных данных Web и XLSB..."
           });
-        }
+        },
+        { includeStudentWriteLayout: true }
       );
+      const additionalStatusMaterialization = materializeStudentDatabaseMissingAdditionalStatuses(
+        payload,
+        sourceDataForExport,
+        payload.defaultStudentAdditionalStatus
+      );
+      delete sourceDataForExport.studentDatabaseWriteLayout;
+      if (additionalStatusMaterialization.updatedCount) {
+        onProgress({
+          progress: 14.5,
+          stage: "compare",
+          message: additionalStatusMaterialization.defaultedCount
+            ? "Заполнение пустых разделов слушателей перед сверкой Web и XLSB..."
+            : "Сохранение разделов XLSB для слушателей без дополнительного статуса Web..."
+        });
+      }
       const currentWebCriticalHash = hashStudentDatabaseCriticalSnapshot(payload);
       const currentExcelCriticalHash = hashStudentDatabaseCriticalSnapshot(sourceDataForExport);
       const currentWebCriticalIdentityHash = hashStudentDatabaseCriticalIdentity(payload);
@@ -39712,6 +39829,7 @@ module.exports = {
   resolveStudentDatabaseEventSettingsReconciliation,
   resolveStudentDatabaseCompleteReconciliation,
   validateStudentDatabaseReconciliationSelectionsAgainstOutput,
+  materializeStudentDatabaseMissingAdditionalStatuses,
   materializeStudentDatabaseReconciledCollections,
   buildStudentDatabaseSyncConflictDiagnosticReport,
   buildStudentDatabaseRecordEventDifferenceSummary,

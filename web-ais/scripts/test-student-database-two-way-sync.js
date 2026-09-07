@@ -9,6 +9,7 @@ const {
   resolveStudentDatabaseReconciliationAfterDirectionError,
   resolveStudentDatabaseCompleteReconciliation,
   validateStudentDatabaseReconciliationSelectionsAgainstOutput,
+  materializeStudentDatabaseMissingAdditionalStatuses,
   applyStudentDatabaseFormulaBackedWebOverrides,
   validateStudentDatabaseFormulaBackedWebOverridesAgainstOutput,
   materializeStudentDatabaseReconciledCollections,
@@ -1970,6 +1971,191 @@ assert.equal(
   hashStudentDatabaseCriticalSnapshot(statusCaseWeb),
   hashStudentDatabaseCriticalSnapshot(statusCaseExcel),
   "Регистр заголовка раздела слушателей не должен создавать ложный конфликт"
+);
+
+const missingAdditionalStatusWeb = {
+  students: [{
+    id: "students-mtbhy188-rkk4w",
+    uid: "1171",
+    name: "Загодарчук Инна Владимировна",
+    status: "Отчислен",
+    additionalStatus: ""
+  }]
+};
+const missingAdditionalStatusExcel = {
+  students: [{
+    id: "student-db-1171",
+    uid: "1171",
+    name: "Загодарчук Инна Владимировна",
+    status: "Учится",
+    additionalStatus: "Печать докобров"
+  }]
+};
+const missingAdditionalStatusExcelBefore = clone(missingAdditionalStatusExcel);
+assert.deepStrictEqual(
+  materializeStudentDatabaseMissingAdditionalStatuses(
+    missingAdditionalStatusWeb,
+    missingAdditionalStatusExcel
+  ),
+  { updatedCount: 1, preservedCount: 1, defaultedCount: 0 }
+);
+assert.equal(
+  missingAdditionalStatusWeb.students[0].additionalStatus,
+  "Печать докобров",
+  "Пустой Web-статус должен означать сохранение физического раздела исходного XLSB"
+);
+assert.deepStrictEqual(
+  missingAdditionalStatusExcel,
+  missingAdditionalStatusExcelBefore,
+  "Материализация не должна изменять прочитанные данные исходного XLSB"
+);
+const preservedAdditionalStatusInitial = resolveStudentDatabaseCompleteReconciliation({
+  webData: missingAdditionalStatusWeb,
+  excelData: missingAdditionalStatusExcel
+});
+const preservedAdditionalStatusMainConflict = preservedAdditionalStatusInitial.conflicts.find(
+  (conflict) => conflict.fieldName === "status"
+);
+assert.ok(preservedAdditionalStatusMainConflict);
+assert.equal(
+  preservedAdditionalStatusInitial.conflicts.some(
+    (conflict) => conflict.fieldName === "additionalStatus"
+  ),
+  false,
+  "Пустой Web-статус не должен создавать отдельный конфликт с физическим разделом XLSB"
+);
+const preservedAdditionalStatusReconciliation = resolveStudentDatabaseCompleteReconciliation({
+  webData: missingAdditionalStatusWeb,
+  excelData: missingAdditionalStatusExcel,
+  conflictResolutions: {
+    [preservedAdditionalStatusMainConflict.id]: "web"
+  }
+});
+assert.equal(preservedAdditionalStatusReconciliation.conflicts.length, 0);
+assert.doesNotThrow(() => validateStudentDatabaseReconciliationSelectionsAgainstOutput(
+  preservedAdditionalStatusReconciliation.collections,
+  clone(preservedAdditionalStatusReconciliation.collections),
+  preservedAdditionalStatusReconciliation
+));
+const incorrectPreservedAdditionalStatusOutput = clone(
+  preservedAdditionalStatusReconciliation.collections
+);
+incorrectPreservedAdditionalStatusOutput.students[0].additionalStatus = "Обучающиеся";
+assert.throws(
+  () => validateStudentDatabaseReconciliationSelectionsAgainstOutput(
+    preservedAdditionalStatusReconciliation.collections,
+    incorrectPreservedAdditionalStatusOutput,
+    preservedAdditionalStatusReconciliation
+  ),
+  /изменилось при записи|записано не в выбранном варианте/iu,
+  "Реальный перенос в другой раздел должен по-прежнему блокировать сохранение"
+);
+const explicitAdditionalStatusWeb = clone(missingAdditionalStatusWeb);
+explicitAdditionalStatusWeb.students[0].additionalStatus = "Обучающиеся";
+assert.equal(
+  materializeStudentDatabaseMissingAdditionalStatuses(
+    explicitAdditionalStatusWeb,
+    missingAdditionalStatusExcel
+  ).updatedCount,
+  0
+);
+assert.equal(explicitAdditionalStatusWeb.students[0].additionalStatus, "Обучающиеся");
+const newStudentWithoutAdditionalStatus = {
+  students: [{ id: "new-student", uid: "2001", name: "Новый слушатель", additionalStatus: "" }]
+};
+assert.deepStrictEqual(
+  materializeStudentDatabaseMissingAdditionalStatuses(
+    newStudentWithoutAdditionalStatus,
+    { students: [] }
+  ),
+  { updatedCount: 1, preservedCount: 0, defaultedCount: 1 }
+);
+assert.equal(
+  newStudentWithoutAdditionalStatus.students[0].additionalStatus,
+  "На зачисление (пока без документов)"
+);
+const duplicateUidSource = {
+  students: [
+    { uid: "3001", name: "Первая запись", additionalStatus: "Раздел А" },
+    { uid: "3001", name: "Вторая запись", additionalStatus: "Раздел Б" }
+  ]
+};
+const duplicateUidTargets = {
+  students: [
+    { uid: "3001", name: "Вторая запись", additionalStatus: "" },
+    { uid: "3001", name: "Первая запись", additionalStatus: "" }
+  ]
+};
+assert.deepStrictEqual(
+  materializeStudentDatabaseMissingAdditionalStatuses(
+    duplicateUidTargets,
+    duplicateUidSource
+  ),
+  { updatedCount: 2, preservedCount: 2, defaultedCount: 0 }
+);
+assert.deepStrictEqual(
+  duplicateUidTargets.students.map((student) => student.additionalStatus),
+  ["Раздел А", "Раздел Б"],
+  "Повторяющиеся UID должны получать разделы из очереди XLSB в порядке записи книги"
+);
+const unevenDuplicateUidTargets = {
+  students: [{ uid: "3001", name: "Неоднозначная запись", additionalStatus: "" }]
+};
+materializeStudentDatabaseMissingAdditionalStatuses(
+  unevenDuplicateUidTargets,
+  duplicateUidSource
+);
+assert.equal(
+  unevenDuplicateUidTargets.students[0].additionalStatus,
+  "Раздел А",
+  "При разном количестве дублей writer сохраняет первый оставшийся раздел этого UID"
+);
+const explicitThenBlankDuplicateUidTargets = {
+  students: [
+    { uid: "3001", name: "Явная запись", additionalStatus: "Раздел Б" },
+    { uid: "3001", name: "Пустая запись", additionalStatus: "" }
+  ]
+};
+materializeStudentDatabaseMissingAdditionalStatuses(
+  explicitThenBlankDuplicateUidTargets,
+  duplicateUidSource
+);
+assert.deepStrictEqual(
+  explicitThenBlankDuplicateUidTargets.students.map((student) => student.additionalStatus),
+  ["Раздел Б", "Раздел А"],
+  "Явный статус не должен расходовать очередь сохранения пустых значений"
+);
+const fixedAndMovableDuplicateUidSource = {
+  students: [
+    { uid: "3002", name: "Фиксированная запись", additionalStatus: "На зачисление (пока без документов)" },
+    { uid: "3002", name: "Перемещаемая запись", additionalStatus: "Раздел А" }
+  ],
+  studentDatabaseWriteLayout: {
+    fixedStatusesByUid: {
+      3002: ["На зачисление (пока без документов)"]
+    },
+    movableStatusesByUid: {
+      3002: ["Раздел А"]
+    }
+  }
+};
+const fixedAndMovableDuplicateUidTargets = {
+  students: [
+    { uid: "3002", name: "Фиксированная запись", additionalStatus: "Явный статус" },
+    { uid: "3002", name: "Перемещаемая запись", additionalStatus: "" }
+  ]
+};
+assert.deepStrictEqual(
+  materializeStudentDatabaseMissingAdditionalStatuses(
+    fixedAndMovableDuplicateUidTargets,
+    fixedAndMovableDuplicateUidSource
+  ),
+  { updatedCount: 2, preservedCount: 2, defaultedCount: 0 }
+);
+assert.deepStrictEqual(
+  fixedAndMovableDuplicateUidTargets.students.map((student) => student.additionalStatus),
+  ["На зачисление (пока без документов)", "Раздел А"],
+  "Фиксированная строка должна сохранить физический раздел и не расходовать очередь перемещаемых строк"
 );
 
 const mutuallyDeletedWeb = clone(sameStudentBaselineData);
