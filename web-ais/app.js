@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.390",
+    version: "1.7.391",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.391",
+      releasedAt: "2026-09-07",
+      changes: [
+        "В реестре «Общие затраты» добавлено явное массовое действие «Дублировать» для выделенных строк: копии получают новые идентификаторы и текущую дату без переноса оплаты, бухгалтерского закрытия, акта, номера расхода, ручного порядка выплаты и служебной привязки к строке XLSB."
+      ]
+    },
     {
       version: "1.7.390",
       releasedAt: "2026-09-07",
@@ -20510,8 +20517,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="primary-button" data-action="open-student-bulk-operations" data-mobile-label="Гр. операции" type="button" title="Групповые операции" ${selected.length ? "" : "disabled"}>Групповые операции</button>
         ` : ""}
         ${configId === "generalExpenses" ? `
-          <button class="ghost-button" data-action="bulk-copy-general-expenses" data-config="${configId}" type="button" title="Копировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>
-            Копировать
+          <button class="ghost-button" data-action="bulk-duplicate-general-expenses" data-config="${configId}" type="button" title="Дублировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>
+            Дублировать
           </button>
         ` : ""}
         <button class="danger-button icon-only trash-button" data-action="bulk-delete" data-config="${configId}" type="button" title="Удалить выбранные" aria-label="Удалить выбранные" ${selected.length ? "" : "disabled"}>
@@ -39999,8 +40006,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
     document.querySelector("[data-action='open-student-bulk-operations']")?.addEventListener("click", openStudentBulkOperationsDialog);
 
-    document.querySelectorAll("[data-action='bulk-copy-general-expenses']").forEach((button) => {
-      button.addEventListener("click", () => bulkCopyGeneralExpenses());
+    document.querySelectorAll("[data-action='bulk-duplicate-general-expenses']").forEach((button) => {
+      button.addEventListener("click", () => bulkDuplicateGeneralExpenses());
     });
 
     document.querySelectorAll("[data-action='bulk-delete']").forEach((button) => {
@@ -52498,18 +52505,38 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function bulkCopyGeneralExpenses() {
+  function createGeneralExpenseDuplicate(source, currentDate = todayIso()) {
+    const duplicate = clone(source);
+    [
+      "databaseSync",
+      "databaseSyncSourceRow",
+      "databaseSyncFormulaFields",
+      "databaseFixedValueOverrides",
+      "__syncComment",
+      "employeePaymentOrder"
+    ].forEach((fieldName) => {
+      delete duplicate[fieldName];
+    });
+    return normalizeGeneralExpenseRecord({
+      ...duplicate,
+      id: makeId("general-expense"),
+      date: currentDate,
+      paid: "",
+      isPaid: "",
+      accountingClosed: "",
+      bkExpenseNo: "",
+      act: "",
+      actStatus: ""
+    });
+  }
+
+  function bulkDuplicateGeneralExpenses() {
     const selected = getSelected("generalExpenses");
     const sourceRows = getRowsByIds("generalExpenses", selected);
     if (!sourceRows.length) return;
+    if (!confirm(`Выбрано записей: ${sourceRows.length}. Продублировать общие расходы?`)) return;
     const currentDate = todayIso();
-    const copies = sourceRows.map((source) => normalizeGeneralExpenseRecord({
-      ...clone(source),
-      id: makeId("general-expense"),
-      date: currentDate,
-      paid: currentDate,
-      bkExpenseNo: ""
-    }));
+    const copies = sourceRows.map((source) => createGeneralExpenseDuplicate(source, currentDate));
     state.data.collections.generalExpenses = [
       ...copies,
       ...(state.data.collections.generalExpenses || [])
@@ -52520,16 +52547,15 @@ MAX - https://bizvmax.ru/zifra_plus
       id: copies[copies.length - 1]?.id || ""
     };
     state.tablePages.generalExpenses = 1;
-    addAudit("Скопированы общие расходы", configs.generalExpenses.title, `${copies.length} записей`, {
+    addAudit("Продублированы общие расходы", configs.generalExpenses.title, `${copies.length} записей`, {
       entityType: "generalExpenses",
-      entityId: copies.map((record) => record.id).join(", "),
-      changes: [
-        { field: "date", label: "Дата", before: "", after: currentDate },
-        { field: "paid", label: "Оплачено", before: "", after: currentDate }
-      ]
+      entityId: copies.map((record) => record.id).join(", ")
     });
     persist();
     render();
+    showDocumentGenerationNotice(
+      `Продублировано общих расходов: ${copies.length}. Копии созданы текущей датой и не отмечены оплаченными.`
+    );
   }
 
   const studentBulkDocumentOperations = [
