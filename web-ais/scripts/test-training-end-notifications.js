@@ -15,9 +15,11 @@ const {
   withoutTrainingEndNotificationMetaPatch,
   withoutTrainingEndNotificationSharedStateResult,
   getTrainingEndNotificationCandidates,
+  buildTrainingEndNotificationDeliveryPlan,
   getTrainingEndNotificationConfiguration,
   getTrainingEndNotificationSchedule,
   buildTrainingEndNotificationMessage,
+  buildTrainingEndStudentNotificationMessage,
   createEmailMessage
 } = require("../app-server.js");
 
@@ -202,6 +204,7 @@ const candidates = getTrainingEndNotificationCandidates([
     status: "Учится",
     educationType: "КПК",
     program: "Программа КПК",
+    email: "student@example.ru",
     finalGrade: "",
     endDate: "2026-08-26",
     responsible: "manager"
@@ -212,6 +215,7 @@ const candidates = getTrainingEndNotificationCandidates([
     name: "Петров Петр Петрович",
     status: " Учится ",
     program: "Программа ППП",
+    email: " PETR@Example.ru ",
     finalGrade: " ",
     endDate: "2026-08-22"
   },
@@ -220,6 +224,7 @@ const candidates = getTrainingEndNotificationCandidates([
     name: "Сидорова Ольга Сергеевна",
     status: "Учится",
     program: "Программа ДОП",
+    email: "incorrect-email",
     finalGrade: "",
     endDate: "2026-09-01",
     extendedEndDate: "25.08.2026"
@@ -294,7 +299,85 @@ assert.deepEqual(candidates.map((student) => student.id), [
   "student-kpk-direct"
 ]);
 assert.deepEqual(candidates.map((student) => student.daysRemaining), [0, 3, 4]);
+assert.deepEqual(candidates.map((student) => student.email), [
+  "petr@example.ru",
+  "",
+  "student@example.ru"
+]);
 assert.equal(candidates[1].endDate, "25.08.2026");
+
+const deliveryPlan = buildTrainingEndNotificationDeliveryPlan(candidates);
+assert.equal(deliveryPlan.mode, "student");
+assert.equal(deliveryPlan.missingEmailCount, 1);
+assert.deepEqual(
+  deliveryPlan.deliveries.map((delivery) => delivery.recipient),
+  ["petr@example.ru", "student@example.ru"]
+);
+assert.deepEqual(
+  deliveryPlan.deliveries.map((delivery) => delivery.candidates.map((student) => student.id)),
+  [["student-ppp-from-program"], ["student-kpk-direct"]]
+);
+assert.match(deliveryPlan.deliveries[0].deliveryKey, /^student:[a-f0-9]{64}$/u);
+
+const sharedRecipientCandidates = [
+  { id: "first", uid: "1", name: "Первый Слушатель", email: "same@example.ru", program: "Курс 1", endDate: "2026-08-24" },
+  { id: "second", uid: "2", name: "Второй Слушатель", email: "SAME@example.ru", program: "Курс 2", endDate: "2026-08-25" }
+];
+const sharedRecipientPlan = buildTrainingEndNotificationDeliveryPlan(sharedRecipientCandidates);
+assert.equal(sharedRecipientPlan.deliveries.length, 2);
+assert.deepEqual(
+  sharedRecipientPlan.deliveries.map((delivery) => delivery.candidates.map((student) => student.id)),
+  [["first"], ["second"]],
+  "Один общий email не должен объединять программы разных слушателей"
+);
+assert.deepEqual(
+  buildTrainingEndNotificationDeliveryPlan([...sharedRecipientCandidates].reverse())
+    .deliveries.map((delivery) => delivery.deliveryKey).sort(),
+  sharedRecipientPlan.deliveries.map((delivery) => delivery.deliveryKey).sort(),
+  "Ключ доставки должен оставаться стабильным при изменении порядка записей"
+);
+
+const sameStudentCandidates = [
+  { id: "course-one", name: "Один Слушатель", email: "student@example.ru", program: "Курс 1", endDate: "2026-08-24" },
+  { id: "course-two", name: "  один   слушатель ", email: "STUDENT@example.ru", program: "Курс 2", endDate: "2026-08-25" }
+];
+const sameStudentPlan = buildTrainingEndNotificationDeliveryPlan(sameStudentCandidates);
+assert.equal(sameStudentPlan.deliveries.length, 1);
+assert.deepEqual(
+  sameStudentPlan.deliveries[0].candidates.map((student) => student.id),
+  ["course-one", "course-two"],
+  "Программы одного слушателя должны оставаться в одном письме"
+);
+assert.equal(
+  buildTrainingEndNotificationDeliveryPlan([sameStudentCandidates[0]]).deliveries[0].deliveryKey,
+  sameStudentPlan.deliveries[0].deliveryKey,
+  "Ключ слушателя не должен меняться при изменении состава его программ во время повтора"
+);
+
+const systemTestPlan = buildTrainingEndNotificationDeliveryPlan(candidates, {
+  testMode: true,
+  testRecipients: ["mail@edu-plus.ru"]
+});
+assert.equal(systemTestPlan.mode, "test");
+assert.equal(systemTestPlan.deliveries.length, 1);
+assert.equal(systemTestPlan.deliveries[0].recipient, "mail@edu-plus.ru");
+assert.equal(systemTestPlan.deliveries[0].candidates.length, candidates.length);
+assert.match(systemTestPlan.deliveries[0].deliveryKey, /^test:[a-f0-9]{64}$/u);
+assert.equal(
+  buildTrainingEndNotificationDeliveryPlan([], {
+    testMode: true,
+    testRecipients: ["mail@edu-plus.ru"]
+  }).deliveries.length,
+  1,
+  "Тест системного ящика должен работать даже при отсутствии подходящих слушателей"
+);
+assert.deepEqual(
+  buildTrainingEndNotificationDeliveryPlan([
+    { id: "without-email", email: "" },
+    { id: "invalid-email", email: "invalid" }
+  ]),
+  { mode: "student", missingEmailCount: 2, deliveries: [] }
+);
 
 const ambiguousShortNamePrograms = [
   { name: "Общий курс (72 ч)", shortName: "Общий курс", type: "КПК", hours: 72 },
@@ -361,6 +444,21 @@ assert.doesNotMatch(message, /Просрочено/u);
 assert.match(message, /Тест &lt;script&gt;/u);
 assert.doesNotMatch(message, /<script>/u);
 
+const testMessage = buildTrainingEndNotificationMessage(candidates, {
+  days: 5,
+  testMode: true
+});
+assert.match(testMessage, /Тестовая отправка/u);
+assert.match(testMessage, /Письма слушателям не отправлялись/u);
+
+const studentMessage = buildTrainingEndStudentNotificationMessage(
+  deliveryPlan.deliveries[0].candidates
+);
+assert.match(studentMessage, /Программа ППП/u);
+assert.doesNotMatch(studentMessage, /Программа КПК/u);
+assert.doesNotMatch(studentMessage, /Иванова Анна Ивановна/u);
+assert.match(studentMessage, /Оценка итоговой аттестации пока не заполнена/u);
+
 const stableEmailOptions = {
   from: "mail@edu-plus.ru",
   to: "manager@example.ru",
@@ -386,7 +484,7 @@ assert.notEqual(
 
 assert.match(appSource, /name="trainingEndNotificationsEnabled"/u);
 assert.match(appSource, /name="trainingEndNotificationDays"/u);
-assert.match(appSource, /Уведомлять за \(дней\)/u);
+assert.match(appSource, /Уведомлять за/u);
 assert.match(appSource, /name="trainingEndNotificationTime"/u);
 assert.match(appSource, /name="trainingEndNotificationTimeZone"/u);
 assert.match(appSource, /name="trainingEndNotificationFrequency"/u);
@@ -407,9 +505,19 @@ assert.match(serverSource, /CREATE TABLE IF NOT EXISTS ais_scheduled_job_setting
 assert.match(serverSource, /sharedRecordLocksMySqlPool = null;\n  scheduledJobRunsTableInitialization = null;/u);
 assert.match(serverSource, /status === "completed"/u);
 assert.match(serverSource, /checkpointTrainingEndNotificationRun/u);
-assert.match(serverSource, /if \(sentRecipients\.has\(recipient\)\) continue;/u);
+assert.match(serverSource, /if \(sentDeliveryKeys\.has\(delivery\.deliveryKey\)\) continue;/u);
 assert.match(serverSource, /if \(error\?\.deliveryUnknown === true\)[\s\S]*?checkpointTrainingEndNotificationRun/u);
 assert.match(serverSource, /result_json = VALUES\(result_json\)/u);
+assert.match(serverSource, /testRecipients: testMode \? \[systemMailbox\] : \[\]/u);
+assert.match(serverSource, /testMode: true,\n\s+source: "admin"/u);
+assert.match(serverSource, /email: normalizeTrainingEndNotificationStudentEmail\(student\?\.email\)/u);
+assert.match(serverSource, /SELECT status,[\s\S]*?result_json[\s\S]*?FROM ais_scheduled_job_runs/u);
+assert.match(appSource, /String\(status\.outcome \|\| ""\) === "test-sent"/u);
+assert.doesNotMatch(
+  serverSource,
+  /for \(const recipient of configuration\.recipients\)/u,
+  "Плановая рассылка не должна использовать системный список получателей"
+);
 assert.match(appSource, /TRAINING_END_NOTIFICATION_SERVER_META_KEYS/u);
 assert.match(appSource, /if \(!isAdminUser\(\)\) return;\n    try \{\n      const response = await fetch\(photoApiUrl\("\/api\/training-end-notifications\/check"\)/u);
 assert.match(serverSource, /"\/api\/training-end-notifications\/check",\n      "\/api\/admin\/training-end-notifications\/run"/u);
@@ -433,12 +541,16 @@ assert.match(notificationSettingsRouteSource, /POST/u);
 assert.match(stylesSource, /\.training-end-notification-settings/u);
 assert.match(
   stylesSource,
-  /grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 170px\), 1fr\)\)/u
+  /\.training-end-notification-settings-fields \{[\s\S]*?display: flex;[\s\S]*?justify-content: flex-start;/u
 );
 assert.match(
   stylesSource,
-  /\.training-end-notification-settings-fields :is\(input, select, textarea\)[\s\S]*?max-width: 100%;[\s\S]*?min-width: 0;/u
+  /\.training-end-notification-time-controls \{[\s\S]*?grid-template-columns: 108px 190px;/u
 );
+assert.doesNotMatch(appSource, /name="trainingEndNotificationRecipients"/u);
+assert.match(appSource, /Получатель — слушатель/u);
+assert.match(appSource, /Адрес берётся из поля «Email» карточки слушателя/u);
+assert.match(appSource, /Отправить тест/u);
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";
 assert.ok(authBuild, "Не найден идентификатор клиентской сборки.");
 assert.match(indexSource, new RegExp(`(?:styles\\.css|auth-bootstrap\\.js)\\?v=${authBuild}`, "u"));

@@ -157,6 +157,7 @@ const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
 const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
 const DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES = Object.freeze(["КПК", "ДОП", "ППП"]);
 const MAX_TRAINING_END_NOTIFICATION_RECIPIENTS = 50;
+const MAX_TRAINING_END_NOTIFICATION_DELIVERY_KEYS = 5000;
 const TRAINING_END_NOTIFICATION_SHARED_META_KEYS = new Set([
   "trainingEndNotificationsEnabled",
   "trainingEndNotificationDays",
@@ -25622,6 +25623,16 @@ function normalizeTrainingEndNotificationRecipients(value) {
     }))];
 }
 
+function normalizeTrainingEndNotificationStudentEmail(value) {
+  const email = String(value || "").normalize("NFKC").trim();
+  if (!email || email.length > 160) return "";
+  try {
+    return validateAuthEmail(email).toLocaleLowerCase("en-US");
+  } catch {
+    return "";
+  }
+}
+
 function normalizeTrainingEndNotificationProgramName(value) {
   return String(value || "")
     .normalize("NFKC")
@@ -25704,6 +25715,7 @@ function getTrainingEndNotificationCandidates(students, options = {}) {
       id: String(student?.id || "").trim(),
       uid: String(student?.uid || "").trim(),
       name: String(student?.name || "Без ФИО").trim() || "Без ФИО",
+      email: normalizeTrainingEndNotificationStudentEmail(student?.email),
       program: String(student?.program || "Не указана").trim() || "Не указана",
       programType,
       responsible: String(student?.responsible || "").trim(),
@@ -25714,6 +25726,87 @@ function getTrainingEndNotificationCandidates(students, options = {}) {
     left.daysRemaining - right.daysRemaining
     || left.name.localeCompare(right.name, "ru", { sensitivity: "base" })
   ));
+}
+
+function buildTrainingEndNotificationDeliveryKey(recipient, candidates, mode = "student") {
+  const normalizedMode = String(mode || "student").trim().toLowerCase();
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const identity = normalizedMode === "student"
+    ? [...new Set(rows.map(buildTrainingEndNotificationStudentIdentity))].sort((left, right) => (
+      left.localeCompare(right, "ru")
+    ))
+    : rows
+      .map((candidate) => [
+        String(candidate?.id || "").trim(),
+        String(candidate?.uid || "").trim(),
+        String(candidate?.program || "").trim(),
+        String(candidate?.endDate || "").trim()
+      ])
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right), "ru"));
+  return [
+    normalizedMode,
+    crypto.createHash("sha256")
+      .update([
+        normalizeTrainingEndNotificationStudentEmail(recipient),
+        JSON.stringify(identity)
+      ].join("\n"))
+      .digest("hex")
+  ].join(":");
+}
+
+function buildTrainingEndNotificationStudentIdentity(candidate) {
+  const name = String(candidate?.name || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("ru-RU");
+  if (name && name !== "без фио") return `name:${name}`;
+  const id = String(candidate?.id || "").normalize("NFKC").trim();
+  const uid = String(candidate?.uid || "").normalize("NFKC").trim();
+  return `record:${id || uid || "unknown"}`;
+}
+
+function buildTrainingEndNotificationDeliveryPlan(candidates, options = {}) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const missingEmailCount = rows.filter((candidate) => (
+    !normalizeTrainingEndNotificationStudentEmail(candidate?.email)
+  )).length;
+  if (options.testMode === true) {
+    const testRecipients = normalizeTrainingEndNotificationRecipients(options.testRecipients);
+    return {
+      mode: "test",
+      missingEmailCount,
+      deliveries: testRecipients.map((recipient) => ({
+        recipient,
+        candidates: rows,
+        deliveryKey: buildTrainingEndNotificationDeliveryKey(recipient, rows, "test")
+      }))
+    };
+  }
+  const candidatesByStudent = new Map();
+  rows.forEach((candidate) => {
+    const recipient = normalizeTrainingEndNotificationStudentEmail(candidate?.email);
+    if (!recipient) return;
+    const studentIdentity = buildTrainingEndNotificationStudentIdentity(candidate);
+    const groupKey = `${recipient}\n${studentIdentity}`;
+    if (!candidatesByStudent.has(groupKey)) {
+      candidatesByStudent.set(groupKey, { recipient, candidates: [] });
+    }
+    candidatesByStudent.get(groupKey).candidates.push(candidate);
+  });
+  return {
+    mode: "student",
+    missingEmailCount,
+    deliveries: [...candidatesByStudent.values()].map(({ recipient, candidates: studentCandidates }) => ({
+      recipient,
+      candidates: studentCandidates,
+      deliveryKey: buildTrainingEndNotificationDeliveryKey(
+        recipient,
+        studentCandidates,
+        "student"
+      )
+    }))
+  };
 }
 
 function getTrainingEndNotificationConfiguration(meta = {}) {
@@ -25818,8 +25911,18 @@ async function saveTrainingEndNotificationConfiguration(settings, authUser = nul
 
 function publicTrainingEndNotificationRun(row = null) {
   if (!row) return { status: "never" };
+  let outcome = "";
+  try {
+    const result = typeof row.result_json === "string"
+      ? JSON.parse(row.result_json)
+      : row.result_json;
+    outcome = String(result?.outcome || "").trim();
+  } catch {
+    outcome = "";
+  }
   return {
     status: String(row.status || "never"),
+    outcome,
     runDate: row.run_date instanceof Date
       ? row.run_date.toISOString().slice(0, 10)
       : String(row.run_date || "").slice(0, 10),
@@ -25869,12 +25972,19 @@ async function ensureScheduledJobRunsTable(pool) {
   return scheduledJobRunsTableInitialization;
 }
 
-function getTrainingEndNotificationSentRecipients(row = null) {
+function normalizeTrainingEndNotificationDeliveryKeys(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((item) => String(item || "").trim())
+    .filter((item) => /^(?:student|test):[a-f0-9]{64}$/u.test(item)))]
+    .slice(0, MAX_TRAINING_END_NOTIFICATION_DELIVERY_KEYS);
+}
+
+function getTrainingEndNotificationSentDeliveryKeys(row = null) {
   const value = row?.result_json;
   if (!value) return [];
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    return normalizeTrainingEndNotificationRecipients(parsed?.sentRecipients);
+    return normalizeTrainingEndNotificationDeliveryKeys(parsed?.sentDeliveryKeys);
   } catch {
     return [];
   }
@@ -25916,8 +26026,8 @@ async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TR
         return { claimed: false, reason: "retry-later", runKey, status: publicTrainingEndNotificationRun(current) };
       }
     }
-    const sentRecipients = current && !force
-      ? getTrainingEndNotificationSentRecipients(current)
+    const sentDeliveryKeys = current && !force
+      ? getTrainingEndNotificationSentDeliveryKeys(current)
       : [];
     await connection.query(`
       INSERT INTO ais_scheduled_job_runs (
@@ -25934,10 +26044,10 @@ async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TR
       TRAINING_END_NOTIFICATION_JOB_NAME,
       runDate,
       token,
-      sentRecipients.length,
-      JSON.stringify({ outcome: "running", sentRecipients })
+      sentDeliveryKeys.length,
+      JSON.stringify({ outcome: "running", sentDeliveryKeys })
     ]);
-    return { claimed: true, runKey, token, sentRecipients };
+    return { claimed: true, runKey, token, sentDeliveryKeys };
   } finally {
     if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
     connection.release();
@@ -25947,7 +26057,7 @@ async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TR
 async function checkpointTrainingEndNotificationRun(claim, result = {}) {
   const pool = await getSharedRecordLocksMySqlPool();
   if (!pool) throw new Error("Общая MySQL-база недоступна для фиксации отправленных уведомлений.");
-  const sentRecipients = normalizeTrainingEndNotificationRecipients(result.sentRecipients);
+  const sentDeliveryKeys = normalizeTrainingEndNotificationDeliveryKeys(result.sentDeliveryKeys);
   const [updateResult] = await pool.query(`
     UPDATE ais_scheduled_job_runs
        SET candidate_count = ?, sent_count = ?, updated_at = UTC_TIMESTAMP(3),
@@ -25955,8 +26065,8 @@ async function checkpointTrainingEndNotificationRun(claim, result = {}) {
      WHERE run_key = ? AND token = ? AND status = 'running'
   `, [
     Math.max(0, Number(result.candidateCount) || 0),
-    sentRecipients.length,
-    JSON.stringify({ outcome: "running", sentRecipients }),
+    sentDeliveryKeys.length,
+    JSON.stringify({ outcome: "running", sentDeliveryKeys }),
     claim.runKey,
     claim.token
   ]);
@@ -25979,7 +26089,7 @@ async function finishTrainingEndNotificationRun(claim, result = {}) {
     Math.max(0, Number(result.sentCount) || 0),
     JSON.stringify({
       outcome: String(result.outcome || "completed"),
-      sentRecipients: normalizeTrainingEndNotificationRecipients(result.sentRecipients)
+      sentDeliveryKeys: normalizeTrainingEndNotificationDeliveryKeys(result.sentDeliveryKeys)
     }),
     claim.runKey,
     claim.token
@@ -26002,7 +26112,7 @@ async function readTrainingEndNotificationStatus() {
   if (!pool) return { status: "never" };
   await ensureScheduledJobRunsTable(pool);
   const [rows] = await pool.query(`
-    SELECT status, run_date, candidate_count, sent_count, started_at, completed_at, updated_at, last_error
+    SELECT status, run_date, candidate_count, sent_count, started_at, completed_at, updated_at, last_error, result_json
       FROM ais_scheduled_job_runs
      WHERE job_name = ?
      ORDER BY updated_at DESC
@@ -26026,6 +26136,9 @@ function buildTrainingEndNotificationMessage(candidates, options = {}) {
   const programTypeLabel = (programTypes.length
     ? programTypes
     : DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES).join(", ");
+  const testNotice = options.testMode === true
+    ? `<p style="padding:10px 12px;border:1px solid #99d5ca;border-radius:8px;background:#edf9f6;color:#176b54"><strong>Тестовая отправка.</strong> Письма слушателям не отправлялись.</p>`
+    : "";
   const rows = candidates.map((student, index) => `
     <tr>
       <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${index + 1}</td>
@@ -26039,6 +26152,7 @@ function buildTrainingEndNotificationMessage(candidates, options = {}) {
   `).join("");
   return `
     <p>Здравствуйте!</p>
+    ${testNotice}
     <p>В сводку включены слушатели со статусом <strong>«Учится»</strong> по программам ${escapeEmailHtml(programTypeLabel)}, у которых срок обучения заканчивается в ближайшие ${days} дн. и не заполнена оценка итоговой аттестации.</p>
     <p><strong>Требуют внимания: ${candidates.length}.</strong></p>
     <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:14px">
@@ -26060,8 +26174,41 @@ function buildTrainingEndNotificationMessage(candidates, options = {}) {
   `.trim();
 }
 
+function buildTrainingEndStudentNotificationMessage(candidates) {
+  const rows = (Array.isArray(candidates) ? candidates : []).map((student, index) => `
+    <tr>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${index + 1}</td>
+      <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.program)}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${escapeEmailHtml(student.programType || "—")}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;white-space:nowrap">${escapeEmailHtml(formatTrainingEndNotificationDate(student.endDate))}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${Number(student.daysRemaining) === 0 ? "Сегодня" : `Осталось ${Number(student.daysRemaining)} дн.`}</td>
+    </tr>
+  `).join("");
+  const count = Array.isArray(candidates) ? candidates.length : 0;
+  return `
+    <p>Здравствуйте!</p>
+    <p>Напоминаем, что срок Вашего обучения ${count > 1 ? "по указанным программам завершается" : "по указанной программе завершается"} в ближайшие дни.</p>
+    <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:14px">
+      <thead>
+        <tr style="background:#edf7f4">
+          <th style="padding:8px;border:1px solid #d9e2df">№</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Программа</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Тип</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Дата окончания</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Осталось</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p>Оценка итоговой аттестации пока не заполнена. Если Вы уже прошли аттестацию, пожалуйста, свяжитесь с ответственным специалистом.</p>
+    <p><a href="https://edu-plus.ru/lms/">Открыть АИС Допобразование</a></p>
+    <p style="color:#64748b;font-size:12px">Сообщение сформировано автоматически.</p>
+  `.trim();
+}
+
 async function executeTrainingEndNotificationJob(options = {}) {
   const force = options.force === true;
+  const testMode = force && options.testMode === true;
   const configuration = await readTrainingEndNotificationConfiguration();
   if (!configuration.enabled && !force) {
     return {
@@ -26112,84 +26259,97 @@ async function executeTrainingEndNotificationJob(options = {}) {
       programs: data.collections?.programs,
       programTypes: configuration.programTypes
     });
-    if (!candidates.length) {
-      const sentRecipients = (claim.sentRecipients || [])
-        .filter((recipient) => configuration.recipients.includes(recipient));
+    const systemMailbox = getStudentApplicationsEmailSettings().login;
+    const deliveryPlan = buildTrainingEndNotificationDeliveryPlan(candidates, {
+      testMode,
+      testRecipients: testMode ? [systemMailbox] : []
+    });
+    const plannedDeliveryKeys = new Set(
+      deliveryPlan.deliveries.map((delivery) => delivery.deliveryKey)
+    );
+    const sentDeliveryKeys = new Set(
+      (claim.sentDeliveryKeys || []).filter((key) => plannedDeliveryKeys.has(key))
+    );
+    if (!deliveryPlan.deliveries.length) {
+      const outcome = candidates.length ? "no-recipient-email" : "no-candidates";
       await finishTrainingEndNotificationRun(claim, {
-        outcome: sentRecipients.length ? "sent" : "no-candidates",
-        candidateCount: 0,
-        sentCount: sentRecipients.length,
-        sentRecipients
+        outcome,
+        candidateCount: candidates.length,
+        sentCount: 0,
+        sentDeliveryKeys: []
       });
       return {
         ok: true,
-        outcome: sentRecipients.length ? "sent" : "no-candidates",
-        message: sentRecipients.length
-          ? "Ранее отправленные уведомления за текущий период зафиксированы; новых подходящих слушателей не найдено."
+        outcome,
+        message: candidates.length
+          ? `Найдено слушателей: ${candidates.length}, но у них не заполнен корректный email. Письма не отправлены.`
           : `Слушателей по выбранным типам программ с окончанием обучения менее чем через ${configuration.days} дней и без оценки итоговой аттестации не найдено.`,
         status: await readTrainingEndNotificationStatus()
       };
     }
-    const subject = normalizeEmailSubject(
-      `Срок обучения заканчивается, оценка ИА не заполнена — ${candidates.length}`
-    );
-    const message = buildTrainingEndNotificationMessage(candidates, {
-      days: configuration.days,
-      programTypes: configuration.programTypes
-    });
-    const sentRecipients = new Set(
-      (claim.sentRecipients || []).filter((recipient) => configuration.recipients.includes(recipient))
-    );
     let mailSettings = null;
-    for (const recipient of configuration.recipients) {
-      if (sentRecipients.has(recipient)) continue;
+    for (const delivery of deliveryPlan.deliveries) {
+      if (sentDeliveryKeys.has(delivery.deliveryKey)) continue;
+      const subject = normalizeEmailSubject(testMode
+        ? `Тест: окончание срока обучения — слушателей ${candidates.length}`
+        : "Напоминание об окончании срока обучения");
+      const message = testMode
+        ? buildTrainingEndNotificationMessage(delivery.candidates, {
+          days: configuration.days,
+          programTypes: configuration.programTypes,
+          testMode: true
+        })
+        : buildTrainingEndStudentNotificationMessage(delivery.candidates);
       try {
         mailSettings = await sendEmailThroughConfiguredMailbox({
-          to: recipient,
+          to: delivery.recipient,
           subject,
           message,
           attachment: null,
           idempotencyKey: [
             TRAINING_END_NOTIFICATION_JOB_NAME,
             claim.runKey,
-            recipient,
+            delivery.deliveryKey,
             subject,
             message
           ].join("\n")
         });
       } catch (error) {
         if (error?.deliveryUnknown === true) {
-          sentRecipients.add(recipient);
+          sentDeliveryKeys.add(delivery.deliveryKey);
           await checkpointTrainingEndNotificationRun(claim, {
             candidateCount: candidates.length,
-            sentRecipients: [...sentRecipients]
+            sentDeliveryKeys: [...sentDeliveryKeys]
           });
         }
         throw error;
       }
-      sentRecipients.add(recipient);
+      sentDeliveryKeys.add(delivery.deliveryKey);
       await checkpointTrainingEndNotificationRun(claim, {
         candidateCount: candidates.length,
-        sentRecipients: [...sentRecipients]
+        sentDeliveryKeys: [...sentDeliveryKeys]
       });
     }
-    const sentCount = sentRecipients.size;
+    const sentCount = sentDeliveryKeys.size;
+    const outcome = testMode ? "test-sent" : "sent";
     await finishTrainingEndNotificationRun(claim, {
-      outcome: "sent",
+      outcome,
       candidateCount: candidates.length,
       sentCount,
-      sentRecipients: [...sentRecipients]
+      sentDeliveryKeys: [...sentDeliveryKeys]
     });
-    const recipientLabel = configuration.recipients.join(", ");
+    const recipientLabel = testMode ? "Системный ящик (тест)" : "Слушатели";
     await safelyAppendAuditEntry({
-      action: "Отправлено уведомление об окончании обучения",
+      action: testMode
+        ? "Выполнена тестовая отправка уведомления об окончании обучения"
+        : "Отправлены уведомления слушателям об окончании обучения",
       area: "Электронная почта",
       entityType: "training-end-notification",
       entityId: schedule.calendarDate,
       entityLabel: recipientLabel,
       field: "email",
       after: recipientLabel,
-      details: `Слушателей: ${candidates.length}; типы программ: ${configuration.programTypes.join(", ")}; интервал: менее ${configuration.days} дн.; получателей: ${sentCount}; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings?.login || getStudentApplicationsEmailSettings().login}`,
+      details: `Режим: ${testMode ? "тестовый" : "слушателям"}; слушателей: ${candidates.length}; без корректного email: ${deliveryPlan.missingEmailCount}; типы программ: ${configuration.programTypes.join(", ")}; интервал: менее ${configuration.days} дн.; писем: ${sentCount}; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings?.login || systemMailbox}`,
       source: options.source || "scheduler"
     }, {
       id: "system-training-end-notifications",
@@ -26199,8 +26359,10 @@ async function executeTrainingEndNotificationJob(options = {}) {
     }, { headers: {}, socket: {} });
     return {
       ok: true,
-      outcome: "sent",
-      message: `Сводка отправлена получателям: ${recipientLabel}. Слушателей: ${candidates.length}.`,
+      outcome,
+      message: testMode
+        ? `Тестовое письмо отправлено на системный ящик ${systemMailbox}. Найдено слушателей: ${candidates.length}.`
+        : `Уведомления отправлены слушателям. Писем: ${sentCount}; слушателей без корректного email: ${deliveryPlan.missingEmailCount}.`,
       status: await readTrainingEndNotificationStatus()
     };
   } catch (error) {
@@ -38694,7 +38856,7 @@ async function publicTrainingEndNotificationSettings() {
     trainingEndNotificationTimeZone: configuration.timeZone,
     trainingEndNotificationFrequency: configuration.frequency,
     trainingEndNotificationProgramTypes: configuration.programTypes,
-    trainingEndNotificationRecipients: configuration.recipients,
+    trainingEndNotificationRecipients: [getStudentApplicationsEmailSettings().login],
     trainingEndNotificationStatus: status
   };
 }
@@ -38750,12 +38912,7 @@ async function handleTrainingEndNotificationSettings(req, res, authUser) {
     if (!programTypes.length) {
       throw new Error("Выберите хотя бы один тип программы.");
     }
-    const recipients = normalizeTrainingEndNotificationRecipients(
-      body.trainingEndNotificationRecipients ?? body.recipients
-    );
-    if (!recipients.length) {
-      throw new Error("Укажите хотя бы один email получателя.");
-    }
+    const recipients = [getStudentApplicationsEmailSettings().login];
     const configuration = await saveTrainingEndNotificationConfiguration({
       enabled: body.trainingEndNotificationsEnabled ?? body.enabled,
       days,
@@ -38790,7 +38947,7 @@ async function handleTrainingEndNotificationSettings(req, res, authUser) {
         programTypes: configuration.programTypes,
         recipients: configuration.recipients
       }),
-      details: `Типы: ${configuration.programTypes.join(", ")}; получатели: ${configuration.recipients.join(", ")}`
+      details: `Типы: ${configuration.programTypes.join(", ")}; плановый получатель: слушатель; тестовый ящик: ${configuration.recipients.join(", ")}`
     }, authUser, req);
     sendJson(res, 200, await publicTrainingEndNotificationSettings());
   } catch (error) {
@@ -38806,6 +38963,7 @@ async function handleTrainingEndNotificationCheck(req, res, options = {}) {
     }
     sendJson(res, 200, await maybeRunTrainingEndNotificationJob({
       force: options.force === true,
+      testMode: options.testMode === true,
       source: options.source || "web"
     }));
   } catch (error) {
@@ -39463,7 +39621,11 @@ async function route(req, res) {
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/admin/training-end-notifications/run") {
-    await handleTrainingEndNotificationCheck(req, res, { force: true, source: "admin" });
+    await handleTrainingEndNotificationCheck(req, res, {
+      force: true,
+      testMode: true,
+      source: "admin"
+    });
     return;
   }
   if (requestUrl.pathname === "/api/statistics/sources/test") {
@@ -39950,9 +40112,11 @@ module.exports = {
   withoutTrainingEndNotificationMetaPatch,
   withoutTrainingEndNotificationSharedStateResult,
   getTrainingEndNotificationCandidates,
+  buildTrainingEndNotificationDeliveryPlan,
   getTrainingEndNotificationConfiguration,
   getTrainingEndNotificationSchedule,
   buildTrainingEndNotificationMessage,
+  buildTrainingEndStudentNotificationMessage,
   maybeRunTrainingEndNotificationJob,
   sanitizePartnerRegistrationPayload,
   createPartnerRegistrationSpamChallenge,

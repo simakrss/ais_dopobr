@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.393",
+    version: "1.7.394",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.394",
+      releasedAt: "2026-09-07",
+      changes: [
+        "Уведомления об окончании обучения теперь отправляются персонально на email слушателя; ручная проверка выполняет безопасную тестовую отправку только на системный ящик. Настройки оформлены компактными фирменными переключателями и полями."
+      ]
+    },
     {
       version: "1.7.393",
       releasedAt: "2026-09-07",
@@ -23404,7 +23411,8 @@ MAX - https://bizvmax.ru/zifra_plus
               type="checkbox"
               ${settings.trainingEndNotificationsEnabled ? "checked" : ""}
             >
-            <span>Включено</span>
+            <span class="training-end-notification-switch-track" aria-hidden="true"><span></span></span>
+            <span class="training-end-notification-switch-label">Автоотправка</span>
           </label>
         </div>
         <fieldset class="training-end-notification-program-types">
@@ -23424,8 +23432,8 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </fieldset>
         <div class="training-end-notification-settings-fields">
-          <label>
-            <span>Уведомлять за (дней)</span>
+          <label class="training-end-notification-field training-end-notification-days">
+            <span>Уведомлять за</span>
             <input
               name="trainingEndNotificationDays"
               type="number"
@@ -23433,29 +23441,29 @@ MAX - https://bizvmax.ru/zifra_plus
               max="60"
               step="1"
               value="${escapeAttr(settings.trainingEndNotificationDays)}"
+              title="Количество календарных дней, включая сегодняшний"
               required
             >
-            <small>При значении 5 в сводку попадут сроки от сегодняшнего дня до четырёх дней включительно.</small>
           </label>
-          <label>
+          <label class="training-end-notification-field training-end-notification-schedule">
             <span>Время отправки</span>
-            <input
-              name="trainingEndNotificationTime"
-              type="time"
-              step="60"
-              value="${escapeAttr(settings.trainingEndNotificationTime)}"
-              required
-            >
+            <span class="training-end-notification-time-controls">
+              <input
+                name="trainingEndNotificationTime"
+                type="time"
+                step="60"
+                value="${escapeAttr(settings.trainingEndNotificationTime)}"
+                aria-label="Время отправки"
+                required
+              >
+              <select name="trainingEndNotificationTimeZone" aria-label="Часовой пояс" required>
+                ${TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.map((option) => `
+                  <option value="${escapeAttr(option.value)}" ${option.value === settings.trainingEndNotificationTimeZone ? "selected" : ""}>${escapeHtml(option.label)}</option>
+                `).join("")}
+              </select>
+            </span>
           </label>
-          <label>
-            <span>Часовой пояс</span>
-            <select name="trainingEndNotificationTimeZone" required>
-              ${TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.map((option) => `
-                <option value="${escapeAttr(option.value)}" ${option.value === settings.trainingEndNotificationTimeZone ? "selected" : ""}>${escapeHtml(option.label)}</option>
-              `).join("")}
-            </select>
-          </label>
-          <label>
+          <label class="training-end-notification-field training-end-notification-frequency">
             <span>Периодичность</span>
             <select name="trainingEndNotificationFrequency" required>
               ${TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.map((option) => `
@@ -23463,24 +23471,25 @@ MAX - https://bizvmax.ru/zifra_plus
               `).join("")}
             </select>
           </label>
-          <label class="training-end-notification-recipients">
-            <span>Получатели</span>
-            <textarea
-              name="trainingEndNotificationRecipients"
-              rows="4"
-              placeholder="manager@example.ru"
-              required
-            >${escapeHtml(settings.trainingEndNotificationRecipients.join("\n"))}</textarea>
-            <small>Укажите до 50 email-адресов: по одному в строке либо через запятую или точку с запятой.</small>
-          </label>
         </div>
-        <label class="training-end-notification-fixed-condition">
-          <input type="checkbox" checked disabled>
+        <div class="training-end-notification-recipient" role="note">
+          <span class="training-end-notification-recipient-icon" aria-hidden="true">✉</span>
+          <span class="training-end-notification-recipient-copy">
+            <strong>Получатель — слушатель</strong>
+            <small>Адрес берётся из поля «Email» карточки слушателя. В письме отображаются только его программы.</small>
+          </span>
+          <span class="training-end-notification-recipient-source">Email из карточки</span>
+        </div>
+        <div class="training-end-notification-fixed-condition" role="note">
+          <span aria-hidden="true">✓</span>
           <span>Оценка итоговой аттестации не заполнена</span>
-        </label>
+        </div>
         <div class="training-end-notification-settings-status is-${escapeAttr(status.status || "never")}" role="status">
           <span>${escapeHtml(getTrainingEndNotificationStatusLabel(status))}</span>
-          <button class="ghost-button compact-button" data-action="run-training-end-notifications" type="button">Проверить и отправить сейчас</button>
+          <span class="training-end-notification-test-action">
+            <small>Тестовый ящик: ${escapeHtml(getStudentApplicationsEmailLogin())}</small>
+            <button class="ghost-button compact-button" data-action="run-training-end-notifications" type="button">Отправить тест</button>
+          </span>
         </div>
         <div class="sdo-settings-actions">
           <button class="ghost-button settings-apply-button" type="submit" title="Применить параметры к черновику настроек">Применить</button>
@@ -25807,6 +25816,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const completedAt = formatDateTimeRu(status.completedAt || status.updatedAt || "");
       const candidates = Math.max(0, Number(status.candidateCount) || 0);
       const sent = Math.max(0, Number(status.sentCount) || 0);
+      if (String(status.outcome || "") === "test-sent") {
+        return `${completedAt ? `Последний тест: ${completedAt}. ` : ""}Системных писем: ${sent}; найдено слушателей: ${candidates}.`;
+      }
       return `${completedAt ? `Последняя проверка: ${completedAt}. ` : ""}Найдено слушателей: ${candidates}; отправлено писем: ${sent}.`;
     }
     if (stateValue === "running") return "Плановая проверка выполняется.";
@@ -58784,12 +58796,6 @@ MAX - https://bizvmax.ru/zifra_plus
       Array.from(form.querySelectorAll("[name='trainingEndNotificationProgramTypes']:checked"))
         .map((input) => input.value)
     );
-    const recipientValues = getTrainingEndNotificationRecipientValues(
-      form.elements.trainingEndNotificationRecipients?.value
-    );
-    const invalidRecipient = recipientValues.find((email) => (
-      email.length > 160 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(email)
-    ));
     if (!Number.isInteger(days) || days < 1 || days > 60) {
       alert("Укажите срок уведомления целым числом от 1 до 60 дней.");
       form.elements.trainingEndNotificationDays?.focus();
@@ -58815,22 +58821,9 @@ MAX - https://bizvmax.ru/zifra_plus
       form.querySelector("[name='trainingEndNotificationProgramTypes']")?.focus();
       return;
     }
-    if (!recipientValues.length) {
-      alert("Укажите хотя бы один email получателя.");
-      form.elements.trainingEndNotificationRecipients?.focus();
-      return;
-    }
-    if (recipientValues.length > 50) {
-      alert("Можно указать не более 50 получателей.");
-      form.elements.trainingEndNotificationRecipients?.focus();
-      return;
-    }
-    if (invalidRecipient) {
-      alert(`Укажите корректный email получателя: ${invalidRecipient}.`);
-      form.elements.trainingEndNotificationRecipients?.focus();
-      return;
-    }
-    const recipients = normalizeTrainingEndNotificationRecipients(recipientValues);
+    const recipients = normalizeTrainingEndNotificationRecipients([
+      getStudentApplicationsEmailLogin()
+    ]);
     Object.assign(state.data.meta, {
       trainingEndNotificationsEnabled: Boolean(form.elements.trainingEndNotificationsEnabled?.checked),
       trainingEndNotificationDays: days,
@@ -58897,7 +58890,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!confirm(
-      "Проверить сроки обучения сейчас и отправить сводку настроенным получателям, если найдены подходящие слушатели?"
+      `Отправить тестовую сводку на системный ящик ${getStudentApplicationsEmailLogin()}? Слушателям письма отправлены не будут.`
     )) return;
     button.disabled = true;
     try {
