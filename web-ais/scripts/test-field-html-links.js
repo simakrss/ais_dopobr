@@ -516,11 +516,20 @@ assert.match(stylesSource, /\.native-html-link-highlight\s*\{[\s\S]*?pointer-eve
 assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?color:\s*transparent\s*!important/u);
 assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?caret-color:/u);
 assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?text-shadow:\s*none\s*!important/u);
-assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link/u);
-assert.match(
-  stylesSource,
-  /\.native-html-link-highlight \.communication-template-html-link\s*\{[\s\S]*?cursor:\s*inherit;/u
-);
+const nativeSelectionCss = /\.has-native-html-links::selection\s*\{([^}]*)\}/u
+  .exec(stylesSource)?.[1] || "";
+assert.match(nativeSelectionCss, /background-color:\s*rgba\(47, 111, 237, 0\.24\);/u);
+assert.match(nativeSelectionCss, /color:\s*transparent(?:\s*!important)?\s*;/u);
+assert.match(nativeSelectionCss, /text-shadow:\s*none(?:\s*!important)?\s*;/u);
+const firefoxSelectionCss = /\.has-native-html-links::-moz-selection\s*\{([^}]*)\}/u
+  .exec(stylesSource)?.[1] || "";
+assert.match(firefoxSelectionCss, /background-color:\s*rgba\(47, 111, 237, 0\.24\);/u);
+assert.match(firefoxSelectionCss, /color:\s*transparent(?:\s*!important)?\s*;/u);
+assert.match(firefoxSelectionCss, /text-shadow:\s*none(?:\s*!important)?\s*;/u);
+const nativeOverlayLinkCss = /\.native-html-link-highlight \.communication-template-html-link\s*\{([^}]*)\}/u
+  .exec(stylesSource)?.[1] || "";
+assert.match(nativeOverlayLinkCss, /background-color:\s*transparent;/u);
+assert.match(nativeOverlayLinkCss, /cursor:\s*inherit;/u);
 assert.match(
   stylesSource,
   /\.native-html-link-modifier-active[\s\S]*?\.native-html-link-highlight[\s\S]*?\.communication-template-html-link\s*\{[\s\S]*?cursor:\s*pointer;[\s\S]*?pointer-events:\s*auto;/u

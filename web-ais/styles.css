@@ -6096,6 +6096,7 @@ body.long-press-dragging * {
 }
 
 .native-html-link-highlight .communication-template-html-link {
+  background-color: transparent;
   cursor: inherit;
   -webkit-text-fill-color: currentColor;
 }
@@ -6112,6 +6113,18 @@ body.long-press-dragging * {
   caret-color: var(--text);
   text-shadow: none !important;
   -webkit-text-fill-color: transparent;
+}
+
+.has-native-html-links::-moz-selection {
+  background-color: rgba(47, 111, 237, 0.24);
+  color: transparent;
+  text-shadow: none;
+}
+
+.has-native-html-links::selection {
+  background-color: rgba(47, 111, 237, 0.24);
+  color: transparent;
+  text-shadow: none;
 }
 
 .communication-template-editor.is-drop-target {
