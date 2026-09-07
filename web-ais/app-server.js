@@ -838,6 +838,7 @@ const PROGRAM_DATABASE_COLUMN_MAP = Object.freeze({
   "Наименование программы": "name",
   "Программа": "name",
   "Наименование": "name",
+  "Название программы на английском": "nameEnglish",
   "Наименование программы (без часов)": "shortName",
   "Статус": "status",
   "№ в лендинге": "landingPosition",

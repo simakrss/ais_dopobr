@@ -6,9 +6,11 @@ const vm = require("node:vm");
 const serverPath = path.resolve(__dirname, "..", "app-server.js");
 const clientPath = path.resolve(__dirname, "..", "app.js");
 const syncScriptPath = path.resolve(__dirname, "sync-student-database.ps1");
+const programRegistryGeneratorPath = path.resolve(__dirname, "generate-program-payment-registry.js");
 const serverSource = fs.readFileSync(serverPath, "utf8");
 const clientSource = fs.readFileSync(clientPath, "utf8");
 const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8");
+const programRegistryGeneratorSource = fs.readFileSync(programRegistryGeneratorPath, "utf8");
 const { sanitizeStudentDatabaseExportPayload } = require(serverPath);
 
 function extractBetween(source, startMarker, endMarker) {
@@ -47,6 +49,34 @@ function loadProgramMerge() {
   return context.mergePrograms;
 }
 
+function loadProgramEnglishCertificateSource(program) {
+  const context = {
+    resolveContractTemplateAddressSourceKey: () => "",
+    getContractDocumentDiscountPercent: () => "",
+    getStudentProgramHours: () => "",
+    getStudentProgramTypeCode: () => "",
+    inferStudentGender: () => "",
+    isChecked: () => false,
+    splitFullName: () => ({ firstName: "", patronymic: "" }),
+    findProgramByName: () => program,
+    getIssuedEducationDocumentName: () => "",
+    formatEducationDocumentTrainingPlan: () => "",
+    formatEducationDocumentStudyPeriod: () => "",
+    getProgramPromoUrl: () => "",
+    contractTemplateSourceFieldMap: {}
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function getContractTemplateRawSourceValue",
+      "\n  function getContractDocumentDiscountPercent"
+    ) + "\nthis.resolveProgramEnglish = getContractTemplateRawSourceValue;",
+    context
+  );
+  return context.resolveProgramEnglish;
+}
+
 const payload = sanitizeStudentDatabaseExportPayload({
   students: [{ id: "student-1", uid: "1", name: "Тест" }],
   contracts: [],
@@ -58,6 +88,7 @@ const payload = sanitizeStudentDatabaseExportPayload({
     xlsbProgramName: "Старое имя в Excel",
     xlsbProgramLandingCode: "old-code",
     xlsbProgramRow: 2,
+    nameEnglish: "New program name",
     shortName: "Новое краткое имя",
     hours: 36,
     databaseSyncFormulaFields: ["hours"]
@@ -69,8 +100,11 @@ const payload = sanitizeStudentDatabaseExportPayload({
 });
 
 assert.equal(payload.programColumnMap["Наименование программы"], "name");
+assert.equal(payload.programColumnMap["Название программы на английском"], "nameEnglish");
 assert.ok(payload.programs[0].providedFields.includes("name"));
+assert.ok(payload.programs[0].providedFields.includes("nameEnglish"));
 assert.equal(payload.programs[0].name, "Новое имя в Web");
+assert.equal(payload.programs[0].nameEnglish, "New program name");
 assert.deepEqual(payload.programs[0].databaseSyncFormulaFields, ["hours"]);
 assert.equal(payload.programDictionariesProvided, true);
 assert.deepEqual(payload.programDictionaries, {
@@ -104,12 +138,13 @@ const merged = mergePrograms(
     name: "Новое имя в Excel",
     xlsbProgramRow: 2,
     xlsbProgramLandingCode: "new-code",
+    nameEnglish: "English program name",
     shortName: "Excel short",
     hours: 36,
     databaseSyncFormulaFields: ["hours"]
   }],
   50,
-  ["name", "shortName"]
+  ["name", "nameEnglish", "shortName"]
 );
 assert.equal(merged.length, 1);
 assert.equal(merged[0].id, "program-stable");
@@ -117,8 +152,37 @@ assert.equal(merged[0].name, "Новое имя в Excel");
 assert.equal(merged[0].xlsbProgramName, "Новое имя в Excel");
 assert.equal(merged[0].xlsbProgramRow, 2);
 assert.equal(merged[0].xlsbProgramLandingCode, "new-code");
+assert.equal(merged[0].nameEnglish, "English program name");
 assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["hours"]);
 assert.deepEqual(merged[0].webOnly, { keep: true });
+
+const resolveProgramEnglish = loadProgramEnglishCertificateSource({
+  name: "Новое имя в Excel",
+  nameEnglish: "English program name",
+  shortName: "Русское краткое имя"
+});
+assert.equal(
+  resolveProgramEnglish("Прогр обуч факт_ENG", {
+    program: "Новое имя в Excel",
+    programEnglish: "Legacy English name"
+  }),
+  "English program name"
+);
+assert.match(
+  clientSource,
+  /field\("nameEnglish", "Название программы на английском"/u,
+  "Поле английского названия должно отображаться в карточке программы."
+);
+assert.match(
+  programRegistryGeneratorSource,
+  /\["Название программы на английском", "nameEnglish"\]/u,
+  "Статический реестр должен читать английское название из XLSB."
+);
+assert.match(
+  programRegistryGeneratorSource,
+  /2026-09-07-program-english-name-/u,
+  "Версия статического реестра должна принудительно обновить данные у существующих клиентов."
+);
 
 assert.match(syncScriptSource, /function Update-ProgramDictionaries/u);
 assert.match(syncScriptSource, /Name = "Деятельность"/u);

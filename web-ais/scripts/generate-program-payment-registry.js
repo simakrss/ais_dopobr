@@ -32,6 +32,7 @@ const headers = rows[headerRowIndex].map((value) => String(value || "").trim());
 const programColumn = headers.findIndex((value) => programHeaders.has(value));
 const programFieldDefinitions = [
   ["Автор", "authorSource"],
+  ["Название программы на английском", "nameEnglish"],
   ["Квалификация", "qualification", "list"],
   ["Сфера деятельности", "activityScope", "list"],
   ["ФГОС", "fgos", "list"],
@@ -120,7 +121,7 @@ const defaultPercentSource = getNamedCellValue("АвторскаяСтавка")
 const defaultAuthorPercent = Math.abs(defaultPercentSource) <= 1
   ? defaultPercentSource * 100
   : defaultPercentSource;
-const version = `2026-07-30-characteristics-${crypto
+const version = `2026-09-07-program-english-name-${crypto
   .createHash("sha1")
   .update(workbookBuffer)
   .digest("hex")

@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.389",
+    version: "1.7.390",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.390",
+      releasedAt: "2026-09-07",
+      changes: [
+        "В карточку образовательной программы добавлено поле «Название программы на английском» из листа «Реестр программ»; при формировании и отправке сертификатов ДОП и ПРО английское название теперь подставляется из выбранной программы."
+      ]
+    },
     {
       version: "1.7.389",
       releasedAt: "2026-09-07",
@@ -5366,6 +5373,7 @@ MAX - https://bizvmax.ru/zifra_plus
       defaultSort: { key: "name", dir: "asc" },
       fields: [
         field("name", "Наименование программы", "text", true),
+        field("nameEnglish", "Название программы на английском", "text", false, null, { wide: true }),
         field("shortName", "Краткое название"),
         field("status", "Статус", "select", true, "programStatuses"),
         field("price", "Стоимость", "number"),
@@ -66946,7 +66954,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (normalized === "Прогр обуч факт_ENG") {
       const program = findProgramByName(record.program);
-      return String(record.programEnglish || program?.shortName || record.program || "").trim();
+      return String(
+        program?.nameEnglish
+        || program?.["Название программы на английском"]
+        || record.programEnglish
+        || program?.shortName
+        || record.program
+        || ""
+      ).trim();
     }
     if (normalized === "Документ об образовании") return getIssuedEducationDocumentName(record);
     if (normalized === "Квалификация") {

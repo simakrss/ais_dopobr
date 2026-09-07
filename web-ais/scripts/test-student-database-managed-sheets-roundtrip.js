@@ -84,6 +84,18 @@ try {
   });
   const baseHeaderRowIndex = baseRows.findIndex((row) => row.includes("uid") && row.includes("ФИО"));
   const baseHeaders = baseRows[baseHeaderRowIndex].map((value) => String(value || "").trim());
+  const programRows = XLSX.utils.sheet_to_json(before.Sheets["Реестр программ"], {
+    header: 1,
+    defval: "",
+    raw: true
+  });
+  const programHeaderRowIndex = programRows.findIndex((row) => (
+    row.includes("Наименование программы") && row.includes("Автор")
+  ));
+  const programHeaders = programRows[programHeaderRowIndex]
+    .map((value) => String(value || "").trim());
+  const programEnglishColumnIndex = programHeaders.indexOf("Название программы на английском");
+  assert.ok(programEnglishColumnIndex >= 0, "Не найдена колонка английского названия программы.");
   const contractAmountColumnIndex = baseHeaders.findIndex((header) => (
     header === "Сумма по договору (руб)" || header === "Сумма  по договору (руб)"
   ));
@@ -109,6 +121,23 @@ try {
   assert.ok(imported.inventory.length, "В исходной книге нет запасов.");
   assert.ok(imported.trainingPlans.length, "В исходной книге нет учебных планов.");
   assert.ok(imported.programPaymentSettings.length, "В исходной книге нет реестра программ.");
+  assert.ok(
+    imported.programDatabaseSyncFields.includes("nameEnglish"),
+    "Английское название программы не объявлено управляемым при Excel → Web."
+  );
+  const importedProgramWithEnglish = imported.programPaymentSettings.find((program) => (
+    String(program.nameEnglish || "").trim()
+  ));
+  assert.ok(importedProgramWithEnglish, "Из XLSB не импортировано ни одного английского названия программы.");
+  const importedEnglishAddress = XLSX.utils.encode_cell({
+    r: Number(importedProgramWithEnglish.xlsbProgramRow) - 1,
+    c: programEnglishColumnIndex
+  });
+  assert.equal(
+    importedProgramWithEnglish.nameEnglish,
+    String(getCell(before, "Реестр программ", importedEnglishAddress).v || "").trim(),
+    "Английское название программы и исходная ячейка XLSB различаются."
+  );
   assert.ok(
     imported.programPaymentSettings.some((program) => (
       Array.isArray(program.databaseSyncFormulaFields)
@@ -160,10 +189,12 @@ try {
   const inventoryNote = `Round-trip запас ${runId}`;
   const trainingTeacher = `Round-trip преподаватель ${runId}`;
   const programManager = `Round-trip менеджер ${runId}`;
+  const programEnglishName = `Round-trip program ${runId}`;
   const programFormulaHours = Number(programTarget.hours || 0) + 1;
   const insertedProgram = {
     id: `roundtrip-program-${runId}`,
     name: `Автоматически добавленная программа ${runId} (5 ч)`,
+    nameEnglish: `Automatically added program ${runId} (5 h)`,
     shortName: `Автоматически добавленная программа ${runId}`,
     status: "Набор",
     landingCode: `roundtrip-${runId}`,
@@ -224,6 +255,7 @@ try {
           ? {
             ...program,
             manager: programManager,
+            nameEnglish: programEnglishName,
             hours: programFormulaHours,
             databaseSyncFormulaFields: program.databaseSyncFormulaFields
               .filter((fieldName) => fieldName !== "hours"),
@@ -282,6 +314,10 @@ try {
   fs.writeFileSync(payloadPath, JSON.stringify(payload), "utf8");
 
   const programRow = Number(programTarget.xlsbProgramRow);
+  const programEnglishAddress = XLSX.utils.encode_cell({
+    r: programRow - 1,
+    c: programEnglishColumnIndex
+  });
   const fixedValueAddress = XLSX.utils.encode_cell({
     r: Number(fixedValueTarget.databaseSyncSourceRow) - 1,
     c: contractAmountColumnIndex
@@ -369,6 +405,11 @@ try {
   assert.equal(result.studentFormulaCellsReplaced, 2);
 
   const after = readRaw(outputPath);
+  assert.equal(
+    String(getCell(after, "Реестр программ", programEnglishAddress).v || "").trim(),
+    programEnglishName,
+    "Английское название программы не записано из Web в XLSB."
+  );
   assert.ok(
     getCell(
       after,
@@ -489,6 +530,7 @@ try {
     }, null, 2));
   }
   assert.equal(updatedProgramResult?.manager, programManager);
+  assert.equal(updatedProgramResult?.nameEnglish, programEnglishName);
   assert.equal(Number(updatedProgramResult?.hours), programFormulaHours);
   assert.equal(
     getCell(
@@ -508,6 +550,7 @@ try {
   ));
   assert.ok(insertedProgramResult, "Отсутствующая программа не была добавлена в XLSB.");
   assert.equal(insertedProgramResult.name, insertedProgram.name);
+  assert.equal(insertedProgramResult.nameEnglish, insertedProgram.nameEnglish);
   assert.equal(insertedProgramResult.status, "Набор");
   assert.ok(getCell(after, "Реестр программ", `B${insertedProgramResult.xlsbProgramRow}`).f);
   assert.ok(getCell(after, "Реестр программ", `M${insertedProgramResult.xlsbProgramRow}`).f);

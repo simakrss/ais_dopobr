@@ -58,6 +58,7 @@ const payload = sanitize({
   }],
   programs: [{
     name: "Тестовая программа",
+    nameEnglish: "Test program",
     xlsbProgramName: "Тестовая программа",
     xlsbProgramRow: 2,
     price: "12000,50",
@@ -125,9 +126,10 @@ assert.equal(payload.trainingPlans[0].practiceHours, 3);
 assert.equal(payload.trainingPlans[0].totalHours, 5.5);
 assert.deepEqual(
   payload.programs[0].providedFields,
-  ["name", "price", "hours", "authorSource", "manager"]
+  ["name", "nameEnglish", "price", "hours", "authorSource", "manager"]
 );
 assert.equal(payload.programs[0].price, 12000.5);
+assert.equal(payload.programs[0].nameEnglish, "Test program");
 
 assert.deepEqual(
   validateStudentDatabaseProgramStructure(
