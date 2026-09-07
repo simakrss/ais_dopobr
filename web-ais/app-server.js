@@ -155,6 +155,18 @@ const DEFAULT_TRAINING_END_NOTIFICATION_DAYS = 5;
 const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
 const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
 const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
+const DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES = Object.freeze(["КПК", "ДОП", "ППП"]);
+const MAX_TRAINING_END_NOTIFICATION_RECIPIENTS = 50;
+const TRAINING_END_NOTIFICATION_SHARED_META_KEYS = new Set([
+  "trainingEndNotificationsEnabled",
+  "trainingEndNotificationDays",
+  "trainingEndNotificationTime",
+  "trainingEndNotificationTimeZone",
+  "trainingEndNotificationFrequency",
+  "trainingEndNotificationProgramTypes",
+  "trainingEndNotificationRecipients",
+  "trainingEndNotificationStatus"
+]);
 const TRAINING_END_NOTIFICATION_FREQUENCIES = new Set(["daily", "weekdays", "weekly"]);
 const TRAINING_END_NOTIFICATION_JOB_NAME = "training-end-notification";
 const TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS = 60 * 1000;
@@ -1399,6 +1411,8 @@ async function ensureStorage() {
     trainingEndNotificationTime: DEFAULT_TRAINING_END_NOTIFICATION_TIME,
     trainingEndNotificationTimeZone: DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE,
     trainingEndNotificationFrequency: DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY,
+    trainingEndNotificationProgramTypes: [...DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES],
+    trainingEndNotificationRecipients: [DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN],
     studentDocumentMailboxes: [],
     documentConverterUrl: DEFAULT_DOCUMENT_CONVERTER_URL,
     documentConverterSourceUrl: DEFAULT_DOCUMENT_CONVERTER_SOURCE_URL,
@@ -12933,13 +12947,70 @@ async function flushSharedApplicationStateForSyncPreflight() {
   };
 }
 
+function withoutTrainingEndNotificationSharedMeta(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const meta = data.meta && typeof data.meta === "object" && !Array.isArray(data.meta)
+    ? { ...data.meta }
+    : {};
+  TRAINING_END_NOTIFICATION_SHARED_META_KEYS.forEach((key) => {
+    delete meta[key];
+  });
+  return { ...data, meta };
+}
+
+function withoutTrainingEndNotificationMetaPatch(operation) {
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return operation;
+  let sanitizedOperation = operation;
+  if (operation.data && typeof operation.data === "object" && !Array.isArray(operation.data)) {
+    sanitizedOperation = {
+      ...sanitizedOperation,
+      data: withoutTrainingEndNotificationSharedMeta(operation.data)
+    };
+  }
+  const patch = operation.patch && typeof operation.patch === "object" && !Array.isArray(operation.patch)
+    ? operation.patch
+    : null;
+  if (!patch?.meta || typeof patch.meta !== "object" || Array.isArray(patch.meta)) {
+    return sanitizedOperation;
+  }
+  const meta = { ...patch.meta };
+  TRAINING_END_NOTIFICATION_SHARED_META_KEYS.forEach((key) => {
+    delete meta[key];
+  });
+  return {
+    ...sanitizedOperation,
+    patch: {
+      ...patch,
+      meta
+    }
+  };
+}
+
+function withoutTrainingEndNotificationSharedStateResult(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const sanitized = { ...result };
+  if (Object.prototype.hasOwnProperty.call(sanitized, "data")) {
+    sanitized.data = withoutTrainingEndNotificationSharedMeta(sanitized.data);
+  }
+  if (sanitized.document && typeof sanitized.document === "object" && !Array.isArray(sanitized.document)) {
+    sanitized.document = {
+      ...sanitized.document,
+      data: withoutTrainingEndNotificationSharedMeta(sanitized.document.data)
+    };
+  }
+  return sanitized;
+}
+
 async function handleSharedApplicationState(req, res, authUser, requestUrl) {
   try {
     if (req.method === "GET") {
       if (requestUrl.searchParams.get("flush") === "1") {
+        const result = withoutTrainingEndNotificationSharedStateResult(
+          await flushSharedApplicationStateForSyncPreflight()
+        );
         sendJson(res, 200, {
           ok: true,
-          ...await flushSharedApplicationStateForSyncPreflight()
+          ...result
         });
         return;
       }
@@ -12956,7 +13027,9 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
       const result = await readSharedApplicationStateMirrorSnapshot({
         expectedRevision: requestUrl.searchParams.get("revision")
       });
-      const responseData = result.document?.data || null;
+      const responseData = withoutTrainingEndNotificationSharedMeta(
+        result.document?.data || null
+      );
       const responseMetadata = {
         exists: result.exists,
         revision: result.document?.revision || 0,
@@ -12985,12 +13058,13 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
       return;
     }
     if (req.method === "POST") {
-      const operation = await readJsonBody(req);
+      const operation = withoutTrainingEndNotificationMetaPatch(await readJsonBody(req));
       const result = await saveSharedApplicationState(operation, authUser);
+      const responseResult = withoutTrainingEndNotificationSharedStateResult(result);
       if (result.locked) {
         sendJson(res, 423, {
           error: "Одна из изменяемых записей сейчас заблокирована другим пользователем.",
-          ...result
+          ...responseResult
         });
         return;
       }
@@ -12998,12 +13072,12 @@ async function handleSharedApplicationState(req, res, authUser, requestUrl) {
         sendJson(res, 409, {
           error: "Общая база уже изменена другим пользователем.",
           conflict: true,
-          ...result
+          ...responseResult
         });
         return;
       }
       await rememberSharedApplicationStateMirrorSave(result, operation);
-      sendJson(res, 200, { ok: true, ...result });
+      sendJson(res, 200, { ok: true, ...responseResult });
       return;
     }
     if (
@@ -25038,10 +25112,14 @@ function createEmailMessage({
   message,
   attachment,
   attachments,
-  requestDeliveryAndReadReceipts = false
+  requestDeliveryAndReadReceipts = false,
+  idempotencyKey = ""
 }) {
   const domain = String(from).split("@")[1] || "localhost";
-  const messageId = `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`;
+  const stableMessageKey = String(idempotencyKey || "");
+  const messageId = stableMessageKey
+    ? `${crypto.createHash("sha256").update(stableMessageKey).digest("hex")}@${domain}`
+    : `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`;
   const bodyContentType = containsHtmlMarkup(message) ? "text/html" : "text/plain";
   const encodedBody = wrapEmailBase64(
     Buffer.from(String(message || "").replace(/\r\n|\r|\n/g, "\r\n"), "utf8").toString("base64")
@@ -25097,7 +25175,14 @@ function createEmailMessage({
   return parts.join("\r\n");
 }
 
-async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachment, attachments }) {
+async function sendEmailThroughConfiguredMailbox({
+  to,
+  subject,
+  message,
+  attachment,
+  attachments,
+  idempotencyKey = ""
+}) {
   return runAuthenticatedSmtpSession(async ({
     settings,
     writeCommand,
@@ -25126,7 +25211,8 @@ async function sendEmailThroughConfiguredMailbox({ to, subject, message, attachm
         message,
         attachment,
         attachments,
-        requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts
+        requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts,
+        idempotencyKey
       })}\r\n.\r\n`, "Передача письма", SMTP_MESSAGE_TIMEOUT_MS);
       deliveryResponse = await waitForResponse("Отправка письма", SMTP_MESSAGE_TIMEOUT_MS);
     } catch (error) {
@@ -25287,6 +25373,97 @@ function formatTrainingEndNotificationDate(value) {
   return `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}.${date.getUTCFullYear()}`;
 }
 
+function normalizeTrainingEndNotificationProgramType(value) {
+  const text = String(value || "").normalize("NFKC").trim().toLocaleUpperCase("ru-RU");
+  if (!text) return "";
+  if (text === "КПК" || text.includes("ПОВЫШ")) return "КПК";
+  if (text === "ППП" || text.includes("ПЕРЕПОД")) return "ППП";
+  if (text === "ДОП" || text.includes("ОБЩЕОБРАЗ")) return "ДОП";
+  if (text === "ПРО" || text.includes("ПРОЧ")) return "ПРО";
+  return "";
+}
+
+function normalizeTrainingEndNotificationProgramTypes(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[,;\r\n]+/u);
+  return [...new Set(source
+    .map(normalizeTrainingEndNotificationProgramType)
+    .filter((type) => DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES.includes(type)))];
+}
+
+function normalizeTrainingEndNotificationRecipients(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "").normalize("NFKC").split(/[,;\r\n]+/u);
+  const normalizedSource = source
+    .map((item) => String(item || "").normalize("NFKC").trim())
+    .filter(Boolean);
+  if (normalizedSource.length > MAX_TRAINING_END_NOTIFICATION_RECIPIENTS) {
+    throw new Error(`Можно указать не более ${MAX_TRAINING_END_NOTIFICATION_RECIPIENTS} получателей.`);
+  }
+  return [...new Set(normalizedSource
+    .map((item) => {
+      if (item.length > 160) throw new Error("Email получателя не должен превышать 160 символов.");
+      const email = validateAuthEmail(item);
+      if (!email) throw new Error("Укажите хотя бы один email получателя.");
+      return email.toLocaleLowerCase("en-US");
+    }))];
+}
+
+function normalizeTrainingEndNotificationProgramName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function buildTrainingEndNotificationProgramIndex(programs) {
+  const byName = new Map();
+  const byShortName = new Map();
+  (Array.isArray(programs) ? programs : []).forEach((program) => {
+    const type = normalizeTrainingEndNotificationProgramType(
+      program?.type || program?.educationType || program?.programType
+    );
+    if (!type) return;
+    const entry = {
+      type,
+      hours: String(program?.hours ?? "").trim()
+    };
+    const add = (map, value) => {
+      const key = normalizeTrainingEndNotificationProgramName(value);
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(entry);
+    };
+    add(byName, program?.name);
+    add(byShortName, program?.shortName);
+  });
+  return { byName, byShortName };
+}
+
+function resolveTrainingEndNotificationProgramType(student, programIndex) {
+  const programName = normalizeTrainingEndNotificationProgramName(student?.program);
+  const resolveUniqueType = (entries) => {
+    const types = [...new Set((Array.isArray(entries) ? entries : []).map((entry) => entry.type).filter(Boolean))];
+    return types.length === 1 ? types[0] : "";
+  };
+  const exactType = resolveUniqueType(programIndex.byName.get(programName));
+  if (exactType) return exactType;
+  const directType = normalizeTrainingEndNotificationProgramType(
+    student?.educationType || student?.programType
+  );
+  if (directType) return directType;
+  let shortNameEntries = programIndex.byShortName.get(programName) || [];
+  const studentHours = String(student?.hours ?? "").trim();
+  if (studentHours) {
+    const matchingHours = shortNameEntries.filter((entry) => entry.hours && entry.hours === studentHours);
+    if (matchingHours.length) shortNameEntries = matchingHours;
+  }
+  return resolveUniqueType(shortNameEntries);
+}
+
 function getTrainingEndNotificationCandidates(students, options = {}) {
   const today = getCalendarDateInTimeZone(
     options.today || new Date(),
@@ -25294,18 +25471,30 @@ function getTrainingEndNotificationCandidates(students, options = {}) {
   );
   if (!today) return [];
   const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
+  const configuredProgramTypes = normalizeTrainingEndNotificationProgramTypes(options.programTypes);
+  const programTypes = new Set(
+    configuredProgramTypes.length
+      ? configuredProgramTypes
+      : DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES
+  );
+  const programIndex = buildTrainingEndNotificationProgramIndex(options.programs);
   return (Array.isArray(students) ? students : []).flatMap((student) => {
     if (String(student?.status || "").trim().toLocaleLowerCase("ru-RU") !== "учится") return [];
-    const endDate = String(student?.extendedEndDate || student?.endDate || "").trim();
+    if (String(student?.finalGrade ?? "").trim()) return [];
+    const programType = resolveTrainingEndNotificationProgramType(student, programIndex);
+    if (!programTypes.has(programType)) return [];
+    const endDate = String(student?.extendedEndDate ?? "").trim()
+      || String(student?.endDate ?? "").trim();
     const endDay = parseTrainingEndNotificationDate(endDate);
     if (!Number.isFinite(endDay)) return [];
     const daysRemaining = Math.round((endDay - today.utcDay) / 86400000);
-    if (daysRemaining > days) return [];
+    if (daysRemaining < 0 || daysRemaining >= days) return [];
     return [{
       id: String(student?.id || "").trim(),
       uid: String(student?.uid || "").trim(),
       name: String(student?.name || "Без ФИО").trim() || "Без ФИО",
       program: String(student?.program || "Не указана").trim() || "Не указана",
+      programType,
       responsible: String(student?.responsible || "").trim(),
       endDate,
       daysRemaining
@@ -25342,6 +25531,18 @@ function getTrainingEndNotificationConfiguration(meta = {}) {
     : Object.prototype.hasOwnProperty.call(meta, "frequency")
       ? meta.frequency
       : serverSettings.trainingEndNotificationFrequency;
+  const programTypesValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationProgramTypes")
+    ? meta.trainingEndNotificationProgramTypes
+    : Object.prototype.hasOwnProperty.call(meta, "programTypes")
+      ? meta.programTypes
+      : serverSettings.trainingEndNotificationProgramTypes;
+  const recipientsValue = Object.prototype.hasOwnProperty.call(meta, "trainingEndNotificationRecipients")
+    ? meta.trainingEndNotificationRecipients
+    : Object.prototype.hasOwnProperty.call(meta, "recipients")
+      ? meta.recipients
+      : serverSettings.trainingEndNotificationRecipients;
+  const programTypes = normalizeTrainingEndNotificationProgramTypes(programTypesValue);
+  const recipients = normalizeTrainingEndNotificationRecipients(recipientsValue);
   return {
     enabled: hasSharedEnabled
       ? enabledValue !== false
@@ -25352,7 +25553,12 @@ function getTrainingEndNotificationConfiguration(meta = {}) {
     time: normalizeTrainingEndNotificationTime(timeValue),
     timeZone: normalizeTrainingEndNotificationTimeZone(timeZoneValue),
     frequency: normalizeTrainingEndNotificationFrequency(frequencyValue),
-    recipient: DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN
+    programTypes: programTypes.length
+      ? programTypes
+      : [...DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES],
+    recipients: recipients.length
+      ? recipients
+      : [DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN]
   };
 }
 
@@ -25390,7 +25596,9 @@ async function saveTrainingEndNotificationConfiguration(settings, authUser = nul
       days: normalized.days,
       time: normalized.time,
       timeZone: normalized.timeZone,
-      frequency: normalized.frequency
+      frequency: normalized.frequency,
+      programTypes: normalized.programTypes,
+      recipients: normalized.recipients
     }),
     String(authUser?.login || "system").slice(0, 160)
   ]);
@@ -25450,6 +25658,17 @@ async function ensureScheduledJobRunsTable(pool) {
   return scheduledJobRunsTableInitialization;
 }
 
+function getTrainingEndNotificationSentRecipients(row = null) {
+  const value = row?.result_json;
+  if (!value) return [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return normalizeTrainingEndNotificationRecipients(parsed?.sentRecipients);
+  } catch {
+    return [];
+  }
+}
+
 async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY, force = false }) {
   const pool = await getSharedRecordLocksMySqlPool();
   if (!pool) throw new Error("Общая MySQL-база недоступна для плановых уведомлений.");
@@ -25486,20 +25705,52 @@ async function claimTrainingEndNotificationRun({ runDate, frequency = DEFAULT_TR
         return { claimed: false, reason: "retry-later", runKey, status: publicTrainingEndNotificationRun(current) };
       }
     }
+    const sentRecipients = current && !force
+      ? getTrainingEndNotificationSentRecipients(current)
+      : [];
     await connection.query(`
       INSERT INTO ais_scheduled_job_runs (
         run_key, job_name, run_date, status, token, attempts,
         candidate_count, sent_count, started_at, completed_at, updated_at, last_error, result_json
-      ) VALUES (?, ?, ?, 'running', ?, 1, 0, 0, UTC_TIMESTAMP(3), NULL, UTC_TIMESTAMP(3), '', NULL)
+      ) VALUES (?, ?, ?, 'running', ?, 1, 0, ?, UTC_TIMESTAMP(3), NULL, UTC_TIMESTAMP(3), '', ?)
       ON DUPLICATE KEY UPDATE
         status = 'running', token = VALUES(token), attempts = attempts + 1,
-        candidate_count = 0, sent_count = 0, started_at = UTC_TIMESTAMP(3),
-        completed_at = NULL, updated_at = UTC_TIMESTAMP(3), last_error = '', result_json = NULL
-    `, [runKey, TRAINING_END_NOTIFICATION_JOB_NAME, runDate, token]);
-    return { claimed: true, runKey, token };
+        candidate_count = 0, sent_count = VALUES(sent_count), started_at = UTC_TIMESTAMP(3),
+        completed_at = NULL, updated_at = UTC_TIMESTAMP(3), last_error = '',
+        result_json = VALUES(result_json)
+    `, [
+      runKey,
+      TRAINING_END_NOTIFICATION_JOB_NAME,
+      runDate,
+      token,
+      sentRecipients.length,
+      JSON.stringify({ outcome: "running", sentRecipients })
+    ]);
+    return { claimed: true, runKey, token, sentRecipients };
   } finally {
     if (lockAcquired) await connection.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
     connection.release();
+  }
+}
+
+async function checkpointTrainingEndNotificationRun(claim, result = {}) {
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Общая MySQL-база недоступна для фиксации отправленных уведомлений.");
+  const sentRecipients = normalizeTrainingEndNotificationRecipients(result.sentRecipients);
+  const [updateResult] = await pool.query(`
+    UPDATE ais_scheduled_job_runs
+       SET candidate_count = ?, sent_count = ?, updated_at = UTC_TIMESTAMP(3),
+           result_json = ?
+     WHERE run_key = ? AND token = ? AND status = 'running'
+  `, [
+    Math.max(0, Number(result.candidateCount) || 0),
+    sentRecipients.length,
+    JSON.stringify({ outcome: "running", sentRecipients }),
+    claim.runKey,
+    claim.token
+  ]);
+  if (Number(updateResult?.affectedRows) !== 1) {
+    throw new Error("Не удалось зафиксировать результат отправки уведомления.");
   }
 }
 
@@ -25515,7 +25766,10 @@ async function finishTrainingEndNotificationRun(claim, result = {}) {
   `, [
     Math.max(0, Number(result.candidateCount) || 0),
     Math.max(0, Number(result.sentCount) || 0),
-    JSON.stringify({ outcome: String(result.outcome || "completed") }),
+    JSON.stringify({
+      outcome: String(result.outcome || "completed"),
+      sentRecipients: normalizeTrainingEndNotificationRecipients(result.sentRecipients)
+    }),
     claim.runKey,
     claim.token
   ]);
@@ -25557,30 +25811,32 @@ function escapeEmailHtml(value) {
 
 function buildTrainingEndNotificationMessage(candidates, options = {}) {
   const days = Math.min(60, Math.max(1, Math.floor(Number(options.days) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
-  const overdueCount = candidates.filter((student) => Number(student.daysRemaining) < 0).length;
-  const upcomingCount = candidates.length - overdueCount;
+  const programTypes = normalizeTrainingEndNotificationProgramTypes(options.programTypes);
+  const programTypeLabel = (programTypes.length
+    ? programTypes
+    : DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES).join(", ");
   const rows = candidates.map((student, index) => `
     <tr>
       <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${index + 1}</td>
       <td style="padding:8px;border:1px solid #d9e2df"><strong>${escapeEmailHtml(student.name)}</strong>${student.uid ? `<br><small>UID: ${escapeEmailHtml(student.uid)}</small>` : ""}</td>
       <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.program)}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${escapeEmailHtml(student.programType || "—")}</td>
       <td style="padding:8px;border:1px solid #d9e2df;white-space:nowrap">${escapeEmailHtml(formatTrainingEndNotificationDate(student.endDate))}</td>
-      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${Number(student.daysRemaining) < 0
-        ? `<strong style="color:#b42318">Просрочено ${Math.abs(Number(student.daysRemaining))} дн.</strong>`
-        : (Number(student.daysRemaining) === 0 ? "Сегодня" : `Осталось ${Number(student.daysRemaining)} дн.`)}</td>
+      <td style="padding:8px;border:1px solid #d9e2df;text-align:center">${Number(student.daysRemaining) === 0 ? "Сегодня" : `Осталось ${Number(student.daysRemaining)} дн.`}</td>
       <td style="padding:8px;border:1px solid #d9e2df">${escapeEmailHtml(student.responsible || "—")}</td>
     </tr>
   `).join("");
   return `
     <p>Здравствуйте!</p>
-    <p>В сводку включены слушатели со статусом <strong>«Учится»</strong>, у которых срок обучения заканчивается в ближайшие ${days} дн. или уже истёк.</p>
-    <p><strong>Ближайшие окончания: ${upcomingCount}. Просроченные: ${overdueCount}.</strong></p>
+    <p>В сводку включены слушатели со статусом <strong>«Учится»</strong> по программам ${escapeEmailHtml(programTypeLabel)}, у которых срок обучения заканчивается в ближайшие ${days} дн. и не заполнена оценка итоговой аттестации.</p>
+    <p><strong>Требуют внимания: ${candidates.length}.</strong></p>
     <table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:14px">
       <thead>
         <tr style="background:#edf7f4">
           <th style="padding:8px;border:1px solid #d9e2df">№</th>
           <th style="padding:8px;border:1px solid #d9e2df">Слушатель</th>
           <th style="padding:8px;border:1px solid #d9e2df">Программа</th>
+          <th style="padding:8px;border:1px solid #d9e2df">Тип</th>
           <th style="padding:8px;border:1px solid #d9e2df">Дата окончания</th>
           <th style="padding:8px;border:1px solid #d9e2df">Состояние срока</th>
           <th style="padding:8px;border:1px solid #d9e2df">Ответственный</th>
@@ -25641,45 +25897,88 @@ async function executeTrainingEndNotificationJob(options = {}) {
     const candidates = getTrainingEndNotificationCandidates(data.collections?.students, {
       today: options.now || new Date(),
       days: configuration.days,
-      timeZone: configuration.timeZone
+      timeZone: configuration.timeZone,
+      programs: data.collections?.programs,
+      programTypes: configuration.programTypes
     });
     if (!candidates.length) {
+      const sentRecipients = (claim.sentRecipients || [])
+        .filter((recipient) => configuration.recipients.includes(recipient));
       await finishTrainingEndNotificationRun(claim, {
-        outcome: "no-candidates",
+        outcome: sentRecipients.length ? "sent" : "no-candidates",
         candidateCount: 0,
-        sentCount: 0
+        sentCount: sentRecipients.length,
+        sentRecipients
       });
       return {
         ok: true,
-        outcome: "no-candidates",
-        message: `Слушателей с окончанием обучения в ближайшие ${configuration.days} дней или с просроченным сроком не найдено.`,
+        outcome: sentRecipients.length ? "sent" : "no-candidates",
+        message: sentRecipients.length
+          ? "Ранее отправленные уведомления за текущий период зафиксированы; новых подходящих слушателей не найдено."
+          : `Слушателей по выбранным типам программ с окончанием обучения менее чем через ${configuration.days} дней и без оценки итоговой аттестации не найдено.`,
         status: await readTrainingEndNotificationStatus()
       };
     }
     const subject = normalizeEmailSubject(
-      `Ближайшие и просроченные сроки обучения — ${candidates.length}`
+      `Срок обучения заканчивается, оценка ИА не заполнена — ${candidates.length}`
     );
-    const message = buildTrainingEndNotificationMessage(candidates, { days: configuration.days });
-    const mailSettings = await sendEmailThroughConfiguredMailbox({
-      to: configuration.recipient,
-      subject,
-      message,
-      attachment: null
+    const message = buildTrainingEndNotificationMessage(candidates, {
+      days: configuration.days,
+      programTypes: configuration.programTypes
     });
+    const sentRecipients = new Set(
+      (claim.sentRecipients || []).filter((recipient) => configuration.recipients.includes(recipient))
+    );
+    let mailSettings = null;
+    for (const recipient of configuration.recipients) {
+      if (sentRecipients.has(recipient)) continue;
+      try {
+        mailSettings = await sendEmailThroughConfiguredMailbox({
+          to: recipient,
+          subject,
+          message,
+          attachment: null,
+          idempotencyKey: [
+            TRAINING_END_NOTIFICATION_JOB_NAME,
+            claim.runKey,
+            recipient,
+            subject,
+            message
+          ].join("\n")
+        });
+      } catch (error) {
+        if (error?.deliveryUnknown === true) {
+          sentRecipients.add(recipient);
+          await checkpointTrainingEndNotificationRun(claim, {
+            candidateCount: candidates.length,
+            sentRecipients: [...sentRecipients]
+          });
+        }
+        throw error;
+      }
+      sentRecipients.add(recipient);
+      await checkpointTrainingEndNotificationRun(claim, {
+        candidateCount: candidates.length,
+        sentRecipients: [...sentRecipients]
+      });
+    }
+    const sentCount = sentRecipients.size;
     await finishTrainingEndNotificationRun(claim, {
       outcome: "sent",
       candidateCount: candidates.length,
-      sentCount: 1
+      sentCount,
+      sentRecipients: [...sentRecipients]
     });
+    const recipientLabel = configuration.recipients.join(", ");
     await safelyAppendAuditEntry({
       action: "Отправлено уведомление об окончании обучения",
       area: "Электронная почта",
       entityType: "training-end-notification",
       entityId: schedule.calendarDate,
-      entityLabel: configuration.recipient,
+      entityLabel: recipientLabel,
       field: "email",
-      after: configuration.recipient,
-      details: `Слушателей: ${candidates.length}; просрочено: ${candidates.filter((student) => student.daysRemaining < 0).length}; интервал: ${configuration.days} дн.; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings.login}`,
+      after: recipientLabel,
+      details: `Слушателей: ${candidates.length}; типы программ: ${configuration.programTypes.join(", ")}; интервал: менее ${configuration.days} дн.; получателей: ${sentCount}; расписание: ${configuration.frequency}, ${configuration.time}, ${configuration.timeZone}; отправитель: ${mailSettings?.login || getStudentApplicationsEmailSettings().login}`,
       source: options.source || "scheduler"
     }, {
       id: "system-training-end-notifications",
@@ -25690,7 +25989,7 @@ async function executeTrainingEndNotificationJob(options = {}) {
     return {
       ok: true,
       outcome: "sent",
-      message: `Сводка отправлена на ${configuration.recipient}. Слушателей: ${candidates.length}.`,
+      message: `Сводка отправлена получателям: ${recipientLabel}. Слушателей: ${candidates.length}.`,
       status: await readTrainingEndNotificationStatus()
     };
   } catch (error) {
@@ -37471,12 +37770,16 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
 
 async function publicSystemDocumentSettings(includeAdminSettings = false) {
   const localDocuments = await getLocalSystemDocumentsAvailability();
-  const trainingEndNotificationConfiguration = await readTrainingEndNotificationConfiguration()
-    .catch(() => getTrainingEndNotificationConfiguration({}));
-  const trainingEndNotificationStatus = await readTrainingEndNotificationStatus().catch((error) => ({
-    status: "failed",
-    lastError: `Статус плановой проверки недоступен: ${error.message}`
-  }));
+  const trainingEndNotificationConfiguration = includeAdminSettings
+    ? await readTrainingEndNotificationConfiguration()
+      .catch(() => getTrainingEndNotificationConfiguration({}))
+    : null;
+  const trainingEndNotificationStatus = includeAdminSettings
+    ? await readTrainingEndNotificationStatus().catch((error) => ({
+      status: "failed",
+      lastError: `Статус плановой проверки недоступен: ${error.message}`
+    }))
+    : null;
   const settings = {
     databasePath: normalizeYandexDiskResourceSetting(
       serverSettings.studentDatabaseWebDavPath,
@@ -37515,24 +37818,22 @@ async function publicSystemDocumentSettings(includeAdminSettings = false) {
     ),
     emailRequestDeliveryAndReadReceipts:
       serverSettings.emailRequestDeliveryAndReadReceipts !== false,
-    trainingEndNotificationsEnabled: trainingEndNotificationConfiguration.enabled,
-    trainingEndNotificationDays: trainingEndNotificationConfiguration.days,
-    trainingEndNotificationTime: trainingEndNotificationConfiguration.time,
-    trainingEndNotificationTimeZone: trainingEndNotificationConfiguration.timeZone,
-    trainingEndNotificationFrequency: trainingEndNotificationConfiguration.frequency,
-    trainingEndNotificationStatus,
     documentMailboxes: publicStudentDocumentMailboxes(),
     applicationsOrderAdminUrlTemplate: normalizeStudentApplicationsOrderAdminUrlTemplate(
       serverSettings.studentApplicationsOrderAdminUrlTemplate
     )
   };
-  if (includeAdminSettings) Object.assign(
-    settings,
-    publicStudentApplicationsMySqlSettings(),
-    publicAssistantStatisticsMySqlSettings(),
-    publicSharedRecordLocksMySqlSettings(),
-    publicAdvertisingSystemSettings()
-  );
+  if (includeAdminSettings) Object.assign(settings, {
+    trainingEndNotificationsEnabled: trainingEndNotificationConfiguration.enabled,
+    trainingEndNotificationDays: trainingEndNotificationConfiguration.days,
+    trainingEndNotificationTime: trainingEndNotificationConfiguration.time,
+    trainingEndNotificationTimeZone: trainingEndNotificationConfiguration.timeZone,
+    trainingEndNotificationFrequency: trainingEndNotificationConfiguration.frequency,
+    trainingEndNotificationProgramTypes: trainingEndNotificationConfiguration.programTypes,
+    trainingEndNotificationRecipients: trainingEndNotificationConfiguration.recipients,
+    trainingEndNotificationStatus
+  }, publicStudentApplicationsMySqlSettings(), publicAssistantStatisticsMySqlSettings(),
+  publicSharedRecordLocksMySqlSettings(), publicAdvertisingSystemSettings());
   return settings;
 }
 
@@ -37579,32 +37880,6 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     )
       ? body.emailRequestDeliveryAndReadReceipts !== false
       : serverSettings.emailRequestDeliveryAndReadReceipts !== false;
-    const trainingEndNotificationsEnabled = Object.prototype.hasOwnProperty.call(
-      body,
-      "trainingEndNotificationsEnabled"
-    )
-      ? body.trainingEndNotificationsEnabled !== false
-      : serverSettings.trainingEndNotificationsEnabled !== false;
-    const trainingEndNotificationDays = Number(
-      body.trainingEndNotificationDays
-        || serverSettings.trainingEndNotificationDays
-        || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
-    );
-    const trainingEndNotificationTime = String(
-      body.trainingEndNotificationTime
-        ?? serverSettings.trainingEndNotificationTime
-        ?? DEFAULT_TRAINING_END_NOTIFICATION_TIME
-    ).trim();
-    const trainingEndNotificationTimeZone = String(
-      body.trainingEndNotificationTimeZone
-        ?? serverSettings.trainingEndNotificationTimeZone
-        ?? DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE
-    ).trim();
-    const trainingEndNotificationFrequency = String(
-      body.trainingEndNotificationFrequency
-        ?? serverSettings.trainingEndNotificationFrequency
-        ?? DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY
-    ).trim().toLowerCase();
     const currentDocumentMailboxes = new Map(
       (Array.isArray(serverSettings.studentDocumentMailboxes)
         ? serverSettings.studentDocumentMailboxes
@@ -37780,22 +38055,6 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
       throw new Error("Укажите корректный порт SMTP.");
     }
-    if (
-      !Number.isInteger(trainingEndNotificationDays)
-      || trainingEndNotificationDays < 1
-      || trainingEndNotificationDays > 60
-    ) {
-      throw new Error("Укажите срок уведомления от 1 до 60 дней.");
-    }
-    if (!isValidTrainingEndNotificationTime(trainingEndNotificationTime)) {
-      throw new Error("Укажите корректное время отправки в формате ЧЧ:ММ.");
-    }
-    if (!isValidTrainingEndNotificationTimeZone(trainingEndNotificationTimeZone)) {
-      throw new Error("Укажите корректный часовой пояс.");
-    }
-    if (!TRAINING_END_NOTIFICATION_FREQUENCIES.has(trainingEndNotificationFrequency)) {
-      throw new Error("Укажите корректную периодичность уведомлений.");
-    }
     if (!mysqlUseApplicationsConnection) {
       if (!mysqlHost || mysqlHost.length > 255 || !/^[A-Za-z0-9.-]+$/.test(mysqlHost)) {
         throw new Error("Укажите корректный сервер MySQL.");
@@ -37833,11 +38092,6 @@ async function handleSystemDocumentSettings(req, res, authUser) {
       studentApplicationsEmailSmtpSecure: true,
       studentApplicationsEmailLogin: emailLogin,
       emailRequestDeliveryAndReadReceipts,
-      trainingEndNotificationsEnabled,
-      trainingEndNotificationDays,
-      trainingEndNotificationTime,
-      trainingEndNotificationTimeZone,
-      trainingEndNotificationFrequency,
       studentApplicationsSqlQuery: applicationsSqlQuery,
       studentApplicationsOrderAdminUrlTemplate: applicationsOrderAdminUrlTemplate,
       advertisingCollectorLocalWorkbookPath: advertisingWorkbookLocalPath,
@@ -37888,14 +38142,125 @@ async function handleSystemDocumentSettings(req, res, authUser) {
     if (body.clearEmailPassword) patch.studentApplicationsEmailPassword = "";
     await saveServerSettings(patch);
     await closeAssistantStatisticsMySqlStorage();
-    await saveTrainingEndNotificationConfiguration({
-      trainingEndNotificationsEnabled,
-      trainingEndNotificationDays,
-      trainingEndNotificationTime,
-      trainingEndNotificationTimeZone,
-      trainingEndNotificationFrequency
-    }, authUser);
     sendJson(res, 200, await publicSystemDocumentSettings(includeAdminSettings));
+  } catch (error) {
+    sendError(res, 400, error.message);
+  }
+}
+
+async function publicTrainingEndNotificationSettings() {
+  const configuration = await readTrainingEndNotificationConfiguration()
+    .catch(() => getTrainingEndNotificationConfiguration({}));
+  const status = await readTrainingEndNotificationStatus().catch((error) => ({
+    status: "failed",
+    lastError: `Статус плановой проверки недоступен: ${error.message}`
+  }));
+  return {
+    trainingEndNotificationsEnabled: configuration.enabled,
+    trainingEndNotificationDays: configuration.days,
+    trainingEndNotificationTime: configuration.time,
+    trainingEndNotificationTimeZone: configuration.timeZone,
+    trainingEndNotificationFrequency: configuration.frequency,
+    trainingEndNotificationProgramTypes: configuration.programTypes,
+    trainingEndNotificationRecipients: configuration.recipients,
+    trainingEndNotificationStatus: status
+  };
+}
+
+async function handleTrainingEndNotificationSettings(req, res, authUser) {
+  if (req.method === "GET") {
+    sendJson(res, 200, await publicTrainingEndNotificationSettings());
+    return;
+  }
+  if (req.method !== "POST") {
+    sendError(res, 405, "Method not allowed");
+    return;
+  }
+  try {
+    if (String(req.headers["x-requested-with"] || "") !== "AIS-Web") {
+      throw new Error("Некорректный запрос сохранения настроек уведомлений.");
+    }
+    const body = await readJsonBody(req);
+    const days = Number(body.trainingEndNotificationDays ?? body.days);
+    const time = String(body.trainingEndNotificationTime ?? body.time ?? "").trim();
+    const timeZone = String(body.trainingEndNotificationTimeZone ?? body.timeZone ?? "").trim();
+    const frequency = String(
+      body.trainingEndNotificationFrequency ?? body.frequency ?? ""
+    ).trim().toLowerCase();
+    if (!Number.isInteger(days) || days < 1 || days > 60) {
+      throw new Error("Укажите срок уведомления целым числом от 1 до 60 дней.");
+    }
+    if (!isValidTrainingEndNotificationTime(time)) {
+      throw new Error("Укажите корректное время отправки в формате ЧЧ:ММ.");
+    }
+    if (!isValidTrainingEndNotificationTimeZone(timeZone)) {
+      throw new Error("Укажите корректный часовой пояс.");
+    }
+    if (!TRAINING_END_NOTIFICATION_FREQUENCIES.has(frequency)) {
+      throw new Error("Укажите корректную периодичность уведомлений.");
+    }
+    const rawProgramTypes = Array.isArray(body.trainingEndNotificationProgramTypes)
+      ? body.trainingEndNotificationProgramTypes
+      : Array.isArray(body.programTypes)
+        ? body.programTypes
+        : String(body.trainingEndNotificationProgramTypes ?? body.programTypes ?? "")
+          .split(/[,;\r\n]+/u);
+    const invalidProgramType = rawProgramTypes
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .find((value) => !DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES.includes(
+        normalizeTrainingEndNotificationProgramType(value)
+      ));
+    if (invalidProgramType) {
+      throw new Error("Для уведомлений доступны только типы программ КПК, ДОП и ППП.");
+    }
+    const programTypes = normalizeTrainingEndNotificationProgramTypes(rawProgramTypes);
+    if (!programTypes.length) {
+      throw new Error("Выберите хотя бы один тип программы.");
+    }
+    const recipients = normalizeTrainingEndNotificationRecipients(
+      body.trainingEndNotificationRecipients ?? body.recipients
+    );
+    if (!recipients.length) {
+      throw new Error("Укажите хотя бы один email получателя.");
+    }
+    const configuration = await saveTrainingEndNotificationConfiguration({
+      enabled: body.trainingEndNotificationsEnabled ?? body.enabled,
+      days,
+      time,
+      timeZone,
+      frequency,
+      programTypes,
+      recipients
+    }, authUser);
+    await saveServerSettings({
+      trainingEndNotificationsEnabled: configuration.enabled,
+      trainingEndNotificationDays: configuration.days,
+      trainingEndNotificationTime: configuration.time,
+      trainingEndNotificationTimeZone: configuration.timeZone,
+      trainingEndNotificationFrequency: configuration.frequency,
+      trainingEndNotificationProgramTypes: configuration.programTypes,
+      trainingEndNotificationRecipients: configuration.recipients
+    });
+    await safelyAppendAuditEntry({
+      action: "Изменены настройки уведомлений",
+      area: "Настройки",
+      entityType: "training-end-notification-settings",
+      entityId: TRAINING_END_NOTIFICATION_JOB_NAME,
+      entityLabel: "Окончание срока обучения",
+      field: "schedule",
+      after: JSON.stringify({
+        enabled: configuration.enabled,
+        days: configuration.days,
+        time: configuration.time,
+        timeZone: configuration.timeZone,
+        frequency: configuration.frequency,
+        programTypes: configuration.programTypes,
+        recipients: configuration.recipients
+      }),
+      details: `Типы: ${configuration.programTypes.join(", ")}; получатели: ${configuration.recipients.join(", ")}`
+    }, authUser, req);
+    sendJson(res, 200, await publicTrainingEndNotificationSettings());
   } catch (error) {
     sendError(res, 400, error.message);
   }
@@ -38464,7 +38829,11 @@ async function route(req, res) {
     return;
   }
   const adminOnlyRequest = (
-    [
+    (
+      ["GET", "POST"].includes(req.method)
+      && requestUrl.pathname === "/api/admin/training-end-notifications/settings"
+    )
+    || [
       "/api/statistics/sources",
       "/api/statistics/sources/test",
       "/api/advertising/sites",
@@ -38484,6 +38853,7 @@ async function route(req, res) {
       "/api/assistant-statistics-mysql/test",
       "/api/student-document-mailboxes/test",
       "/api/mysql-locks/test",
+      "/api/training-end-notifications/check",
       "/api/admin/training-end-notifications/run"
     ].includes(requestUrl.pathname)
     || requestUrl.pathname === "/api/students/import-database"
@@ -38539,6 +38909,13 @@ async function route(req, res) {
     && requestUrl.pathname === "/api/settings/system-documents"
   ) {
     await handleSystemDocumentSettings(req, res, authUser);
+    return;
+  }
+  if (
+    ["GET", "POST"].includes(req.method)
+    && requestUrl.pathname === "/api/admin/training-end-notifications/settings"
+  ) {
+    await handleTrainingEndNotificationSettings(req, res, authUser);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/training-end-notifications/check") {
@@ -39018,6 +39395,12 @@ module.exports = {
   getMoscowCalendarDate,
   getCalendarDateInTimeZone,
   parseTrainingEndNotificationDate,
+  normalizeTrainingEndNotificationProgramType,
+  normalizeTrainingEndNotificationProgramTypes,
+  normalizeTrainingEndNotificationRecipients,
+  withoutTrainingEndNotificationSharedMeta,
+  withoutTrainingEndNotificationMetaPatch,
+  withoutTrainingEndNotificationSharedStateResult,
   getTrainingEndNotificationCandidates,
   getTrainingEndNotificationConfiguration,
   getTrainingEndNotificationSchedule,

@@ -33,6 +33,17 @@
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME = "09:00";
   const DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE = "Europe/Moscow";
   const DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY = "daily";
+  const DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES = Object.freeze(["КПК", "ДОП", "ППП"]);
+  const TRAINING_END_NOTIFICATION_SERVER_META_KEYS = new Set([
+    "trainingEndNotificationsEnabled",
+    "trainingEndNotificationDays",
+    "trainingEndNotificationTime",
+    "trainingEndNotificationTimeZone",
+    "trainingEndNotificationFrequency",
+    "trainingEndNotificationProgramTypes",
+    "trainingEndNotificationRecipients",
+    "trainingEndNotificationStatus"
+  ]);
   const DEFAULT_TRAINING_EXTENSION_DAYS = 14;
   const DEFAULT_BASE_TRAINING_HOURS_PER_WEEK = 40;
   const DEFAULT_COMPRESSED_TRAINING_HOURS_PER_WEEK = 54;
@@ -185,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.382",
+    version: "1.7.383",
     releasedAt: "2026-09-07"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.383",
+      releasedAt: "2026-09-07",
+      changes: [
+        "В «Настройки» добавлен отдельный пункт «Уведомления»: можно включить автоматическую email-сводку, выбрать КПК, ДОП и ППП, порог менее пяти дней, расписание и список получателей.",
+        "В уведомление попадают только обучающиеся без оценки итоговой аттестации; просроченные сроки и дата ровно на границе порога исключаются."
+      ]
+    },
     {
       version: "1.7.382",
       releasedAt: "2026-09-07",
@@ -6929,6 +6948,18 @@ MAX - https://bizvmax.ru/zifra_plus
     )
       ? String(data.meta.trainingEndNotificationFrequency).trim()
       : DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY;
+    const trainingEndNotificationProgramTypes = normalizeTrainingEndNotificationProgramTypes(
+      data.meta.trainingEndNotificationProgramTypes
+    );
+    data.meta.trainingEndNotificationProgramTypes = trainingEndNotificationProgramTypes.length
+      ? trainingEndNotificationProgramTypes
+      : [...DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES];
+    const trainingEndNotificationRecipients = normalizeTrainingEndNotificationRecipients(
+      data.meta.trainingEndNotificationRecipients
+    );
+    data.meta.trainingEndNotificationRecipients = trainingEndNotificationRecipients.length
+      ? trainingEndNotificationRecipients
+      : [data.meta.studentApplicationsEmailLogin].filter(Boolean);
     data.meta.trainingEndNotificationStatus = data.meta.trainingEndNotificationStatus
       && typeof data.meta.trainingEndNotificationStatus === "object"
       ? data.meta.trainingEndNotificationStatus
@@ -9138,6 +9169,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ...Object.keys(nextData[key] || {})
       ]);
       names.forEach((name) => {
+        if (key === "meta" && TRAINING_END_NOTIFICATION_SERVER_META_KEYS.has(name)) return;
         if (!sharedStateValuesEqual(baseData[key]?.[name], nextData[key]?.[name])) {
           patch[key][name] = nextData[key]?.[name] ?? null;
           if (key === "dictionaries" && name === "documentTemplates") {
@@ -9172,6 +9204,9 @@ MAX - https://bizvmax.ru/zifra_plus
     merged.collections = merged.collections || {};
     merged.dictionaries = { ...(merged.dictionaries || {}), ...(nextPatch.dictionaries || {}) };
     merged.meta = { ...(merged.meta || {}), ...(nextPatch.meta || {}) };
+    TRAINING_END_NOTIFICATION_SERVER_META_KEYS.forEach((key) => {
+      delete merged.meta[key];
+    });
     merged.root = { ...(merged.root || {}), ...(nextPatch.root || {}) };
     merged.recordKeys = [...new Set([
       ...(merged.recordKeys || []),
@@ -9244,7 +9279,9 @@ MAX - https://bizvmax.ru/zifra_plus
       next.collections[collectionName] = ordered;
     });
     Object.assign(next.dictionaries, patch?.dictionaries || {});
-    Object.assign(next.meta, patch?.meta || {});
+    Object.entries(patch?.meta || {}).forEach(([name, value]) => {
+      if (!TRAINING_END_NOTIFICATION_SERVER_META_KEYS.has(name)) next.meta[name] = value;
+    });
     Object.entries(patch?.root || {}).forEach(([name, value]) => {
       if (!["collections", "dictionaries", "meta"].includes(name)) next[name] = value;
     });
@@ -9600,10 +9637,28 @@ MAX - https://bizvmax.ru/zifra_plus
       : label);
   }
 
+  function withTrainingEndNotificationServerMeta(data, sourceMeta = state.data?.meta) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+    const next = {
+      ...data,
+      meta: data.meta && typeof data.meta === "object" && !Array.isArray(data.meta)
+        ? { ...data.meta }
+        : {}
+    };
+    if (!sourceMeta || typeof sourceMeta !== "object" || Array.isArray(sourceMeta)) return next;
+    TRAINING_END_NOTIFICATION_SERVER_META_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(sourceMeta, key)) {
+        const value = sourceMeta[key];
+        next.meta[key] = value && typeof value === "object" ? clone(value) : value;
+      }
+    });
+    return next;
+  }
+
   function applySharedApplicationState(payload, { renderAfter = false } = {}) {
     if (!payload?.exists || !payload.data) return false;
     const resetCleanSettingsBaseline = isSettingsDraftSessionActive() && !hasUnsavedSettingsChanges();
-    const serverData = ensureDataShape(payload.data);
+    const serverData = ensureDataShape(withTrainingEndNotificationServerMeta(payload.data));
     sharedStateBaseData = clone(serverData);
     state.data = sharedStatePendingPatch
       ? applySharedApplicationStatePatchLocally(serverData, sharedStatePendingPatch)
@@ -9785,13 +9840,14 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateOffline = Boolean(payload.offline);
       const preserveSettingsDraftData = isSettingsDraftSessionActive() && !state.settingsDraftSaving;
       if (payload.data && !preserveSettingsDraftData) {
+        const confirmedData = withTrainingEndNotificationServerMeta(payload.data);
         if (generation === sharedStateChangeGeneration) {
-          state.data = ensureDataShape(payload.data);
+          state.data = ensureDataShape(confirmedData);
         } else {
           const pendingPatch = buildSharedApplicationStatePatch(data, state.data);
           state.data = pendingPatch
-            ? applySharedApplicationStatePatchLocally(payload.data, pendingPatch)
-            : ensureDataShape(payload.data);
+            ? applySharedApplicationStatePatchLocally(confirmedData, pendingPatch)
+            : ensureDataShape(confirmedData);
         }
         persistStateToLocalStorage(state.data);
       }
@@ -10827,6 +10883,12 @@ MAX - https://bizvmax.ru/zifra_plus
           : "Все изменения сохранены";
       element.classList.toggle("is-unsaved", dirty && !saving);
     });
+    root.querySelectorAll?.("[data-action='run-training-end-notifications']").forEach((button) => {
+      button.disabled = dirty || saving;
+      button.title = dirty
+        ? "Сначала сохраните изменения настроек"
+        : "Проверить сроки и отправить уведомления сейчас";
+    });
     window.__AIS_HAS_UNSAVED_SETTINGS__ = dirty;
   }
 
@@ -10952,9 +11014,25 @@ MAX - https://bizvmax.ru/zifra_plus
       if (renderAfterSave) render();
       return true;
     }
+    const trainingEndNotificationSettingsChanged = hasTrainingEndNotificationSettingsChanges();
+    let baselineTrainingEndNotificationSettings = null;
+    if (trainingEndNotificationSettingsChanged) {
+      try {
+        baselineTrainingEndNotificationSettings = getTrainingEndNotificationSettingsFromMeta(
+          JSON.parse(state.settingsDraftBaseline)?.meta || {}
+        );
+      } catch {
+        baselineTrainingEndNotificationSettings = null;
+      }
+    }
+    let trainingEndNotificationSettingsApplied = false;
     state.settingsDraftSaving = true;
     updateSettingsDraftActions();
     try {
+      if (trainingEndNotificationSettingsChanged) {
+        await persistTrainingEndNotificationSettings();
+        trainingEndNotificationSettingsApplied = true;
+      }
       persist({ forceSettingsDraft: true });
       const targetGeneration = sharedStateChangeGeneration;
       const saved = !sharedStateReady
@@ -10970,8 +11048,24 @@ MAX - https://bizvmax.ru/zifra_plus
       if (renderAfterSave) render();
       return true;
     } catch (error) {
+      let rollbackError = null;
+      if (trainingEndNotificationSettingsApplied && baselineTrainingEndNotificationSettings) {
+        try {
+          await persistTrainingEndNotificationSettings(
+            baselineTrainingEndNotificationSettings,
+            { applyResponse: false }
+          );
+        } catch (notificationRollbackError) {
+          rollbackError = notificationRollbackError;
+        }
+      }
       state.settingsDraftDirty = true;
-      alert(`Не удалось сохранить настройки: ${error.message}`);
+      alert(
+        `Не удалось сохранить настройки: ${error.message}`
+        + (rollbackError
+          ? ` Параметры уведомлений уже применены на сервере и не смогли откатиться: ${rollbackError.message}`
+          : "")
+      );
       return false;
     } finally {
       state.settingsDraftSaving = false;
@@ -21611,6 +21705,16 @@ MAX - https://bizvmax.ru/zifra_plus
     educationRegistrationTypeCodes: ["Тип программы", "Сокращение в регистрационном номере"],
     finalAttestationSettings: ["Категории оценок", "Шкала перевода процентов", "Оценка ИА"],
     issuedDocumentSettings: ["Норматив выгрузки", "Папка выгрузки", "ФРДО"],
+    notificationSettings: [
+      "Автоматические уведомления",
+      "Окончание срока обучения",
+      "Итоговая аттестация",
+      "КПК",
+      "ДОП",
+      "ППП",
+      "Получатели",
+      "Расписание"
+    ],
     studentEventSettings: [
       "События слушателей",
       "События сотрудников",
@@ -21719,9 +21823,15 @@ MAX - https://bizvmax.ru/zifra_plus
         "contractTemplateFields",
         "contractTemplateSettings",
         "documentTemplates",
+        "notificationSettings",
         "studentEventSettings"
       ].includes(key))
       .map((key) => ({ key, title: dictionaryTitle(key), values: dictionaries[key] || [] })),
+      {
+        key: "notificationSettings",
+        title: dictionaryTitle("notificationSettings"),
+        values: []
+      },
       {
         key: "studentEventSettings",
         title: dictionaryTitle("studentEventSettings"),
@@ -21745,8 +21855,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const isEducationRegistrationTypeCodes = selectedKey === "educationRegistrationTypeCodes";
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
     const isIssuedDocumentSettings = selectedKey === "issuedDocumentSettings";
+    const isNotificationSettings = selectedKey === "notificationSettings";
     const isStudentEventSettings = selectedKey === "studentEventSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isStudentEventSettings;
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isNotificationSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const hasDraftChanges = hasUnsavedSettingsChanges();
     return `
@@ -21800,6 +21911,8 @@ MAX - https://bizvmax.ru/zifra_plus
                     ? item.values.length + employeeCommunicationMessages.length
                     : item.key === "studentEventSettings"
                       ? getStudentEventTemplates().length + getContractEventTemplates().length
+                      : item.key === "notificationSettings"
+                        ? (state.data.meta.trainingEndNotificationsEnabled !== false ? "Вкл." : "Выкл.")
                       : item.values.length}</small>
                 </button>
               `).join("") : `<div class="empty-state compact"><span>Настройки не найдены</span></div>`}
@@ -21816,7 +21929,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isStudentEventSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isNotificationSettings || isStudentEventSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -21837,6 +21950,8 @@ MAX - https://bizvmax.ru/zifra_plus
                     ? selectedValues.length + employeeCommunicationMessages.length
                     : isStudentEventSettings
                       ? getStudentEventTemplates().length + getContractEventTemplates().length
+                      : isNotificationSettings
+                        ? (state.data.meta.trainingEndNotificationsEnabled !== false ? "Включено" : "Отключено")
                       : selectedValues.length}</span>
                 </div>
               </div>
@@ -21854,9 +21969,11 @@ MAX - https://bizvmax.ru/zifra_plus
                         ? renderEducationRegistrationTypeCodesDictionary(selectedValues)
                         : isFinalAttestationSettings
                         ? renderFinalAttestationSettingsDictionary(selectedValues)
-                        : isIssuedDocumentSettings
-                          ? renderIssuedDocumentSettingsDictionary(selectedValues)
-                        : isStudentEventSettings
+                         : isIssuedDocumentSettings
+                           ? renderIssuedDocumentSettingsDictionary(selectedValues)
+                         : isNotificationSettings
+                           ? renderTrainingEndNotificationSettingsDictionary()
+                         : isStudentEventSettings
                           ? renderStudentEventSettingsDictionary(selectedValues)
                         : renderSimpleDictionaryEditor(selectedKey, selectedValues)}
             ` : `<div class="empty-state"><span>Выберите справочник</span></div>`}
@@ -23112,6 +23229,107 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-issued-document-settings" type="button">Восстановить исходные</button>
           <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderTrainingEndNotificationSettingsDictionary() {
+    const settings = getTrainingEndNotificationSettingsFromMeta();
+    const status = state.data.meta.trainingEndNotificationStatus || {};
+    return `
+      <form class="training-end-notification-settings sdo-settings-form" data-action="save-training-end-notification-settings">
+        <div class="training-end-notification-settings-head">
+          <div>
+            <strong>Окончание срока обучения</strong>
+            <small>Автоматическая сводка формируется только по слушателям со статусом «Учится», если оценка итоговой аттестации не заполнена и до окончания обучения осталось меньше указанного количества дней.</small>
+          </div>
+          <label class="training-end-notification-settings-switch">
+            <input
+              name="trainingEndNotificationsEnabled"
+              type="checkbox"
+              ${settings.trainingEndNotificationsEnabled ? "checked" : ""}
+            >
+            <span>Включено</span>
+          </label>
+        </div>
+        <fieldset class="training-end-notification-program-types">
+          <legend>Виды образовательных программ</legend>
+          <div>
+            ${DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES.map((programType) => `
+              <label>
+                <input
+                  name="trainingEndNotificationProgramTypes"
+                  type="checkbox"
+                  value="${escapeAttr(programType)}"
+                  ${settings.trainingEndNotificationProgramTypes.includes(programType) ? "checked" : ""}
+                >
+                <span>${escapeHtml(programType)}</span>
+              </label>
+            `).join("")}
+          </div>
+        </fieldset>
+        <div class="training-end-notification-settings-fields">
+          <label>
+            <span>Уведомлять за (дней)</span>
+            <input
+              name="trainingEndNotificationDays"
+              type="number"
+              min="1"
+              max="60"
+              step="1"
+              value="${escapeAttr(settings.trainingEndNotificationDays)}"
+              required
+            >
+            <small>При значении 5 в сводку попадут сроки от сегодняшнего дня до четырёх дней включительно.</small>
+          </label>
+          <label>
+            <span>Время отправки</span>
+            <input
+              name="trainingEndNotificationTime"
+              type="time"
+              step="60"
+              value="${escapeAttr(settings.trainingEndNotificationTime)}"
+              required
+            >
+          </label>
+          <label>
+            <span>Часовой пояс</span>
+            <select name="trainingEndNotificationTimeZone" required>
+              ${TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.map((option) => `
+                <option value="${escapeAttr(option.value)}" ${option.value === settings.trainingEndNotificationTimeZone ? "selected" : ""}>${escapeHtml(option.label)}</option>
+              `).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Периодичность</span>
+            <select name="trainingEndNotificationFrequency" required>
+              ${TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.map((option) => `
+                <option value="${escapeAttr(option.value)}" ${option.value === settings.trainingEndNotificationFrequency ? "selected" : ""}>${escapeHtml(option.label)}</option>
+              `).join("")}
+            </select>
+          </label>
+          <label class="training-end-notification-recipients">
+            <span>Получатели</span>
+            <textarea
+              name="trainingEndNotificationRecipients"
+              rows="4"
+              placeholder="manager@example.ru"
+              required
+            >${escapeHtml(settings.trainingEndNotificationRecipients.join("\n"))}</textarea>
+            <small>Укажите до 50 email-адресов: по одному в строке либо через запятую или точку с запятой.</small>
+          </label>
+        </div>
+        <label class="training-end-notification-fixed-condition">
+          <input type="checkbox" checked disabled>
+          <span>Оценка итоговой аттестации не заполнена</span>
+        </label>
+        <div class="training-end-notification-settings-status is-${escapeAttr(status.status || "never")}" role="status">
+          <span>${escapeHtml(getTrainingEndNotificationStatusLabel(status))}</span>
+          <button class="ghost-button compact-button" data-action="run-training-end-notifications" type="button">Проверить и отправить сейчас</button>
+        </div>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить параметры к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -25320,6 +25538,115 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function normalizeTrainingEndNotificationProgramTypes(value) {
+    const source = Array.isArray(value)
+      ? value
+      : String(value || "").split(/[,;\r\n]+/u);
+    return [...new Set(source
+      .map(normalizeEducationProgramType)
+      .filter((type) => DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES.includes(type)))];
+  }
+
+  function getTrainingEndNotificationRecipientValues(value) {
+    const source = Array.isArray(value)
+      ? value
+      : String(value || "").normalize("NFKC").split(/[,;\r\n]+/u);
+    return source
+      .map((item) => String(item || "").normalize("NFKC").trim())
+      .filter(Boolean);
+  }
+
+  function normalizeTrainingEndNotificationRecipients(value) {
+    return [...new Set(getTrainingEndNotificationRecipientValues(value)
+      .filter((email) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(email))
+      .map((email) => email.toLocaleLowerCase("en-US")))]
+      .slice(0, 50);
+  }
+
+  function getTrainingEndNotificationSettingsFromMeta(meta = state.data.meta) {
+    const programTypes = normalizeTrainingEndNotificationProgramTypes(
+      meta?.trainingEndNotificationProgramTypes
+    );
+    const recipients = normalizeTrainingEndNotificationRecipients(
+      meta?.trainingEndNotificationRecipients
+    );
+    const timeValue = String(meta?.trainingEndNotificationTime || "").trim();
+    const timeZoneValue = String(meta?.trainingEndNotificationTimeZone || "").trim();
+    const frequencyValue = String(meta?.trainingEndNotificationFrequency || "").trim();
+    return {
+      trainingEndNotificationsEnabled: meta?.trainingEndNotificationsEnabled !== false,
+      trainingEndNotificationDays: Math.min(
+        60,
+        Math.max(1, Math.floor(Number(meta?.trainingEndNotificationDays) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))
+      ),
+      trainingEndNotificationTime: /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(timeValue)
+        ? timeValue
+        : DEFAULT_TRAINING_END_NOTIFICATION_TIME,
+      trainingEndNotificationTimeZone: TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.some(
+        (option) => option.value === timeZoneValue
+      )
+        ? timeZoneValue
+        : DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE,
+      trainingEndNotificationFrequency: TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.some(
+        (option) => option.value === frequencyValue
+      )
+        ? frequencyValue
+        : DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY,
+      trainingEndNotificationProgramTypes: programTypes.length
+        ? programTypes
+        : [...DEFAULT_TRAINING_END_NOTIFICATION_PROGRAM_TYPES],
+      trainingEndNotificationRecipients: recipients.length
+        ? recipients
+        : normalizeTrainingEndNotificationRecipients([
+          meta?.studentApplicationsEmailLogin,
+          DEFAULT_STUDENT_APPLICATIONS_EMAIL.login
+        ])
+    };
+  }
+
+  function getTrainingEndNotificationSettingsSnapshot(data = state.data) {
+    return JSON.stringify(getTrainingEndNotificationSettingsFromMeta(data?.meta || {}));
+  }
+
+  function hasTrainingEndNotificationSettingsChanges() {
+    if (!state.settingsDraftBaseline) return false;
+    try {
+      return getTrainingEndNotificationSettingsSnapshot(state.data)
+        !== getTrainingEndNotificationSettingsSnapshot(JSON.parse(state.settingsDraftBaseline));
+    } catch {
+      return false;
+    }
+  }
+
+  function applyTrainingEndNotificationSettings(payload = {}) {
+    const current = getTrainingEndNotificationSettingsFromMeta(state.data.meta);
+    const next = getTrainingEndNotificationSettingsFromMeta({
+      ...state.data.meta,
+      trainingEndNotificationsEnabled: Object.prototype.hasOwnProperty.call(
+        payload,
+        "trainingEndNotificationsEnabled"
+      )
+        ? payload.trainingEndNotificationsEnabled
+        : current.trainingEndNotificationsEnabled,
+      trainingEndNotificationDays:
+        payload.trainingEndNotificationDays ?? current.trainingEndNotificationDays,
+      trainingEndNotificationTime:
+        payload.trainingEndNotificationTime ?? current.trainingEndNotificationTime,
+      trainingEndNotificationTimeZone:
+        payload.trainingEndNotificationTimeZone ?? current.trainingEndNotificationTimeZone,
+      trainingEndNotificationFrequency:
+        payload.trainingEndNotificationFrequency ?? current.trainingEndNotificationFrequency,
+      trainingEndNotificationProgramTypes:
+        payload.trainingEndNotificationProgramTypes ?? current.trainingEndNotificationProgramTypes,
+      trainingEndNotificationRecipients:
+        payload.trainingEndNotificationRecipients ?? current.trainingEndNotificationRecipients
+    });
+    Object.assign(state.data.meta, next);
+    if (payload.trainingEndNotificationStatus && typeof payload.trainingEndNotificationStatus === "object") {
+      state.data.meta.trainingEndNotificationStatus = payload.trainingEndNotificationStatus;
+    }
+  }
+
   function getTrainingEndNotificationStatusLabel(status = {}) {
     const stateValue = String(status.status || "never").trim().toLowerCase();
     if (stateValue === "completed") {
@@ -25380,42 +25707,6 @@ MAX - https://bizvmax.ru/zifra_plus
       "emailRequestDeliveryAndReadReceipts",
       state.data.meta.emailRequestDeliveryAndReadReceipts !== false
     ));
-    const trainingEndNotificationsEnabled = Boolean(getAdminSettingRenderValue(
-      "trainingEndNotificationsEnabled",
-      state.data.meta.trainingEndNotificationsEnabled !== false
-    ));
-    const trainingEndNotificationDays = Math.min(60, Math.max(1, Math.floor(Number(
-      getAdminSettingRenderValue(
-        "trainingEndNotificationDays",
-        state.data.meta.trainingEndNotificationDays || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
-      )
-    ) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS)));
-    const trainingEndNotificationTimeValue = String(getAdminSettingRenderValue(
-      "trainingEndNotificationTime",
-      state.data.meta.trainingEndNotificationTime || DEFAULT_TRAINING_END_NOTIFICATION_TIME
-    ) || "").trim();
-    const trainingEndNotificationTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(trainingEndNotificationTimeValue)
-      ? trainingEndNotificationTimeValue
-      : DEFAULT_TRAINING_END_NOTIFICATION_TIME;
-    const trainingEndNotificationTimeZoneValue = String(getAdminSettingRenderValue(
-      "trainingEndNotificationTimeZone",
-      state.data.meta.trainingEndNotificationTimeZone || DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE
-    ) || "").trim();
-    const trainingEndNotificationTimeZone = TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.some(
-      (option) => option.value === trainingEndNotificationTimeZoneValue
-    )
-      ? trainingEndNotificationTimeZoneValue
-      : DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE;
-    const trainingEndNotificationFrequencyValue = String(getAdminSettingRenderValue(
-      "trainingEndNotificationFrequency",
-      state.data.meta.trainingEndNotificationFrequency || DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY
-    ) || "").trim();
-    const trainingEndNotificationFrequency = TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.some(
-      (option) => option.value === trainingEndNotificationFrequencyValue
-    )
-      ? trainingEndNotificationFrequencyValue
-      : DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY;
-    const trainingEndNotificationStatus = state.data.meta.trainingEndNotificationStatus || {};
     const applicationsMysqlDriver = getAdminSettingRenderValue(
       "applicationsMysqlDriver",
       state.data.meta.applicationsMysqlDriver || "MySQL ODBC 9.4 Unicode Driver"
@@ -26041,70 +26332,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     <small>Применяется ко всем исходящим письмам. Уведомление о доставке зависит от поддержки SMTP-сервера, а подтверждение прочтения — от почтовой программы и решения получателя.</small>
                   </span>
                 </label>
-                <section class="admin-training-end-notification" aria-labelledby="training-end-notification-title">
-                  <div class="admin-training-end-notification-head">
-                    <div>
-                      <strong id="training-end-notification-title">Окончание срока обучения</strong>
-                      <small>Система отправляет на основной ящик сводку по ближайшим и уже просроченным срокам слушателей со статусом «Учится». Повторная сводка за один плановый период не отправляется.</small>
-                    </div>
-                    <label class="admin-training-end-notification-switch">
-                      <input
-                        name="trainingEndNotificationsEnabled"
-                        type="checkbox"
-                        ${trainingEndNotificationsEnabled ? "checked" : ""}
-                      >
-                      <span>Включено</span>
-                    </label>
-                  </div>
-                  <div class="admin-training-end-notification-fields">
-                    <label>
-                      <span>Уведомлять за (дней)</span>
-                      <input
-                        name="trainingEndNotificationDays"
-                        type="number"
-                        min="1"
-                        max="60"
-                        step="1"
-                        value="${escapeAttr(trainingEndNotificationDays)}"
-                        required
-                      >
-                    </label>
-                    <label>
-                      <span>Время отправки</span>
-                      <input
-                        name="trainingEndNotificationTime"
-                        type="time"
-                        step="60"
-                        value="${escapeAttr(trainingEndNotificationTime)}"
-                        required
-                      >
-                    </label>
-                    <label>
-                      <span>Часовой пояс</span>
-                      <select name="trainingEndNotificationTimeZone" required>
-                        ${TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.map((option) => `
-                          <option value="${escapeAttr(option.value)}" ${option.value === trainingEndNotificationTimeZone ? "selected" : ""}>${escapeHtml(option.label)}</option>
-                        `).join("")}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Периодичность</span>
-                      <select name="trainingEndNotificationFrequency" required>
-                        ${TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.map((option) => `
-                          <option value="${escapeAttr(option.value)}" ${option.value === trainingEndNotificationFrequency ? "selected" : ""}>${escapeHtml(option.label)}</option>
-                        `).join("")}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Получатель</span>
-                      <input type="email" value="${escapeAttr(emailLogin)}" readonly aria-readonly="true">
-                    </label>
-                  </div>
-                  <div class="admin-training-end-notification-status is-${escapeAttr(trainingEndNotificationStatus.status || "never")}" role="status">
-                    <span>${escapeHtml(getTrainingEndNotificationStatusLabel(trainingEndNotificationStatus))}</span>
-                    <button class="ghost-button compact-button" data-action="run-training-end-notifications" type="button">Проверить и отправить сейчас</button>
-                  </div>
-                </section>
                 <div class="admin-document-mailboxes is-applications-list">
                   ${renderAdminApplicationsMailbox({
                     host: emailHost,
@@ -39876,6 +40103,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", resetFinalAttestationSettings);
     document.querySelector("form[data-action='save-issued-document-settings']")?.addEventListener("submit", saveIssuedDocumentSettings);
     document.querySelector("[data-action='reset-issued-document-settings']")?.addEventListener("click", resetIssuedDocumentSettings);
+    document.querySelector("form[data-action='save-training-end-notification-settings']")
+      ?.addEventListener("submit", saveTrainingEndNotificationSettingsDraft);
     document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
     document.querySelector("[data-action='add-attestation-scale']")?.addEventListener("click", () => addFinalAttestationSetting("scale"));
     document.querySelectorAll("[data-action='remove-attestation-setting']").forEach((button) => {
@@ -57462,21 +57691,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailRequestDeliveryAndReadReceipts = Boolean(
       form.elements.emailRequestDeliveryAndReadReceipts?.checked
     );
-    const trainingEndNotificationsEnabled = Boolean(
-      form.elements.trainingEndNotificationsEnabled?.checked
-    );
-    const trainingEndNotificationDays = Number(
-      form.elements.trainingEndNotificationDays?.value || DEFAULT_TRAINING_END_NOTIFICATION_DAYS
-    );
-    const trainingEndNotificationTime = String(
-      form.elements.trainingEndNotificationTime?.value || ""
-    ).trim();
-    const trainingEndNotificationTimeZone = String(
-      form.elements.trainingEndNotificationTimeZone?.value || ""
-    ).trim();
-    const trainingEndNotificationFrequency = String(
-      form.elements.trainingEndNotificationFrequency?.value || ""
-    ).trim();
     const documentMailboxes = collectDocumentMailboxesFromForm(form);
     const applicationsMysqlDriver = String(form.elements.applicationsMysqlDriver?.value || "").trim();
     const applicationsMysqlHost = String(form.elements.applicationsMysqlHost?.value || "").trim();
@@ -57572,26 +57786,6 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!emailLogin) throw new Error("Укажите логин электронной почты.");
     if (emailLogin.toLowerCase() !== DEFAULT_STUDENT_APPLICATIONS_EMAIL.login) {
       throw new Error(`Для сбора заявок используется ящик ${DEFAULT_STUDENT_APPLICATIONS_EMAIL.login}.`);
-    }
-    if (
-      !Number.isInteger(trainingEndNotificationDays)
-      || trainingEndNotificationDays < 1
-      || trainingEndNotificationDays > 60
-    ) {
-      throw new Error("Укажите срок уведомления от 1 до 60 дней.");
-    }
-    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(trainingEndNotificationTime)) {
-      throw new Error("Укажите корректное время отправки.");
-    }
-    if (!TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.some(
-      (option) => option.value === trainingEndNotificationTimeZone
-    )) {
-      throw new Error("Укажите корректный часовой пояс.");
-    }
-    if (!TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.some(
-      (option) => option.value === trainingEndNotificationFrequency
-    )) {
-      throw new Error("Укажите корректную периодичность уведомлений.");
     }
     if (!applicationsSqlQuery) throw new Error("Укажите SQL-запрос интернет-магазина.");
     if (!applicationsOrderAdminUrlTemplate) {
@@ -57690,11 +57884,6 @@ MAX - https://bizvmax.ru/zifra_plus
         emailLogin,
         emailPassword,
         emailRequestDeliveryAndReadReceipts,
-        trainingEndNotificationsEnabled,
-        trainingEndNotificationDays,
-        trainingEndNotificationTime,
-        trainingEndNotificationTimeZone,
-        trainingEndNotificationFrequency,
         documentMailboxes,
         applicationsMysqlDriver,
         applicationsMysqlHost,
@@ -57783,31 +57972,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.meta.studentApplicationsEmailHasPassword = Boolean(payload.emailHasPassword);
     state.data.meta.emailRequestDeliveryAndReadReceipts =
       payload.emailRequestDeliveryAndReadReceipts !== false;
-    state.data.meta.trainingEndNotificationsEnabled =
-      payload.trainingEndNotificationsEnabled !== false;
-    state.data.meta.trainingEndNotificationDays = Math.min(
-      60,
-      Math.max(1, Math.floor(Number(payload.trainingEndNotificationDays) || DEFAULT_TRAINING_END_NOTIFICATION_DAYS))
-    );
-    state.data.meta.trainingEndNotificationTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(
-      String(payload.trainingEndNotificationTime || "").trim()
-    )
-      ? String(payload.trainingEndNotificationTime).trim()
-      : DEFAULT_TRAINING_END_NOTIFICATION_TIME;
-    state.data.meta.trainingEndNotificationTimeZone = TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.some(
-      (option) => option.value === String(payload.trainingEndNotificationTimeZone || "").trim()
-    )
-      ? String(payload.trainingEndNotificationTimeZone).trim()
-      : DEFAULT_TRAINING_END_NOTIFICATION_TIME_ZONE;
-    state.data.meta.trainingEndNotificationFrequency = TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.some(
-      (option) => option.value === String(payload.trainingEndNotificationFrequency || "").trim()
-    )
-      ? String(payload.trainingEndNotificationFrequency).trim()
-      : DEFAULT_TRAINING_END_NOTIFICATION_FREQUENCY;
-    state.data.meta.trainingEndNotificationStatus = payload.trainingEndNotificationStatus
-      && typeof payload.trainingEndNotificationStatus === "object"
-      ? payload.trainingEndNotificationStatus
-      : state.data.meta.trainingEndNotificationStatus || {};
+    applyTrainingEndNotificationSettings(payload);
     state.data.meta.documentMailboxes = Array.isArray(payload.documentMailboxes)
       ? payload.documentMailboxes
       : [];
@@ -57961,7 +58126,101 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function saveTrainingEndNotificationSettingsDraft(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const days = Number(form.elements.trainingEndNotificationDays?.value);
+    const time = String(form.elements.trainingEndNotificationTime?.value || "").trim();
+    const timeZone = String(form.elements.trainingEndNotificationTimeZone?.value || "").trim();
+    const frequency = String(form.elements.trainingEndNotificationFrequency?.value || "").trim();
+    const programTypes = normalizeTrainingEndNotificationProgramTypes(
+      Array.from(form.querySelectorAll("[name='trainingEndNotificationProgramTypes']:checked"))
+        .map((input) => input.value)
+    );
+    const recipientValues = getTrainingEndNotificationRecipientValues(
+      form.elements.trainingEndNotificationRecipients?.value
+    );
+    const invalidRecipient = recipientValues.find((email) => (
+      email.length > 160 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(email)
+    ));
+    if (!Number.isInteger(days) || days < 1 || days > 60) {
+      alert("Укажите срок уведомления целым числом от 1 до 60 дней.");
+      form.elements.trainingEndNotificationDays?.focus();
+      return;
+    }
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) {
+      alert("Укажите корректное время отправки.");
+      form.elements.trainingEndNotificationTime?.focus();
+      return;
+    }
+    if (!TRAINING_END_NOTIFICATION_TIME_ZONE_OPTIONS.some((option) => option.value === timeZone)) {
+      alert("Укажите корректный часовой пояс.");
+      form.elements.trainingEndNotificationTimeZone?.focus();
+      return;
+    }
+    if (!TRAINING_END_NOTIFICATION_FREQUENCY_OPTIONS.some((option) => option.value === frequency)) {
+      alert("Укажите корректную периодичность уведомлений.");
+      form.elements.trainingEndNotificationFrequency?.focus();
+      return;
+    }
+    if (!programTypes.length) {
+      alert("Выберите хотя бы один вид образовательной программы.");
+      form.querySelector("[name='trainingEndNotificationProgramTypes']")?.focus();
+      return;
+    }
+    if (!recipientValues.length) {
+      alert("Укажите хотя бы один email получателя.");
+      form.elements.trainingEndNotificationRecipients?.focus();
+      return;
+    }
+    if (recipientValues.length > 50) {
+      alert("Можно указать не более 50 получателей.");
+      form.elements.trainingEndNotificationRecipients?.focus();
+      return;
+    }
+    if (invalidRecipient) {
+      alert(`Укажите корректный email получателя: ${invalidRecipient}.`);
+      form.elements.trainingEndNotificationRecipients?.focus();
+      return;
+    }
+    const recipients = normalizeTrainingEndNotificationRecipients(recipientValues);
+    Object.assign(state.data.meta, {
+      trainingEndNotificationsEnabled: Boolean(form.elements.trainingEndNotificationsEnabled?.checked),
+      trainingEndNotificationDays: days,
+      trainingEndNotificationTime: time,
+      trainingEndNotificationTimeZone: timeZone,
+      trainingEndNotificationFrequency: frequency,
+      trainingEndNotificationProgramTypes: programTypes,
+      trainingEndNotificationRecipients: recipients
+    });
+    markSettingsDraftDirty();
+    render();
+  }
+
+  async function persistTrainingEndNotificationSettings(
+    settings = getTrainingEndNotificationSettingsFromMeta(),
+    { applyResponse = true } = {}
+  ) {
+    const response = await fetch(photoApiUrl("/api/admin/training-end-notifications/settings"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "AIS-Web"
+      },
+      credentials: "same-origin",
+      cache: "no-store",
+      body: JSON.stringify(settings)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Не удалось сохранить параметры уведомлений.");
+    }
+    if (applyResponse) applyTrainingEndNotificationSettings(payload);
+    return payload;
+  }
+
   async function checkTrainingEndNotifications() {
+    if (!isAdminUser()) return;
     try {
       const response = await fetch(photoApiUrl("/api/training-end-notifications/check"), {
         method: "POST",
@@ -57973,7 +58232,11 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!response.ok) throw new Error(payload.error || "Не удалось проверить сроки обучения.");
       if (payload.status && typeof payload.status === "object") {
         state.data.meta.trainingEndNotificationStatus = payload.status;
-        if (state.view === "admin" && state.adminTab === "email" && !state.adminSettingsDirty) render();
+        if (
+          state.view === "settings"
+          && state.selectedDictionary === "notificationSettings"
+          && !hasUnsavedSettingsChanges()
+        ) render();
       }
     } catch (error) {
       console.warn("Не удалось выполнить плановую проверку сроков обучения", error);
@@ -57982,17 +58245,15 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function runTrainingEndNotificationsNow(event) {
     const button = event.currentTarget;
-    const form = button.closest("form");
-    if (!form) return;
+    if (hasUnsavedSettingsChanges()) {
+      alert("Сначала сохраните изменённые параметры уведомлений.");
+      return;
+    }
     if (!confirm(
-      "Проверить сроки обучения сейчас и отправить сводку на основной системный ящик, если найдены подходящие слушатели?"
+      "Проверить сроки обучения сейчас и отправить сводку настроенным получателям, если найдены подходящие слушатели?"
     )) return;
     button.disabled = true;
     try {
-      const settings = await saveYandexDiskSettings(form);
-      applyYandexDiskSettings(settings);
-      clearAdminSettingsDirtyState(form);
-      persist();
       const response = await fetch(photoApiUrl("/api/admin/training-end-notifications/run"), {
         method: "POST",
         headers: {
@@ -58197,6 +58458,8 @@ MAX - https://bizvmax.ru/zifra_plus
           trainingEndNotificationTime: state.data.meta.trainingEndNotificationTime,
           trainingEndNotificationTimeZone: state.data.meta.trainingEndNotificationTimeZone,
           trainingEndNotificationFrequency: state.data.meta.trainingEndNotificationFrequency,
+          trainingEndNotificationProgramTypes: state.data.meta.trainingEndNotificationProgramTypes,
+          trainingEndNotificationRecipients: state.data.meta.trainingEndNotificationRecipients,
           trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
           assistantStatisticsMysqlHost: state.data.meta.assistantStatisticsMysqlHost,
@@ -58239,6 +58502,8 @@ MAX - https://bizvmax.ru/zifra_plus
           trainingEndNotificationTime: state.data.meta.trainingEndNotificationTime,
           trainingEndNotificationTimeZone: state.data.meta.trainingEndNotificationTimeZone,
           trainingEndNotificationFrequency: state.data.meta.trainingEndNotificationFrequency,
+          trainingEndNotificationProgramTypes: state.data.meta.trainingEndNotificationProgramTypes,
+          trainingEndNotificationRecipients: state.data.meta.trainingEndNotificationRecipients,
           trainingEndNotificationStatus: state.data.meta.trainingEndNotificationStatus,
           documentMailboxes: state.data.meta.documentMailboxes,
           assistantStatisticsMysqlHost: state.data.meta.assistantStatisticsMysqlHost,
@@ -66562,6 +66827,7 @@ MAX - https://bizvmax.ru/zifra_plus
       educationRegistrationTypeCodes: "Сокращения типов программ в рег. номере",
       finalAttestationSettings: "Итоговая аттестация: оценки и шкала",
       issuedDocumentSettings: "ФРДО",
+      notificationSettings: "Уведомления",
       studentEventSettings: "События",
       discountRules: "Скидки",
       dataFormulas: "Конструктор формул данных",
