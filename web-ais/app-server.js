@@ -29459,6 +29459,13 @@ function sanitizeStudentDatabaseFixedValueOverrides(value) {
     .filter((field) => STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS.has(field)))];
 }
 
+function normalizeStudentDatabaseFixedValueOverrideValue(record, fieldName) {
+  if (fieldName === "frdoStatus") {
+    return normalizeStudentDatabaseCriticalStudentValue(record, fieldName);
+  }
+  return normalizeStudentDatabaseSyncValue(record?.[fieldName], fieldName);
+}
+
 function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
   const webStudents = Array.isArray(payload?.students) ? payload.students : [];
   const excelStudents = Array.isArray(sourceData?.students) ? sourceData.students : [];
@@ -29507,9 +29514,9 @@ function getStudentDatabaseFixedValueOverrideTargets(payload, sourceData) {
       throw error;
     }
     fields.forEach((field) => {
-      const webValue = normalizeStudentDatabaseSyncValue(student?.[field], field);
+      const webValue = normalizeStudentDatabaseFixedValueOverrideValue(student, field);
       const excelValue = matches.length
-        ? normalizeStudentDatabaseSyncValue(matches[0]?.[field], field)
+        ? normalizeStudentDatabaseFixedValueOverrideValue(matches[0], field)
         : "";
       targets.push({
         id,

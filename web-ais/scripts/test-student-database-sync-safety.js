@@ -387,6 +387,80 @@ function testStudentContractAmountFixedValueOverride() {
     /ожидалось «Ж»; записано «М»/iu,
     "Реальное несовпадение пола должно остаться блокирующей ошибкой"
   );
+
+  const frdoPayload = sanitizeStudentDatabaseExportPayload({
+    students: [
+      {
+        id: "student-db-1166",
+        uid: "1166",
+        name: "Добрышкина Екатерина Сергеевна",
+        frdoStatus: "2026-09-03",
+        databaseFixedValueOverrides: ["frdoStatus"]
+      },
+      {
+        id: "students-mtbhy188-rkk4w",
+        uid: "1171",
+        name: "Загодарчук Инна Владимировна",
+        frdoDate: "2026-09-03",
+        databaseFixedValueOverrides: ["frdoStatus"]
+      }
+    ],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: []
+  });
+  const frdoSource = {
+    students: frdoPayload.students.map((student) => ({
+      id: student.id,
+      uid: student.uid,
+      name: student.name
+    }))
+  };
+  const pendingFrdoTargets = getStudentDatabaseFixedValueOverrideTargets(frdoPayload, frdoSource);
+  assert.equal(pendingFrdoTargets.length, 2);
+  assert.ok(pendingFrdoTargets.every((target) => target.webValue === "2026-09-03"));
+  assert.ok(pendingFrdoTargets.every((target) => target.excelValue === ""));
+  assert.ok(pendingFrdoTargets.every((target) => target.differs));
+
+  const frdoRoundTripOutput = {
+    students: [
+      ...frdoPayload.students.map((student) => ({
+        id: `xlsb-row-${student.uid}`,
+        uid: student.uid,
+        name: student.name,
+        frdoDate: "2026-09-03",
+        databaseSync: { recordId: student.id }
+      })),
+      {
+        id: "xlsb-row-1171-repeat",
+        uid: "1171",
+        name: "Загодарчук Инна Владимировна",
+        frdoDate: "2026-09-04",
+        databaseSync: { recordId: "student-db-1171-repeat" }
+      }
+    ]
+  };
+  const savedFrdoTargets = getStudentDatabaseFixedValueOverrideTargets(
+    frdoPayload,
+    frdoRoundTripOutput
+  );
+  assert.ok(savedFrdoTargets.every((target) => target.excelValue === "2026-09-03"));
+  assert.ok(savedFrdoTargets.every((target) => !target.differs));
+  assert.equal(
+    validateStudentDatabaseFixedValueOverridesAgainstOutput(frdoPayload, frdoRoundTripOutput),
+    2,
+    "Дата ФРДО после обратного импорта из frdoDate должна подтверждать фиксированное поле frdoStatus"
+  );
+  assert.throws(
+    () => validateStudentDatabaseFixedValueOverridesAgainstOutput(frdoPayload, {
+      students: frdoRoundTripOutput.students.map((student, index) => ({
+        ...student,
+        frdoDate: index === 0 ? "2026-09-04" : student.frdoDate
+      }))
+    }),
+    /ожидалось «2026-09-03»; записано «2026-09-04»/iu,
+    "Реально отличающаяся дата ФРДО должна остаться блокирующей ошибкой"
+  );
   assert.match(syncScriptSource, /\$hasFormula\s+-and\s+-not\s+\$isFixedValueOverride/u);
   assert.match(syncScriptSource, /if\s*\(\[bool\]\$cell\.HasFormula\)[\s\S]{0,180}не заменена фиксированным значением/u);
 }
