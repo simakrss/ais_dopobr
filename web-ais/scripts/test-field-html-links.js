@@ -73,6 +73,7 @@ class MockField {
     this.value = value;
     this.type = type;
     this.selectionStart = 0;
+    this.selectionEnd = 0;
     this.tagName = "INPUT";
     this.nodeType = 1;
     this.parentElement = null;
@@ -152,6 +153,7 @@ const mutationObservers = [];
 const animationFrames = [];
 const document = {
   hidden: false,
+  activeElement: null,
   documentElement: {
     classList: new MockClassList()
   },
@@ -289,6 +291,11 @@ assert.equal(documentListeners.get("scroll").capture, true);
 assert.equal(documentListeners.get("keydown").capture, true);
 assert.equal(documentListeners.get("keyup").capture, true);
 assert.equal(documentListeners.get("pointermove").capture, true);
+assert.equal(documentListeners.get("pointerup").capture, true);
+assert.equal(documentListeners.get("select").capture, true);
+assert.equal(documentListeners.get("selectionchange").capture, true);
+assert.equal(documentListeners.get("focusin").capture, true);
+assert.equal(documentListeners.get("focusout").capture, true);
 assert.ok(documentListeners.has("visibilitychange"));
 assert.equal(mutationObservers.length, 1);
 assert.deepEqual(
@@ -394,6 +401,64 @@ assert.equal(linkedHost.children[0].style.color, defaultFieldStyle.color);
 assert.equal(linkedHost.children[0].style.webkitTextFillColor, defaultFieldStyle.color);
 assert.equal(resizeObservers[0].observed.has(linkedField), true);
 
+document.activeElement = linkedField;
+linkedField.selectionStart = matches[0].start;
+linkedField.selectionEnd = matches[0].end;
+documentListeners.get("select").listener({ type: "select", target: linkedField });
+assert.equal(linkedField.classList.contains("has-native-html-links"), false);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+linkedField.selectionEnd = linkedField.selectionStart;
+documentListeners.get("selectionchange").listener({ type: "selectionchange", target: document });
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
+documentListeners.get("select").listener({ type: "select", target: linkedField });
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
+linkedField.selectionEnd = matches[1].end;
+documentListeners.get("keyup").listener({
+  type: "keyup",
+  target: linkedField,
+  key: "ArrowRight",
+  shiftKey: true,
+  ctrlKey: false,
+  metaKey: false
+});
+assert.equal(linkedField.classList.contains("has-native-html-links"), false);
+linkedField.scrollLeft = 17;
+documentListeners.get("scroll").listener({ target: linkedField });
+assert.match(linkedHost.children[0].content.style.transform, /translate\(-17px, 0px\)/u);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+windowListeners.get("blur")();
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
+windowListeners.get("focus")();
+assert.equal(linkedField.classList.contains("has-native-html-links"), false);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+documentListeners.get("focusout").listener({ type: "focusout", target: linkedField });
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
+document.activeElement = null;
+
+const emailHost = new MockHost();
+const emailField = new MockInput(firstUrl, "email");
+emailField.selectionStart = null;
+emailField.selectionEnd = null;
+emailField.parentElement = emailHost;
+documentListeners.get("input").listener({ target: emailField });
+document.activeElement = emailField;
+documentListeners.get("select").listener({ type: "select", target: emailField });
+assert.equal(emailField.classList.contains("has-native-html-links"), false);
+assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), true);
+documentListeners.get("pointerup").listener({ type: "pointerup", target: emailField });
+assert.equal(emailField.classList.contains("has-native-html-links"), true);
+assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), false);
+document.activeElement = null;
+mutationObservers[0].callback([{
+  removedNodes: [emailField],
+  addedNodes: []
+}]);
+assert.equal(emailHost.children.length, 0);
+
 const transparentFallbackHost = new MockHost();
 const transparentFallbackField = new MockTextarea("Текст " + firstUrl + " хвост");
 transparentFallbackField.forceTransparentColor = true;
@@ -404,11 +469,17 @@ assert.equal(transparentFallbackHost.children[0].style.webkitTextFillColor, defa
 assert.match(transparentFallbackHost.children[0].innerHTML, /^<span[^>]*>Текст /u);
 assert.match(transparentFallbackHost.children[0].innerHTML, / хвост<\/span>$/u);
 
+document.activeElement = linkedField;
+linkedField.selectionStart = 0;
+linkedField.selectionEnd = linkedField.value.length;
+documentListeners.get("select").listener({ type: "select", target: linkedField });
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
 linkedField.value = "Ссылка удалена";
 documentListeners.get("input").listener({ target: linkedField });
 assert.equal(linkedField.classList.contains("has-native-html-links"), false);
 assert.equal(linkedHost.children.length, 0);
 assert.equal(resizeObservers[0].observed.has(linkedField), false);
+document.activeElement = null;
 
 const dynamicHost = new MockHost();
 const dynamicField = new MockTextarea("Текст " + firstUrl);
@@ -430,6 +501,17 @@ assert.equal(dynamicHost.children[0].content.style.minWidth, "0px");
 assert.equal(dynamicHost.children[0].content.style.whiteSpace, "pre-line");
 assert.equal(dynamicHost.children[0].content.style.overflowWrap, "anywhere");
 assert.equal(dynamicHost.children[0].content.style.wordBreak, "normal");
+document.activeElement = dynamicField;
+dynamicField.selectionStart = 0;
+dynamicField.selectionEnd = dynamicField.value.length;
+documentListeners.get("pointerup").listener({ type: "pointerup", target: dynamicField });
+assert.equal(dynamicField.classList.contains("has-native-html-links"), false);
+assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), true);
+dynamicField.selectionEnd = dynamicField.selectionStart;
+documentListeners.get("pointerup").listener({ type: "pointerup", target: dynamicField });
+assert.equal(dynamicField.classList.contains("has-native-html-links"), true);
+assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), false);
+document.activeElement = null;
 mutationObservers[0].callback([{
   removedNodes: [dynamicField],
   addedNodes: []
@@ -539,6 +621,10 @@ assert.match(stylesSource, /\.native-html-link-highlight \.communication-templat
 assert.match(
   stylesSource,
   /\.native-html-link-highlight\.is-textarea \.native-html-link-highlight-content\s*\{[\s\S]*?min-width:\s*0/u
+);
+assert.match(
+  stylesSource,
+  /\.native-html-link-highlight\.is-native-text-selection-active \.native-html-link-highlight-content\s*\{[^}]*opacity:\s*0;/u
 );
 
 const styleBuild = /styles\.css\?v=([^"']+)/u.exec(indexSource)?.[1] || "";

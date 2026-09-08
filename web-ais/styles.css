@@ -6095,6 +6095,10 @@ body.long-press-dragging * {
   word-break: break-word;
 }
 
+.native-html-link-highlight.is-native-text-selection-active .native-html-link-highlight-content {
+  opacity: 0;
+}
+
 .native-html-link-highlight .communication-template-html-link {
   background-color: transparent;
   cursor: inherit;

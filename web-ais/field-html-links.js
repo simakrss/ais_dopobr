@@ -264,6 +264,34 @@
     content.style.transform = `translate(${-Number(field.scrollLeft || 0)}px, ${-Number(field.scrollTop || 0)}px)`;
   }
 
+  function getNativeFieldTextSelectionState(field) {
+    if (!isNativeField(field)) return null;
+    try {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      if (typeof start !== "number" || typeof end !== "number") return null;
+      return end > start;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function setNativeFieldSelectionRendering(field, active) {
+    const overlay = fieldOverlays.get(field);
+    if (!overlay) return false;
+    const useNativeRendering = Boolean(active);
+    overlay.classList.toggle("is-native-text-selection-active", useNativeRendering);
+    field.classList.toggle("has-native-html-links", !useNativeRendering);
+    return useNativeRendering;
+  }
+
+  function syncNativeFieldSelectionRendering(field) {
+    return setNativeFieldSelectionRendering(
+      field,
+      field === document.activeElement && getNativeFieldTextSelectionState(field) === true
+    );
+  }
+
   function syncFieldHighlight(field) {
     if (!isNativeField(field)) return;
     const links = getMatches(field.value);
@@ -280,6 +308,7 @@
     field.classList.add("has-native-html-links");
     field.dataset.nativeHtmlLinkField = "";
     positionFieldHighlight(field, overlay);
+    syncNativeFieldSelectionRendering(field);
   }
 
   function handleNativeFieldClick(event) {
@@ -349,6 +378,36 @@
     setLinkModifierActive(Boolean(event?.ctrlKey || event?.metaKey));
   }
 
+  function getNativeFieldFromSelectionEvent(event) {
+    if (isNativeField(event?.target)) return event.target;
+    return isNativeField(document.activeElement) ? document.activeElement : null;
+  }
+
+  function syncNativeFieldSelectionFromEvent(event) {
+    const field = getNativeFieldFromSelectionEvent(event);
+    if (!field) return;
+    if (
+      event?.type === "select"
+      && field === document.activeElement
+      && getNativeFieldTextSelectionState(field) === null
+    ) {
+      setNativeFieldSelectionRendering(field, true);
+      return;
+    }
+    syncNativeFieldSelectionRendering(field);
+  }
+
+  function handleNativeFieldFocusOut(event) {
+    if (isNativeField(event?.target)) {
+      setNativeFieldSelectionRendering(event.target, false);
+    }
+  }
+
+  function handleDocumentKeyUp(event) {
+    syncLinkModifierState(event);
+    syncNativeFieldSelectionFromEvent(event);
+  }
+
   function getFields(root = document) {
     const fields = [];
     if (isNativeField(root)) fields.push(root);
@@ -390,13 +449,29 @@
       if (overlay) positionFieldHighlight(event.target, overlay);
     }, true);
     document.addEventListener("keydown", syncLinkModifierState, true);
-    document.addEventListener("keyup", syncLinkModifierState, true);
+    document.addEventListener("keyup", handleDocumentKeyUp, true);
     document.addEventListener("pointermove", syncLinkModifierState, true);
+    document.addEventListener("pointerup", syncNativeFieldSelectionFromEvent, true);
+    document.addEventListener("select", syncNativeFieldSelectionFromEvent, true);
+    document.addEventListener("selectionchange", syncNativeFieldSelectionFromEvent, true);
+    document.addEventListener("focusin", syncNativeFieldSelectionFromEvent, true);
+    document.addEventListener("focusout", handleNativeFieldFocusOut, true);
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) setLinkModifierActive(false);
+      if (document.hidden) {
+        setLinkModifierActive(false);
+        return;
+      }
+      syncNativeFieldSelectionFromEvent({ target: document.activeElement });
     });
     document.addEventListener("click", handleDocumentClick, true);
-    window.addEventListener("blur", () => setLinkModifierActive(false));
+    window.addEventListener("blur", () => {
+      setLinkModifierActive(false);
+      const activeField = isNativeField(document.activeElement) ? document.activeElement : null;
+      if (activeField) setNativeFieldSelectionRendering(activeField, false);
+    });
+    window.addEventListener("focus", () => {
+      syncNativeFieldSelectionFromEvent({ target: document.activeElement });
+    });
     window.addEventListener("resize", () => {
       document.querySelectorAll("[data-native-html-link-field]").forEach(syncFieldHighlight);
     });
