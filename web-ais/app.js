@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.404",
+    version: "1.7.405",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.405",
+      releasedAt: "2026-09-08",
+      changes: [
+        "В окне импорта слушателей добавлено контекстное меню строки для перехода к лендингу программы и карточке заявки интернет-магазина в новом окне."
+      ]
+    },
     {
       version: "1.7.404",
       releasedAt: "2026-09-08",
@@ -12819,6 +12826,7 @@ MAX - https://bizvmax.ru/zifra_plus
     closeNavItemMenu();
     closeMessengerPreferenceMenu();
     closeSystemMailboxEmailMenu();
+    closeStudentApplicationsImportContextMenu();
     const recordLockNotice = document.querySelector("[data-record-lock-notice]");
     const readOnlyIdentity = state.modal?.readOnly ? getCurrentModalRecordLockIdentity() : null;
     if (recordLockNotice && (!readOnlyIdentity || recordLockNotice.dataset.recordLockKey !== readOnlyIdentity.key)) {
@@ -18553,6 +18561,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeStudentApplicationsImport() {
+    closeStudentApplicationsImportContextMenu();
     if (state.studentApplicationsImport.importing) return;
     clearTimeout(studentApplicationsSearchTimer);
     state.studentApplicationsImport.open = false;
@@ -18595,6 +18604,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function refreshStudentApplicationsImportDialog(options = {}) {
+    closeStudentApplicationsImportContextMenu();
     if (!state.studentApplicationsImport.open) return;
     hideTableValueFilterButton({ immediate: true });
     const current = document.querySelector("[data-student-applications-import-backdrop]");
@@ -19037,6 +19047,175 @@ MAX - https://bizvmax.ru/zifra_plus
       program,
       getStudentApplicationInferredProgramType(row)
     ) ? { program, score: Number(match.score || 0) } : null;
+  }
+
+  function getStudentApplicationsImportContextLinks(row) {
+    const selectedProgramId = getStudentApplicationsSingleProgramFilterId();
+    const program = getStudentApplicationProgram(row, selectedProgramId);
+    const landingUrl = getProgramPromoUrl(program)
+      || getProgramLandingPageUrl(program?.landingCode || row?.productId);
+    const isInSales = /insales/iu.test([
+      row?.sourceType,
+      row?.source
+    ].map((value) => String(value || "").trim()).filter(Boolean).join(" "));
+    const orderUrl = isInSales ? "" : getStudentOrderAdminUrl(row?.orderId);
+    return {
+      landingUrl,
+      orderUrl,
+      landingUnavailableReason: landingUrl
+        ? ""
+        : (program
+          ? "Для программы не указан адрес лендинга."
+          : "Сначала сопоставьте заявку с образовательной программой."),
+      orderUnavailableReason: orderUrl
+        ? ""
+        : (isInSales
+          ? "Ссылка на карточку заявки InSales не настроена."
+          : "В заявке отсутствует номер заказа интернет-магазина.")
+    };
+  }
+
+  function closeStudentApplicationsImportContextMenu(options = {}) {
+    document.removeEventListener(
+      "pointerdown",
+      closeStudentApplicationsImportContextMenuOnOutsidePointer,
+      { capture: true }
+    );
+    window.removeEventListener("resize", closeStudentApplicationsImportContextMenuOnViewportChange);
+    window.removeEventListener("scroll", closeStudentApplicationsImportContextMenuOnViewportChange, true);
+    const menu = document.querySelector("[data-student-applications-import-context-menu]");
+    const opener = menu?.studentApplicationsImportContextMenuOpener;
+    if (opener instanceof Element) opener.setAttribute("aria-expanded", "false");
+    menu?.remove();
+    if (options.restoreFocus && opener?.isConnected) {
+      opener.focus({ preventScroll: true });
+    }
+  }
+
+  function closeStudentApplicationsImportContextMenuOnOutsidePointer(event) {
+    if (event.target?.closest?.("[data-student-applications-import-context-menu]")) return;
+    closeStudentApplicationsImportContextMenu();
+  }
+
+  function closeStudentApplicationsImportContextMenuOnViewportChange() {
+    closeStudentApplicationsImportContextMenu();
+  }
+
+  function showStudentApplicationsImportContextMenu(rowElement, x, y) {
+    closeStudentApplicationsImportContextMenu();
+    if (!(rowElement instanceof Element) || !rowElement.isConnected) return;
+    const rowId = String(rowElement.dataset.studentApplicationRow || "");
+    const application = (state.studentApplicationsImport.rows || [])
+      .find((row) => String(row.id || "") === rowId);
+    if (!application) return;
+    const links = getStudentApplicationsImportContextLinks(application);
+    const menu = document.createElement("div");
+    menu.className = "field-copy-popup student-applications-import-context-menu";
+    menu.setAttribute("data-student-applications-import-context-menu", "true");
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Ссылки заявки");
+    menu.setAttribute("tabindex", "-1");
+    menu.studentApplicationsImportContextMenuOpener = rowElement;
+    menu.innerHTML = `
+      <button
+        data-student-application-import-link="landing"
+        type="button"
+        role="menuitem"
+        tabindex="-1"
+        ${links.landingUrl ? "" : `disabled aria-disabled="true" title="${escapeAttr(links.landingUnavailableReason)}"`}
+      >
+        ${renderExternalLinkIcon()}
+        <span>Перейти к лендингу</span>
+      </button>
+      <button
+        data-student-application-import-link="order"
+        type="button"
+        role="menuitem"
+        tabindex="-1"
+        ${links.orderUrl ? "" : `disabled aria-disabled="true" title="${escapeAttr(links.orderUnavailableReason)}"`}
+      >
+        ${renderExternalLinkIcon()}
+        <span>Перейти к заявке в интернет-магазин</span>
+      </button>
+    `;
+    document.body.appendChild(menu);
+    rowElement.setAttribute("aria-expanded", "true");
+    const openerRect = rowElement.getBoundingClientRect();
+    const useOpenerPosition = !(Number.isFinite(x) && Number.isFinite(y)) || (x === 0 && y === 0);
+    const desiredX = useOpenerPosition ? openerRect.left : x;
+    const desiredY = useOpenerPosition ? openerRect.bottom + 4 : y;
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${clamp(desiredX, 8, Math.max(8, window.innerWidth - menuRect.width - 8))}px`;
+    menu.style.top = `${clamp(desiredY, 8, Math.max(8, window.innerHeight - menuRect.height - 8))}px`;
+    const menuItems = Array.from(menu.querySelectorAll("[data-student-application-import-link]"));
+    const enabledItems = menuItems.filter((item) => !item.disabled);
+    if (enabledItems[0]) enabledItems[0].tabIndex = 0;
+    menuItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        const action = String(item.dataset.studentApplicationImportLink || "");
+        const url = action === "landing" ? links.landingUrl : links.orderUrl;
+        if (!url || item.disabled) return;
+        closeStudentApplicationsImportContextMenu({ restoreFocus: true });
+        openExternalUrl(url);
+      });
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" || event.key === "Tab") {
+        event.preventDefault();
+        closeStudentApplicationsImportContextMenu({ restoreFocus: true });
+        return;
+      }
+      if (!enabledItems.length) return;
+      const currentIndex = Math.max(0, enabledItems.indexOf(document.activeElement));
+      let nextIndex = currentIndex;
+      if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % enabledItems.length;
+      else if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + enabledItems.length) % enabledItems.length;
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = enabledItems.length - 1;
+      else return;
+      event.preventDefault();
+      enabledItems.forEach((item, index) => { item.tabIndex = index === nextIndex ? 0 : -1; });
+      enabledItems[nextIndex]?.focus({ preventScroll: true });
+    });
+    menu.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.setTimeout(() => {
+      if (!menu.isConnected) return;
+      document.addEventListener(
+        "pointerdown",
+        closeStudentApplicationsImportContextMenuOnOutsidePointer,
+        { capture: true }
+      );
+      window.addEventListener("resize", closeStudentApplicationsImportContextMenuOnViewportChange);
+      window.addEventListener("scroll", closeStudentApplicationsImportContextMenuOnViewportChange, true);
+      if (enabledItems[0]) enabledItems[0].focus({ preventScroll: true });
+      else menu.focus({ preventScroll: true });
+    });
+  }
+
+  function bindStudentApplicationsImportRowContextMenu(rowElement) {
+    if (
+      !(rowElement instanceof Element)
+      || rowElement.dataset.studentApplicationsContextMenuBound === "true"
+    ) return;
+    rowElement.dataset.studentApplicationsContextMenuBound = "true";
+    const openMenu = (x, y) => {
+      const id = String(rowElement.dataset.studentApplicationRow || "");
+      if (!(state.studentApplicationsImport.rows || []).some((row) => String(row.id || "") === id)) return;
+      state.studentApplicationsImport.activeId = id;
+      updateStudentApplicationsSelectionUi({ row: rowElement, updateDetail: true });
+      showStudentApplicationsImportContextMenu(rowElement, x, y);
+    };
+    rowElement.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMenu(event.clientX, event.clientY);
+    });
+    rowElement.addEventListener("keydown", (event) => {
+      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openMenu(0, 0);
+    });
   }
 
   function getStudentApplicationProgramRecommendations(row, limit = 6) {
@@ -19976,7 +20155,13 @@ MAX - https://bizvmax.ru/zifra_plus
                     const active = String(activeRow?.id || "") === String(row.id);
                     const paymentAmount = getStudentApplicationReceiptAmount(row);
                     return `
-                      <tr class="${active ? "is-active" : ""} ${imported ? "is-repeat" : ""}" data-student-application-row="${escapeAttr(row.id)}">
+                      <tr
+                        class="${active ? "is-active" : ""} ${imported ? "is-repeat" : ""}"
+                        data-student-application-row="${escapeAttr(row.id)}"
+                        tabindex="0"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                      >
                         <td>
                           <input data-student-application-select="${escapeAttr(row.id)}" data-payment-amount="${escapeAttr(paymentAmount)}" type="checkbox" ${selected ? "checked" : ""} aria-label="Выбрать заявку">
                         </td>
@@ -20974,6 +21159,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     scope.querySelectorAll("[data-student-application-row]").forEach((row) => {
+      bindStudentApplicationsImportRowContextMenu(row);
       row.addEventListener("click", () => {
         const id = String(row.dataset.studentApplicationRow || "");
         const checkbox = row.querySelector("[data-student-application-select]");

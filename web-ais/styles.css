@@ -11729,6 +11729,14 @@ body.card-window-moving {
   cursor: pointer;
 }
 
+.student-applications-import-context-menu {
+  min-width: min(300px, calc(100vw - 16px));
+}
+
+.student-applications-import-context-menu button {
+  white-space: nowrap;
+}
+
 .student-applications-import-table tbody tr:hover td {
   background: #f3faf7;
 }
