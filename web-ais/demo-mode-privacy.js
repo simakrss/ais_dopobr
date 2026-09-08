@@ -82,8 +82,9 @@ const DEMO_MODE_COLLECTION_SAFE_FIELDS = new Map([
     "landingcode", "promosite", "studyform", "qualification", "activityscope", "fgos",
     "fgoscompetency", "professionalstandard", "professionalstandardfunctions", "frdoprofessionalarea",
     "economicactivity", "minimumeducationlevel", "groupindex", "xlsbprogramname", "xlsbprogramrow",
-    "xlsbprogramlandingcode", "defaultauthorpaymentpercent"
+    "xlsbprogramlandingcode", "defaultauthorpaymentpercent", "commissionsetid"
   ])],
+  ["commissionSets", new Set(["id"])],
   ["trainingPlans", new Set([
     "id", "code", "programid", "programname", "discipline", "totalhours", "theoryhours",
     "practicehours", "attestation", "xlsbtrainingplanrow"
@@ -147,6 +148,7 @@ const DEMO_MODE_STRUCTURAL_FIELDS = new Set([
   "parentid",
   "sourceid",
   "linkedid",
+  "commissionsetid",
   "inventoryid",
   "inventorylink"
 ]);
@@ -361,6 +363,10 @@ function sanitizeDemoSharedState(source, options = {}) {
       }
       if (key === "label" && DEMO_MODE_PERSON_COLLECTIONS.has(recycleCollection)) {
         result[key] = maskDemoModeValue(nested);
+        continue;
+      }
+      if (nextContext.collection === "programs" && normalizedKey === "commissionsetid") {
+        result[key] = demoModeOpaqueId(nested, idSecret);
         continue;
       }
       const sensitiveField = isDemoModeSensitiveField(key);

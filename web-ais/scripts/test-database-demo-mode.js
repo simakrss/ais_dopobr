@@ -89,10 +89,19 @@ const source = {
       id: "program-89991234567",
       name: safeProgramName,
       shortName: "Базовый Access",
+      commissionSetId: "commission-set-89991234567",
       teacher: canaries.employee,
       commissionMember1: canaries.commission,
       secretary: canaries.commission,
       promoMessage1: `Пишите ${canaries.student} по адресу student-canary@example.test или https://t.me/private_canary`
+    }],
+    commissionSets: [{
+      id: "commission-set-89991234567",
+      name: `Основная комиссия ${canaries.naturalName}`,
+      commissionChair: canaries.naturalName,
+      commissionMember1: canaries.commission,
+      commissionMember2: canaries.employee,
+      secretary: canaries.student
     }],
     generalExpenses: [{
       id: "expense-89991234567",
@@ -158,6 +167,15 @@ assert.equal(
   sanitized.collections.programs[0].id,
   "связи между записями должны сохраняться после псевдонимизации"
 );
+assert.match(sanitized.collections.commissionSets[0].id, /^demo-id-[A-Za-z0-9_-]{24}$/u);
+assert.equal(
+  sanitized.collections.programs[0].commissionSetId,
+  sanitized.collections.commissionSets[0].id,
+  "ссылка программы на множество комиссии должна сохраняться после псевдонимизации"
+);
+assert.equal(sanitized.collections.commissionSets[0].name, DEMO_MODE_MASK_TEXT);
+assert.equal(sanitized.collections.commissionSets[0].commissionChair, DEMO_MODE_MASK_TEXT);
+assert.equal(sanitized.collections.commissionSets[0].commissionMember1, DEMO_MODE_MASK_TEXT);
 assert.equal(sanitized.collections.students[0].source, DEMO_MODE_MASK_TEXT);
 assert.deepEqual(sanitized.collections.students[0].tags, []);
 assert.equal(sanitized.collections.programs[0].name, safeProgramName);
@@ -205,6 +223,7 @@ for (const privateValue of [
   "student-89991234567",
   "employee-89991234567",
   "program-89991234567",
+  "commission-set-89991234567",
   "expense-89991234567",
   "plan-89991234567"
 ]) {

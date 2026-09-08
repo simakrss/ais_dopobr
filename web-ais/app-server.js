@@ -29053,6 +29053,41 @@ function materializeStudentDatabaseReconciledCollections(
     inventoryUnits,
     Array.isArray(collections.directExpenses) ? collections.directExpenses : []
   ).directExpenses;
+  const programCommissionFieldKeys = [
+    "commissionChair",
+    "commissionMember1",
+    "commissionMember2",
+    "secretary"
+  ];
+  const commissionSetsById = new Map(
+    (Array.isArray(collections.commissionSets) ? collections.commissionSets : [])
+      .map((commissionSet) => [String(commissionSet?.id || "").trim(), commissionSet])
+      .filter(([id]) => id)
+  );
+  const getLegacyCommissionSetId = (program) => {
+    const values = programCommissionFieldKeys
+      .map((fieldName) => String(program?.[fieldName] || "").replace(/\r\n?/gu, "\n").trim());
+    if (!values.some(Boolean)) return "";
+    const source = values.join("\u001f");
+    let hash = 2166136261;
+    for (let index = 0; index < source.length; index += 1) {
+      hash ^= source.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `commission-set-legacy-${(hash >>> 0).toString(36)}`;
+  };
+  const programsWithEffectiveCommissions = (Array.isArray(collections.programs)
+    ? collections.programs
+    : []).map((program) => {
+    const commissionSet = commissionSetsById.get(String(program?.commissionSetId || "").trim())
+      || commissionSetsById.get(getLegacyCommissionSetId(program));
+    if (!commissionSet) return program;
+    const nextProgram = { ...(program || {}) };
+    programCommissionFieldKeys.forEach((fieldName) => {
+      nextProgram[fieldName] = String(commissionSet?.[fieldName] || "").replace(/\r\n?/gu, "\n").trim();
+    });
+    return nextProgram;
+  });
   return {
     students: materialize(
       (Array.isArray(collections.students) ? collections.students : []).map((student) => {
@@ -29090,7 +29125,7 @@ function materializeStudentDatabaseReconciledCollections(
     }),
     inventory,
     programs: sanitizeStudentDatabaseExportPrograms(
-      (Array.isArray(collections.programs) ? collections.programs : []).map((record, index) => ({
+      programsWithEffectiveCommissions.map((record, index) => ({
         ...(record || {}),
         id: getStudentDatabaseChangeRecordId(record)
           || String(record?.id || "").trim()

@@ -13659,7 +13659,8 @@ body.card-window-moving {
 
 .program-characteristics-section,
 .program-promo-section,
-.program-commission-section {
+.program-commission-section,
+.program-participants-section {
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -13668,36 +13669,42 @@ body.card-window-moving {
 
 .program-characteristics-section .form-section-head,
 .program-promo-section .form-section-head,
-.program-commission-section .form-section-head {
+.program-commission-section .form-section-head,
+.program-participants-section .form-section-head {
   align-items: flex-start;
 }
 
 .program-characteristics-section .form-section-head p,
 .program-promo-section .form-section-head p,
-.program-commission-section .form-section-head p {
+.program-commission-section .form-section-head p,
+.program-participants-section .form-section-head p {
   margin: 3px 0 0;
   color: var(--muted);
   font-size: 12px;
 }
 
 .program-characteristics-grid,
-.program-commission-grid {
+.program-commission-grid,
+.program-participants-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 10px;
 }
 
 .program-characteristics-grid label,
-.program-commission-grid label {
+.program-commission-grid label,
+.program-participants-grid label {
   gap: 4px;
 }
 
 .program-characteristics-grid label > span,
-.program-commission-grid label > span {
+.program-commission-grid label > span,
+.program-participants-grid label > span {
   font-size: 12px;
 }
 
 .program-characteristics-grid label.program-field-wide,
-.program-commission-grid label.program-field-wide {
+.program-commission-grid label.program-field-wide,
+.program-participants-grid label.program-field-wide {
   grid-column: 1 / -1;
 }
 
@@ -13706,16 +13713,71 @@ body.card-window-moving {
 .program-characteristics-grid textarea,
 .program-commission-grid input,
 .program-commission-grid select,
-.program-commission-grid textarea {
+.program-commission-grid textarea,
+.program-participants-grid input,
+.program-participants-grid select,
+.program-participants-grid textarea {
   min-height: 34px;
   padding: 6px 8px;
   font-size: 13px;
 }
 
 .program-characteristics-grid textarea,
-.program-commission-grid textarea {
+.program-commission-grid textarea,
+.program-participants-grid textarea {
   min-height: 68px;
   line-height: 1.35;
+}
+
+.program-commission-set-panel {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 8px 10px;
+  padding: 9px;
+  border: 1px solid #d8e6e0;
+  border-radius: 8px;
+  background: #f3f8f6;
+}
+
+.program-commission-set-panel label,
+.program-commission-source-panel label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.program-commission-set-panel label > span,
+.program-commission-source-panel label > span {
+  color: #3d4945;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.program-commission-set-panel input,
+.program-commission-set-panel select,
+.program-commission-source-panel input {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.program-commission-set-usage {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.program-commission-source-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.program-commission-source-panel .ghost-button {
+  min-height: 34px;
+  white-space: nowrap;
 }
 
 .program-promo-grid {
@@ -22548,7 +22610,10 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .program-characteristics-grid,
   .program-promo-grid,
-  .program-commission-grid {
+  .program-commission-grid,
+  .program-participants-grid,
+  .program-commission-set-panel,
+  .program-commission-source-panel {
     grid-template-columns: 1fr;
   }
 
@@ -22559,7 +22624,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .program-characteristics-grid label.program-field-wide,
-  .program-commission-grid label.program-field-wide {
+  .program-commission-grid label.program-field-wide,
+  .program-participants-grid label.program-field-wide {
     grid-column: 1;
   }
 

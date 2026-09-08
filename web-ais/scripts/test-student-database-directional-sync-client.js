@@ -499,6 +499,7 @@ async function testRealSynchronizationImportPath() {
             balance: 1
           }],
           programs: [],
+          commissionSets: [],
           trainingPlans: [],
           audit: []
         }
@@ -534,6 +535,8 @@ async function testRealSynchronizationImportPath() {
     mergeImportedTrainingPlanRows: (value) => value,
     mergeImportedCommunicationTemplateNamedRanges: (value) => ({ ...(value || {}) }),
     normalizeProgramRecord: (value) => ({ ...value }),
+    prepareImportedProgramCommissionLinks: (value) => value,
+    synchronizeProgramCommissionSets: (programs, commissionSets) => ({ programs, commissionSets }),
     normalizeTrainingPlanRecord: (value) => ({ ...value }),
     linkTrainingPlanRecordsToPrograms: (value) => value,
     PROGRAM_DICTIONARY_FIELDS: {},
@@ -754,6 +757,7 @@ function makeExportContext(result, { validBaseline = true } = {}) {
     hasUnsavedSettingsChanges: () => false,
     saveSettingsDraftChanges: async () => true,
     waitForStudentImportPoll: async () => {},
+    probeLocalDocumentServices: async () => {},
     getStudentDocumentsSource: () => "local",
     getStudentDatabaseSyncConfirmation: () => "confirm",
     getStudentDatabaseWebDavPath: () => "db.xlsb",

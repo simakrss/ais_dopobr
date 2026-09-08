@@ -45,8 +45,8 @@ const renderProgramModalSource = sourceBlock(
 );
 assert.equal(
   [...renderProgramModalSource.matchAll(/data-program-tab-panel=/gu)].length,
-  6,
-  "Все шесть вкладок программы должны оставаться внутри одного модального окна."
+  7,
+  "Все семь вкладок программы должны оставаться внутри одного модального окна."
 );
 
 const switchProgramTabSource = sourceBlock(

@@ -26,7 +26,7 @@ const context = {
   ],
   PROGRAM_DUPLICATE_FIELD_KEYS: [
     "name", "shortName", "status", "price", "type", "hours", "landingCode",
-    "promoMessage1", "emailMessageTemplate"
+    "promoMessage1", "emailMessageTemplate", "commissionSetId"
   ],
   PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS: [
     "discipline", "description", "theoryHours", "practiceHours",
@@ -159,6 +159,7 @@ const sourceProgram = {
   type: "КПК",
   hours: 72,
   landingCode: "ot-72",
+  commissionSetId: "commission-set-main",
   promoMessage1: "Описание программы",
   emailMessageTemplate: "Письмо",
   authorSource: "Иванов И.И.",
@@ -193,6 +194,7 @@ assert.match(programDraft.name, /\(72 ч\)$/u, "Суффикс с часами �
 assert.equal(programDraft.status, sourceProgram.status);
 assert.equal(programDraft.price, sourceProgram.price);
 assert.equal(programDraft.hours, sourceProgram.hours);
+assert.equal(programDraft.commissionSetId, sourceProgram.commissionSetId);
 assert.equal(
   programDraft.landingCode,
   sourceProgram.landingCode,
@@ -393,8 +395,8 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /version: "1\.7\.401"/u);
-assert.match(authSource, /20260908-shared-landing-duplicate-v1/u);
-assert.match(indexSource, /20260908-shared-landing-duplicate-v1/u);
+assert.match(appSource, /version: "1\.7\.402"/u);
+assert.match(authSource, /20260908-program-commission-sets-v1/u);
+assert.match(indexSource, /20260908-program-commission-sets-v1/u);
 
 console.log("Program and student duplication checks: OK");

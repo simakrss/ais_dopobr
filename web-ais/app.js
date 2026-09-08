@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.401",
+    version: "1.7.402",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.402",
+      releasedAt: "2026-09-08",
+      changes: [
+        "Комиссии программ вынесены в отдельную вкладку и объединяются в переиспользуемые множества: состав можно подставить из другой программы и изменить сразу во всех связанных программах; текстовый поиск программ выполняется только по названию."
+      ]
+    },
     {
       version: "1.7.401",
       releasedAt: "2026-09-08",
@@ -5321,6 +5328,18 @@ MAX - https://bizvmax.ru/zifra_plus
     "teachers",
     "literature"
   ]);
+  const PROGRAM_COMMISSION_FIELD_KEYS = Object.freeze([
+    "commissionChair",
+    "commissionMember1",
+    "commissionMember2",
+    "secretary"
+  ]);
+  const PROGRAM_PARTICIPANT_FIELD_KEYS = Object.freeze([
+    "developer",
+    "manager",
+    "teachers"
+  ]);
+  const PROGRAM_COMMISSION_NEW_SET_VALUE = "__new__";
   const PROGRAM_FIELD_ALIASES = Object.freeze({
     qualification: ["Квалификация"],
     activityScope: ["Сфера деятельности"],
@@ -5485,9 +5504,9 @@ MAX - https://bizvmax.ru/zifra_plus
         field("commissionMember1", "Член 1", "text", false, null, { programTab: "commission" }),
         field("commissionMember2", "Член 2", "text", false, null, { programTab: "commission" }),
         field("secretary", "Секретарь", "text", false, null, { programTab: "commission" }),
-        field("developer", "Разработчик", "text", false, null, { programTab: "commission" }),
-        field("manager", "Менеджер", "text", false, null, { programTab: "commission" }),
-        field("teachers", "Преподаватели", "textarea", false, null, { programTab: "commission", list: true, wide: true, rows: 5 })
+        field("developer", "Разработчик", "text", false, null, { programTab: "participants" }),
+        field("manager", "Менеджер", "text", false, null, { programTab: "participants" }),
+        field("teachers", "Преподаватели", "textarea", false, null, { programTab: "participants", list: true, wide: true, rows: 5 })
       ],
       table: ["name", "status", "type", "hours", "price", "promoSite", "groupIndex"]
     },
@@ -6014,7 +6033,8 @@ MAX - https://bizvmax.ru/zifra_plus
     ...STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS
   ])]);
   const PROGRAM_DUPLICATE_FIELD_KEYS = Object.freeze([
-    ...configs.programs.fields.map((item) => item.key)
+    ...configs.programs.fields.map((item) => item.key),
+    "commissionSetId"
   ]);
   const PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS = Object.freeze([
     "discipline", "description", "theoryHours", "practiceHours",
@@ -7274,6 +7294,12 @@ MAX - https://bizvmax.ru/zifra_plus
       ));
     data.collections.programs = mergeProgramPaymentRegistry(data, mergeProgramRegistry(data))
       .map((program) => normalizeProgramRecord(program));
+    const synchronizedProgramCommissions = synchronizeProgramCommissionSets(
+      data.collections.programs,
+      data.collections.commissionSets
+    );
+    data.collections.programs = synchronizedProgramCommissions.programs;
+    data.collections.commissionSets = synchronizedProgramCommissions.commissionSets;
     Object.entries(PROGRAM_DICTIONARY_FIELDS).forEach(([fieldKey, dictionaryKey]) => {
       if (!missingProgramDictionaryKeys.has(dictionaryKey)) return;
       const importedValues = data.collections.programs
@@ -9248,6 +9274,202 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter(Boolean);
   }
 
+  function normalizeProgramCommissionValue(value) {
+    return String(value || "").replace(/\r\n?/gu, "\n").trim();
+  }
+
+  function getProgramCommissionSignature(value = {}) {
+    return PROGRAM_COMMISSION_FIELD_KEYS
+      .map((key) => normalizeProgramCommissionValue(value?.[key]))
+      .join("\u001f");
+  }
+
+  function hasProgramCommissionValues(value = {}) {
+    return PROGRAM_COMMISSION_FIELD_KEYS.some((key) => normalizeProgramCommissionValue(value?.[key]));
+  }
+
+  function getProgramCommissionSetSuggestedName(value = {}, index = 0) {
+    const chair = normalizeProgramCommissionValue(value.commissionChair).split(",")[0].trim();
+    return chair ? `Комиссия — ${chair}` : `Состав комиссии ${index + 1}`;
+  }
+
+  function getUniqueProgramCommissionSetName(name, usedNames = new Set()) {
+    const base = String(name || "").trim() || "Состав комиссии";
+    let candidate = base;
+    let suffix = 2;
+    while (usedNames.has(candidate.toLocaleLowerCase("ru-RU"))) {
+      candidate = `${base} (${suffix})`;
+      suffix += 1;
+    }
+    usedNames.add(candidate.toLocaleLowerCase("ru-RU"));
+    return candidate;
+  }
+
+  function normalizeProgramCommissionSet(value, index = 0, usedIds = new Set(), usedNames = new Set()) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const normalized = { ...value };
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      normalized[key] = normalizeProgramCommissionValue(value[key]);
+    });
+    let id = String(value.id || "").trim()
+      || buildLegacyRecordId("commission-set", PROGRAM_COMMISSION_FIELD_KEYS.map((key) => normalized[key]));
+    if (usedIds.has(id)) {
+      id = buildLegacyRecordId("commission-set", [id, value.name, ...PROGRAM_COMMISSION_FIELD_KEYS.map((key) => normalized[key]), index]);
+    }
+    usedIds.add(id);
+    normalized.id = id;
+    normalized.name = getUniqueProgramCommissionSetName(
+      String(value.name || "").trim() || getProgramCommissionSetSuggestedName(normalized, index),
+      usedNames
+    );
+    return normalized;
+  }
+
+  function applyProgramCommissionSetToProgram(program = {}, commissionSet = null) {
+    if (!commissionSet) return { ...program, commissionSetId: "" };
+    const next = { ...program, commissionSetId: String(commissionSet.id || "").trim() };
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      next[key] = normalizeProgramCommissionValue(commissionSet[key]);
+    });
+    return next;
+  }
+
+  function synchronizeProgramCommissionSets(programs = [], values = []) {
+    const usedIds = new Set();
+    const usedNames = new Set();
+    const commissionSets = (Array.isArray(values) ? values : [])
+      .map((item, index) => normalizeProgramCommissionSet(item, index, usedIds, usedNames))
+      .filter(Boolean);
+    const setsById = new Map(commissionSets.map((item) => [String(item.id), item]));
+    const setsBySignature = new Map();
+    commissionSets.forEach((item) => {
+      if (!hasProgramCommissionValues(item)) return;
+      const signature = getProgramCommissionSignature(item);
+      if (!setsBySignature.has(signature)) setsBySignature.set(signature, item);
+    });
+    const synchronizedPrograms = (Array.isArray(programs) ? programs : []).map((program, index) => {
+      let commissionSet = setsById.get(String(program?.commissionSetId || "").trim()) || null;
+      if (!commissionSet && hasProgramCommissionValues(program)) {
+        const signature = getProgramCommissionSignature(program);
+        const legacySetId = buildLegacyRecordId(
+          "commission-set",
+          PROGRAM_COMMISSION_FIELD_KEYS.map((key) => normalizeProgramCommissionValue(program?.[key]))
+        );
+        commissionSet = setsById.get(legacySetId) || setsBySignature.get(signature) || null;
+        if (!commissionSet) {
+          commissionSet = normalizeProgramCommissionSet({
+            id: legacySetId,
+            name: getProgramCommissionSetSuggestedName(program, commissionSets.length),
+            ...Object.fromEntries(PROGRAM_COMMISSION_FIELD_KEYS.map((key) => [key, program?.[key]]))
+          }, commissionSets.length, usedIds, usedNames);
+          commissionSets.push(commissionSet);
+          setsById.set(commissionSet.id, commissionSet);
+          setsBySignature.set(signature, commissionSet);
+        }
+      }
+      return applyProgramCommissionSetToProgram(program || {}, commissionSet);
+    });
+    return { programs: synchronizedPrograms, commissionSets };
+  }
+
+  function getProgramCommissionSetById(id, values = state.data?.collections?.commissionSets) {
+    const target = String(id || "").trim();
+    if (!target) return null;
+    return (Array.isArray(values) ? values : []).find((item) => String(item?.id || "").trim() === target) || null;
+  }
+
+  function resolveProgramCommissionRecord(program = {}, values = state.data?.collections?.commissionSets) {
+    const commissionSet = getProgramCommissionSetById(program?.commissionSetId, values);
+    return commissionSet ? applyProgramCommissionSetToProgram(program, commissionSet) : { ...program };
+  }
+
+  function upsertProgramCommissionSet(
+    programs = [],
+    values = [],
+    selectedId = "",
+    setName = "",
+    commissionValues = {},
+    options = {}
+  ) {
+    const targetId = String(selectedId || "").trim();
+    if (!targetId) {
+      return {
+        programs: Array.isArray(programs) ? programs : [],
+        commissionSets: Array.isArray(values) ? values : [],
+        commissionSet: null,
+        created: false,
+        changed: false
+      };
+    }
+    const sourceSets = Array.isArray(values) ? values : [];
+    const existingSet = targetId === PROGRAM_COMMISSION_NEW_SET_VALUE
+      ? null
+      : getProgramCommissionSetById(targetId, sourceSets);
+    const usedIds = new Set(sourceSets
+      .filter((item) => item !== existingSet)
+      .map((item) => String(item?.id || "").trim())
+      .filter(Boolean));
+    const usedNames = new Set(sourceSets
+      .filter((item) => item !== existingSet)
+      .map((item) => String(item?.name || "").trim().toLocaleLowerCase("ru-RU"))
+      .filter(Boolean));
+    const rawSet = {
+      ...(existingSet || {}),
+      id: existingSet?.id || makeId("commission-set"),
+      name: String(setName || "").trim()
+        || existingSet?.name
+        || getProgramCommissionSetSuggestedName(commissionValues, sourceSets.length)
+    };
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      rawSet[key] = normalizeProgramCommissionValue(commissionValues[key]);
+    });
+    const commissionSet = normalizeProgramCommissionSet(
+      rawSet,
+      Math.max(0, sourceSets.indexOf(existingSet)),
+      usedIds,
+      usedNames
+    );
+    const commissionSets = existingSet
+      ? sourceSets.map((item) => item === existingSet ? commissionSet : item)
+      : [commissionSet, ...sourceSets];
+    const synchronizedPrograms = options.materializeProgramSnapshots === false
+      ? (Array.isArray(programs) ? programs : [])
+      : (Array.isArray(programs) ? programs : []).map((program) => (
+        String(program?.commissionSetId || "").trim() === commissionSet.id
+          ? applyProgramCommissionSetToProgram(program, commissionSet)
+          : program
+      ));
+    const changed = !existingSet || PROGRAM_COMMISSION_FIELD_KEYS.some((key) => (
+      normalizeProgramCommissionValue(existingSet[key]) !== commissionSet[key]
+    )) || String(existingSet.name || "").trim() !== commissionSet.name;
+    return {
+      programs: synchronizedPrograms,
+      commissionSets,
+      commissionSet,
+      created: !existingSet,
+      changed
+    };
+  }
+
+  function prepareImportedProgramCommissionLinks(importedPrograms = [], previousPrograms = [], commissionSets = [], managedFields = []) {
+    const managedCommissionFields = new Set((Array.isArray(managedFields) ? managedFields : [])
+      .map((key) => String(key || "").trim())
+      .filter((key) => PROGRAM_COMMISSION_FIELD_KEYS.includes(key)));
+    if (!managedCommissionFields.size) return Array.isArray(importedPrograms) ? importedPrograms : [];
+    const previousById = new Map((Array.isArray(previousPrograms) ? previousPrograms : [])
+      .map((program) => [String(program?.id || "").trim(), program])
+      .filter(([id]) => id));
+    return (Array.isArray(importedPrograms) ? importedPrograms : []).map((program) => {
+      const previous = previousById.get(String(program?.id || "").trim());
+      const linkedSet = getProgramCommissionSetById(previous?.commissionSetId, commissionSets);
+      if (!previous || !linkedSet) return program;
+      const importedCommissionChanged = [...managedCommissionFields].some((key) => (
+        normalizeProgramCommissionValue(program?.[key]) !== normalizeProgramCommissionValue(linkedSet[key])
+      ));
+      return importedCommissionChanged ? { ...program, commissionSetId: "" } : program;
+    });
+  }
+
   function normalizeProgramRecord(program) {
     if (!program || typeof program !== "object") return program;
     const studyForm = normalizeStudyForm(program.studyForm || program["Форма обучения"]);
@@ -10150,19 +10372,21 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
       sharedStateOffline = Boolean(payload.offline);
       const preserveSettingsDraftData = isSettingsDraftSessionActive() && !state.settingsDraftSaving;
-      if (payload.data && !preserveSettingsDraftData) {
-        const confirmedData = withTrainingEndNotificationServerMeta(payload.data);
+      const confirmedData = payload.data
+        ? ensureDataShape(withTrainingEndNotificationServerMeta(payload.data))
+        : null;
+      if (confirmedData && !preserveSettingsDraftData) {
         if (generation === sharedStateChangeGeneration) {
-          state.data = ensureDataShape(confirmedData);
+          state.data = confirmedData;
         } else {
           const pendingPatch = buildSharedApplicationStatePatch(data, state.data);
           state.data = pendingPatch
             ? applySharedApplicationStatePatchLocally(confirmedData, pendingPatch)
-            : ensureDataShape(confirmedData);
+            : confirmedData;
         }
         persistStateToLocalStorage(state.data);
       }
-      sharedStateBaseData = clone(payload.data || data);
+      sharedStateBaseData = clone(confirmedData || data);
       sharedStatePendingPatch = null;
       sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
       if (generation === sharedStateChangeGeneration) {
@@ -10189,11 +10413,11 @@ MAX - https://bizvmax.ru/zifra_plus
         updateSharedStateStatusUi();
         if (!sharedStateConflictShown) {
           sharedStateConflictShown = true;
-          alert(
+          alert(options.conflictMessage || (
             "Общая база была изменена на другом компьютере. "
             + "Ваш вариант сохранён в резервной копии этого браузера и не перезаписал чужие данные. "
             + "Закройте редактируемую карточку и обновите раздел, затем повторите изменение."
-          );
+          ));
         }
         return false;
       }
@@ -18261,8 +18485,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalizedQuery = normalizeStudentListProgramQuery(query);
     let visibleCount = 0;
     root.querySelectorAll("[data-student-applications-program-option-row]").forEach((row) => {
-      const label = normalizeStudentListProgramQuery(row.textContent);
-      const hidden = Boolean(normalizedQuery && !label.includes(normalizedQuery));
+      const programName = normalizeStudentListProgramQuery(row.dataset.programName);
+      const hidden = Boolean(normalizedQuery && !programName.includes(normalizedQuery));
       row.hidden = hidden;
       if (!hidden) visibleCount += 1;
     });
@@ -19490,8 +19714,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const normalizedProgramQuery = normalizeStudentListProgramQuery(programQuery);
     const visibleProgramOptionCount = programs.filter((program) => (
       !normalizedProgramQuery
-      || normalizeStudentListProgramQuery(`${program.name || ""} ${program.landingCode || ""}`)
-        .includes(normalizedProgramQuery)
+      || normalizeStudentListProgramQuery(program.name).includes(normalizedProgramQuery)
     )).length;
     const statuses = unique([
       ...(state.data.dictionaries.statuses || []),
@@ -19531,10 +19754,10 @@ MAX - https://bizvmax.ru/zifra_plus
                     <div class="student-list-program-filter-options" data-student-applications-program-filter-options>
                       ${programs.map((program) => {
                         const programId = String(program.id || "");
-                        const searchValue = normalizeStudentListProgramQuery(`${program.name || ""} ${program.landingCode || ""}`);
+                        const searchValue = normalizeStudentListProgramQuery(program.name);
                         const hidden = normalizedProgramQuery && !searchValue.includes(normalizedProgramQuery);
                         return `
-                          <label data-student-applications-program-option-row ${hidden ? "hidden" : ""}>
+                          <label data-student-applications-program-option-row data-program-name="${escapeAttr(program.name || "")}" ${hidden ? "hidden" : ""}>
                             <input type="checkbox" value="${escapeAttr(programId)}" data-student-applications-program-filter-option ${selectedProgramIdSet.has(programId) ? "checked" : ""}>
                             <span>${escapeHtml(program.name || "Без названия")}${program.landingCode ? ` [${escapeHtml(program.landingCode)}]` : ""}</span>
                           </label>
@@ -20208,6 +20431,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildAutomaticStudentExpenses(record, program = null) {
     const rules = parseAutomaticExpenseRules(getPaymentSettingValue("automaticExpenseRules"));
+    const commissionProgram = program ? resolveProgramCommissionRecord(program) : null;
     const commonRulesAllowed = isFrdoProgramType(program?.type || record.educationType);
     const existingExpenses = Array.isArray(record.directExpenses) ? record.directExpenses : [];
     const existingKeys = new Set(existingExpenses.map((expense) => String(expense?.automaticPaymentKey || "")).filter(Boolean));
@@ -20263,7 +20487,7 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
       if (normalizedType === normalizeProgramName("Оплата председателю ИАК")) {
-        const recipient = extractPaymentRecipientName(program?.commissionChair);
+        const recipient = extractPaymentRecipientName(commissionProgram?.commissionChair);
         if (recipient) addExpense(rule, recipient, evaluatePaymentAmountFormula(rule.amountFormula), "commission-chair");
         return;
       }
@@ -21113,7 +21337,11 @@ MAX - https://bizvmax.ru/zifra_plus
       ? state.generalExpenseWorkTypeFilter.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
     let filtered = rows.filter((row) => {
-      const matchQuery = !query || getRegistryRowSearchText(row).includes(query);
+      const matchQuery = !query || (
+        config.collection === "programs"
+          ? String(row?.name || "").toLocaleLowerCase("ru-RU").includes(query)
+          : getRegistryRowSearchText(row).includes(query)
+      );
       const hasUnassignedStatus = state.statusFilter === "Не задано"
         && ![row.status, row.type, row.workType, row.itemType].some((value) => String(value || "").trim());
       const matchStatus = isDocumentTemplateTable
@@ -30327,7 +30555,8 @@ MAX - https://bizvmax.ru/zifra_plus
         label: "Отправка по почте",
         note: "Текст загружается из примечания к колонке «СообщПочты» листа «Реестр программ». Если текст не заполнен, используется шаблон выбранного документа об образовании."
       },
-      { id: "commission", label: "Комиссия" }
+      { id: "commission", label: "Комиссии" },
+      { id: "participants", label: "Участники" }
     ]);
     const activeTab = programTabs.find((tab) => tab.id === state.programCardTab) || programTabs[0];
     const navigation = getProgramCardNavigation(record);
@@ -30335,7 +30564,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="modal-backdrop" data-action="close-modal">
         <section class="modal program-modal" role="dialog" aria-modal="true" aria-label="${title}">
-          <form id="recordForm" data-config="programs" data-id="${record?.id || ""}">
+          <form
+            id="recordForm"
+            data-config="programs"
+            data-id="${record?.id || ""}"
+            data-program-commission-base-revision="${sharedStateRevision}"
+          >
             <header class="modal-head">
               <div>
                 <p class="eyebrow">${escapeHtml(config.title)}</p>
@@ -30417,6 +30651,9 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
               <div class="program-tab-panel ${activeTab.id === "commission" ? "is-active" : ""}" data-program-tab-panel="commission" role="tabpanel" ${activeTab.id === "commission" ? "" : "hidden"}>
                 ${renderProgramCommissionSection(record || {})}
+              </div>
+              <div class="program-tab-panel ${activeTab.id === "participants" ? "is-active" : ""}" data-program-tab-panel="participants" role="tabpanel" ${activeTab.id === "participants" ? "" : "hidden"}>
+                ${renderProgramParticipantsSection(record || {})}
               </div>
             </div>
           </form>
@@ -30689,16 +30926,89 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderProgramCommissionSection(record) {
-    const fields = getProgramFieldsByTab("commission");
+    const fields = getProgramFieldsByTab("commission")
+      .filter((item) => PROGRAM_COMMISSION_FIELD_KEYS.includes(item.key));
+    const commissionSets = [...(state.data.collections.commissionSets || [])]
+      .sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || ""), "ru"));
+    const selectedSet = getProgramCommissionSetById(record.commissionSetId, commissionSets);
+    const selectedSetId = String(selectedSet?.id || "");
+    const effectiveRecord = selectedSet
+      ? applyProgramCommissionSetToProgram(record, selectedSet)
+      : record;
+    const usageCount = selectedSetId
+      ? (state.data.collections.programs || [])
+        .filter((program) => String(program?.commissionSetId || "") === selectedSetId).length
+      : 0;
+    const sourcePrograms = getProgramRows()
+      .filter((program) => String(program?.id || "") !== String(record?.id || ""));
     return `
-      <section class="form-section program-commission-section">
+      <section class="form-section program-commission-section" data-program-commission-section>
         <div class="form-section-head">
           <div>
-            <h3>Комиссия и участники программы</h3>
+            <h3>Состав комиссии</h3>
+            <p>Выберите общее множество. Изменение его названия или состава при сохранении обновит все связанные программы.</p>
+          </div>
+        </div>
+        <div class="program-commission-set-panel">
+          <label>
+            <span>Множество состава</span>
+            <select name="commissionSetId" data-program-commission-set-select>
+              <option value="" ${selectedSetId ? "" : "selected"} disabled>Выберите множество</option>
+              ${commissionSets.map((item) => `
+                <option value="${escapeAttr(item.id)}" ${item.id === selectedSetId ? "selected" : ""}>${escapeHtml(item.name)}</option>
+              `).join("")}
+              <option value="${PROGRAM_COMMISSION_NEW_SET_VALUE}">+ Новое множество</option>
+            </select>
+          </label>
+          <label>
+            <span>Название множества</span>
+            <input
+              name="commissionSetName"
+              value="${escapeAttr(selectedSet?.name || "")}"
+              placeholder="Например: Основная комиссия КПК"
+              data-program-commission-set-name
+              ${selectedSet ? "" : "disabled"}
+            >
+          </label>
+          <small class="program-commission-set-usage" data-program-commission-set-usage>
+            ${selectedSet ? `Используется в программах: ${usageCount}` : "Выберите существующее множество или создайте новое."}
+          </small>
+        </div>
+        <div class="program-commission-source-panel">
+          <label>
+            <span>Подставить из другой программы</span>
+            <input
+              type="search"
+              list="program-commission-source-list"
+              placeholder="Введите название программы"
+              autocomplete="off"
+              data-program-commission-source-search
+            >
+            <datalist id="program-commission-source-list">
+              ${sourcePrograms.map((program) => `<option value="${escapeAttr(program.name || "")}"></option>`).join("")}
+            </datalist>
+          </label>
+          <button class="ghost-button" data-action="apply-program-commission-source" type="button" ${sourcePrograms.length ? "" : "disabled"}>Подставить</button>
+        </div>
+        <div class="form-grid program-commission-grid">
+          ${fields.map((item) => renderField(item, effectiveRecord)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderProgramParticipantsSection(record) {
+    const fields = getProgramFieldsByTab("participants")
+      .filter((item) => PROGRAM_PARTICIPANT_FIELD_KEYS.includes(item.key));
+    return `
+      <section class="form-section program-participants-section">
+        <div class="form-section-head">
+          <div>
+            <h3>Участники программы</h3>
             <p>Для преподавателей указывайте каждого человека с новой строки.</p>
           </div>
         </div>
-        <div class="form-grid program-commission-grid">
+        <div class="form-grid program-participants-grid">
           ${fields.map((item) => renderField(item, record)).join("")}
         </div>
       </section>
@@ -39439,6 +39749,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-student-finance-grid]").forEach(bindStudentFinanceRowDrag);
     document.querySelector("[data-action='add-program-author-payment-row']")?.addEventListener("click", addProgramAuthorPaymentRow);
     bindProgramAuthorPaymentListActions(document.querySelector("[data-program-author-payment-list]"));
+    bindProgramCommissionControls();
     document.querySelectorAll("[data-action='open-program-op-resource']").forEach((button) => {
       button.addEventListener("click", openProgramOperationalDocumentResource);
     });
@@ -45147,6 +45458,106 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function populateProgramCommissionFields(formElement, values = {}) {
+    if (!formElement) return;
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      const input = formElement.elements?.[key];
+      if (!input) return;
+      input.value = normalizeProgramCommissionValue(values[key]);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function synchronizeProgramCommissionSetControls(select, { populate = true } = {}) {
+    const section = select?.closest("[data-program-commission-section]");
+    const formElement = select?.form || section?.closest("form");
+    if (!section || !formElement) return;
+    const selectedId = String(select.value || "");
+    const nameInput = section.querySelector("[data-program-commission-set-name]");
+    const usage = section.querySelector("[data-program-commission-set-usage]");
+    const commissionSet = getProgramCommissionSetById(selectedId);
+    if (selectedId === PROGRAM_COMMISSION_NEW_SET_VALUE) {
+      if (nameInput) {
+        nameInput.disabled = false;
+        nameInput.value = "";
+        nameInput.focus({ preventScroll: true });
+      }
+      if (usage) usage.textContent = "Новое множество будет создано из указанного ниже состава при сохранении программы.";
+      return;
+    }
+    if (!commissionSet) {
+      if (nameInput) {
+        nameInput.value = "";
+        nameInput.disabled = true;
+      }
+      if (usage) usage.textContent = "Выберите существующее множество или создайте новое.";
+      return;
+    }
+    if (nameInput) {
+      nameInput.disabled = false;
+      nameInput.value = commissionSet.name || "";
+    }
+    if (populate) populateProgramCommissionFields(formElement, commissionSet);
+    if (usage) {
+      const count = (state.data.collections.programs || [])
+        .filter((program) => String(program?.commissionSetId || "") === selectedId).length;
+      usage.textContent = `Используется в программах: ${count}. Изменение состава обновит каждую из них.`;
+    }
+  }
+
+  function findProgramCommissionSourceByName(query, currentProgramId = "") {
+    const normalizedQuery = normalizeProgramName(query);
+    if (!normalizedQuery) return { program: null, ambiguous: false };
+    const candidates = getProgramRows()
+      .filter((program) => String(program?.id || "") !== String(currentProgramId || ""));
+    const exactMatches = candidates.filter((program) => normalizeProgramName(program?.name) === normalizedQuery);
+    if (exactMatches.length === 1) return { program: exactMatches[0], ambiguous: false };
+    if (exactMatches.length > 1) return { program: null, ambiguous: true };
+    const partialMatches = candidates.filter((program) => normalizeProgramName(program?.name).includes(normalizedQuery));
+    return {
+      program: partialMatches.length === 1 ? partialMatches[0] : null,
+      ambiguous: partialMatches.length > 1
+    };
+  }
+
+  function applyProgramCommissionSource(button) {
+    const formElement = button?.closest("form[data-config='programs']");
+    const search = formElement?.querySelector("[data-program-commission-source-search]");
+    const select = formElement?.querySelector("[data-program-commission-set-select]");
+    if (!formElement || !search || !select) return;
+    const result = findProgramCommissionSourceByName(search.value, formElement.dataset.id);
+    if (!result.program) {
+      alert(result.ambiguous
+        ? "Найдено несколько программ. Выберите точное название из списка."
+        : "Программа с таким названием не найдена.");
+      search.focus();
+      return;
+    }
+    const sourceSet = getProgramCommissionSetById(result.program.commissionSetId);
+    if (sourceSet) {
+      select.value = sourceSet.id;
+      synchronizeProgramCommissionSetControls(select, { populate: true });
+    } else {
+      select.value = "";
+      synchronizeProgramCommissionSetControls(select, { populate: false });
+      populateProgramCommissionFields(formElement, result.program);
+    }
+    search.value = result.program.name || "";
+  }
+
+  function bindProgramCommissionControls(root = document) {
+    const select = root.querySelector?.("[data-program-commission-set-select]");
+    select?.addEventListener("change", () => synchronizeProgramCommissionSetControls(select));
+    const applyButton = root.querySelector?.("[data-action='apply-program-commission-source']");
+    applyButton?.addEventListener("click", () => applyProgramCommissionSource(applyButton));
+    const search = root.querySelector?.("[data-program-commission-source-search]");
+    search?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      applyProgramCommissionSource(applyButton);
+    });
+  }
+
   function switchContractTab(tabId) {
     const target = String(tabId || "").trim();
     const modal = document.querySelector(".contract-modal");
@@ -45380,6 +45791,80 @@ MAX - https://bizvmax.ru/zifra_plus
     state.data.collections.trainingPlans = nextRows;
   }
 
+  function getProgramCommissionStrictSaveOptions(formElement) {
+    if (formElement?.dataset?.config !== "programs") return null;
+    const selectedId = String(
+      formElement.querySelector("[data-program-commission-set-select]")?.value || ""
+    ).trim();
+    const commissionSet = getProgramCommissionSetById(selectedId);
+    if (!commissionSet) return null;
+    const setName = String(
+      formElement.querySelector("[data-program-commission-set-name]")?.value || ""
+    ).trim();
+    const changed = String(commissionSet.name || "").trim() !== setName
+      || PROGRAM_COMMISSION_FIELD_KEYS.some((key) => (
+        normalizeProgramCommissionValue(commissionSet[key])
+          !== normalizeProgramCommissionValue(formElement.elements?.[key]?.value)
+      ));
+    if (!changed) return null;
+    return {
+      strictRevision: true,
+      baseRevision: Math.max(
+        0,
+        Math.floor(Number(formElement.dataset.programCommissionBaseRevision) || 0)
+      ),
+      conflictMessage: "Общая база изменилась после открытия карточки. "
+        + "Состав комиссии не применён и чужие изменения не перезаписаны. "
+        + "Закройте карточку без сохранения, откройте её снова и повторите изменение множества."
+    };
+  }
+
+  function applyProgramCommissionConfiguration(formElement, values, programRows) {
+    const select = formElement?.querySelector("[data-program-commission-set-select]");
+    if (!select) return;
+    const selectedId = String(select.value || "").trim();
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      values[key] = normalizeProgramCommissionValue(values[key]);
+    });
+    const targetId = selectedId || (hasProgramCommissionValues(values)
+      ? PROGRAM_COMMISSION_NEW_SET_VALUE
+      : "");
+    if (!targetId) {
+      values.commissionSetId = "";
+      return;
+    }
+    const setName = formElement.querySelector("[data-program-commission-set-name]")?.value || "";
+    const result = upsertProgramCommissionSet(
+      programRows,
+      state.data.collections.commissionSets,
+      targetId,
+      setName,
+      values,
+      { materializeProgramSnapshots: false }
+    );
+    if (!result.commissionSet) {
+      values.commissionSetId = "";
+      return;
+    }
+    state.data.collections.commissionSets = result.commissionSets;
+    values.commissionSetId = result.commissionSet.id;
+    PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+      values[key] = result.commissionSet[key];
+    });
+    if (result.changed) {
+      addAudit(
+        result.created ? "Создано множество комиссии" : "Изменено множество комиссии",
+        "Реестр программ",
+        result.commissionSet.name,
+        {
+          entityType: "commissionSets",
+          entityId: result.commissionSet.id,
+          entityLabel: result.commissionSet.name
+        }
+      );
+    }
+  }
+
   function saveFormRecord(formElement) {
     if (!formElement) return "";
     const config = configs[formElement.dataset.config];
@@ -45486,6 +45971,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (programFixedValueOverrides.size) {
         values.databaseFixedValueOverrides = [...programFixedValueOverrides].sort();
       }
+      applyProgramCommissionConfiguration(formElement, values, rows);
     }
     if (isStudentCard || isContractCard) {
       formData.forEach((raw, key) => {
@@ -45646,6 +46132,31 @@ MAX - https://bizvmax.ru/zifra_plus
       || form.querySelector('button[type="submit"]');
   }
 
+  async function restoreFailedProgramCommissionSave(snapshot, generation) {
+    if (!snapshot || sharedStateChangeGeneration !== generation) return false;
+    state.data = ensureDataShape(clone(snapshot.data));
+    state.lastEditedRow = { ...snapshot.lastEditedRow };
+    state.tablePages = { ...snapshot.tablePages };
+    sharedStatePendingPatch = snapshot.pendingPatch ? clone(snapshot.pendingPatch) : null;
+    sharedStateDirty = snapshot.dirty;
+    sharedStateConflict = false;
+    sharedStateConflictShown = false;
+    sharedStateSyncBlockedReason = snapshot.syncBlockedReason;
+    persistStateToLocalStorage(state.data);
+    persistSharedStateRecovery();
+    try {
+      await reloadSharedApplicationState({ renderAfter: false });
+      return true;
+    } catch (error) {
+      sharedStateConflict = true;
+      sharedStateOffline = true;
+      sharedStateSyncBlockedReason = "conflict";
+      persistSharedStateRecovery();
+      updateSharedStateStatusUi();
+      return false;
+    }
+  }
+
   async function ensureRecordLockForSave(form) {
     if (isDatabaseDemoMode()) return false;
     const existingId = String(form.dataset.id || "").trim();
@@ -45684,6 +46195,34 @@ MAX - https://bizvmax.ru/zifra_plus
     recordFormSavePending = true;
     const submitButton = getFormSubmitButton(form);
     try {
+      const commissionStrictSaveOptions = getProgramCommissionStrictSaveOptions(form);
+      if (
+        commissionStrictSaveOptions
+        && (sharedStateSavePromise || sharedStateDirty || sharedStatePendingPatch)
+      ) {
+        alert(
+          "Дождитесь завершения текущей синхронизации общей базы, затем сохраните множество комиссии."
+        );
+        return false;
+      }
+      if (
+        commissionStrictSaveOptions
+        && (!sharedStateReady || sharedStateOffline || sharedStateConflict)
+      ) {
+        alert(
+          "Общее множество комиссии нельзя изменить без актуального подключения к MySQL-базе. "
+          + "Восстановите подключение, обновите раздел и повторите изменение."
+        );
+        return false;
+      }
+      const commissionSaveSnapshot = commissionStrictSaveOptions ? {
+        data: clone(state.data),
+        lastEditedRow: { ...state.lastEditedRow },
+        tablePages: { ...state.tablePages },
+        pendingPatch: sharedStatePendingPatch ? clone(sharedStatePendingPatch) : null,
+        dirty: sharedStateDirty,
+        syncBlockedReason: sharedStateSyncBlockedReason
+      } : null;
       if (!await ensureRecordLockForSave(form)) return false;
       if (submitButton) submitButton.disabled = true;
       const savedId = saveFormRecord(form);
@@ -45696,6 +46235,29 @@ MAX - https://bizvmax.ru/zifra_plus
       setTablePageForRow(configId, savedId);
       persist();
       const generation = sharedStateChangeGeneration;
+      if (commissionStrictSaveOptions) {
+        try {
+          const saved = await flushSharedApplicationStateThroughGeneration(
+            generation,
+            commissionStrictSaveOptions
+          );
+          if (!saved) {
+            await restoreFailedProgramCommissionSave(commissionSaveSnapshot, generation);
+            if (submitButton) submitButton.disabled = false;
+            return false;
+          }
+        } catch (error) {
+          if (!sharedStateConflictShown) {
+            alert(
+              "Множество комиссии не сохранено: общая база недоступна или успела измениться. "
+              + "Обновите раздел и повторите изменение."
+            );
+          }
+          await restoreFailedProgramCommissionSave(commissionSaveSnapshot, generation);
+          if (submitButton) submitButton.disabled = false;
+          return false;
+        }
+      }
       const lock = activeRecordLock;
       activeRecordLock = null;
       stopRecordLockHeartbeat();
@@ -59996,7 +60558,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return (state.data.collections.programs || [])
       .filter((program) => program && typeof program === "object")
       .map((source) => {
-        const program = normalizeProgramRecord(source);
+        const program = normalizeProgramRecord(resolveProgramCommissionRecord(source));
         return {
           ...program,
           name: String(program.name || "").trim(),
@@ -62230,15 +62792,20 @@ MAX - https://bizvmax.ru/zifra_plus
             : setting
         )));
       }
-      const nextPrograms = applyGlobalAuthorRateToPrograms(
-        mergeImportedProgramPaymentSettings(
-          previousData.collections.programs,
-          payload.programPaymentSettings,
-          defaultAuthorPaymentPercent,
-          isSynchronizationImport ? payload.programDatabaseSyncFields : []
+      const nextPrograms = prepareImportedProgramCommissionLinks(
+        applyGlobalAuthorRateToPrograms(
+          mergeImportedProgramPaymentSettings(
+            previousData.collections.programs,
+            payload.programPaymentSettings,
+            defaultAuthorPaymentPercent,
+            isSynchronizationImport ? payload.programDatabaseSyncFields : []
+          ),
+          previousAuthorRate,
+          defaultAuthorPaymentPercent
         ),
-        previousAuthorRate,
-        defaultAuthorPaymentPercent
+        previousData.collections.programs,
+        previousData.collections.commissionSets,
+        isSynchronizationImport ? payload.programDatabaseSyncFields : PROGRAM_COMMISSION_FIELD_KEYS
       );
       const nextTrainingPlans = mergeImportedTrainingPlanRows(
         previousData.collections.trainingPlans,
@@ -62389,7 +62956,6 @@ MAX - https://bizvmax.ru/zifra_plus
         if (state.advertising?.exclusions) state.advertising.exclusions.loaded = false;
       }
       if (isSynchronizationImport) {
-        state.data.collections.programs = nextPrograms.map((program) => normalizeProgramRecord(program));
         state.data.collections.trainingPlans = linkTrainingPlanRecordsToPrograms(
           nextTrainingPlans.map((item, index) => normalizeTrainingPlanRecord(item, index)),
           state.data.collections.programs
