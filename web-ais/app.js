@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.406",
+    version: "1.7.407",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.407",
+      releasedAt: "2026-09-08",
+      changes: [
+        "Справочник комиссий преобразован в компактную таблицу; полный состав, связанные программы, создание и редактирование открываются в отдельной всплывающей форме."
+      ]
+    },
     {
       version: "1.7.406",
       releasedAt: "2026-09-08",
@@ -22551,109 +22558,115 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="program-commission-settings-head">
           <div>
             <h4>Множества составов комиссий</h4>
-            <p>Измените состав один раз — новые значения будут использоваться во всех связанных программах и документах.</p>
+            <p id="programCommissionSettingsHint">Откройте строку, чтобы посмотреть или изменить полный состав. Изменения применяются ко всем связанным программам и документам.</p>
           </div>
           <button class="ghost-button" data-action="add-program-commission-set" type="button">Добавить множество</button>
         </div>
-        <form class="program-commission-settings-form" data-action="save-program-commission-sets">
-          <div class="program-commission-settings-list" data-program-commission-settings-list>
-            ${commissionSets.length ? commissionSets.map((commissionSet, index) => {
-              const usage = getProgramCommissionSetUsage(commissionSet.id);
-              return `
-                <article class="program-commission-settings-card" data-program-commission-set-row data-commission-set-id="${escapeAttr(commissionSet.id)}">
-                  <input type="hidden" data-program-commission-settings-id value="${escapeAttr(commissionSet.id)}">
-                  <div class="program-commission-settings-card-head">
-                    <label class="program-commission-settings-name">
-                      <span>Название множества</span>
-                      <input
-                        name="commissionSet_${index}_name"
-                        value="${escapeAttr(commissionSet.name || "")}"
-                        data-program-commission-settings-field="name"
-                        maxlength="200"
-                        autocomplete="off"
-                        required
+        <div
+          class="program-commission-settings-table-wrap"
+          data-program-commission-settings-table-wrap
+          role="region"
+          aria-label="Таблица составов комиссий"
+          tabindex="0"
+        >
+          <table class="program-commission-settings-table" aria-describedby="programCommissionSettingsHint">
+            <colgroup>
+              <col class="program-commission-settings-name-column">
+              <col class="program-commission-settings-composition-column">
+              <col class="program-commission-settings-usage-column">
+              <col class="program-commission-settings-actions-column">
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">Название</th>
+                <th scope="col">Состав комиссии</th>
+                <th scope="col">Программ</th>
+                <th scope="col"><span class="visually-hidden">Действия</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${commissionSets.length ? commissionSets.map((commissionSet) => {
+                const usage = getProgramCommissionSetUsage(commissionSet.id);
+                const compositionParts = fields
+                  .map((field) => ({
+                    label: field.label,
+                    value: normalizeProgramCommissionValue(commissionSet[field.key])
+                  }))
+                  .filter((item) => item.value);
+                const compositionText = compositionParts.length
+                  ? compositionParts.map((item) => `${item.label}: ${item.value}`).join("; ")
+                  : "Состав не заполнен";
+                const compositionTitle = compositionParts.length
+                  ? compositionParts.map((item) => `${item.label}: ${item.value}`).join("\n")
+                  : compositionText;
+                const usageTitle = usage.names.length
+                  ? usage.names.join("\n")
+                  : "Не используется в образовательных программах";
+                return `
+                  <tr data-program-commission-set-row data-commission-set-id="${escapeAttr(commissionSet.id)}">
+                    <th scope="row">
+                      <button
+                        class="program-commission-settings-open"
+                        data-action="open-program-commission-set"
+                        data-commission-set-id="${escapeAttr(commissionSet.id)}"
+                        type="button"
+                        title="${escapeMultilineAttr(commissionSet.name || "Множество без названия")}"
                       >
-                    </label>
-                    <span class="program-commission-settings-usage ${usage.count ? "is-used" : ""}">
-                      ${usage.count ? `Используется в программах: ${usage.count}` : "Не используется"}
-                    </span>
-                    <button
-                      class="attestation-delete-button"
-                      data-action="remove-program-commission-set"
-                      data-commission-set-id="${escapeAttr(commissionSet.id)}"
-                      type="button"
-                      title="${escapeAttr(usage.count ? "Сначала выберите для связанных программ другое множество" : "Удалить множество")}"
-                      aria-label="${escapeAttr(usage.count ? `Нельзя удалить: используется в ${usage.count} программах` : `Удалить множество ${commissionSet.name || "без названия"}`)}"
-                      ${usage.count ? "disabled" : ""}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
-                    </button>
-                  </div>
-                  <div class="program-commission-settings-grid">
-                    ${fields.map((field) => `
-                      <label>
-                        <span>${escapeHtml(field.label)}</span>
-                        <textarea
-                          name="commissionSet_${index}_${escapeAttr(field.key)}"
-                          data-program-commission-settings-field="${escapeAttr(field.key)}"
-                          rows="2"
-                        >${escapeHtml(normalizeProgramCommissionValue(commissionSet[field.key]))}</textarea>
-                      </label>
-                    `).join("")}
-                  </div>
-                  ${usage.names.length ? `
-                    <p class="program-commission-settings-programs" title="${escapeAttr(usage.names.join("\n"))}">
-                      <strong>Программы:</strong> ${escapeHtml(usage.names.join("; "))}
-                    </p>
-                  ` : ""}
-                </article>
-              `;
-            }).join("") : `
-              <div class="empty-state compact program-commission-settings-empty">
-                <span>Множеств пока нет. Добавьте первое, затем выберите его в карточке программы.</span>
-              </div>
-            `}
-          </div>
-          <button class="visually-hidden" type="submit" tabindex="-1" aria-hidden="true">Применить изменения комиссий</button>
-        </form>
+                        ${escapeHtml(commissionSet.name || "Множество без названия")}
+                      </button>
+                    </th>
+                    <td>
+                      <span
+                        class="program-commission-settings-cell-value ${compositionParts.length ? "" : "is-empty"}"
+                        title="${escapeMultilineAttr(compositionTitle)}"
+                      >${escapeHtml(compositionText)}</span>
+                    </td>
+                    <td>
+                      <span
+                        class="program-commission-settings-usage ${usage.count ? "is-used" : ""}"
+                        title="${escapeMultilineAttr(usageTitle)}"
+                        aria-label="${escapeAttr(usage.count ? `Используется в программах: ${usage.count}` : "Не используется в программах")}"
+                      >${usage.count}</span>
+                    </td>
+                    <td>
+                      <div class="program-commission-settings-row-actions">
+                        <button
+                          class="icon-button program-commission-settings-edit"
+                          data-action="open-program-commission-set"
+                          data-commission-set-id="${escapeAttr(commissionSet.id)}"
+                          type="button"
+                          title="Просмотреть или изменить состав"
+                          aria-label="${escapeAttr(`Просмотреть или изменить состав ${commissionSet.name || "без названия"}`)}"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4L19 9l-4-4L4 16v4"></path><path d="m13.5 6.5 4 4"></path></svg>
+                        </button>
+                        <button
+                          class="attestation-delete-button"
+                          data-action="remove-program-commission-set"
+                          data-commission-set-id="${escapeAttr(commissionSet.id)}"
+                          type="button"
+                          title="${escapeAttr(usage.count ? "Сначала выберите для связанных программ другое множество" : "Удалить множество")}"
+                          aria-label="${escapeAttr(usage.count ? `Нельзя удалить: используется в ${usage.count} программах` : `Удалить множество ${commissionSet.name || "без названия"}`)}"
+                          ${usage.count ? "disabled" : ""}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 15h10l1-15"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join("") : `
+                <tr>
+                  <td class="program-commission-settings-empty" colspan="4">
+                    Множеств пока нет. Добавьте первое, затем выберите его в карточке программы.
+                  </td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
       </section>
     `;
-  }
-
-  function collectProgramCommissionSettings(form) {
-    const existingById = new Map((state.data.collections.commissionSets || [])
-      .map((commissionSet) => [String(commissionSet?.id || "").trim(), commissionSet]));
-    const usedNames = new Set();
-    const commissionSets = [];
-    const rows = Array.from(form?.querySelectorAll?.("[data-program-commission-set-row]") || []);
-    for (const row of rows) {
-      const id = String(row.dataset.commissionSetId || "").trim();
-      const nameInput = row.querySelector('[data-program-commission-settings-field="name"]');
-      const name = String(nameInput?.value || "").trim();
-      nameInput?.setCustomValidity("");
-      const normalizedName = name.toLocaleLowerCase("ru-RU");
-      if (!name) {
-        nameInput?.setCustomValidity("Укажите название множества комиссии.");
-        nameInput?.reportValidity();
-        nameInput?.focus();
-        return null;
-      }
-      if (usedNames.has(normalizedName)) {
-        nameInput?.setCustomValidity("Названия множеств комиссий не должны повторяться.");
-        nameInput?.reportValidity();
-        nameInput?.focus();
-        return null;
-      }
-      usedNames.add(normalizedName);
-      const commissionSet = { ...(existingById.get(id) || {}), id, name };
-      PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
-        commissionSet[key] = normalizeProgramCommissionValue(
-          row.querySelector(`[data-program-commission-settings-field="${key}"]`)?.value
-        );
-      });
-      commissionSets.push(commissionSet);
-    }
-    return commissionSets;
   }
 
   function programCommissionSetsEqual(left = {}, right = {}) {
@@ -22663,60 +22676,210 @@ MAX - https://bizvmax.ru/zifra_plus
       ));
   }
 
-  function saveProgramCommissionSettings(event) {
-    event.preventDefault();
-    const commissionSets = collectProgramCommissionSettings(event.currentTarget);
-    if (!commissionSets) return;
-    const previousById = new Map((state.data.collections.commissionSets || [])
-      .map((commissionSet) => [String(commissionSet?.id || "").trim(), commissionSet]));
-    state.data.collections.commissionSets = commissionSets;
-    commissionSets.forEach((commissionSet) => {
-      const previous = previousById.get(commissionSet.id);
-      if (previous && programCommissionSetsEqual(previous, commissionSet)) return;
-      addAudit(previous ? "Изменено множество комиссии" : "Создано множество комиссии", "Настройки", commissionSet.name, {
-        entityType: "commissionSets",
-        entityId: commissionSet.id,
-        entityLabel: commissionSet.name
-      });
-    });
-    const nextIds = new Set(commissionSets.map((commissionSet) => commissionSet.id));
-    previousById.forEach((commissionSet, id) => {
-      if (nextIds.has(id)) return;
-      addAudit("Удалено множество комиссии", "Настройки", commissionSet.name, {
-        entityType: "commissionSets",
-        entityId: commissionSet.id,
-        entityLabel: commissionSet.name
-      });
-    });
-    markSettingsDraftDirty();
-  }
-
-  function addProgramCommissionSetting() {
+  function openProgramCommissionSettingDialog(id = "") {
     if (!applySettingsEditorDrafts()) return;
+    const existingDialog = document.querySelector("[data-program-commission-setting-dialog]");
+    if (existingDialog) {
+      existingDialog.querySelector("input, textarea, button")?.focus({ preventScroll: true });
+      return;
+    }
+    const commissionSetId = String(id || "").trim();
+    const commissionSet = getProgramCommissionSetById(commissionSetId);
+    const create = !commissionSet;
     const commissionSets = state.data.collections.commissionSets || [];
-    const name = getUniqueProgramCommissionSetName(
+    const suggestedName = getUniqueProgramCommissionSetName(
       "Новое множество комиссий",
       new Set(commissionSets.map((commissionSet) => (
         String(commissionSet?.name || "").trim().toLocaleLowerCase("ru-RU")
       )).filter(Boolean))
     );
-    const commissionSet = {
-      id: makeId("commission-set"),
-      name,
+    const draft = commissionSet || {
+      id: "",
+      name: suggestedName,
       ...Object.fromEntries(PROGRAM_COMMISSION_FIELD_KEYS.map((key) => [key, ""]))
     };
-    state.data.collections.commissionSets = [commissionSet, ...commissionSets];
-    addAudit("Создано множество комиссии", "Настройки", commissionSet.name, {
-      entityType: "commissionSets",
-      entityId: commissionSet.id,
-      entityLabel: commissionSet.name
+    const fields = getProgramFieldsByTab("commission")
+      .filter((item) => PROGRAM_COMMISSION_FIELD_KEYS.includes(item.key));
+    const usage = commissionSet ? getProgramCommissionSetUsage(commissionSet.id) : { count: 0, names: [] };
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop program-commission-setting-dialog-backdrop";
+    backdrop.dataset.programCommissionSettingDialog = "";
+    backdrop.innerHTML = `
+      <section
+        class="modal program-commission-setting-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="programCommissionSettingDialogTitle"
+      >
+        <header class="modal-head">
+          <div>
+            <p class="eyebrow">Настройки → Комиссии</p>
+            <h2 id="programCommissionSettingDialogTitle">${create ? "Новое множество комиссий" : escapeHtml(draft.name || "Множество без названия")}</h2>
+          </div>
+          <button class="icon-button" data-action="close-program-commission-set-dialog" type="button" title="Закрыть" aria-label="Закрыть">×</button>
+        </header>
+        <form data-action="save-program-commission-set-dialog">
+          <div class="program-commission-setting-dialog-body">
+            <div class="program-commission-setting-dialog-fields">
+              <label class="program-commission-setting-dialog-name">
+                <span>Название множества</span>
+                <input
+                  name="name"
+                  value="${escapeAttr(draft.name || "")}"
+                  maxlength="200"
+                  autocomplete="off"
+                  required
+                >
+              </label>
+              ${fields.map((field) => `
+                <label>
+                  <span>${escapeHtml(field.label)}</span>
+                  <textarea name="${escapeAttr(field.key)}" rows="3">${escapeHtml(normalizeProgramCommissionValue(draft[field.key]))}</textarea>
+                </label>
+              `).join("")}
+            </div>
+            <section class="program-commission-setting-dialog-usage" aria-label="Связанные образовательные программы">
+              <div>
+                <strong>Используется в программах</strong>
+                <span>${usage.count}</span>
+              </div>
+              ${usage.names.length ? `
+                <ul>
+                  ${usage.names.map((name) => `<li>${escapeHtml(name)}</li>`).join("")}
+                </ul>
+              ` : `
+                <p>${create
+                  ? "Связи появятся после создания множества и его выбора в карточках программ."
+                  : "Это множество пока не выбрано ни в одной образовательной программе."}</p>
+              `}
+            </section>
+          </div>
+          <footer class="modal-actions">
+            <button class="ghost-button" data-action="close-program-commission-set-dialog" type="button">Отмена</button>
+            <button class="primary-button" type="submit">${create ? "Создать" : "Сохранить"}</button>
+          </footer>
+        </form>
+      </section>
+    `;
+    document.body.appendChild(backdrop);
+    const form = backdrop.querySelector('form[data-action="save-program-commission-set-dialog"]');
+    initializeRecordFormSnapshot(form);
+    let settled = false;
+    const trapFocus = (event) => {
+      if (event.key !== "Tab") return;
+      const focusable = [...backdrop.querySelectorAll(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+      )].filter((element) => !element.hidden && element.getClientRects().length);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+    backdrop.addEventListener("keydown", trapFocus);
+    const close = async ({ skipUnsavedCheck = false } = {}) => {
+      if (settled) return true;
+      if (!skipUnsavedCheck && hasUnsavedFormChanges(form)) {
+        const decision = await chooseUnsavedChangesAction({
+          title: "Состав комиссии не сохранён",
+          message: "Сохранить изменения состава комиссии перед закрытием?"
+        });
+        if (decision === "cancel") return false;
+        if (decision === "save") {
+          form?.requestSubmit();
+          return false;
+        }
+      }
+      settled = true;
+      backdrop.removeEventListener("keydown", trapFocus);
+      backdrop.remove();
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      return true;
+    };
+    backdrop.closeProgramCommissionSettingDialog = close;
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close();
     });
-    markSettingsDraftDirty();
-    render();
+    backdrop.querySelectorAll('[data-action="close-program-commission-set-dialog"]').forEach((button) => {
+      button.addEventListener("click", () => close());
+    });
+    form?.elements?.name?.addEventListener("input", () => {
+      form.elements.name.setCustomValidity("");
+    });
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const nameInput = form.elements.name;
+      const name = String(nameInput?.value || "").trim();
+      nameInput?.setCustomValidity("");
+      if (!name) {
+        nameInput?.setCustomValidity("Укажите название множества комиссии.");
+        nameInput?.reportValidity();
+        nameInput?.focus();
+        return;
+      }
+      const normalizedName = name.toLocaleLowerCase("ru-RU");
+      const duplicate = (state.data.collections.commissionSets || []).find((item) => (
+        String(item?.id || "").trim() !== String(commissionSet?.id || "").trim()
+        && String(item?.name || "").trim().toLocaleLowerCase("ru-RU") === normalizedName
+      ));
+      if (duplicate) {
+        nameInput?.setCustomValidity("Названия множеств комиссий не должны повторяться.");
+        nameInput?.reportValidity();
+        nameInput?.focus();
+        return;
+      }
+      const nextCommissionSet = {
+        ...(commissionSet || {}),
+        id: commissionSet?.id || makeId("commission-set"),
+        name
+      };
+      PROGRAM_COMMISSION_FIELD_KEYS.forEach((key) => {
+        nextCommissionSet[key] = normalizeProgramCommissionValue(form.elements[key]?.value);
+      });
+      if (commissionSet && programCommissionSetsEqual(commissionSet, nextCommissionSet)) {
+        await close({ skipUnsavedCheck: true });
+        return;
+      }
+      state.data.collections.commissionSets = commissionSet
+        ? (state.data.collections.commissionSets || []).map((item) => (
+          String(item?.id || "").trim() === String(commissionSet.id || "").trim()
+            ? nextCommissionSet
+            : item
+        ))
+        : [nextCommissionSet, ...(state.data.collections.commissionSets || [])];
+      addAudit(
+        commissionSet ? "Изменено множество комиссии" : "Создано множество комиссии",
+        "Настройки",
+        nextCommissionSet.name,
+        {
+          entityType: "commissionSets",
+          entityId: nextCommissionSet.id,
+          entityLabel: nextCommissionSet.name
+        }
+      );
+      markSettingsDraftDirty();
+      await close({ skipUnsavedCheck: true });
+      render();
+      requestAnimationFrame(() => {
+        document.querySelector(
+          `[data-action="open-program-commission-set"][data-commission-set-id="${CSS.escape(nextCommissionSet.id)}"]`
+        )?.focus({ preventScroll: true });
+      });
+    });
     requestAnimationFrame(() => {
-      document.querySelector(`[data-program-commission-set-row][data-commission-set-id="${CSS.escape(commissionSet.id)}"] [data-program-commission-settings-field="name"]`)
-        ?.focus({ preventScroll: false });
+      form?.elements?.name?.focus({ preventScroll: true });
+      form?.elements?.name?.select?.();
     });
+  }
+
+  function addProgramCommissionSetting() {
+    openProgramCommissionSettingDialog();
   }
 
   function removeProgramCommissionSetting(button) {
@@ -22742,13 +22905,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindProgramCommissionSettingsControls(root = document) {
-    const form = root.querySelector?.('form[data-action="save-program-commission-sets"]');
-    form?.addEventListener("submit", saveProgramCommissionSettings);
-    form?.querySelectorAll('[data-program-commission-settings-field="name"]').forEach((input) => {
-      input.addEventListener("input", () => input.setCustomValidity(""));
-    });
     root.querySelector?.('[data-action="add-program-commission-set"]')
       ?.addEventListener("click", addProgramCommissionSetting);
+    root.querySelectorAll?.('[data-action="open-program-commission-set"]').forEach((button) => {
+      button.addEventListener("click", () => openProgramCommissionSettingDialog(button.dataset.commissionSetId));
+    });
+    root.querySelectorAll?.("[data-program-commission-set-row]").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("button, a, input, select, textarea")) return;
+        openProgramCommissionSettingDialog(row.dataset.commissionSetId);
+      });
+    });
     root.querySelectorAll?.('[data-action="remove-program-commission-set"]').forEach((button) => {
       button.addEventListener("click", () => removeProgramCommissionSetting(button));
     });
@@ -39587,6 +39754,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const unsavedChangesDialog = document.querySelector("[data-unsaved-changes-dialog]");
     if (unsavedChangesDialog) {
       unsavedChangesDialog.cancelUnsavedChangesDialog?.();
+      return true;
+    }
+    const programCommissionDialog = document.querySelector("[data-program-commission-setting-dialog]");
+    if (programCommissionDialog) {
+      programCommissionDialog.closeProgramCommissionSettingDialog?.();
       return true;
     }
     const settingsListDialog = document.querySelector("[data-settings-list-dialog]");

@@ -13877,19 +13877,27 @@ body.card-window-moving {
 
 .program-commission-settings {
   display: grid;
-  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .program-commission-settings-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid #d8e6e0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #f3f8f6;
+}
+
+.program-commission-settings-head > div {
+  min-width: 0;
 }
 
 .program-commission-settings-head h4,
@@ -13910,87 +13918,140 @@ body.card-window-moving {
 
 .program-commission-settings-head .ghost-button {
   flex: 0 0 auto;
-  min-height: 34px;
+  min-height: 32px;
   white-space: nowrap;
 }
 
-.program-commission-settings-form,
-.program-commission-settings-list {
-  display: grid;
-  gap: 10px;
+.program-commission-settings-table-wrap {
+  width: 100%;
+  height: 100%;
   min-width: 0;
-}
-
-.program-commission-settings-card {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 11px;
+  min-height: 180px;
+  max-height: min(600px, calc(100dvh - 250px));
+  overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 5px 16px rgba(31, 41, 38, 0.04);
+  scrollbar-gutter: stable;
 }
 
-.program-commission-settings-card-head {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto 34px;
-  align-items: end;
-  gap: 8px;
+.program-commission-settings-table-wrap:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 2px;
 }
 
-.program-commission-settings-name,
-.program-commission-settings-grid label {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
+.program-commission-settings-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  background: #fff;
 }
 
-.program-commission-settings-name > span,
-.program-commission-settings-grid label > span {
-  color: #3d4945;
+.program-commission-settings-name-column {
+  width: 27%;
+}
+
+.program-commission-settings-usage-column {
+  width: 82px;
+}
+
+.program-commission-settings-actions-column {
+  width: 76px;
+}
+
+.program-commission-settings-table th,
+.program-commission-settings-table td {
+  height: 39px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.program-commission-settings-table thead th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  height: 34px;
+  background: #edf3f0;
+  color: #33413d;
   font-size: 11px;
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-.program-commission-settings-name input,
-.program-commission-settings-grid textarea {
+.program-commission-settings-table thead th:nth-last-child(-n + 2) {
+  text-align: center;
+}
+
+.program-commission-settings-table tbody tr:hover {
+  background: #f4faf7;
+}
+
+.program-commission-settings-table tbody tr[data-program-commission-set-row] {
+  cursor: pointer;
+}
+
+.program-commission-settings-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.program-commission-settings-open {
+  display: block;
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--teal);
   font: inherit;
+  font-weight: 800;
+  line-height: 1.3;
+  padding: 2px 0;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: rgba(15, 118, 110, 0.34);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.program-commission-settings-name input {
-  min-height: 34px;
-  padding: 6px 8px;
+.program-commission-settings-open:hover {
+  text-decoration-color: currentColor;
 }
 
-.program-commission-settings-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 10px;
+.program-commission-settings-open:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid rgba(15, 118, 110, 0.3);
+  outline-offset: 1px;
 }
 
-.program-commission-settings-grid textarea {
-  min-height: 68px;
-  padding: 7px 8px;
-  line-height: 1.4;
-  resize: vertical;
+.program-commission-settings-cell-value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.program-commission-settings-name input:focus,
-.program-commission-settings-grid textarea:focus {
-  border-color: var(--green);
-  outline: 0;
-  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.13);
+.program-commission-settings-cell-value.is-empty {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .program-commission-settings-usage {
-  align-self: center;
-  padding: 5px 8px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #f7f9f8;
@@ -14006,37 +14067,192 @@ body.card-window-moving {
   color: #17634d;
 }
 
-.program-commission-settings-card-head .attestation-delete-button {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
+.program-commission-settings-table td:nth-last-child(2) {
+  text-align: center;
 }
 
-.program-commission-settings-card-head .attestation-delete-button:disabled {
+.program-commission-settings-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.program-commission-settings-row-actions .icon-button,
+.program-commission-settings-row-actions .attestation-delete-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+}
+
+.program-commission-settings-edit svg,
+.program-commission-settings-row-actions .attestation-delete-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.program-commission-settings-row-actions .attestation-delete-button:disabled {
   cursor: not-allowed;
-  opacity: 0.42;
+  opacity: 0.38;
 }
 
-.program-commission-settings-programs {
-  margin: 0;
+.program-commission-settings-table .program-commission-settings-empty {
+  height: 110px;
+  padding: 18px;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
 }
 
-.program-commission-settings-programs strong {
+.program-commission-setting-dialog-backdrop {
+  z-index: 110;
+  padding: 16px;
+}
+
+.program-commission-setting-dialog {
+  width: min(780px, calc(100vw - 32px));
+  max-height: min(780px, calc(100dvh - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.program-commission-setting-dialog .modal-head {
+  align-items: flex-start;
+}
+
+.program-commission-setting-dialog .modal-head > div {
+  min-width: 0;
+}
+
+.program-commission-setting-dialog .modal-head h2 {
+  max-width: min(620px, calc(100vw - 130px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-commission-setting-dialog form {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.program-commission-setting-dialog-body {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.program-commission-setting-dialog-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.program-commission-setting-dialog-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.program-commission-setting-dialog-fields label > span {
   color: #3d4945;
+  font-size: 11px;
+  font-weight: 800;
 }
 
-.program-commission-settings-empty {
-  min-height: 120px;
+.program-commission-setting-dialog-name {
+  grid-column: 1 / -1;
+}
+
+.program-commission-setting-dialog-fields input,
+.program-commission-setting-dialog-fields textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+
+.program-commission-setting-dialog-fields input {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+
+.program-commission-setting-dialog-fields textarea {
+  min-height: 82px;
+  padding: 8px 9px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.program-commission-setting-dialog-fields input:focus,
+.program-commission-setting-dialog-fields textarea:focus {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.13);
+}
+
+.program-commission-setting-dialog-usage {
+  padding: 10px 12px;
+  border: 1px solid #d8e6e0;
+  border-radius: 8px;
+  background: #f3f8f6;
+}
+
+.program-commission-setting-dialog-usage > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.program-commission-setting-dialog-usage > div > span {
+  min-width: 28px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #dff1ea;
+  color: #17634d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.program-commission-setting-dialog-usage p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.program-commission-setting-dialog-usage ul {
+  max-height: 150px;
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  overflow: auto;
+  color: #3d4945;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 @media (max-width: 720px) {
   .program-commission-preview,
-  .program-commission-settings-grid,
-  .program-commission-settings-card-head {
+  .program-commission-setting-dialog-fields {
     grid-template-columns: 1fr;
   }
 
@@ -14048,8 +14264,44 @@ body.card-window-moving {
     width: 100%;
   }
 
-  .program-commission-settings-usage {
-    justify-self: start;
+  .program-commission-settings-table-wrap {
+    min-height: 160px;
+    max-height: min(500px, calc(100dvh - 240px));
+  }
+
+  .program-commission-settings-table {
+    min-width: 0;
+  }
+
+  .program-commission-settings-composition-column,
+  .program-commission-settings-table th:nth-child(2),
+  .program-commission-settings-table td:nth-child(2) {
+    display: none;
+  }
+
+  .program-commission-settings-name-column {
+    width: auto;
+  }
+
+  .program-commission-setting-dialog-backdrop {
+    padding: 8px;
+  }
+
+  .program-commission-setting-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .program-commission-setting-dialog .modal-head h2 {
+    max-width: calc(100vw - 100px);
+  }
+
+  .program-commission-setting-dialog-name {
+    grid-column: 1;
+  }
+
+  .program-commission-setting-dialog-body {
+    padding: 10px;
   }
 }
 
