@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.405",
+    version: "1.7.406",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.406",
+      releasedAt: "2026-09-08",
+      changes: [
+        "Организация, должность, источник и примечание в сведениях импортируемой заявки собраны в компактную строку; длинные значения сокращаются многоточием и полностью показываются при наведении."
+      ]
+    },
     {
       version: "1.7.405",
       releasedAt: "2026-09-08",
@@ -19801,18 +19808,26 @@ MAX - https://bizvmax.ru/zifra_plus
       ["Стоимость по реестру", financialTerms.registryPrice ? money(financialTerms.registryPrice) : "—"],
       ["Сумма договора", contractAmount || financialTerms.coupon ? money(contractAmount) : "—"],
       ["Купон", financialTerms.coupon || "—"],
-      ["Скидка / рассрочка", benefitDescription],
-      ["Организация", row.organization, true],
+      ["Скидка / рассрочка", benefitDescription]
+    ];
+    const metaDetails = [
+      ["Организация", row.organization],
       ["Должность", row.position],
       ["Источник", row.source],
-      ["Примечание", row.note, true]
+      ["Примечание", row.note]
     ];
-    const renderDetailItems = (items) => items.map(([label, value, wide]) => `
-      <div class="${wide ? "is-wide" : ""}">
-        <dt>${escapeHtml(label)}</dt>
-        <dd>${escapeHtml(value || "—")}</dd>
-      </div>
-    `).join("");
+    const renderDetailItems = (items, options = {}) => items.map(([label, value, wide]) => {
+      const displayValue = String(value || "—");
+      const title = options.tooltip && displayValue !== "—"
+        ? ` title="${escapeMultilineAttr(displayValue)}"`
+        : "";
+      return `
+        <div class="${wide ? "is-wide" : ""}">
+          <dt>${escapeHtml(label)}</dt>
+          <dd${title}>${escapeHtml(displayValue)}</dd>
+        </div>
+      `;
+    }).join("");
     return `
       <div class="student-application-detail-grid">
         ${renderDetailItems(topDetails)}
@@ -19820,6 +19835,9 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderDetailItems(orderLineDetails)}
         </div>
         ${renderDetailItems(details)}
+        <div class="student-application-detail-meta-line">
+          ${renderDetailItems(metaDetails, { tooltip: true })}
+        </div>
       </div>
       <div class="student-application-import-preview">
         <span>Будет добавлено</span>

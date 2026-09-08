@@ -49,12 +49,30 @@ assert.doesNotMatch(
   renderSource,
   /\["(?:Заказ|Программа|Категория)",[^\]]*,\s*true\]/u
 );
-[
-  '["Организация", row.organization, true]',
-  '["Примечание", row.note, true]'
-].forEach((expected) => assert.ok(renderSource.includes(expected), `${expected} must use the full-width layout`));
-assert.match(renderSource, /const renderDetailItems = \(items\) => items\.map\(\(\[label, value, wide\]\)/u);
+const metaLineFields = [
+  '["Организация", row.organization]',
+  '["Должность", row.position]',
+  '["Источник", row.source]',
+  '["Примечание", row.note]'
+];
+metaLineFields.forEach((field, index) => {
+  assert.equal(renderSource.split(field).length - 1, 1, `${field} must occur exactly once`);
+  if (index) {
+    assert.ok(
+      renderSource.indexOf(metaLineFields[index - 1]) < renderSource.indexOf(field),
+      `${field} must follow ${metaLineFields[index - 1]}`
+    );
+  }
+});
+assert.doesNotMatch(renderSource, /\["(?:Организация|Должность|Источник|Примечание)",[^\]]*,\s*true\]/u);
+assert.match(
+  renderSource,
+  /<div class="student-application-detail-meta-line">[\s\S]*?renderDetailItems\(metaDetails, \{ tooltip: true \}\)/u
+);
+assert.match(renderSource, /const renderDetailItems = \(items, options = \{\}\) => items\.map\(\(\[label, value, wide\]\)/u);
 assert.match(renderSource, /class="\$\{wide \? "is-wide" : ""\}"/u);
+assert.match(renderSource, /title="\$\{escapeMultilineAttr\(displayValue\)\}"/u);
+assert.match(renderSource, /<dd\$\{title\}>\$\{escapeHtml\(displayValue\)\}<\/dd>/u);
 
 const detailValueRule = stylesSource.match(/\.student-application-detail-grid dd\s*\{([\s\S]*?)\n\}/u)?.[1] || "";
 assert.match(detailValueRule, /white-space:\s*normal/u);
@@ -74,6 +92,22 @@ assert.match(orderLineRule, /grid-column:\s*1\s*\/\s*-1/u);
 assert.match(orderLineRule, /display:\s*grid/u);
 const orderLineTracks = orderLineRule.match(/grid-template-columns:\s*([^;]+);/u)?.[1] || "";
 assert.equal((orderLineTracks.match(/minmax\(/gu) || []).length, 3);
+
+const metaLineRule = stylesSource.match(
+  /\.student-application-detail-grid\s*>\s*\.student-application-detail-meta-line\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(metaLineRule, /grid-column:\s*1\s*\/\s*-1/u);
+assert.match(metaLineRule, /display:\s*grid/u);
+assert.match(metaLineRule, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/u);
+assert.match(metaLineRule, /overflow:\s*hidden/u);
+const metaValueRule = stylesSource.match(
+  /\.student-application-detail-meta-line dd\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(metaValueRule, /min-width:\s*0/u);
+assert.match(metaValueRule, /overflow:\s*hidden/u);
+assert.match(metaValueRule, /overflow-wrap:\s*normal/u);
+assert.match(metaValueRule, /text-overflow:\s*ellipsis/u);
+assert.match(metaValueRule, /white-space:\s*nowrap/u);
 
 const detailPanelRule = stylesSource.match(/\.student-applications-import-detail\s*\{([\s\S]*?)\n\}/u)?.[1] || "";
 assert.match(detailPanelRule, /max-height:\s*min\(300px,\s*28vh\)/u);
@@ -106,6 +140,13 @@ const responsiveOrderLineTracks = responsiveOrderLineRule
   .match(/grid-template-columns:\s*([^;]+);/u)?.[1] || "";
 assert.equal((responsiveOrderLineTracks.match(/minmax\(/gu) || []).length, 3);
 assert.doesNotMatch(responsiveOrderLineTracks, /^\s*1fr\s*$/u);
+const responsiveMetaLineRule = responsiveStyles.match(
+  /\.student-application-detail-grid\s*>\s*\.student-application-detail-meta-line\s*\{([^}]*)\}/u
+)?.[1] || "";
+assert.match(
+  responsiveMetaLineRule,
+  /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/u
+);
 assert.match(appSource, /data-student-applications-detail role="region" tabindex="0" aria-labelledby="student-applications-detail-title"/u);
 assert.equal((appSource.match(/id="student-applications-detail-title"/gu) || []).length, 2);
 assert.match(appSource, /detail\.innerHTML\s*=\s*`[\s\S]*?detail\.scrollTop\s*=\s*0;/u);
