@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.400",
+    version: "1.7.401",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.401",
+      releasedAt: "2026-09-08",
+      changes: [
+        "При дублировании образовательной программы сохраняется код лендинга, чтобы вариации одной программы продолжали использовать общую посадочную страницу; при импорте заявок вариации общего лендинга различаются по названию и часам вместо выбора первой записи."
+      ]
+    },
     {
       version: "1.7.400",
       releasedAt: "2026-09-08",
@@ -8595,8 +8602,7 @@ MAX - https://bizvmax.ru/zifra_plus
       name: getUniqueProgramDuplicateName(source.name, existingPrograms),
       shortName: String(source.shortName || "").trim()
         ? getUniqueProgramDuplicateName(source.shortName, existingPrograms)
-        : "",
-      landingCode: ""
+        : ""
     });
     normalized.authorPayments = normalizeProgramAuthorPayments(
       source.authorPayments,
@@ -18667,12 +18673,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const storedProgram = resolveStoredStudentApplicationProgram(row);
     if (storedProgram) return storedProgram;
     const productId = String(row?.productId || "").trim();
-    const byProductId = productId
-      ? (state.data.collections.programs || []).find((program) => (
+    const productMatches = productId
+      ? (state.data.collections.programs || []).filter((program) => (
         String(program.landingCode || "").trim() === productId
         && matchesInferredType(program)
       ))
-      : null;
+      : [];
+    const byProductId = productMatches.length === 1 ? productMatches[0] : null;
     const title = getStudentApplicationProgramTitle(row);
     const normalizedTitle = normalizeProgramName(title);
     const byName = getProgramRows().find((program) => (

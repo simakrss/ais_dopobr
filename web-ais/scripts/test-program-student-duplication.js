@@ -25,7 +25,7 @@ const context = {
     "mailingAddress", "photoPath", "photoData", "photoUrl"
   ],
   PROGRAM_DUPLICATE_FIELD_KEYS: [
-    "name", "shortName", "status", "price", "hours", "landingCode",
+    "name", "shortName", "status", "price", "type", "hours", "landingCode",
     "promoMessage1", "emailMessageTemplate"
   ],
   PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS: [
@@ -156,6 +156,7 @@ const sourceProgram = {
   shortName: "Охрана труда",
   status: "Действует",
   price: 9000,
+  type: "КПК",
   hours: 72,
   landingCode: "ot-72",
   promoMessage1: "Описание программы",
@@ -192,7 +193,11 @@ assert.match(programDraft.name, /\(72 ч\)$/u, "Суффикс с часами �
 assert.equal(programDraft.status, sourceProgram.status);
 assert.equal(programDraft.price, sourceProgram.price);
 assert.equal(programDraft.hours, sourceProgram.hours);
-assert.equal(programDraft.landingCode, "", "Копия не должна перехватывать заявки исходного лендинга.");
+assert.equal(
+  programDraft.landingCode,
+  sourceProgram.landingCode,
+  "Вариация программы должна сохранить общий код лендинга."
+);
 assert.equal(programDraft.promoMessage1, sourceProgram.promoMessage1);
 assert.equal(programDraft.emailMessageTemplate, sourceProgram.emailMessageTemplate);
 assert.equal(programDraft.authorPayments.length, 1);
@@ -214,13 +219,47 @@ assert.equal(programDraft.authorSource, "Иванов И.И.");
   );
 });
 assert.deepEqual(sourceProgram, sourceProgramSnapshot, "Исходная программа изменилась.");
+
 const savedProgramCopy = { id: "program-copy", ...programDraft };
-const programResolvedByOriginalProductId = [savedProgramCopy, sourceProgram]
-  .find((program) => String(program.landingCode || "") === sourceProgram.landingCode);
+const applicationProgramContext = {
+  state: {
+    data: {
+      collections: {
+        programs: [savedProgramCopy, sourceProgram]
+      }
+    }
+  },
+  getStudentApplicationInferredProgramType: (row) => row.inferredType,
+  studentApplicationProgramMatchesInferredType: (program, inferredType) => (
+    !inferredType || program.type === inferredType
+  ),
+  resolveStoredStudentApplicationProgram: () => null,
+  getStudentApplicationProgramTitle: (row) => row.programTitle,
+  normalizeProgramName: context.normalizeProgramName,
+  normalizeStudentApplicationProgramName: context.normalizeProgramName,
+  getStudentApplicationProgramHours: () => 72
+};
+applicationProgramContext.getProgramRows = () => (
+  applicationProgramContext.state.data.collections.programs
+);
+vm.createContext(applicationProgramContext);
+vm.runInContext(
+  extractBetween(
+    appSource,
+    "  function getStudentApplicationProgram(row, selectedProgramId = \"\")",
+    "\n  function getStudentApplicationProgramRecommendation"
+  ) + "\nthis.getStudentApplicationProgramForTest = getStudentApplicationProgram;",
+  applicationProgramContext
+);
+const sharedLandingMatch = applicationProgramContext.getStudentApplicationProgramForTest({
+  productId: sourceProgram.landingCode,
+  programTitle: sourceProgram.name,
+  inferredType: sourceProgram.type
+});
 assert.equal(
-  programResolvedByOriginalProductId?.id,
+  sharedLandingMatch?.id,
   sourceProgram.id,
-  "Исходный productId должен по-прежнему разрешаться в исходную программу."
+  "При общем лендинге точное название должно выбирать нужную вариацию, а не первую запись."
 );
 
 const sourcePlanRows = [
@@ -354,8 +393,8 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /version: "1\.7\.400"/u);
-assert.match(authSource, /20260908-program-student-duplicate-v1/u);
-assert.match(indexSource, /20260908-program-student-duplicate-v1/u);
+assert.match(appSource, /version: "1\.7\.401"/u);
+assert.match(authSource, /20260908-shared-landing-duplicate-v1/u);
+assert.match(indexSource, /20260908-shared-landing-duplicate-v1/u);
 
 console.log("Program and student duplication checks: OK");
