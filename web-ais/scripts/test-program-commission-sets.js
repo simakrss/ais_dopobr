@@ -61,7 +61,7 @@ vm.runInContext(
     ),
     `this.programCommissionFieldKeysForTest = [...PROGRAM_COMMISSION_FIELD_KEYS];
 this.synchronizeProgramCommissionSetsForTest = synchronizeProgramCommissionSets;
-this.upsertProgramCommissionSetForTest = upsertProgramCommissionSet;
+this.resolveProgramCommissionRecordForTest = resolveProgramCommissionRecord;
 this.prepareImportedProgramCommissionLinksForTest = prepareImportedProgramCommissionLinks;
 this.findProgramCommissionSourceByNameForTest = findProgramCommissionSourceByName;`
   ].join("\n\n"),
@@ -209,7 +209,7 @@ assert.deepEqual(
   "Миграция фактического реестра должна быть идемпотентной."
 );
 
-// Editing a shared set cascades all four values only to programs linked to that set.
+// Editing one central set changes effective values everywhere without mutating program records.
 const setA = { id: "set-a", name: "Основная комиссия", ...commission("A") };
 const setB = { id: "set-b", name: "Резервная комиссия", ...commission("B") };
 const cascadePrograms = [
@@ -218,59 +218,36 @@ const cascadePrograms = [
   { id: "linked-b", name: "Связанная B", commissionSetId: setB.id, ...commission("B") },
   { id: "individual", name: "Индивидуальная", commissionSetId: "", ...commission("Личная") }
 ];
-const cascadeInputSnapshot = plain({ programs: cascadePrograms, commissionSets: [setA, setB] });
+const cascadeInputSnapshot = plain(cascadePrograms);
 const changedA = commission("A изменена");
-const cascadeResult = context.upsertProgramCommissionSetForTest(
-  cascadePrograms,
-  [setA, setB],
-  setA.id,
-  "Основная комиссия (обновлена)",
-  changedA
-);
-assert.equal(cascadeResult.created, false);
-assert.equal(cascadeResult.changed, true);
-assert.equal(cascadeResult.commissionSets.length, 2);
-const updatedSetA = cascadeResult.commissionSets.find((item) => item.id === setA.id);
-assert.ok(updatedSetA, "Обновлённое множество должно сохранить свой id.");
-cascadeResult.programs.slice(0, 2).forEach((program) => {
-  assertProgramUsesSet(program, updatedSetA, program.name);
+const updatedSetA = { ...setA, name: "Основная комиссия (обновлена)", ...changedA };
+const updatedSets = [updatedSetA, setB];
+cascadePrograms.slice(0, 2).forEach((program) => {
+  assertProgramUsesSet(
+    context.resolveProgramCommissionRecordForTest(program, updatedSets),
+    updatedSetA,
+    program.name
+  );
 });
 assert.deepEqual(
-  plain(cascadeResult.programs[2]),
-  cascadeInputSnapshot.programs[2],
+  plain(context.resolveProgramCommissionRecordForTest(cascadePrograms[2], updatedSets)),
+  plain(cascadePrograms[2]),
   "Изменение множества A не должно менять программу множества B."
 );
 assert.deepEqual(
-  plain(cascadeResult.programs[3]),
-  cascadeInputSnapshot.programs[3],
+  plain(context.resolveProgramCommissionRecordForTest(cascadePrograms[3], updatedSets)),
+  plain(cascadePrograms[3]),
   "Изменение множества A не должно менять программу без связи."
 );
 assert.deepEqual(
-  plain(cascadeResult.commissionSets.find((item) => item.id === setB.id)),
+  plain(updatedSets.find((item) => item.id === setB.id)),
   plain(setB),
   "Изменение множества A не должно менять множество B."
 );
 assert.deepEqual(
-  plain({ programs: cascadePrograms, commissionSets: [setA, setB] }),
-  cascadeInputSnapshot,
-  "Каскад не должен мутировать входные данные."
-);
-const persistenceSafeResult = context.upsertProgramCommissionSetForTest(
-  cascadePrograms,
-  [setA, setB],
-  setA.id,
-  "Основная комиссия (без полных program upsert)",
-  changedA,
-  { materializeProgramSnapshots: false }
-);
-assert.deepEqual(
-  plain(persistenceSafeResult.programs),
   plain(cascadePrograms),
-  "Безопасное сохранение множества не должно пересоздавать полные записи связанных программ."
-);
-assert.equal(
-  persistenceSafeResult.commissionSets.find((item) => item.id === setA.id).commissionChair,
-  changedA.commissionChair
+  cascadeInputSnapshot,
+  "Централизованное изменение не должно мутировать полные записи программ."
 );
 
 // Every one of the four managed Excel fields is sufficient to detach a stale shared link.
@@ -388,11 +365,84 @@ const commissionSaveSource = extractBetween(
   "  function applyProgramCommissionConfiguration",
   "\n  function saveFormRecord"
 );
-assert.match(commissionSaveSource, /materializeProgramSnapshots:\s*false/u);
+assert.match(commissionSaveSource, /const commissionSet = getProgramCommissionSetById\(selectedId\)/u);
+assert.match(commissionSaveSource, /values\.commissionSetId = commissionSet\.id/u);
+assert.match(commissionSaveSource, /values\[key\] = normalizeProgramCommissionValue\(commissionSet\[key\]\)/u);
 assert.doesNotMatch(
   commissionSaveSource,
-  /programRows\.splice/u,
-  "Сохранение множества не должно отправлять полные снимки всех связанных программ."
+  /upsertProgramCommissionSet|state\.data\.collections\.commissionSets/u,
+  "Карточка программы не должна изменять центральные множества комиссий."
+);
+const assignmentStrictSource = extractBetween(
+  appSource,
+  "  function getProgramCommissionAssignmentStrictSaveOptions",
+  "\n  function saveFormRecord"
+);
+const assignmentStrictContext = {
+  unique: (values) => [...new Set(values)]
+};
+vm.createContext(assignmentStrictContext);
+vm.runInContext(
+  `${assignmentStrictSource.replace(/^  /gmu, "")}
+this.getProgramCommissionAssignmentStrictSaveOptionsForTest = getProgramCommissionAssignmentStrictSaveOptions;`,
+  assignmentStrictContext
+);
+const assignmentForm = (selectedId, originalId = "set-a", id = "program-1") => ({
+  dataset: {
+    id,
+    config: "programs",
+    programCommissionOriginalSetId: originalId,
+    programCommissionBaseRevision: "17"
+  },
+  querySelector: () => ({ value: selectedId })
+});
+assert.equal(
+  assignmentStrictContext.getProgramCommissionAssignmentStrictSaveOptionsForTest(assignmentForm("set-a")),
+  null,
+  "Неизменённая связь не должна переводить обычное сохранение программы в строгий режим."
+);
+const pendingRecoveryForm = assignmentForm("set-a");
+pendingRecoveryForm.dataset.programCommissionPendingAuditIds = JSON.stringify(["audit-delayed"]);
+assert.equal(
+  assignmentStrictContext.getProgramCommissionAssignmentStrictSaveOptionsForTest(pendingRecoveryForm)?.strictRevision,
+  true,
+  "Неподтверждённая попытка должна оставаться строгой даже после возврата исходного выбора."
+);
+const changedAssignmentOptions = JSON.parse(JSON.stringify(
+  assignmentStrictContext.getProgramCommissionAssignmentStrictSaveOptionsForTest(assignmentForm("set-b"))
+));
+assert.equal(changedAssignmentOptions.strictRevision, true);
+assert.equal(changedAssignmentOptions.baseRevision, 17);
+const duplicatedProgramOptions = JSON.parse(JSON.stringify(
+  assignmentStrictContext.getProgramCommissionAssignmentStrictSaveOptionsForTest(
+    assignmentForm("set-a", "set-a", "")
+  )
+));
+assert.equal(
+  duplicatedProgramOptions.strictRevision,
+  true,
+  "Новая или дублированная программа с готовой связью должна проверять существование множества строго."
+);
+assert.equal(
+  assignmentStrictContext.getProgramCommissionAssignmentStrictSaveOptionsForTest(
+    assignmentForm("", "", "")
+  ),
+  null,
+  "Новая программа без комиссии не требует строгого сохранения."
+);
+const programCommissionSectionSource = extractBetween(
+  appSource,
+  "  function renderProgramCommissionSection",
+  "\n  function renderProgramParticipantsSection"
+);
+assert.match(programCommissionSectionSource, /select name="commissionSetId" data-program-commission-set-select/u);
+assert.match(programCommissionSectionSource, /data-action="apply-program-commission-source"/u);
+assert.match(programCommissionSectionSource, /Настройки → Комиссии/u);
+assert.doesNotMatch(programCommissionSectionSource, /PROGRAM_COMMISSION_NEW_SET_VALUE|commissionSetName|data-program-commission-set-name/u);
+assert.doesNotMatch(
+  programCommissionSectionSource,
+  /fields\.map\(\(item\) => renderField/u,
+  "В карточке программы состав множества должен отображаться без редактируемых полей."
 );
 const importSource = extractBetween(
   appSource,
@@ -411,31 +461,94 @@ const exportProgramsSource = extractBetween(
 );
 assert.match(exportProgramsSource, /normalizeProgramRecord\(resolveProgramCommissionRecord\(source\)\)/u);
 const saveRecordSource = extractBetween(appSource, "  async function saveRecord", "\n  function normalizeStudentPhotoRotation");
-assert.match(saveRecordSource, /getProgramCommissionStrictSaveOptions\(form\)/u);
-assert.match(
-  saveRecordSource,
-  /flushSharedApplicationStateThroughGeneration\([\s\S]*?commissionStrictSaveOptions/u,
-  "Изменение существующего множества должно сохраняться со строгой проверкой ревизии."
-);
-assert.match(
-  saveRecordSource,
-  /commissionStrictSaveOptions[\s\S]*?sharedStatePendingPatch[\s\S]*?Дождитесь завершения текущей синхронизации/u,
-  "Строгое сохранение нельзя смешивать с уже ожидающими изменениями."
-);
-const strictRestoreSource = extractBetween(
-  appSource,
-  "  async function restoreFailedProgramCommissionSave",
-  "\n  async function ensureRecordLockForSave"
-);
-assert.match(strictRestoreSource, /sharedStatePendingPatch = snapshot\.pendingPatch \? clone\(snapshot\.pendingPatch\) : null/u);
-assert.doesNotMatch(
-  strictRestoreSource,
-  /localStorage\.removeItem/u,
-  "Восстановление конфликта не должно безусловно удалять чужую локальную очередь."
-);
+assert.match(appSource, /data-program-commission-original-set-id="\$\{escapeAttr\(record\?\.commissionSetId \|\| ""\)\}"/u);
 assert.match(appSource, /data-program-commission-base-revision="\$\{sharedStateRevision\}"/u);
-assert.match(appSource, /<option value=""[^>]*disabled>Выберите множество<\/option>/u);
-assert.doesNotMatch(appSource, />Без общего множества</u);
+assert.match(saveRecordSource, /prepareProgramCommissionAssignmentSave\(form\)/u);
+assert.match(saveRecordSource, /flushProgramCommissionAssignmentSave\(commissionAssignmentSave, generation\)/u);
+assert.doesNotMatch(saveRecordSource, /getProgramCommissionStrictSaveOptions/u);
+const continuationSaveSource = extractBetween(
+  appSource,
+  "  async function saveRecordFormBeforeContinuation",
+  "\n  function resetStudentCardTransientState"
+);
+assert.match(continuationSaveSource, /prepareProgramCommissionAssignmentSave\(formElement\)/u);
+assert.match(continuationSaveSource, /reconcileProgramCommissionAssignmentBeforeRetry\(formElement\)/u);
+assert.match(
+  continuationSaveSource,
+  /flushProgramCommissionAssignmentSave\(commissionAssignmentSave, generation\)/u,
+  "Сохранение перед закрытием или переходом тоже должно проверять ревизию назначения комиссии."
+);
+const assignmentRestoreSource = extractBetween(
+  appSource,
+  "  async function restoreFailedProgramCommissionAssignmentSave",
+  "\n  async function flushProgramCommissionAssignmentSave"
+);
+assert.match(assignmentRestoreSource, /const confirmedProgram[\s\S]*?const currentAttemptCommitted = Boolean/u);
+assert.match(
+  assignmentRestoreSource,
+  /const confirmedAuditIds = new Set[\s\S]*?context\.attemptAuditIds\.every/u,
+  "Неопределённый POST считается подтверждённым только по уникальной записи атомарного аудита."
+);
+assert.match(assignmentRestoreSource, /context\.priorAttemptAuditIds\?\.some/u);
+assert.match(assignmentRestoreSource, /form\.dataset\.id = knownCommittedProgram \? String\(context\.savedId/u);
+assert.match(assignmentRestoreSource, /form\.dataset\.programCommissionOriginalSetId = String/u);
+assert.match(assignmentRestoreSource, /form\.dataset\.programCommissionBaseRevision = String\(sharedStateRevision\)/u);
+assert.match(assignmentRestoreSource, /form\.dataset\.programCommissionPendingSavedId = String/u);
+assert.match(assignmentRestoreSource, /setProgramCommissionPendingAuditIds\(form, pendingAuditIds\)/u);
+assert.match(
+  assignmentRestoreSource,
+  /form\.dataset\.programCommissionPendingSavedId = String\([\s\S]*?persistSharedStateRecovery\(\);[\s\S]*?reloadSharedApplicationState/u,
+  "До контрольного GET новая форма должна получить повторно используемый id даже при полном отсутствии сети."
+);
+const formSaveSource = extractBetween(appSource, "  function saveFormRecord", "\n  function getFormSubmitButton");
+assert.match(formSaveSource, /deferPost: deferAuditPost/u);
+assert.match(formSaveSource, /deferredAuditEntries\?\.push\(auditEntry\)/u);
+assert.match(
+  formSaveSource,
+  /const pendingSavedId = isProgramCard[\s\S]*?String\(formElement\.dataset\.programCommissionPendingSavedId \|\| ""\)\.trim\(\)[\s\S]*?savedId = pendingSavedId \|\| makeId\(config\.collection\)/u,
+  "Повтор неопределённого создания должен использовать тот же id и не создавать дубль программы."
+);
+assert.match(formSaveSource, /pendingSavedId && existingIndex >= 0/u);
+assert.match(appSource, /postDeferredProgramCommissionAssignmentAudit\(context\)/u);
+assert.match(saveRecordSource, /reconcileProgramCommissionAssignmentBeforeRetry\(form\)/u);
+const assignmentRetrySource = extractBetween(
+  appSource,
+  "  async function reconcileProgramCommissionAssignmentBeforeRetry",
+  "\n  function saveFormRecord"
+);
+assert.match(
+  assignmentRetrySource,
+  /getProgramCommissionPendingAuditIds\(formElement\)\.length/u,
+  "После неопределённого strict POST повторная попытка должна сохранять защиту даже при возврате исходного выбора."
+);
+assert.match(
+  assignmentRetrySource,
+  /!hasPendingAssignmentRecovery && !sharedStateConflict && !sharedStateOffline/u
+);
+assert.doesNotMatch(
+  assignmentRetrySource,
+  /if \(confirmedProgram\) setProgramCommissionPendingAuditIds\(formElement, \[\]\)/u,
+  "Один лишь факт существования программы не подтверждает запоздавший strict POST."
+);
+assert.match(
+  assignmentRestoreSource,
+  /setProgramCommissionPendingAuditIds\(form, currentAttemptCommitted \? \[\] : pendingAuditIds\)/u,
+  "Маркеры должны сохраняться, пока не подтверждена именно свежая строгая попытка."
+);
+const settingsSaveSource = extractBetween(
+  appSource,
+  "  async function saveSettingsDraftChanges",
+  "\n  function cancelSettingsDraftChanges"
+);
+assert.match(settingsSaveSource, /programCommissionSettingsChanged[\s\S]*?strictRevision:\s*true/u);
+assert.match(settingsSaveSource, /baseRevision:[\s\S]*?state\.settingsDraftBaseRevision/u);
+assert.match(
+  settingsSaveSource,
+  /programCommissionSettingsChanged[\s\S]*?sharedStateSavePromise[\s\S]*?Дождитесь завершения текущей синхронизации/u,
+  "Строгое сохранение множеств нельзя запускать одновременно с активным сохранением."
+);
+assert.match(settingsSaveSource, /createProgramCommissionSettingsSaveSnapshot\(\)/u);
+assert.match(settingsSaveSource, /restoreFailedProgramCommissionSettingsSave\(programCommissionSaveSnapshot\)/u);
 assert.match(
   appSource,
   /const confirmedData = payload\.data[\s\S]*?ensureDataShape\([\s\S]*?sharedStateBaseData = clone\(confirmedData \|\| data\)/u,
@@ -452,6 +565,158 @@ assert.match(serverReconciliationSource, /getLegacyCommissionSetId/u);
 assert.match(serverReconciliationSource, /nextProgram\[fieldName\]\s*=/u);
 assert.match(serverReconciliationSource, /programsWithEffectiveCommissions\.map/u);
 
-console.log(
-  "OK: множества комиссий — legacy-дедупликация, идемпотентность, каскад, Excel-перепривязка и поиск только по name."
-);
+async function runProgramCommissionAssignmentRecoveryTests() {
+  const form = {
+    dataset: {
+      id: "",
+      initialSnapshot: "attempted",
+      programCommissionOriginalSetId: "set-a",
+      programCommissionBaseRevision: "17"
+    }
+  };
+  const recoveryRuntime = {
+    state: {
+      data: { collections: { programs: [], audit: [] } },
+      lastEditedRow: { config: "", id: "" },
+      tablePages: {},
+      modal: { config: "programs", id: "", hasDraftChanges: true }
+    },
+    sharedStatePendingPatch: null,
+    sharedStateDirty: false,
+    sharedStateConflict: false,
+    sharedStateConflictShown: false,
+    sharedStateSyncBlockedReason: "",
+    sharedStateOffline: false,
+    sharedStateRevision: 17,
+    reloadFails: false,
+    reloadData: { collections: { programs: [], audit: [] } },
+    clone: (value) => JSON.parse(JSON.stringify(value)),
+    unique: (values) => [...new Set(values)],
+    ensureDataShape: (value) => value,
+    persistStateToLocalStorage: () => {},
+    persistSharedStateRecovery: () => {},
+    updateSharedStateStatusUi: () => {},
+    captureFormSnapshot: () => "confirmed",
+    setTablePageForRow: () => {},
+    document: { querySelector: () => form },
+    setProgramCommissionPendingAuditIds: (target, values = []) => {
+      const ids = [...new Set(values.map(String).filter(Boolean))];
+      if (ids.length) target.dataset.programCommissionPendingAuditIds = JSON.stringify(ids);
+      else delete target.dataset.programCommissionPendingAuditIds;
+    }
+  };
+  recoveryRuntime.reloadSharedApplicationState = async () => {
+    if (recoveryRuntime.reloadFails) throw new Error("offline");
+    recoveryRuntime.state.data = recoveryRuntime.clone(recoveryRuntime.reloadData);
+    recoveryRuntime.sharedStateRevision = 18;
+  };
+  vm.createContext(recoveryRuntime);
+  vm.runInContext(
+    `${assignmentRestoreSource.replace(/^  /gmu, "")}
+this.restoreFailedProgramCommissionAssignmentSaveForTest = restoreFailedProgramCommissionAssignmentSave;`,
+    recoveryRuntime
+  );
+  const makeContext = (snapshotOverrides = {}) => ({
+    snapshot: {
+      data: { collections: { programs: [], audit: [] } },
+      lastEditedRow: { config: "", id: "" },
+      tablePages: {},
+      modal: { config: "programs", id: "", hasDraftChanges: true },
+      formId: "",
+      formInitialSnapshot: "baseline",
+      pendingSavedId: "",
+      originalCommissionSetId: "set-a",
+      pendingPatch: null,
+      dirty: false,
+      syncBlockedReason: "",
+      ...snapshotOverrides
+    },
+    savedId: "program-new",
+    attemptedProgram: { id: "program-new", commissionSetId: "set-a" },
+    attemptAuditIds: ["audit-attempt"],
+    priorAttemptAuditIds: []
+  });
+
+  recoveryRuntime.reloadFails = true;
+  const offlineResult = await recoveryRuntime.restoreFailedProgramCommissionAssignmentSaveForTest(makeContext());
+  assert.equal(offlineResult.committed, false);
+  assert.equal(form.dataset.id, "");
+  assert.equal(
+    form.dataset.programCommissionPendingSavedId,
+    "program-new",
+    "Повтор после POST/GET failure должен сохранить generated id."
+  );
+  assert.deepEqual(JSON.parse(form.dataset.programCommissionPendingAuditIds), ["audit-attempt"]);
+
+  recoveryRuntime.reloadFails = false;
+  recoveryRuntime.reloadData = {
+    collections: {
+      programs: [{ id: "program-new", commissionSetId: "set-a" }],
+      audit: [{ id: "audit-attempt" }]
+    }
+  };
+  const committedResult = await recoveryRuntime.restoreFailedProgramCommissionAssignmentSaveForTest(makeContext());
+  assert.equal(committedResult.committed, true);
+  assert.equal(form.dataset.id, "program-new");
+  assert.equal(form.dataset.programCommissionOriginalSetId, "set-a");
+  assert.equal(form.dataset.programCommissionPendingSavedId, undefined);
+
+  recoveryRuntime.reloadData = {
+    collections: {
+      programs: [{ id: "program-new", commissionSetId: "set-a" }],
+      audit: [{ id: "audit-previous" }]
+    }
+  };
+  const delayedCommitContext = makeContext();
+  delayedCommitContext.attemptAuditIds = ["audit-retry"];
+  delayedCommitContext.priorAttemptAuditIds = ["audit-previous"];
+  const delayedCommitResult = await recoveryRuntime.restoreFailedProgramCommissionAssignmentSaveForTest(
+    delayedCommitContext
+  );
+  assert.equal(delayedCommitResult.committed, false);
+  assert.equal(delayedCommitResult.priorCommitted, true);
+  assert.equal(form.dataset.id, "program-new");
+  assert.equal(form.dataset.programCommissionPendingSavedId, undefined);
+  assert.deepEqual(
+    JSON.parse(form.dataset.programCommissionPendingAuditIds),
+    ["audit-previous", "audit-retry"],
+    "Подтверждение предыдущей попытки не должно снимать защиту с ещё не подтверждённой свежей попытки."
+  );
+
+  recoveryRuntime.reloadData = {
+    collections: {
+      programs: [{ id: "program-existing", commissionSetId: "set-b" }],
+      audit: []
+    }
+  };
+  const collidedContext = makeContext({
+    data: {
+      collections: {
+        programs: [{ id: "program-existing", commissionSetId: "set-a" }],
+        audit: []
+      }
+    },
+    formId: "program-existing",
+    originalCommissionSetId: "set-a"
+  });
+  collidedContext.savedId = "program-existing";
+  collidedContext.attemptedProgram = { id: "program-existing", commissionSetId: "set-b" };
+  const collisionResult = await recoveryRuntime.restoreFailedProgramCommissionAssignmentSaveForTest(collidedContext);
+  assert.equal(
+    collisionResult.committed,
+    false,
+    "Совпавший target commissionSetId без уникального audit marker не подтверждает наш POST."
+  );
+  assert.deepEqual(JSON.parse(form.dataset.programCommissionPendingAuditIds), ["audit-attempt"]);
+}
+
+runProgramCommissionAssignmentRecoveryTests()
+  .then(() => {
+    console.log(
+      "OK: множества комиссий — legacy-дедупликация, идемпотентность, каскад, Excel-перепривязка и поиск только по name."
+    );
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

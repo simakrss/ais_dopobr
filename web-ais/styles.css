@@ -13731,7 +13731,7 @@ body.card-window-moving {
 
 .program-commission-set-panel {
   display: grid;
-  grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 1.2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px 10px;
   padding: 9px;
   border: 1px solid #d8e6e0;
@@ -13778,6 +13778,221 @@ body.card-window-moving {
 .program-commission-source-panel .ghost-button {
   min-height: 34px;
   white-space: nowrap;
+}
+
+.program-commission-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.program-commission-preview-item {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d8e6e0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.program-commission-preview-item > span {
+  color: #3d4945;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.program-commission-preview-item > div {
+  min-height: 36px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.program-commission-preview-item.is-empty > div {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.program-commission-settings {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.program-commission-settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d8e6e0;
+  border-radius: 10px;
+  background: #f3f8f6;
+}
+
+.program-commission-settings-head h4,
+.program-commission-settings-head p {
+  margin: 0;
+}
+
+.program-commission-settings-head h4 {
+  font-size: 14px;
+}
+
+.program-commission-settings-head p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.program-commission-settings-head .ghost-button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.program-commission-settings-form,
+.program-commission-settings-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.program-commission-settings-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(31, 41, 38, 0.04);
+}
+
+.program-commission-settings-card-head {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto 34px;
+  align-items: end;
+  gap: 8px;
+}
+
+.program-commission-settings-name,
+.program-commission-settings-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.program-commission-settings-name > span,
+.program-commission-settings-grid label > span {
+  color: #3d4945;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.program-commission-settings-name input,
+.program-commission-settings-grid textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+
+.program-commission-settings-name input {
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.program-commission-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.program-commission-settings-grid textarea {
+  min-height: 68px;
+  padding: 7px 8px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.program-commission-settings-name input:focus,
+.program-commission-settings-grid textarea:focus {
+  border-color: var(--green);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.13);
+}
+
+.program-commission-settings-usage {
+  align-self: center;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7f9f8;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.program-commission-settings-usage.is-used {
+  border-color: #b9dbce;
+  background: #eaf6f1;
+  color: #17634d;
+}
+
+.program-commission-settings-card-head .attestation-delete-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+}
+
+.program-commission-settings-card-head .attestation-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.program-commission-settings-programs {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.program-commission-settings-programs strong {
+  color: #3d4945;
+}
+
+.program-commission-settings-empty {
+  min-height: 120px;
+}
+
+@media (max-width: 720px) {
+  .program-commission-preview,
+  .program-commission-settings-grid,
+  .program-commission-settings-card-head {
+    grid-template-columns: 1fr;
+  }
+
+  .program-commission-settings-head {
+    display: grid;
+  }
+
+  .program-commission-settings-head .ghost-button {
+    width: 100%;
+  }
+
+  .program-commission-settings-usage {
+    justify-self: start;
+  }
 }
 
 .program-promo-grid {
