@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.398",
+    version: "1.7.399",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.399",
+      releasedAt: "2026-09-08",
+      changes: [
+        "Устранён вертикальный сдвиг текста в полях с гиперссылками внутри групп: первая пустая строка больше не появляется, а текст не прыгает при выделении."
+      ]
+    },
     {
       version: "1.7.398",
       releasedAt: "2026-09-08",

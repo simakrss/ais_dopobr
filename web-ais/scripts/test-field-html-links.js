@@ -536,6 +536,23 @@ mutationObservers[0].callback([{
 flushAnimationFrames();
 assert.equal(outerHost.children[0].style.top, "64px");
 
+const fieldsetOuterHost = new MockHost();
+const fieldsetHost = new MockHost();
+fieldsetHost.tagName = "FIELDSET";
+fieldsetHost.parentElement = fieldsetOuterHost;
+const fieldsetField = new MockTextarea(`Сообщение ${firstUrl}`);
+fieldsetField.parentElement = fieldsetHost;
+documentListeners.get("input").listener({ target: fieldsetField });
+assert.equal(fieldsetHost.children.length, 0);
+assert.equal(fieldsetOuterHost.children.length, 1);
+assert.equal(fieldsetOuterHost.classList.contains("native-html-link-field-host"), true);
+fieldsetField.isConnected = false;
+mutationObservers[0].callback([{
+  removedNodes: [fieldsetField],
+  addedNodes: []
+}]);
+assert.equal(fieldsetOuterHost.children.length, 0);
+
 const middleField = new MockInput(firstUrl);
 middleField.selectionStart = 5;
 click(createClickEvent(middleField, { ctrlKey: true, button: 1 }).event);
@@ -580,6 +597,7 @@ assert.match(linkSource, /entry\.removedNodes\.forEach\(cleanupFields\)/u);
 assert.match(linkSource, /entry\.addedNodes\.forEach/u);
 assert.match(linkSource, /scheduleFieldLayoutSync\(\)/u);
 assert.match(linkSource, /getComputedStyle\(host\)\.display === "contents"/u);
+assert.match(linkSource, /String\(host\.tagName \|\| ""\)\.toUpperCase\(\) === "FIELDSET"/u);
 assert.match(linkSource, /event\.stopImmediatePropagation/u);
 assert.match(linkSource, /rel = "noopener noreferrer"/u);
 assert.match(appSource, /return window\.AISFieldHtmlLinks\?\.renderLinks\(value\) \|\| escapeHtml\(value\);/u);

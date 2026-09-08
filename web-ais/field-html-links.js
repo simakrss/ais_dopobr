@@ -140,7 +140,15 @@
 
   function getFieldHighlightHost(field) {
     let host = field?.parentElement || null;
-    while (host && window.getComputedStyle(host).display === "contents") {
+    // Chromium positions absolute fieldset children below the legend's anonymous box.
+    // Use the nearest ordinary ancestor so the overlay and the native field share one origin.
+    while (
+      host
+      && (
+        String(host.tagName || "").toUpperCase() === "FIELDSET"
+        || window.getComputedStyle(host).display === "contents"
+      )
+    ) {
       host = host.parentElement;
     }
     return host;
