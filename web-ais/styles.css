@@ -6052,6 +6052,11 @@ body.long-press-dragging * {
   background: #eff6ff;
   color: #1d4ed8;
   cursor: pointer;
+  font: inherit !important;
+  letter-spacing: inherit !important;
+  line-height: inherit !important;
+  text-transform: inherit !important;
+  word-spacing: inherit !important;
   text-decoration: underline;
   text-decoration-color: #93c5fd;
   text-underline-offset: 2px;
@@ -6081,6 +6086,11 @@ body.long-press-dragging * {
   display: block;
   min-width: 100%;
   min-height: 100%;
+  font: inherit !important;
+  letter-spacing: inherit !important;
+  line-height: inherit !important;
+  text-transform: inherit !important;
+  word-spacing: inherit !important;
   transform-origin: left top;
 }
 
@@ -6102,6 +6112,11 @@ body.long-press-dragging * {
 .native-html-link-highlight .communication-template-html-link {
   background-color: transparent;
   cursor: inherit;
+  font: inherit !important;
+  letter-spacing: inherit !important;
+  line-height: inherit !important;
+  text-transform: inherit !important;
+  word-spacing: inherit !important;
   -webkit-text-fill-color: currentColor;
 }
 

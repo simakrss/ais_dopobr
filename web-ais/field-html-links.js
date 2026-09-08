@@ -296,7 +296,7 @@
   function syncNativeFieldSelectionRendering(field) {
     return setNativeFieldSelectionRendering(
       field,
-      field === document.activeElement && getNativeFieldTextSelectionState(field) === true
+      field === document.activeElement
     );
   }
 

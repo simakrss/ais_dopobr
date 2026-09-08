@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.403",
+    version: "1.7.404",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.404",
+      releasedAt: "2026-09-08",
+      changes: [
+        "Устранено визуальное смещение каретки при вводе ссылок: активные текстовые поля используют единый нативный рендеринг, а подсветка ссылок возвращается после завершения редактирования."
+      ]
+    },
     {
       version: "1.7.403",
       releasedAt: "2026-09-08",
