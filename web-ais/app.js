@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.399",
+    version: "1.7.400",
     releasedAt: "2026-09-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.400",
+      releasedAt: "2026-09-08",
+      changes: [
+        "В карточках программ и слушателей добавлено безопасное дублирование: программа копируется вместе с независимым учебным планом и новыми идентификаторами, а для слушателя создаётся новая карточка обучения с сохранением персональных данных без переноса финансов, приказов и результатов."
+      ]
+    },
     {
       version: "1.7.399",
       releasedAt: "2026-09-08",
@@ -5992,6 +5999,20 @@ MAX - https://bizvmax.ru/zifra_plus
     "registrationAddress", "mailingAddress",
     "photoPath", "photoData", "photoUrl"
   ]);
+  const STUDENT_DUPLICATE_PERSONAL_FIELD_KEYS = Object.freeze([...new Set([
+    "name", "phone", "email", "customerEmail",
+    "workPlace", "position", "employmentCategory", "ovzStatus",
+    ...STUDENT_APPLICATION_REUSABLE_DOCUMENT_FIELDS,
+    ...STUDENT_APPLICATION_REUSABLE_SDO_FIELDS,
+    ...STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS
+  ])]);
+  const PROGRAM_DUPLICATE_FIELD_KEYS = Object.freeze([
+    ...configs.programs.fields.map((item) => item.key)
+  ]);
+  const PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS = Object.freeze([
+    "discipline", "description", "theoryHours", "practiceHours",
+    "attestation", "teacher", "materials", "content"
+  ]);
 
   const contractEventTemplates = [
     { key: "portalAccessSent", label: "Отправлены данные для доступа к порталу" },
@@ -8516,6 +8537,94 @@ MAX - https://bizvmax.ru/zifra_plus
       agencyAmount: Number(contract.agencyAmount || 0),
       balance: Number(contract.balance || 0)
     };
+  }
+
+  function copyDuplicateFieldValue(value) {
+    return value && typeof value === "object" ? clone(value) : value;
+  }
+
+  function buildStudentDuplicateDraft(source = {}) {
+    const draft = {};
+    STUDENT_DUPLICATE_PERSONAL_FIELD_KEYS.forEach((key) => {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+      draft[key] = copyDuplicateFieldValue(source[key]);
+    });
+    return {
+      ...draft,
+      status: "На зачисление",
+      additionalStatus: DEFAULT_STUDENT_ADDITIONAL_STATUS,
+      program: "",
+      studyForm: "",
+      educationType: "",
+      hours: "",
+      applicationDate: "",
+      startDate: "",
+      endDate: "",
+      extendedEndDate: "",
+      fundingSource: "Собственные средства",
+      directExpenses: []
+    };
+  }
+
+  function getUniqueProgramDuplicateName(sourceName, existingPrograms = []) {
+    const source = String(sourceName || "").trim() || "Новая программа";
+    const base = source.replace(/^Копия(?:\s+\d+)?\s+—\s+/iu, "").trim() || source;
+    const usedNames = new Set((Array.isArray(existingPrograms) ? existingPrograms : [])
+      .flatMap((program) => [program?.name, program?.shortName])
+      .map(normalizeProgramName)
+      .filter(Boolean));
+    let copyNumber = 1;
+    let candidate = "";
+    do {
+      candidate = copyNumber === 1
+        ? `Копия — ${base}`
+        : `Копия ${copyNumber} — ${base}`;
+      copyNumber += 1;
+    } while (usedNames.has(normalizeProgramName(candidate)));
+    return candidate;
+  }
+
+  function buildProgramDuplicateDraft(source = {}, existingPrograms = []) {
+    const draft = {};
+    PROGRAM_DUPLICATE_FIELD_KEYS.forEach((key) => {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+      draft[key] = copyDuplicateFieldValue(source[key]);
+    });
+    const normalized = normalizeProgramRecord({
+      ...draft,
+      name: getUniqueProgramDuplicateName(source.name, existingPrograms),
+      shortName: String(source.shortName || "").trim()
+        ? getUniqueProgramDuplicateName(source.shortName, existingPrograms)
+        : "",
+      landingCode: ""
+    });
+    normalized.authorPayments = normalizeProgramAuthorPayments(
+      source.authorPayments,
+      source.authorSource || source.author,
+      source.defaultAuthorPaymentPercent || 50
+    ).map((item) => ({
+      ...item,
+      id: makeId("program-author")
+    }));
+    normalized.authorSource = formatProgramAuthorPaymentSource(normalized.authorPayments);
+    normalized.author = normalized.authorSource;
+    return normalized;
+  }
+
+  function buildProgramDuplicateTrainingPlanRows(sourceRows = [], programName = "") {
+    return (Array.isArray(sourceRows) ? sourceRows : []).map((source, index) => {
+      const duplicate = {
+        id: "",
+        programId: "",
+        programName: String(programName || "").trim(),
+        code: String(index + 1)
+      };
+      PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS.forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(source || {}, key)) return;
+        duplicate[key] = copyDuplicateFieldValue(source[key]);
+      });
+      return duplicate;
+    });
   }
 
   function buildEmployeeContractDuplicateDraft(source = {}) {
@@ -30194,7 +30303,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramModal(record) {
     const config = configs.programs;
-    const title = state.modal.id ? "Редактирование программы" : "Новая программа";
+    const title = state.modal.id
+      ? "Редактирование программы"
+      : (state.modal?.duplicateSourceId ? "Копия программы" : "Новая программа");
     const programTabs = getOrderedTabs("program-card", [
       { id: "main", label: "Основное" },
       { id: "trainingPlan", label: "Учебный план" },
@@ -30225,6 +30336,18 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderCardRecordLockStatus(record || {})}
               </div>
               <div class="modal-head-actions">
+                ${state.modal?.id ? `
+                  <button
+                    class="ghost-button compact-button student-card-header-action"
+                    data-action="copy-program-with-training-plan"
+                    type="button"
+                    title="Создать копию программы вместе с учебным планом"
+                    aria-label="Создать копию программы вместе с учебным планом"
+                  >
+                    ${renderOrdersSdoIcon("copy")}
+                    <span>Дублировать</span>
+                  </button>
+                ` : ""}
                 <button class="primary-button" type="submit">Сохранить</button>
                 <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
                   <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>
@@ -30269,7 +30392,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderProgramPaymentConstantPalette()}
               </div>
               <div class="program-tab-panel ${activeTab.id === "trainingPlan" ? "is-active" : ""}" data-program-tab-panel="trainingPlan" role="tabpanel" ${activeTab.id === "trainingPlan" ? "" : "hidden"}>
-                ${renderProgramTrainingPlanSection(record || {})}
+                ${renderProgramTrainingPlanSection(
+                  record || {},
+                  Array.isArray(state.modal?.duplicateTrainingPlanRows)
+                    ? state.modal.duplicateTrainingPlanRows
+                    : null
+                )}
               </div>
               <div class="program-tab-panel ${activeTab.id === "characteristics" ? "is-active" : ""}" data-program-tab-panel="characteristics" role="tabpanel" ${activeTab.id === "characteristics" ? "" : "hidden"}>
                 ${renderProgramCharacteristicsSection(record || {})}
@@ -30694,8 +30822,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${result}${renderFormulaSegment(source.slice(offset))}`;
   }
 
-  function renderProgramTrainingPlanSection(record) {
-    const rows = getProgramTrainingPlanRows(record);
+  function renderProgramTrainingPlanSection(record, rowsOverride = null) {
+    const rows = Array.isArray(rowsOverride) ? rowsOverride : getProgramTrainingPlanRows(record);
     const hoursSummary = getProgramTrainingPlanHoursSummary(record, rows);
     const nextIndex = rows.length;
     return `
@@ -30951,6 +31079,18 @@ MAX - https://bizvmax.ru/zifra_plus
                   <div class="card-header-context-actions">
                     ${renderCardContextActions(record, "student")}
                   </div>
+                  ${record.id ? `
+                    <button
+                      class="ghost-button compact-button student-card-header-action"
+                      data-action="copy-student-new-enrollment"
+                      type="button"
+                      title="Создать новую карточку обучения с персональными данными этого слушателя"
+                      aria-label="Создать новую карточку обучения с персональными данными этого слушателя"
+                    >
+                      ${renderOrdersSdoIcon("copy")}
+                      <span>Дублировать</span>
+                    </button>
+                  ` : ""}
                   <div class="student-card-nav" aria-label="Переход между карточками слушателей">
                     <button class="icon-button student-card-nav-button" data-action="navigate-student-card" data-direction="-1" type="button" title="Предыдущая карточка" aria-label="Предыдущая карточка" ${navigation.hasPrev ? "" : "disabled"}>
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
@@ -39352,6 +39492,10 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='navigate-contract-card']").forEach((button) => {
       button.addEventListener("click", () => navigateContractCard(button.dataset.direction));
     });
+    document.querySelector("[data-action='copy-student-new-enrollment']")
+      ?.addEventListener("click", copyStudentForNewEnrollment);
+    document.querySelector("[data-action='copy-program-with-training-plan']")
+      ?.addEventListener("click", copyProgramWithTrainingPlan);
     document.querySelector("[data-action='copy-employee-new-contract']")
       ?.addEventListener("click", copyEmployeeForNewContract);
     const contractForm = document.querySelector("#recordForm[data-config='contracts']");
@@ -40911,6 +41055,48 @@ MAX - https://bizvmax.ru/zifra_plus
     await openStudentCardById(target.id);
   }
 
+  async function copyStudentForNewEnrollment() {
+    if (recordFormSavePending) return;
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "students" || !state.modal?.id) return;
+    let sourceId = formElement.dataset.id || state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей карточки перед дублированием слушателя?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement, { flush: true });
+        if (!savedId) return;
+        sourceId = savedId;
+      }
+    }
+    const source = (state.data.collections.students || []).find((record) => record.id === sourceId);
+    if (!source) {
+      alert("Исходная карточка слушателя больше не найдена. Обновите раздел и повторите действие.");
+      return;
+    }
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
+    resetStudentCardTransientState();
+    state.studentCardTab = "main";
+    state.modal = {
+      config: "students",
+      id: "",
+      draft: buildStudentDuplicateDraft(source),
+      duplicateSourceId: sourceId,
+      hasDraftChanges: true
+    };
+    render();
+    window.requestAnimationFrame(() => {
+      document.querySelector("#recordForm[data-config='students'] [name='program']")
+        ?.focus({ preventScroll: false });
+    });
+    if (lock) releaseRecordLock(lock).catch(() => {});
+  }
+
   function getProgramNavigationRows() {
     const visibleRows = getVisibleRows(configs.programs);
     return visibleRows.length ? visibleRows : getProgramRows();
@@ -40966,6 +41152,55 @@ MAX - https://bizvmax.ru/zifra_plus
     const target = getProgramNavigationTarget(currentId, direction);
     if (!target) return;
     await openProgramCardById(target.id);
+  }
+
+  async function copyProgramWithTrainingPlan() {
+    if (recordFormSavePending) return;
+    const formElement = document.getElementById("recordForm");
+    if (!formElement || formElement.dataset.config !== "programs" || !state.modal?.id) return;
+    let sourceId = formElement.dataset.id || state.modal.id;
+    const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
+    if (hasChanges) {
+      const decision = await chooseUnsavedChangesAction({
+        message: "Сохранить изменения текущей программы перед созданием копии?"
+      });
+      if (decision === "cancel") return;
+      if (decision === "save") {
+        const savedId = await saveRecordFormBeforeContinuation(formElement, { flush: true });
+        if (!savedId) return;
+        sourceId = savedId;
+      }
+    }
+    const programs = state.data.collections.programs || [];
+    const source = programs.find((record) => record.id === sourceId);
+    if (!source) {
+      alert("Исходная программа больше не найдена. Обновите раздел и повторите действие.");
+      return;
+    }
+    const draft = buildProgramDuplicateDraft(source, programs);
+    const duplicateTrainingPlanRows = buildProgramDuplicateTrainingPlanRows(
+      getProgramTrainingPlanRows(source),
+      draft.name
+    );
+    const lock = activeRecordLock;
+    activeRecordLock = null;
+    stopRecordLockHeartbeat();
+    state.programCardTab = "main";
+    state.modal = {
+      config: "programs",
+      id: "",
+      draft,
+      duplicateSourceId: sourceId,
+      duplicateTrainingPlanRows,
+      hasDraftChanges: true
+    };
+    render();
+    window.requestAnimationFrame(() => {
+      const nameInput = document.querySelector("#recordForm[data-config='programs'] [name='name']");
+      nameInput?.focus({ preventScroll: false });
+      nameInput?.select();
+    });
+    if (lock) releaseRecordLock(lock).catch(() => {});
   }
 
   function getContractNavigationRows() {
