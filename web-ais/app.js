@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.407",
-    releasedAt: "2026-09-08"
+    version: "1.7.408",
+    releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.408",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Сохранение настроек комиссий дожидается общей базы, автоматически переносит черновик на свежую ревизию и повторяет строгую запись, не перезаписывая пересекающиеся чужие изменения."
+      ]
+    },
     {
       version: "1.7.407",
       releasedAt: "2026-09-08",
@@ -3442,6 +3449,8 @@
   const SHARED_STATE_PROGRESS_TICK_MS = 700;
   const SHARED_STATE_PROGRESS_COMPLETE_VISIBLE_MS = 1400;
   const SHARED_STATE_PROGRESS_ERROR_VISIBLE_MS = 4000;
+  const SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS = 3;
+  const SETTINGS_SHARED_STATE_RETRY_DELAY_MS = 200;
   const EMPLOYEE_PAYMENT_PERSIST_DELAY_MS = 120;
   const SHARED_STATE_POLL_INTERVAL_MS = 1000;
   const RECORD_LOCK_POLL_INTERVAL_MS = 1000;
@@ -6521,6 +6530,8 @@ MAX - https://bizvmax.ru/zifra_plus
     adminSettingsSaving: false,
     settingsDraftBaseline: null,
     settingsDraftBaseRevision: 0,
+    settingsDraftSharedBaseData: null,
+    settingsDraftPendingPatch: null,
     settingsDraftDirty: false,
     settingsEditorDirty: false,
     settingsDraftSaving: false,
@@ -6609,6 +6620,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let adminBeforeUnloadBound = false;
   let settingsDraftApplyInProgress = false;
   let settingsDraftMutationGeneration = 0;
+  let settingsDraftSavePreparing = false;
   let aisHistoryNavigationBound = false;
   let aisHistoryNavigationRestoring = false;
   let aisHistoryNavigationDiscardApproved = false;
@@ -9751,7 +9763,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return merged;
   }
 
-  function applySharedApplicationStatePatchLocally(currentData, patch) {
+  function applySharedApplicationStatePatchRaw(currentData, patch) {
     const next = clone(currentData);
     next.collections = next.collections || {};
     next.dictionaries = next.dictionaries || {};
@@ -9785,7 +9797,11 @@ MAX - https://bizvmax.ru/zifra_plus
     Object.entries(patch?.root || {}).forEach(([name, value]) => {
       if (!["collections", "dictionaries", "meta"].includes(name)) next[name] = value;
     });
-    return ensureDataShape(next);
+    return next;
+  }
+
+  function applySharedApplicationStatePatchLocally(currentData, patch) {
+    return ensureDataShape(applySharedApplicationStatePatchRaw(currentData, patch));
   }
 
   function estimateSharedApplicationStateTransferBytes() {
@@ -10179,6 +10195,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (resetCleanSettingsBaseline) {
       state.settingsDraftBaseline = JSON.stringify(state.data);
       state.settingsDraftBaseRevision = sharedStateRevision;
+      state.settingsDraftSharedBaseData = clone(serverData);
+      state.settingsDraftPendingPatch = sharedStatePendingPatch
+        ? clone(sharedStatePendingPatch)
+        : null;
     }
     persistSharedStateRecovery();
     if (renderAfter) {
@@ -10273,7 +10293,6 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (
       isSettingsDraftSessionActive()
-      && !state.settingsDraftSaving
       && saveOptions.allowSettingsDraft !== true
     ) {
       return Promise.resolve(true);
@@ -10366,6 +10385,7 @@ MAX - https://bizvmax.ru/zifra_plus
       saved = true;
     } catch (error) {
       if (error.status === 423) {
+        if (strictRevision && options.deferLockedSave === true) throw error;
         const lock = error.payload?.lock || {};
         alert(formatRecordLockMessage(lock, "Изменения не сохранены"));
         await reloadSharedApplicationState({ renderAfter: false }).catch(() => {});
@@ -10377,6 +10397,9 @@ MAX - https://bizvmax.ru/zifra_plus
           && syncCommitToken
           && /срок подтверждения синхронизации XLSB ист[её]к/iu.test(String(error.message || ""))
         ) {
+          throw error;
+        }
+        if (strictRevision && options.deferRevisionConflict === true) {
           throw error;
         }
         sharedStateConflict = true;
@@ -10416,7 +10439,6 @@ MAX - https://bizvmax.ru/zifra_plus
   async function flushSharedApplicationStateThroughGeneration(targetGeneration, options = {}) {
     if (
       isSettingsDraftSessionActive()
-      && !state.settingsDraftSaving
       && options.allowSettingsDraft !== true
     ) return true;
     const target = Math.max(0, Number(targetGeneration) || 0);
@@ -11363,9 +11385,25 @@ MAX - https://bizvmax.ru/zifra_plus
     return Boolean(state.settingsDraftDirty || state.settingsEditorDirty);
   }
 
+  function isSettingsDraftSaveBusy() {
+    return Boolean(state.settingsDraftSaving || settingsDraftSavePreparing);
+  }
+
+  function setSettingsDraftInteractionLocked(locked) {
+    const root = document.querySelector(".settings-page-panel");
+    if (!root) return;
+    if (locked) {
+      root.setAttribute("inert", "");
+      root.setAttribute("aria-busy", "true");
+    } else {
+      root.removeAttribute("inert");
+      root.removeAttribute("aria-busy");
+    }
+  }
+
   function updateSettingsDraftActions(root = document) {
     const dirty = hasUnsavedSettingsChanges();
-    const saving = Boolean(state.settingsDraftSaving);
+    const saving = isSettingsDraftSaveBusy();
     root.querySelectorAll?.("[data-action='save-settings-changes']").forEach((button) => {
       button.disabled = !dirty || saving;
       button.classList.toggle("is-unsaved", dirty && !saving);
@@ -11401,8 +11439,15 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isSettingsDraftSessionActive()) return;
     window.clearTimeout(sharedStateSaveTimer);
     sharedStateSaveTimer = 0;
-    state.settingsDraftBaseline = JSON.stringify(state.data);
+    const baselineData = clone(state.data);
+    const sharedBaseDataAtOpen = clone(sharedStateBaseData || baselineData);
+    state.settingsDraftBaseline = JSON.stringify(baselineData);
     state.settingsDraftBaseRevision = sharedStateRevision;
+    state.settingsDraftSharedBaseData = sharedBaseDataAtOpen;
+    state.settingsDraftPendingPatch = mergeSharedApplicationStatePatches(
+      sharedStatePendingPatch,
+      buildSharedApplicationStatePatch(sharedBaseDataAtOpen, baselineData)
+    );
     state.settingsDraftDirty = false;
     state.settingsEditorDirty = false;
     state.settingsDraftSaving = false;
@@ -11413,6 +11458,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function endSettingsDraftSession() {
     state.settingsDraftBaseline = null;
     state.settingsDraftBaseRevision = 0;
+    state.settingsDraftSharedBaseData = null;
+    state.settingsDraftPendingPatch = null;
     state.settingsDraftDirty = false;
     state.settingsEditorDirty = false;
     state.settingsDraftSaving = false;
@@ -11551,6 +11598,267 @@ MAX - https://bizvmax.ru/zifra_plus
     return null;
   }
 
+  function hasSharedApplicationStatePatchChanges(patch) {
+    if (!patch || typeof patch !== "object") return false;
+    return ["collections", "dictionaries", "meta", "root"].some((group) => (
+      Object.keys(patch[group] || {}).length > 0
+    ));
+  }
+
+  function withoutSharedApplicationStateCollection(patch, collectionName) {
+    if (!patch) return null;
+    const next = clone(patch);
+    next.collections = next.collections || {};
+    delete next.collections[collectionName];
+    return hasSharedApplicationStatePatchChanges(next) ? next : null;
+  }
+
+  function getSharedApplicationStatePatchOverlap(baseData, localPatch, latestData) {
+    if (!localPatch) return null;
+    const remotePatch = buildSharedApplicationStatePatch(baseData, latestData);
+    if (!remotePatch) return null;
+    const localData = applySharedApplicationStatePatchRaw(baseData, localPatch);
+    for (const [collectionName, localChange] of Object.entries(localPatch.collections || {})) {
+      const remoteChange = remotePatch.collections?.[collectionName];
+      if (!remoteChange) continue;
+      if (Array.isArray(localChange.replace) || Array.isArray(remoteChange.replace)) {
+        if (!sharedStateValuesEqual(
+          localData.collections?.[collectionName] || [],
+          latestData.collections?.[collectionName] || []
+        )) return { group: "collections", name: collectionName };
+        continue;
+      }
+      const localIds = new Set([
+        ...(localChange.deletes || []).map(String),
+        ...(localChange.upserts || []).map((record) => String(record?.id || "")).filter(Boolean)
+      ]);
+      const remoteIds = new Set([
+        ...(remoteChange.deletes || []).map(String),
+        ...(remoteChange.upserts || []).map((record) => String(record?.id || "")).filter(Boolean)
+      ]);
+      for (const id of localIds) {
+        if (!remoteIds.has(id)) continue;
+        const localRecord = (localData.collections?.[collectionName] || [])
+          .find((record) => String(record?.id || "") === id);
+        const latestRecord = (latestData.collections?.[collectionName] || [])
+          .find((record) => String(record?.id || "") === id);
+        if (!sharedStateValuesEqual(localRecord, latestRecord)) {
+          return { group: "collections", name: collectionName, id };
+        }
+      }
+    }
+    for (const group of ["dictionaries", "meta", "root"]) {
+      for (const name of Object.keys(localPatch[group] || {})) {
+        if (!Object.prototype.hasOwnProperty.call(remotePatch[group] || {}, name)) continue;
+        const localValue = group === "root" ? localData[name] : localData[group]?.[name];
+        const latestValue = group === "root" ? latestData[name] : latestData[group]?.[name];
+        if (!sharedStateValuesEqual(localValue, latestValue)) return { group, name };
+      }
+    }
+    return null;
+  }
+
+  function prepareSharedApplicationStatePatchForRebase(baseData, localPatch, latestData) {
+    if (!localPatch) return null;
+    const next = clone(localPatch);
+    const remotePatch = buildSharedApplicationStatePatch(baseData, latestData);
+    Object.keys(next.collections || {}).forEach((collectionName) => {
+      if (remotePatch?.collections?.[collectionName]) delete next.collections[collectionName].order;
+    });
+    return hasSharedApplicationStatePatchChanges(next) ? next : null;
+  }
+
+  function getProgramCommissionSettingsRebaseConflictMessage(conflict) {
+    if (!conflict) return "";
+    if (conflict.kind === "used") {
+      return `Множество «${conflict.name}» уже используется в программах: ${conflict.count}. `
+        + "Удаление не применено; выберите для этих программ другой состав комиссии.";
+    }
+    if (conflict.kind === "commission-field") {
+      return `Множество комиссии «${conflict.name}» одновременно изменено другим пользователем `
+        + `в поле «${conflict.fieldLabel}». Чужое значение не перезаписано, ваши изменения оставлены в форме.`;
+    }
+    if (conflict.kind === "commission-record") {
+      return `Множество комиссии «${conflict.name}» одновременно изменено другим пользователем. `
+        + "Чужое значение не перезаписано, ваши изменения оставлены в форме.";
+    }
+    if (conflict.kind === "duplicate-name") {
+      return `Название множества комиссии «${conflict.name}» уже появилось в общей базе. `
+        + "Измените название в черновике и повторите сохранение.";
+    }
+    return "Пока были открыты настройки, другой пользователь изменил те же данные. "
+      + "Чужие изменения не перезаписаны, ваши изменения оставлены в форме.";
+  }
+
+  function mergeProgramCommissionSettingsDraft(baselineData, localData, latestData) {
+    const baselineSets = Array.isArray(baselineData?.collections?.commissionSets)
+      ? baselineData.collections.commissionSets
+      : [];
+    const localSets = Array.isArray(localData?.collections?.commissionSets)
+      ? localData.collections.commissionSets
+      : [];
+    const latestSets = Array.isArray(latestData?.collections?.commissionSets)
+      ? latestData.collections.commissionSets
+      : [];
+    const baselineById = new Map(baselineSets.map((item) => [String(item?.id || ""), item]));
+    const localById = new Map(localSets.map((item) => [String(item?.id || ""), item]));
+    const latestById = new Map(latestSets.map((item) => [String(item?.id || ""), clone(item)]));
+    const locallyChangedIds = new Set();
+    const locallyAddedIds = [];
+    const fieldLabels = {
+      name: "Название",
+      commissionChair: "Председатель комиссии",
+      commissionMember1: "Член комиссии 1",
+      commissionMember2: "Член комиссии 2",
+      secretary: "Секретарь"
+    };
+    const allIds = new Set([...baselineById.keys(), ...localById.keys()]);
+    for (const id of allIds) {
+      if (!id) continue;
+      const baseline = baselineById.get(id);
+      const local = localById.get(id);
+      if (sharedStateValuesEqual(baseline, local)) continue;
+      locallyChangedIds.add(id);
+      const latest = latestById.get(id);
+      const displayName = String(local?.name || baseline?.name || latest?.name || id).trim();
+      if (baseline && !local) {
+        const usage = getProgramCommissionSetUsage(id, latestData?.collections?.programs || []);
+        if (usage.count) {
+          return { conflict: { kind: "used", name: displayName, count: usage.count } };
+        }
+        if (latest && !sharedStateValuesEqual(latest, baseline)) {
+          return { conflict: { kind: "commission-record", name: displayName } };
+        }
+        latestById.delete(id);
+        continue;
+      }
+      if (!baseline && local) {
+        if (latest && !sharedStateValuesEqual(latest, local)) {
+          return { conflict: { kind: "commission-record", name: displayName } };
+        }
+        if (!latest) locallyAddedIds.push(id);
+        latestById.set(id, clone(local));
+        continue;
+      }
+      if (!latest) {
+        return { conflict: { kind: "commission-record", name: displayName } };
+      }
+      const merged = clone(latest);
+      const fieldNames = new Set([
+        "name",
+        ...PROGRAM_COMMISSION_FIELD_KEYS,
+        ...Object.keys(baseline || {}),
+        ...Object.keys(local || {})
+      ]);
+      fieldNames.delete("id");
+      for (const field of fieldNames) {
+        const baselineValue = baseline?.[field];
+        const localValue = local?.[field];
+        if (sharedStateValuesEqual(baselineValue, localValue)) continue;
+        const latestValue = latest?.[field];
+        if (
+          !sharedStateValuesEqual(baselineValue, latestValue)
+          && !sharedStateValuesEqual(localValue, latestValue)
+        ) {
+          return {
+            conflict: {
+              kind: "commission-field",
+              name: displayName,
+              fieldLabel: fieldLabels[field] || field
+            }
+          };
+        }
+        if (Object.prototype.hasOwnProperty.call(local, field) && localValue !== undefined) {
+          merged[field] = clone(localValue);
+        } else {
+          delete merged[field];
+        }
+      }
+      latestById.set(id, merged);
+    }
+    for (const id of locallyChangedIds) {
+      const changed = latestById.get(id);
+      if (!changed) continue;
+      const normalizedName = String(changed.name || "").trim().toLocaleLowerCase("ru-RU");
+      if (!normalizedName) continue;
+      const duplicate = [...latestById.entries()].find(([otherId, item]) => (
+        otherId !== id
+        && String(item?.name || "").trim().toLocaleLowerCase("ru-RU") === normalizedName
+      ));
+      if (duplicate) return { conflict: { kind: "duplicate-name", name: changed.name } };
+    }
+    const addedSet = new Set(locallyAddedIds);
+    const added = localSets
+      .filter((item) => addedSet.has(String(item?.id || "")))
+      .map((item) => latestById.get(String(item.id)))
+      .filter(Boolean);
+    const remaining = latestSets
+      .map((item) => latestById.get(String(item?.id || "")))
+      .filter(Boolean);
+    return { values: [...added, ...remaining] };
+  }
+
+  function prepareProgramCommissionSettingsRebase(snapshot, payload) {
+    if (!payload?.exists || !payload.data) {
+      return { conflict: { kind: "shared-state" } };
+    }
+    const serverData = clone(withTrainingEndNotificationServerMeta(
+      payload.data,
+      snapshot.localData?.meta || state.data?.meta
+    ));
+    let rebasedBaseline = clone(serverData);
+    if (snapshot.pendingPatch) {
+      const pendingOverlap = getSharedApplicationStatePatchOverlap(
+        snapshot.sharedBaseData,
+        snapshot.pendingPatch,
+        serverData
+      );
+      if (pendingOverlap) return { conflict: { kind: "shared-state", overlap: pendingOverlap } };
+      const pendingPatch = prepareSharedApplicationStatePatchForRebase(
+        snapshot.sharedBaseData,
+        snapshot.pendingPatch,
+        serverData
+      );
+      rebasedBaseline = pendingPatch
+        ? applySharedApplicationStatePatchRaw(serverData, pendingPatch)
+        : clone(serverData);
+    }
+    const otherDraftPatch = withoutSharedApplicationStateCollection(
+      snapshot.draftPatch,
+      "commissionSets"
+    );
+    const otherDraftOverlap = getSharedApplicationStatePatchOverlap(
+      snapshot.baselineData,
+      otherDraftPatch,
+      rebasedBaseline
+    );
+    if (otherDraftOverlap) {
+      return { conflict: { kind: "shared-state", overlap: otherDraftOverlap } };
+    }
+    const rebasedOtherPatch = prepareSharedApplicationStatePatchForRebase(
+      snapshot.baselineData,
+      otherDraftPatch,
+      rebasedBaseline
+    );
+    const rebasedData = rebasedOtherPatch
+      ? applySharedApplicationStatePatchRaw(rebasedBaseline, rebasedOtherPatch)
+      : clone(rebasedBaseline);
+    const mergedCommissions = mergeProgramCommissionSettingsDraft(
+      snapshot.baselineData,
+      snapshot.localData,
+      rebasedBaseline
+    );
+    if (mergedCommissions.conflict) return mergedCommissions;
+    rebasedData.collections = rebasedData.collections || {};
+    rebasedData.collections.commissionSets = mergedCommissions.values;
+    return {
+      serverData,
+      baselineData: rebasedBaseline,
+      data: rebasedData,
+      revision: Math.max(0, Number(payload.revision) || 0)
+    };
+  }
+
   function createProgramCommissionSettingsSaveSnapshot() {
     let baselineData = null;
     try {
@@ -11561,9 +11869,16 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!baselineData || typeof baselineData !== "object") baselineData = clone(sharedStateBaseData || state.data);
     return {
       baselineData: clone(baselineData),
+      localData: clone(state.data),
+      sharedBaseData: clone(state.settingsDraftSharedBaseData || sharedStateBaseData || baselineData),
       draftPatch: buildSharedApplicationStatePatch(baselineData, state.data),
-      pendingPatch: sharedStatePendingPatch ? clone(sharedStatePendingPatch) : null,
+      pendingPatch: state.settingsDraftPendingPatch
+        ? clone(state.settingsDraftPendingPatch)
+        : null,
       dirty: sharedStateDirty,
+      conflict: sharedStateConflict,
+      conflictShown: sharedStateConflictShown,
+      offline: sharedStateOffline,
       syncBlockedReason: sharedStateSyncBlockedReason,
       auditEntries: [...state.settingsDraftAuditEntries],
       trainingEndNotificationSettings: hasTrainingEndNotificationSettingsChanges()
@@ -11598,6 +11913,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const latestBaseline = clone(state.data);
     state.settingsDraftBaseline = JSON.stringify(latestBaseline);
     state.settingsDraftBaseRevision = sharedStateRevision;
+    state.settingsDraftSharedBaseData = clone(sharedStateBaseData || latestBaseline);
+    state.settingsDraftPendingPatch = sharedStatePendingPatch
+      ? clone(sharedStatePendingPatch)
+      : null;
     state.data = snapshot.draftPatch
       ? applySharedApplicationStatePatchLocally(latestBaseline, snapshot.draftPatch)
       : clone(latestBaseline);
@@ -11614,8 +11933,109 @@ MAX - https://bizvmax.ru/zifra_plus
     return reloaded;
   }
 
+  async function waitForActiveSharedApplicationStateSave() {
+    while (sharedStateSavePromise) {
+      const activeSave = sharedStateSavePromise;
+      try {
+        await activeSave;
+      } catch {
+        // Состояние подключения и свежая ревизия проверяются авторитетным запросом ниже.
+      }
+      if (sharedStateSavePromise === activeSave) await Promise.resolve();
+    }
+    window.clearTimeout(sharedStateSaveTimer);
+    sharedStateSaveTimer = 0;
+  }
+
+  function waitForSettingsSharedStateRetry(attempt) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, SETTINGS_SHARED_STATE_RETRY_DELAY_MS * Math.max(1, attempt));
+    });
+  }
+
+  async function requestAuthoritativeSharedStateForSettingsSave() {
+    const payload = await requestSharedApplicationState("flush=1", {
+      sharedStateProgress: {
+        operation: "Сохранение настроек",
+        message: "Ожидание завершения записи общей MySQL-базы",
+        responseMessage: "Получение актуальной версии общей базы",
+        completeMessage: "Актуальная версия общей базы получена"
+      }
+    });
+    if (
+      !payload?.exists
+      || !payload.data
+      || payload.offline === true
+      || payload.writable === false
+      || payload.syncPending === true
+      || Math.max(0, Number(payload.pendingCount) || 0) > 0
+    ) {
+      const error = new Error(
+        "Общая MySQL-база ещё завершает предыдущую запись. Повторите сохранение через несколько секунд."
+      );
+      error.status = payload?.syncBlockedReason === "locked" ? 423 : 409;
+      throw error;
+    }
+    return payload;
+  }
+
+  function applyProgramCommissionSettingsRebase(prepared, payload) {
+    state.data = clone(prepared.data);
+    sharedStateBaseData = clone(prepared.serverData);
+    sharedStatePendingPatch = null;
+    sharedStateDirty = false;
+    sharedStateRevision = prepared.revision;
+    sharedStateBackendId = String(payload.backendId || sharedStateBackendId || "");
+    sharedStateVersionTag = String(payload.versionTag || sharedStateVersionTag || "");
+    sharedStateUpdatedAt = String(payload.updatedAt || "");
+    sharedStateUpdatedBy = String(payload.updatedBy || "");
+    sharedStateSource = String(payload.source || sharedStateSource || "mysql");
+    sharedStatePendingCount = Math.max(0, Number(payload.pendingCount) || 0);
+    sharedStateSyncBlockedReason = String(payload.syncBlockedReason || "");
+    sharedStateOffline = false;
+    sharedStateReady = payload.writable !== false;
+    sharedStateConflict = false;
+    sharedStateConflictShown = false;
+    state.settingsDraftBaseline = JSON.stringify(prepared.baselineData);
+    state.settingsDraftBaseRevision = prepared.revision;
+    state.settingsDraftSharedBaseData = clone(prepared.serverData);
+    state.settingsDraftPendingPatch = buildSharedApplicationStatePatch(
+      prepared.serverData,
+      prepared.baselineData
+    );
+    state.settingsDraftDirty = true;
+    state.settingsEditorDirty = false;
+    persistStateToLocalStorage(state.data);
+    persistSharedStateRecovery();
+    updateSharedStateStatusUi();
+  }
+
+  function restoreSettingsDraftSharedStateQueueAfterFailure(snapshot = null) {
+    let confirmedBaseline = null;
+    try {
+      confirmedBaseline = JSON.parse(state.settingsDraftBaseline || "null");
+    } catch {
+      confirmedBaseline = null;
+    }
+    sharedStatePendingPatch = state.settingsDraftPendingPatch
+      ? clone(state.settingsDraftPendingPatch)
+      : confirmedBaseline && sharedStateBaseData
+        ? buildSharedApplicationStatePatch(sharedStateBaseData, confirmedBaseline)
+        : null;
+    const pendingDirty = Boolean(sharedStatePendingPatch);
+    sharedStateConflict = Boolean(snapshot?.conflict);
+    sharedStateConflictShown = Boolean(snapshot?.conflictShown);
+    sharedStateOffline = Boolean(snapshot?.offline);
+    sharedStateSyncBlockedReason = String(snapshot?.syncBlockedReason || "");
+    persistStateToLocalStorage(state.data);
+    sharedStateDirty = false;
+    persistSharedStateRecovery();
+    sharedStateDirty = pendingDirty;
+    updateSharedStateStatusUi();
+  }
+
   async function saveSettingsDraftChanges({ renderAfterSave = true } = {}) {
-    if (state.settingsDraftSaving) return false;
+    if (state.settingsDraftSaving || settingsDraftSavePreparing) return false;
     beginSettingsDraftSession();
     if (!applySettingsEditorDrafts()) return false;
     if (!hasUnsavedSettingsChanges()) {
@@ -11633,33 +12053,13 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       return false;
     }
-    if (
-      programCommissionSettingsChanged
-      && sharedStateSavePromise
-    ) {
-      alert("Дождитесь завершения текущей синхронизации общей базы, затем сохраните настройки комиссий.");
-      return false;
-    }
-    if (
-      programCommissionSettingsChanged
-      && (!sharedStateReady || sharedStateOffline || sharedStateConflict)
-    ) {
+    if (programCommissionSettingsChanged && !sharedStateReady) {
       alert(
         "Множества комиссий нельзя изменить без актуального подключения к MySQL-базе. "
         + "Восстановите подключение, обновите раздел и повторите изменение."
       );
       return false;
     }
-    const sharedSaveOptions = programCommissionSettingsChanged ? {
-      strictRevision: true,
-      baseRevision: Math.max(0, Math.floor(Number(state.settingsDraftBaseRevision) || 0)),
-      conflictMessage: "Общая база изменилась после открытия настроек. "
-        + "Составы комиссий не применены и чужие изменения не перезаписаны. "
-        + "Отмените черновик, обновите раздел и повторите изменение."
-    } : {};
-    const programCommissionSaveSnapshot = programCommissionSettingsChanged
-      ? createProgramCommissionSettingsSaveSnapshot()
-      : null;
     const trainingEndNotificationSettingsChanged = hasTrainingEndNotificationSettingsChanges();
     let baselineTrainingEndNotificationSettings = null;
     if (trainingEndNotificationSettingsChanged) {
@@ -11673,22 +12073,95 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     let trainingEndNotificationSettingsApplied = false;
     let sharedStateSaveStarted = false;
-    state.settingsDraftSaving = true;
+    let programCommissionSaveSnapshot = null;
+    const sharedStateConflictShownBeforeSave = sharedStateConflictShown;
+    settingsDraftSavePreparing = true;
     updateSettingsDraftActions();
+    setSettingsDraftInteractionLocked(true);
     try {
+      if (programCommissionSettingsChanged) {
+        await waitForActiveSharedApplicationStateSave();
+        programCommissionSaveSnapshot = createProgramCommissionSettingsSaveSnapshot();
+      }
+      settingsDraftSavePreparing = false;
+      state.settingsDraftSaving = true;
+      updateSettingsDraftActions();
       if (trainingEndNotificationSettingsChanged) {
         await persistTrainingEndNotificationSettings();
         trainingEndNotificationSettingsApplied = true;
       }
-      persist({ forceSettingsDraft: true });
-      sharedStateSaveStarted = true;
-      const targetGeneration = sharedStateChangeGeneration;
-      const saved = !sharedStateReady
-        || await flushSharedApplicationStateThroughGeneration(targetGeneration, sharedSaveOptions);
+      let saved = false;
+      if (programCommissionSettingsChanged) {
+        let lastRetryableError = null;
+        for (let attempt = 0; attempt < SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS; attempt += 1) {
+          if (attempt > 0) await waitForSettingsSharedStateRetry(attempt);
+          await waitForActiveSharedApplicationStateSave();
+          let payload;
+          try {
+            payload = await requestAuthoritativeSharedStateForSettingsSave();
+          } catch (error) {
+            if ([409, 423].includes(Number(error?.status))) {
+              lastRetryableError = error;
+              if (attempt + 1 < SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS) continue;
+              break;
+            }
+            throw error;
+          }
+          const prepared = prepareProgramCommissionSettingsRebase(
+            programCommissionSaveSnapshot,
+            payload
+          );
+          if (prepared.conflict) {
+            const error = new Error(getProgramCommissionSettingsRebaseConflictMessage(prepared.conflict));
+            error.settingsDraftMessageShown = true;
+            alert(error.message);
+            throw error;
+          }
+          applyProgramCommissionSettingsRebase(prepared, payload);
+          persist({ forceSettingsDraft: true, scheduleSharedSave: false });
+          sharedStateSaveStarted = true;
+          const targetGeneration = sharedStateChangeGeneration;
+          try {
+            saved = await flushSharedApplicationStateThroughGeneration(targetGeneration, {
+              strictRevision: true,
+              baseRevision: prepared.revision,
+              deferRevisionConflict: true,
+              deferLockedSave: true,
+              allowSettingsDraft: true
+            });
+          } catch (error) {
+            if ([409, 423].includes(Number(error?.status))) {
+              lastRetryableError = error;
+              if (attempt + 1 < SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS) continue;
+              break;
+            }
+            throw error;
+          }
+          if (saved) break;
+        }
+        if (!saved) {
+          const error = lastRetryableError || new Error("общая база не подтвердила изменения");
+          error.message = "Общая база продолжает изменяться. Изменения оставлены в форме; "
+            + "повторите сохранение через несколько секунд.";
+          throw error;
+        }
+      } else {
+        persist({ forceSettingsDraft: true });
+        sharedStateSaveStarted = true;
+        const targetGeneration = sharedStateChangeGeneration;
+        saved = !sharedStateReady
+          || await flushSharedApplicationStateThroughGeneration(targetGeneration, {
+            allowSettingsDraft: true
+          });
+      }
       if (!saved) throw new Error("общая база отклонила изменения");
       const auditEntries = [...state.settingsDraftAuditEntries];
       state.settingsDraftBaseline = JSON.stringify(state.data);
       state.settingsDraftBaseRevision = sharedStateRevision;
+      state.settingsDraftSharedBaseData = clone(sharedStateBaseData || state.data);
+      state.settingsDraftPendingPatch = sharedStatePendingPatch
+        ? clone(sharedStatePendingPatch)
+        : null;
       state.settingsDraftDirty = false;
       state.settingsEditorDirty = false;
       state.settingsDraftAuditEntries = [];
@@ -11697,7 +12170,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (renderAfterSave) render();
       return true;
     } catch (error) {
-      const conflictWasShown = sharedStateConflictShown;
+      const conflictWasShown = !sharedStateConflictShownBeforeSave && sharedStateConflictShown;
       let rollbackError = null;
       if (trainingEndNotificationSettingsApplied && baselineTrainingEndNotificationSettings) {
         try {
@@ -11709,12 +12182,19 @@ MAX - https://bizvmax.ru/zifra_plus
           rollbackError = notificationRollbackError;
         }
       }
+      state.settingsDraftDirty = true;
       if (programCommissionSaveSnapshot && sharedStateSaveStarted) {
-        await restoreFailedProgramCommissionSettingsSave(programCommissionSaveSnapshot);
-      } else {
-        state.settingsDraftDirty = true;
+        restoreSettingsDraftSharedStateQueueAfterFailure(programCommissionSaveSnapshot);
       }
-      if (!(programCommissionSettingsChanged && conflictWasShown)) {
+      if (error?.settingsDraftMessageShown === true && rollbackError) {
+        alert(
+          "Параметры уведомлений уже применены на сервере и не смогли откатиться: "
+          + rollbackError.message
+        );
+      } else if (
+        error?.settingsDraftMessageShown !== true
+        && !(programCommissionSettingsChanged && conflictWasShown)
+      ) {
         alert(
           `Не удалось сохранить настройки: ${error.message}`
           + (rollbackError
@@ -11724,7 +12204,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       return false;
     } finally {
+      settingsDraftSavePreparing = false;
       state.settingsDraftSaving = false;
+      setSettingsDraftInteractionLocked(false);
       updateSettingsDraftActions();
     }
   }
@@ -11766,7 +12248,7 @@ MAX - https://bizvmax.ru/zifra_plus
       endSettingsDraftSession();
       return true;
     }
-    if (state.settingsDraftSaving) {
+    if (isSettingsDraftSaveBusy()) {
       alert("Дождитесь завершения сохранения настроек.");
       return false;
     }
@@ -11809,7 +12291,9 @@ MAX - https://bizvmax.ru/zifra_plus
     sharedStateChangeGeneration += 1;
     persistSharedStateRecovery();
     updateSharedStateStatusUi();
-    if (sharedStateReady) scheduleSharedApplicationStateSave();
+    if (sharedStateReady && options.scheduleSharedSave !== false) {
+      scheduleSharedApplicationStateSave();
+    }
   }
 
   function loadTableSettings() {
@@ -23109,8 +23593,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isNotificationSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const hasDraftChanges = hasUnsavedSettingsChanges();
+    const settingsDraftSaveBusy = isSettingsDraftSaveBusy();
     return `
-      <section class="panel settings-page-panel">
+      <section class="panel settings-page-panel" ${settingsDraftSaveBusy ? 'inert aria-busy="true"' : ""}>
         <div class="section-head section-head--headingless settings-page-head">
           <div class="search-box dictionary-search" role="search">
             <span aria-hidden="true">⌕</span>
@@ -23128,7 +23613,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="settings-page-actions">
             <span class="settings-draft-status ${hasDraftChanges ? "is-unsaved" : ""}" data-settings-draft-status role="status" aria-live="polite">
-              ${state.settingsDraftSaving
+              ${settingsDraftSaveBusy
                 ? "Сохраняем изменения..."
                 : hasDraftChanges
                   ? "Есть несохранённые изменения"
@@ -23139,15 +23624,15 @@ MAX - https://bizvmax.ru/zifra_plus
               data-action="cancel-settings-changes"
               type="button"
               title="${hasDraftChanges ? "Отменить все изменения, внесённые после последнего сохранения" : "Нет изменений для отмены"}"
-              ${hasDraftChanges && !state.settingsDraftSaving ? "" : "disabled"}
+              ${hasDraftChanges && !settingsDraftSaveBusy ? "" : "disabled"}
             >Отменить</button>
             <button
-              class="primary-button settings-save-all-button ${hasDraftChanges && !state.settingsDraftSaving ? "is-unsaved" : ""}"
+              class="primary-button settings-save-all-button ${hasDraftChanges && !settingsDraftSaveBusy ? "is-unsaved" : ""}"
               data-action="save-settings-changes"
               type="button"
               title="${hasDraftChanges ? "Сохранить все изменения настроек" : "Все изменения настроек сохранены"}"
-              ${hasDraftChanges && !state.settingsDraftSaving ? "" : "disabled"}
-            >${state.settingsDraftSaving ? "Сохранение..." : "Сохранить"}</button>
+              ${hasDraftChanges && !settingsDraftSaveBusy ? "" : "disabled"}
+            >${settingsDraftSaveBusy ? "Сохранение..." : "Сохранить"}</button>
           </div>
         </div>
         <div class="dictionary-browser">

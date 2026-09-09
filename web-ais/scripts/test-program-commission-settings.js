@@ -185,8 +185,27 @@ const settingsSaveSource = extractBetween(
   "  async function saveSettingsDraftChanges",
   "\n  function cancelSettingsDraftChanges"
 );
+const sharedFlushSource = extractBetween(
+  "  function flushSharedApplicationState",
+  "\n  async function performSharedApplicationStateSave"
+);
+const sharedGenerationFlushSource = extractBetween(
+  "  async function flushSharedApplicationStateThroughGeneration",
+  "\n  function saveSharedApplicationStateInBackground"
+);
+const beginSettingsDraftSource = extractBetween(
+  "  function beginSettingsDraftSession",
+  "\n  function endSettingsDraftSession"
+);
+const settingsSaveSnapshotSource = extractBetween(
+  "  function createProgramCommissionSettingsSaveSnapshot",
+  "\n  async function restoreFailedProgramCommissionSettingsSave"
+);
+const waitForSharedSaveSource = extractBetween(
+  "  async function waitForActiveSharedApplicationStateSave",
+  "\n  function waitForSettingsSharedStateRetry"
+);
 assert.match(settingsSaveSource, /programCommissionSettingsChanged[\s\S]*?strictRevision:\s*true/u);
-assert.match(settingsSaveSource, /state\.settingsDraftBaseRevision/u);
 assert.match(
   appSource,
   /function hasProgramCommissionSettingsChanges\([\s\S]*?sharedStatePendingPatch[\s\S]*?sharedBaseline/u,
@@ -195,27 +214,353 @@ assert.match(
 assert.doesNotMatch(
   settingsSaveSource,
   /sharedStateRevision > state\.settingsDraftBaseRevision[\s\S]*?settingsDraftBaseRevision = sharedStateRevision/u,
-  "Базовую ревизию нельзя повышать без rebase состояния и черновика."
+  "Базовую ревизию нельзя повышать без авторитетного снимка и трёхстороннего rebase."
 );
-assert.match(settingsSaveSource, /flushSharedApplicationStateThroughGeneration\(targetGeneration, sharedSaveOptions\)/u);
+assert.doesNotMatch(
+  settingsSaveSource,
+  /Дождитесь завершения текущей синхронизации|Отмените черновик, обновите раздел и повторите изменение/u,
+  "Активную запись и обычный конфликт ревизий нужно обработать автоматически, без старого ручного сценария."
+);
+assert.match(
+  settingsSaveSource,
+  /settingsDraftSavePreparing = true;[\s\S]*?await waitForActiveSharedApplicationStateSave\(\)[\s\S]*?settingsDraftSavePreparing = false;\s*state\.settingsDraftSaving = true/u,
+  "Ожидание активной записи должно начаться до основного сохранения, оставаясь видимым как занятое состояние настроек."
+);
+assert.equal(
+  (settingsSaveSource.match(/state\.settingsDraftSaving = true/gu) || []).length,
+  1,
+  "Основное сохранение настроек должно запускаться один раз после предварительного ожидания."
+);
+assert.match(settingsSaveSource, /requestAuthoritativeSharedStateForSettingsSave\(\)/u);
+assert.match(
+  settingsSaveSource,
+  /applyProgramCommissionSettingsRebase\(prepared, payload\);\s*persist\(\{ forceSettingsDraft: true, scheduleSharedSave: false \}\);[\s\S]*?flushSharedApplicationStateThroughGeneration/u,
+  "Strict retry комиссий должен сам запускать единственный flush без параллельного фонового таймера."
+);
+assert.match(
+  settingsSaveSource,
+  /\} else \{\s*persist\(\{ forceSettingsDraft: true \}\);\s*sharedStateSaveStarted = true;[\s\S]*?flushSharedApplicationStateThroughGeneration\(targetGeneration,\s*\{\s*allowSettingsDraft:\s*true\s*\}\)/u,
+  "Обычное сохранение настроек должно сохранить стандартное автопланирование общей базы."
+);
+assert.equal(
+  (settingsSaveSource.match(/persist\(\{ forceSettingsDraft: true, scheduleSharedSave: false \}\)/gu) || []).length,
+  1,
+  "В strict-цикле комиссий должен быть ровно один путь persist без фонового планирования."
+);
+assert.match(
+  appSource,
+  /async function requestAuthoritativeSharedStateForSettingsSave\(\)[\s\S]*?requestSharedApplicationState\("flush=1"[\s\S]*?payload\.syncPending === true[\s\S]*?payload\.pendingCount/u,
+  "Перед rebase нужен один авторитетный снимок после завершения серверной очереди."
+);
+assert.match(
+  settingsSaveSource,
+  /attempt < SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS[\s\S]*?attempt > 0[\s\S]*?waitForSettingsSharedStateRetry\(attempt\)/u,
+  "Повтор при гонке ревизий должен быть ограничен константой и иметь короткую задержку."
+);
+assert.match(
+  settingsSaveSource,
+  /flushSharedApplicationStateThroughGeneration\(targetGeneration,\s*\{[\s\S]*?strictRevision:\s*true[\s\S]*?baseRevision:\s*prepared\.revision[\s\S]*?deferRevisionConflict:\s*true[\s\S]*?allowSettingsDraft:\s*true/u,
+  "Strict 409 должен возвращаться в цикл rebase/retry, а не включать глобальный конфликт и ручное восстановление."
+);
+assert.match(
+  settingsSaveSource,
+  /deferRevisionConflict:\s*true,\s*deferLockedSave:\s*true/u,
+  "Strict 423 также должен возвращаться в ограниченный цикл ожидания и повтора."
+);
+assert.equal(
+  (settingsSaveSource.match(/\[409, 423\]\.includes\(Number\(error\?\.status\)\)/gu) || []).length,
+  2,
+  "И авторитетный flush=1, и strict POST должны одинаково повторяться после 409/423."
+);
 assert.match(settingsSaveSource, /getRemovedUsedProgramCommissionSet\(\)[\s\S]*?Отмените удаление/u);
 assert.match(settingsSaveSource, /createProgramCommissionSettingsSaveSnapshot\(\)/u);
-assert.match(settingsSaveSource, /restoreFailedProgramCommissionSettingsSave\(programCommissionSaveSnapshot\)/u);
-
-const restoreSource = extractBetween(
-  "  async function restoreFailedProgramCommissionSettingsSave",
-  "\n  async function saveSettingsDraftChanges"
+assert.match(settingsSaveSource, /prepareProgramCommissionSettingsRebase\(\s*programCommissionSaveSnapshot,\s*payload\s*\)/u);
+assert.match(settingsSaveSource, /applyProgramCommissionSettingsRebase\(prepared, payload\)/u);
+assert.doesNotMatch(
+  settingsSaveSource,
+  /restoreFailedProgramCommissionSettingsSave\(/u,
+  "Обычный 409 не должен откатывать интерфейс и требовать повторного ввода."
 );
-assert.match(restoreSource, /sharedStatePendingPatch = snapshot\.pendingPatch \? clone\(snapshot\.pendingPatch\) : null/u);
-assert.match(restoreSource, /persistSharedStateRecovery\(\)[\s\S]*?reloadSharedApplicationState/u);
-assert.match(restoreSource, /applySharedApplicationStatePatchLocally\(latestBaseline, snapshot\.draftPatch\)/u);
-assert.match(restoreSource, /snapshot\.trainingEndNotificationSettings[\s\S]*?Object\.assign\(state\.data\.meta/u);
 assert.match(
-  restoreSource,
-  /applySharedApplicationStatePatchLocally\(latestBaseline, snapshot\.draftPatch\)[\s\S]*?render\(\)/u,
-  "После rebase редактор должен отобразить множества, добавленные другим пользователем."
+  appSource,
+  /if \(strictRevision && options\.deferRevisionConflict === true\) \{\s*throw error;/u,
+  "Транспорт общей базы должен уметь отдать strict 409 вызывающему коду для ограниченного повтора."
 );
-assert.doesNotMatch(restoreSource, /localStorage\.removeItem/u);
+assert.match(
+  appSource,
+  /if \(error\.status === 423\) \{\s*if \(strictRevision && options\.deferLockedSave === true\) throw error;[\s\S]*?alert\([\s\S]*?reloadSharedApplicationState/u,
+  "При deferLockedSave strict 423 должен выбрасываться до alert и reload общей базы."
+);
+assert.match(
+  appSource,
+  /function persist\(options = \{\}\)[\s\S]*?sharedStateDirty = true;[\s\S]*?if \(sharedStateReady && options\.scheduleSharedSave !== false\) \{\s*scheduleSharedApplicationStateSave\(\);/u,
+  "persist должен пропускать только автопланирование, сохраняя dirty/generation/recovery для ручного strict flush."
+);
+assert.match(
+  sharedFlushSource,
+  /isSettingsDraftSessionActive\(\)\s*&& saveOptions\.allowSettingsDraft !== true/u,
+  "Одиночный flush не должен отправлять state.data активного settings draft без явного разрешения."
+);
+assert.doesNotMatch(
+  sharedFlushSource,
+  /settingsDraftSaving/u,
+  "Защита одиночного flush должна действовать также во время settingsDraftSaving."
+);
+assert.match(
+  sharedGenerationFlushSource,
+  /isSettingsDraftSessionActive\(\)\s*&& options\.allowSettingsDraft !== true/u,
+  "Generation flush не должен отправлять активный settings draft без явного разрешения."
+);
+assert.doesNotMatch(
+  sharedGenerationFlushSource,
+  /settingsDraftSaving/u,
+  "Защита generation flush не должна зависеть от промежуточного флага saving."
+);
+assert.match(
+  beginSettingsDraftSource,
+  /sharedBaseDataAtOpen = clone\(sharedStateBaseData \|\| baselineData\)[\s\S]*?state\.settingsDraftSharedBaseData = sharedBaseDataAtOpen[\s\S]*?state\.settingsDraftPendingPatch = mergeSharedApplicationStatePatches\(\s*sharedStatePendingPatch,\s*buildSharedApplicationStatePatch\(sharedBaseDataAtOpen, baselineData\)/u,
+  "При открытии настроек нужно зафиксировать отдельные shared baseline и pending patch."
+);
+assert.match(
+  settingsSaveSnapshotSource,
+  /sharedBaseData:\s*clone\(state\.settingsDraftSharedBaseData \|\| sharedStateBaseData \|\| baselineData\)[\s\S]*?pendingPatch:\s*state\.settingsDraftPendingPatch/u,
+  "Commission snapshot должен использовать снимки начала settings-сессии."
+);
+assert.match(
+  settingsSaveSource,
+  /state\.settingsDraftBaseline = JSON\.stringify\(state\.data\);[\s\S]*?state\.settingsDraftSharedBaseData = clone\(sharedStateBaseData \|\| state\.data\);[\s\S]*?state\.settingsDraftPendingPatch = sharedStatePendingPatch/u,
+  "После успеха baseline, shared baseline и pending settings-сессии должны обновиться вместе."
+);
+assert.match(
+  waitForSharedSaveSource,
+  /while \(sharedStateSavePromise\)[\s\S]*?window\.clearTimeout\(sharedStateSaveTimer\);\s*sharedStateSaveTimer = 0;/u,
+  "После ожидания активного Promise старый таймер фонового flush должен быть отменён."
+);
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+const rebaseContext = {
+  clone: (value) => structuredClone(value),
+  state: { data: { collections: { programs: [] } } },
+  unique: (values) => [...new Set(values)],
+  PROGRAM_COMMISSION_FIELD_KEYS: [
+    "commissionChair",
+    "commissionMember1",
+    "commissionMember2",
+    "secretary"
+  ],
+  TRAINING_END_NOTIFICATION_SERVER_META_KEYS: new Set(),
+  withTrainingEndNotificationServerMeta: (data) => structuredClone(data)
+};
+vm.createContext(rebaseContext);
+vm.runInContext(
+  `${extractBetween("  function sharedStateValuesEqual", "\n  function mergeSharedApplicationStatePatches")}
+${extractBetween("  function applySharedApplicationStatePatchRaw", "\n  function applySharedApplicationStatePatchLocally")}
+${extractBetween("  function getProgramCommissionSetUsage", "\n  function renderProgramCommissionSettingsDictionary")}
+${extractBetween("  function hasSharedApplicationStatePatchChanges", "\n  function createProgramCommissionSettingsSaveSnapshot")}
+this.buildPatchForTest = buildSharedApplicationStatePatch;
+this.mergeDraftForTest = mergeProgramCommissionSettingsDraft;
+this.prepareRebaseForTest = prepareProgramCommissionSettingsRebase;`,
+  rebaseContext
+);
+
+const baselineData = {
+  collections: {
+    commissionSets: [{
+      id: "set-a",
+      name: "Основная",
+      commissionChair: "Председатель исходный",
+      commissionMember1: "Член исходный",
+      commissionMember2: "",
+      secretary: ""
+    }],
+    programs: [{ id: "program-a", name: "Программа до", commissionSetId: "set-a" }],
+    students: [{ id: "student-a", note: "до" }]
+  },
+  dictionaries: {},
+  meta: {}
+};
+const localData = structuredClone(baselineData);
+localData.collections.commissionSets[0].commissionChair = "Председатель локальный";
+localData.collections.commissionSets.unshift({
+  id: "set-local",
+  name: "Локальная комиссия",
+  commissionChair: "Новый председатель",
+  commissionMember1: "",
+  commissionMember2: "",
+  secretary: ""
+});
+const latestData = structuredClone(baselineData);
+latestData.collections.commissionSets[0].commissionMember1 = "Член от другого пользователя";
+latestData.collections.commissionSets.push({
+  id: "set-remote",
+  name: "Чужая комиссия",
+  commissionChair: "Чужой председатель",
+  commissionMember1: "",
+  commissionMember2: "",
+  secretary: ""
+});
+latestData.collections.programs[0].name = "Программа изменена другим пользователем";
+latestData.collections.students[0].note = "чужое изменение";
+
+const localPatch = rebaseContext.buildPatchForTest(baselineData, localData);
+const preparedRebase = plain(rebaseContext.prepareRebaseForTest({
+  baselineData,
+  localData,
+  sharedBaseData: baselineData,
+  draftPatch: localPatch,
+  pendingPatch: null
+}, {
+  exists: true,
+  data: latestData,
+  revision: 42
+}));
+assert.equal(preparedRebase.conflict, undefined);
+assert.equal(preparedRebase.revision, 42);
+assert.equal(
+  preparedRebase.data.collections.programs[0].name,
+  "Программа изменена другим пользователем",
+  "Rebase не должен откатывать чужую правку программы."
+);
+assert.equal(
+  preparedRebase.data.collections.students[0].note,
+  "чужое изменение",
+  "Rebase не должен перезаписывать чужие данные из других коллекций."
+);
+const rebasedOutgoingPatch = plain(rebaseContext.buildPatchForTest(
+  preparedRebase.serverData,
+  preparedRebase.data
+));
+assert.equal(
+  rebasedOutgoingPatch.collections.programs,
+  undefined,
+  "Чужая правка программы уже входит в server baseline и не должна повторно отправляться как локальный upsert."
+);
+const mergedMainSet = preparedRebase.data.collections.commissionSets.find((item) => item.id === "set-a");
+assert.equal(mergedMainSet.commissionChair, "Председатель локальный");
+assert.equal(
+  mergedMainSet.commissionMember1,
+  "Член от другого пользователя",
+  "Трёхстороннее слияние должно совместить изменения разных полей одного множества."
+);
+assert.ok(preparedRebase.data.collections.commissionSets.some((item) => item.id === "set-local"));
+assert.ok(
+  preparedRebase.data.collections.commissionSets.some((item) => item.id === "set-remote"),
+  "Множество, добавленное другим пользователем, должно сохраниться."
+);
+
+const conflictingLatest = structuredClone(latestData);
+conflictingLatest.collections.commissionSets.find((item) => item.id === "set-a").commissionChair = "Другой председатель";
+const semanticConflict = plain(rebaseContext.prepareRebaseForTest({
+  baselineData,
+  localData,
+  sharedBaseData: baselineData,
+  draftPatch: localPatch,
+  pendingPatch: null
+}, {
+  exists: true,
+  data: conflictingLatest,
+  revision: 43
+}));
+assert.equal(semanticConflict.conflict.kind, "commission-field");
+assert.equal(semanticConflict.conflict.fieldLabel, "Председатель комиссии");
+
+const deletionLocalData = structuredClone(baselineData);
+deletionLocalData.collections.commissionSets = [];
+deletionLocalData.collections.programs = [];
+const freshlyUsedLatest = structuredClone(baselineData);
+freshlyUsedLatest.collections.programs.push({
+  id: "program-new",
+  name: "Новая чужая программа",
+  commissionSetId: "set-a"
+});
+const freshUsageConflict = plain(rebaseContext.mergeDraftForTest(
+  baselineData,
+  deletionLocalData,
+  freshlyUsedLatest
+));
+assert.equal(freshUsageConflict.conflict.kind, "used");
+assert.equal(
+  freshUsageConflict.conflict.count,
+  2,
+  "Перед удалением нужно учитывать актуальное использование множества из свежего серверного снимка."
+);
+
+const recoverySnapshots = [];
+const queueBaseData = structuredClone(baselineData);
+const queueConfirmedBaseline = structuredClone(baselineData);
+queueConfirmedBaseline.collections.commissionSets[0].commissionMember2 = "Подтверждённое сервером значение";
+const queueDraftData = structuredClone(queueConfirmedBaseline);
+queueDraftData.collections.commissionSets[0].commissionChair = "Ещё не подтверждённый черновик";
+Object.assign(rebaseContext, {
+  state: {
+    settingsDraftBaseline: JSON.stringify(queueConfirmedBaseline),
+    data: queueDraftData
+  },
+  sharedStateBaseData: queueBaseData,
+  sharedStatePendingPatch: null,
+  sharedStateDirty: true,
+  sharedStateConflict: true,
+  sharedStateConflictShown: true,
+  sharedStateOffline: true,
+  sharedStateSyncBlockedReason: "conflict",
+  persistStateToLocalStorage: () => {},
+  persistSharedStateRecovery() {
+    recoverySnapshots.push({
+      dirty: rebaseContext.sharedStateDirty,
+      pendingPatch: structuredClone(rebaseContext.sharedStatePendingPatch)
+    });
+  },
+  updateSharedStateStatusUi: () => {}
+});
+vm.runInContext(
+  `${extractBetween(
+    "  function restoreSettingsDraftSharedStateQueueAfterFailure",
+    "\n  async function saveSettingsDraftChanges"
+  )}
+this.restoreSettingsDraftSharedStateQueueAfterFailureForTest = restoreSettingsDraftSharedStateQueueAfterFailure;`,
+  rebaseContext
+);
+rebaseContext.restoreSettingsDraftSharedStateQueueAfterFailureForTest({
+  conflict: false,
+  conflictShown: false,
+  offline: false,
+  syncBlockedReason: ""
+});
+assert.equal(recoverySnapshots.length, 1);
+assert.equal(
+  recoverySnapshots[0].dirty,
+  false,
+  "Recovery нужно сохранять при временном sharedStateDirty=false, чтобы state.data с черновиком не подмешался в pending patch."
+);
+const queuedCommission = recoverySnapshots[0].pendingPatch.collections.commissionSets.upserts
+  .find((item) => item.id === "set-a");
+assert.equal(queuedCommission.commissionMember2, "Подтверждённое сервером значение");
+assert.equal(
+  queuedCommission.commissionChair,
+  "Председатель исходный",
+  "В pending должна попасть только разница подтверждённого baseline, а не несохранённое значение из state.data."
+);
+assert.notEqual(queuedCommission.commissionChair, "Ещё не подтверждённый черновик");
+assert.equal(
+  rebaseContext.sharedStateDirty,
+  true,
+  "После сохранения recovery sharedStateDirty должен восстановиться из наличия pending patch."
+);
+assert.equal(
+  rebaseContext.sharedStateConflict,
+  false,
+  "Ошибка strict POST не должна оставлять восстановленную очередь заблокированной conflict latch."
+);
+assert.equal(rebaseContext.sharedStateConflictShown, false);
+assert.equal(rebaseContext.sharedStateOffline, false);
+assert.equal(
+  rebaseContext.sharedStateSyncBlockedReason,
+  "",
+  "После ошибки strict POST нужно вернуть syncBlockedReason, зафиксированный до попытки."
+);
 
 assert.match(appSource, /commissionSets:\s*\[[\s\S]*?Председатель комиссии/u);
 assert.match(styleSource, /\.program-commission-settings\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\)[\s\S]*?overflow:\s*hidden/u);

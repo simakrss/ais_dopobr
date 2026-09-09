@@ -395,8 +395,8 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.407"/u);
-assert.match(authSource, /20260908-commission-table-dialog-v1/u);
-assert.match(indexSource, /20260908-commission-table-dialog-v1/u);
+assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.408"/u);
+assert.match(authSource, /20260909-settings-safe-rebase-v1/u);
+assert.match(indexSource, /20260909-settings-safe-rebase-v1/u);
 
 console.log("Program and student duplication checks: OK");

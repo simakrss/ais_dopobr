@@ -540,15 +540,91 @@ const settingsSaveSource = extractBetween(
   "  async function saveSettingsDraftChanges",
   "\n  function cancelSettingsDraftChanges"
 );
+const sharedFlushSource = extractBetween(
+  appSource,
+  "  function flushSharedApplicationState",
+  "\n  async function performSharedApplicationStateSave"
+);
+const sharedGenerationFlushSource = extractBetween(
+  appSource,
+  "  async function flushSharedApplicationStateThroughGeneration",
+  "\n  function saveSharedApplicationStateInBackground"
+);
 assert.match(settingsSaveSource, /programCommissionSettingsChanged[\s\S]*?strictRevision:\s*true/u);
-assert.match(settingsSaveSource, /baseRevision:[\s\S]*?state\.settingsDraftBaseRevision/u);
 assert.match(
   settingsSaveSource,
-  /programCommissionSettingsChanged[\s\S]*?sharedStateSavePromise[\s\S]*?Дождитесь завершения текущей синхронизации/u,
-  "Строгое сохранение множеств нельзя запускать одновременно с активным сохранением."
+  /programCommissionSettingsChanged[\s\S]*?await waitForActiveSharedApplicationStateSave\(\)[\s\S]*?createProgramCommissionSettingsSaveSnapshot\(\)/u,
+  "Строгое сохранение множеств должно дождаться активной записи и продолжиться с новым снимком автоматически."
+);
+assert.doesNotMatch(
+  settingsSaveSource,
+  /Дождитесь завершения текущей синхронизации|Отмените черновик, обновите раздел и повторите изменение/u,
+  "Сохранение комиссий не должно возвращать пользователя к ручному повтору при обычной гонке общей базы."
+);
+assert.match(settingsSaveSource, /requestAuthoritativeSharedStateForSettingsSave\(\)/u);
+assert.match(settingsSaveSource, /attempt < SETTINGS_SHARED_STATE_SAVE_MAX_ATTEMPTS/u);
+assert.match(
+  settingsSaveSource,
+  /applyProgramCommissionSettingsRebase\(prepared, payload\);\s*persist\(\{ forceSettingsDraft: true, scheduleSharedSave: false \}\);/u,
+  "Strict retry комиссий не должен создавать конкурирующее фоновое сохранение."
+);
+assert.match(
+  settingsSaveSource,
+  /\} else \{\s*persist\(\{ forceSettingsDraft: true \}\);\s*sharedStateSaveStarted = true;[\s\S]*?allowSettingsDraft:\s*true/u,
+  "Обычные настройки должны по-прежнему использовать стандартное автопланирование persist."
+);
+assert.match(settingsSaveSource, /baseRevision:\s*prepared\.revision/u);
+assert.match(settingsSaveSource, /deferRevisionConflict:\s*true/u);
+assert.match(settingsSaveSource, /deferLockedSave:\s*true/u);
+assert.equal(
+  (settingsSaveSource.match(/allowSettingsDraft:\s*true/gu) || []).length,
+  2,
+  "Обе явные ветки сохранения настроек должны обходить общую защиту settings draft только в своём контролируемом flush."
+);
+assert.equal(
+  (settingsSaveSource.match(/\[409, 423\]\.includes\(Number\(error\?\.status\)\)/gu) || []).length,
+  2,
+  "Flush-снимок и strict POST должны повторяться после временного конфликта ревизии или блокировки."
 );
 assert.match(settingsSaveSource, /createProgramCommissionSettingsSaveSnapshot\(\)/u);
-assert.match(settingsSaveSource, /restoreFailedProgramCommissionSettingsSave\(programCommissionSaveSnapshot\)/u);
+assert.match(settingsSaveSource, /prepareProgramCommissionSettingsRebase\(/u);
+assert.match(settingsSaveSource, /applyProgramCommissionSettingsRebase\(/u);
+assert.doesNotMatch(settingsSaveSource, /restoreFailedProgramCommissionSettingsSave\(/u);
+assert.match(
+  settingsSaveSource,
+  /restoreSettingsDraftSharedStateQueueAfterFailure\(programCommissionSaveSnapshot\)/u
+);
+assert.match(
+  appSource,
+  /function restoreSettingsDraftSharedStateQueueAfterFailure\([\s\S]*?sharedStateDirty = false;\s*persistSharedStateRecovery\(\);\s*sharedStateDirty = pendingDirty;/u,
+  "Recovery должен записывать только подтверждённую очередь, временно исключая несохранённый settings draft."
+);
+assert.match(
+  appSource,
+  /if \(error\.status === 423\) \{\s*if \(strictRevision && options\.deferLockedSave === true\) throw error;[\s\S]*?alert\([\s\S]*?reloadSharedApplicationState/u,
+  "Отложенный strict 423 должен попасть в retry до alert и reload."
+);
+assert.match(
+  appSource,
+  /function persist\(options = \{\}\)[\s\S]*?if \(sharedStateReady && options\.scheduleSharedSave !== false\) \{\s*scheduleSharedApplicationStateSave\(\);/u,
+  "Флаг scheduleSharedSave=false должен подавлять только постановку фонового таймера."
+);
+assert.match(sharedFlushSource, /isSettingsDraftSessionActive\(\)\s*&& saveOptions\.allowSettingsDraft !== true/u);
+assert.doesNotMatch(sharedFlushSource, /settingsDraftSaving/u);
+assert.match(sharedGenerationFlushSource, /isSettingsDraftSessionActive\(\)\s*&& options\.allowSettingsDraft !== true/u);
+assert.doesNotMatch(sharedGenerationFlushSource, /settingsDraftSaving/u);
+assert.match(
+  appSource,
+  /function beginSettingsDraftSession\([\s\S]*?state\.settingsDraftSharedBaseData = sharedBaseDataAtOpen[\s\S]*?state\.settingsDraftPendingPatch = mergeSharedApplicationStatePatches/u
+);
+assert.match(
+  appSource,
+  /function createProgramCommissionSettingsSaveSnapshot\([\s\S]*?state\.settingsDraftSharedBaseData[\s\S]*?state\.settingsDraftPendingPatch/u
+);
+assert.match(
+  appSource,
+  /async function waitForActiveSharedApplicationStateSave\([\s\S]*?window\.clearTimeout\(sharedStateSaveTimer\);\s*sharedStateSaveTimer = 0;/u
+);
 assert.match(
   appSource,
   /const confirmedData = payload\.data[\s\S]*?ensureDataShape\([\s\S]*?sharedStateBaseData = clone\(confirmedData \|\| data\)/u,
