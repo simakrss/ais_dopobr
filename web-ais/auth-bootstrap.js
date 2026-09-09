@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260909-partner-settings-layout-v1";
+  const AUTH_BUILD = "20260909-document-workflow-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
@@ -964,6 +964,7 @@
           await loadScript("data/program-payment-registry.js");
           await loadScript("data/seed.js");
         }
+        await loadScript("document-workflow.js");
         await loadScript("app.js");
       }
       applicationStarted = true;

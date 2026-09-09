@@ -23,6 +23,7 @@ $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
+  "document-workflow.js",
   "audit-lib.php",
   "auth-lib.php",
   "demo-mode-privacy.js",
@@ -63,6 +64,7 @@ function Test-DeployablePath([string]$PathValue) {
     "demo-mode-settings.php",
     "favicon.ico",
     "field-html-links.js",
+    "document-workflow.js",
     "gateway.php",
     "index.html",
     "partner-app.js",

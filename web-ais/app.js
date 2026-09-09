@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.413",
+    version: "1.7.414",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.414",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Добавлен раздел «Документооборот»: приказ об утверждении состава ИАК, приказ о наборе и коммерческое предложение. Документы включены в конструктор и формируются по редактируемым формулам Ассистента из актуальных программ, цен и составов комиссий с выбором даты, номера приказа и формата PDF/Word."
+      ]
+    },
     {
       version: "1.7.413",
       releasedAt: "2026-09-09",
@@ -4155,6 +4162,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "contract-field-67", position: 37, name: "Форма обучения", formula: `=СТРОЧН(ЕСЛИ([Форма обучения]="Дистант";"Заочная дистанционная";[Форма обучения]))`, hideEmpty: false, custom: false }
   ];
   const contractTemplateSourceFieldNames = [
+    "Дата документа", "Номер приказа", "Дата приказа", "Дата начала набора",
     "ФИО", "ФИО_несклон", "Email", "Договор", "Дата договора", "Дата подачи заявки", "Дата начала обучения", "Дата окончания обучения",
     "Продленная дата окончания обучения",
     "Прогр обуч факт", "Количество часов", "Форма обучения", "Стажировка", "Гражданство", "ДР обуч", "Обуч тел#",
@@ -4376,7 +4384,8 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
     { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" },
     { value: "employeeContract", label: "Карточка сотрудника. Договор" },
-    { value: "employeeAct", label: "Карточка сотрудника. Акт" }
+    { value: "employeeAct", label: "Карточка сотрудника. Акт" },
+    ...window.AIS_DOCUMENT_WORKFLOW.definitions.map((item) => ({ value: item.documentKind, label: `Документооборот. ${item.title}` }))
   ];
 
   function createDefaultDocumentTemplate() {
@@ -4781,6 +4790,11 @@ MAX - https://bizvmax.ru/zifra_plus
   function getDefaultDocumentTemplates() {
     return [
       createDefaultDocumentTemplate(),
+      ...window.AIS_DOCUMENT_WORKFLOW.definitions.map((definition) => createEducationDocumentTemplate({
+        ...definition,
+        markers: definition.fields.map((field) => field.name),
+        formulas: Object.fromEntries(definition.fields.map((field) => [field.name, field.formula]))
+      })),
       createLegalEntityApplicationDocumentTemplate(),
       ...trainingTermDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
       ...employeeContractDocumentTemplates.map(createEmployeeContractDocumentTemplate),
@@ -5385,6 +5399,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "issuedDocuments", label: "Реестр выданных документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><circle cx="17.5" cy="17.5" r="3.5"></circle><path d="M16 17.5l1 1 2-2"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
+    { id: "documentWorkflow", label: "Документооборот", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
     { id: "recycleBin", label: "Корзина", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 14h8l1-14"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>' },
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
@@ -13605,6 +13620,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (state.view === "advertising") return renderAdvertising();
     if (state.view === "issuedDocuments") return renderIssuedDocumentsRegistry();
     if (state.view === "documentConstructor") return renderDocumentConstructor();
+    if (state.view === "documentWorkflow") return renderDocumentWorkflow();
     if (state.view === "recycleBin") return renderRecycleBin();
     if (state.view === "settings") return renderSettings();
     if (state.view === "admin") return renderAdmin();
@@ -23091,6 +23107,108 @@ MAX - https://bizvmax.ru/zifra_plus
         `).join("") : `<span class="lookup-empty">Значений пока нет</span>`}
       </div>
     `;
+  }
+
+  function getWorkflowDocuments() {
+    return getDocumentTemplates().filter((item) => window.AIS_DOCUMENT_WORKFLOW.getDefinition(item.documentKind));
+  }
+
+  function getWorkflowPrograms() {
+    return getProgramRows().map((program) => resolveProgramCommissionRecord(program));
+  }
+
+  function getDocumentWorkflowDraft() {
+    if (!state.documentWorkflowDraft) state.documentWorkflowDraft = { documentId: "", date: todayIso(), orderNo: "", format: "" };
+    return state.documentWorkflowDraft;
+  }
+
+  function renderDocumentWorkflow() {
+    const documents = getWorkflowDocuments();
+    const draft = getDocumentWorkflowDraft();
+    const selected = documents.find((item) => item.id === draft.documentId) || documents[0];
+    if (!selected) return '<section class="panel"><p>Добавьте шаблон с привязкой «Документооборот» в конструкторе документов.</p></section>';
+    const definition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(selected.documentKind);
+    const isOrder = selected.documentKind !== "workflowCommercialProposal";
+    let programs = [], error = "";
+    try { programs = window.AIS_DOCUMENT_WORKFLOW.evaluateLists(selected, getWorkflowPrograms()).programs; }
+    catch (failure) { error = failure.message; }
+    return `
+      <section class="panel document-workflow-panel">
+        <div class="document-workflow-heading"><h2>Документооборот</h2><span class="muted">Генерация по формулам Ассистента</span></div>
+        <div class="document-workflow-layout">
+          <nav class="document-workflow-list" aria-label="Документы для формирования">
+            ${documents.map((item) => `<button type="button" class="document-workflow-choice ${item.id === selected.id ? "is-active" : ""}" data-workflow-document="${escapeAttr(item.id)}" aria-pressed="${item.id === selected.id}">${escapeHtml(item.title)}</button>`).join("")}
+          </nav>
+          <div class="document-workflow-detail">
+            <h3>${escapeHtml(selected.title)}</h3>
+            <p class="muted">${escapeHtml(definition.description)}</p>
+            <form data-workflow-generate data-document-id="${escapeAttr(selected.id)}">
+              <div class="document-workflow-fields">
+                <label>Дата документа<input name="date" type="date" required value="${escapeAttr(draft.date)}"></label>
+                ${isOrder ? `<label>Номер приказа<input name="orderNo" required maxlength="80" value="${escapeAttr(draft.orderNo)}" placeholder="Без знака №" autocomplete="off"></label>` : ""}
+                <label>Формат<select name="format"><option value="pdf" ${(draft.format || selected.generationFormat) === "pdf" ? "selected" : ""}>PDF</option><option value="docx" ${(draft.format || selected.generationFormat) === "docx" ? "selected" : ""}>Word (.docx)</option></select></label>
+              </div>
+              <p class="document-workflow-hint">Источник — текущий реестр программ АИС, включая составы комиссий. Для получения изменений из XLSB сначала выполните синхронизацию. Перед сохранением откроется предпросмотр. Отправка по почте не выполняется.</p>
+              <div class="document-workflow-actions"><button class="primary-button" type="submit" ${error || !programs.length ? "disabled" : ""}>Сформировать документ</button><button class="ghost-button" type="button" data-workflow-edit="${escapeAttr(selected.id)}">Открыть в конструкторе</button></div>
+            </form>
+            <div class="document-workflow-programs">
+              <strong>Программы в документе: ${programs.length}</strong>
+              ${error ? `<p role="alert">Ошибка формулы: ${escapeHtml(error)}. Исправьте её в конструкторе.</p>` : !programs.length ? '<p>Нет программ, соответствующих условиям формулы.</p>' : `<ul>${programs.map((program) => `<li title="${escapeAttr(program.name)}"><span>${escapeHtml(program.type)}</span> ${escapeHtml(program.name)}</li>`).join("")}</ul>`}
+            </div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function bindDocumentWorkflowEvents() {
+    const form = document.querySelector("[data-workflow-generate]");
+    if (!form) return;
+    const saveDraft = () => {
+      const draft = getDocumentWorkflowDraft();
+      draft.documentId = form.dataset.documentId;
+      draft.date = form.elements.date.value;
+      draft.orderNo = form.elements.orderNo?.value ?? draft.orderNo;
+      draft.format = form.elements.format.value;
+    };
+    form.addEventListener("input", saveDraft);
+    form.addEventListener("change", saveDraft);
+    document.querySelectorAll("[data-workflow-document]").forEach((button) => button.addEventListener("click", () => {
+      saveDraft();
+      state.documentWorkflowDraft.documentId = button.dataset.workflowDocument;
+      state.documentWorkflowDraft.format = "";
+      render();
+    }));
+    document.querySelector("[data-workflow-edit]")?.addEventListener("click", () => {
+      saveDraft();
+      const template = getWorkflowDocuments().find((item) => item.id === form.dataset.documentId);
+      if (template) editStudentDocumentTemplateParameters(template.id);
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      saveDraft();
+      const draft = getDocumentWorkflowDraft();
+      const template = getWorkflowDocuments().find((item) => item.id === draft.documentId);
+      if (!template) return;
+      const sourceValues = { "Дата документа": draft.date, "Номер приказа": draft.orderNo.trim().replace(/^№\s*/, "") };
+      if (template.documentKind !== "workflowCommercialProposal" && !sourceValues["Номер приказа"]) { alert("Укажите номер приказа."); return; }
+      try {
+        const programs = getWorkflowPrograms().map((program) => Object.fromEntries(["id", ...Object.values(window.AIS_DOCUMENT_WORKFLOW.columnMap)].map((key) => [key, program[key] ?? ""])));
+        const listValues = window.AIS_DOCUMENT_WORKFLOW.evaluateLists(template, programs);
+        if (!listValues.programs.length) { alert("Нет программ, соответствующих условиям формулы."); return; }
+        const date = new Date(`${draft.date}T12:00:00`);
+        const formattedDate = date.toLocaleDateString("ru-RU");
+        const fieldValues = { ...listValues.values, "Номер приказа": sourceValues["Номер приказа"], "Дата приказа": formattedDate, "ТекДата": formattedDate, "Дата начала набора": date.toLocaleDateString("ru-RU", {day: "2-digit", month: "long", year: "numeric"}).replace(/\s*г\.$/, "") };
+        await downloadStudentDocumentFromTemplate(
+          { ...template, generationFormat: draft.format, previewBeforeGeneration: true },
+          { id: template.id, name: template.title, workflowSourceValues: { ...sourceValues, ...fieldValues } },
+          form.querySelector("[type='submit']"), "Не удалось сформировать документ", {
+            fieldValues, sourceValues, skipEmail: true,
+            workflow: { fields: template.fields, programs }, auditArea: "Документооборот", entityType: "documentTemplates"
+          }
+        );
+      } catch (error) { alert(`Не удалось сформировать документ: ${error.message}`); }
+    });
   }
 
   function getProgramCommissionSetUsage(id, programs = state.data?.collections?.programs) {
@@ -40581,6 +40699,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindEvents() {
+    bindDocumentWorkflowEvents();
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
     bindProgramTypeFilterOutsideClick();
@@ -56954,10 +57073,21 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function applyDocumentTemplateInspection(documentTemplate, inspection, baseFields = documentTemplate?.fields || []) {
     const emailProperties = getDocumentEmailPropertiesFromInspection(inspection);
+    const workflowDefinition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(documentTemplate?.documentKind);
+    const workflowDefaults = workflowDefinition?.fields.map((field, index) => ({
+      ...field, id: `${documentTemplate.id}-field-${index + 1}`, position: index + 1, custom: true, hideEmpty: false
+    }));
+    // The generic inspector drops SQL formulas and fields absent from the Word body.
+    // Workflow templates need their SQL and the extra date/number parameters intact.
+    const mergeWorkflowFields = (base) => normalizeContractTemplateDocumentFields([
+      ...base,
+      ...(workflowDefaults || []).filter((field) => !base.some((item) => item.name === field.name)),
+      ...mergeDocumentTemplateFieldsFromInspection(inspection, []).filter((field) => !base.some((item) => item.name === field.name) && !workflowDefaults?.some((item) => item.name === field.name))
+    ]);
     const nextDocument = {
       ...documentTemplate,
-      fields: mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
-      originalFields: mergeDocumentTemplateFieldsFromInspection(inspection, []),
+      fields: workflowDefinition ? mergeWorkflowFields(baseFields) : mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
+      originalFields: workflowDefinition ? mergeWorkflowFields([]) : mergeDocumentTemplateFieldsFromInspection(inspection, []),
       fieldsMode: "document-markers",
       ...(emailProperties.subject.found
         ? { emailSubjectTemplate: emailProperties.subject.value }
@@ -67863,8 +67993,8 @@ MAX - https://bizvmax.ru/zifra_plus
     let pendingPreviewToken = "";
     let documentProcessingOrigin = "";
     try {
-      const fieldValues = evaluateContractTemplateFields(record, documentTemplate.fields);
-      const sourceValues = collectContractTemplateSourceValues(record);
+      const fieldValues = options.fieldValues || evaluateContractTemplateFields(record, documentTemplate.fields);
+      const sourceValues = options.sourceValues || collectContractTemplateSourceValues(record);
       const fileNameValues = { ...sourceValues, ...fieldValues };
       const outputFormat = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
       const fileName = ensureGeneratedDocumentFileName(
@@ -67873,7 +68003,7 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       const previewEnabled = Boolean(documentTemplate.previewBeforeGeneration)
         && options.skipPreview !== true;
-      let emailRequest = prepareStudentDocumentEmailRequest(
+      let emailRequest = options.skipEmail ? null : prepareStudentDocumentEmailRequest(
         documentTemplate,
         record,
         fieldValues,
@@ -67889,6 +68019,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fieldValues,
         sourceValues,
         documentKind: documentTemplate.documentKind,
+        ...(options.workflow ? { workflow: { ...options.workflow, fileNameTemplate } } : {}),
         useCustomDocumentProperties,
         preferLocalTemplate: getEffectiveLocalDocumentsMode(),
         outputFormat
@@ -69434,6 +69565,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getContractTemplateRawSourceValue(name, record) {
     const normalized = String(name || "").replace(/\s+/g, " ").trim();
+    if (Object.prototype.hasOwnProperty.call(record?.workflowSourceValues || {}, normalized)) return record.workflowSourceValues[normalized];
     const addressKey = resolveContractTemplateAddressSourceKey(normalized);
     if (addressKey) return record?.[addressKey] ?? "";
     if (normalized === "Скидка") return getContractDocumentDiscountPercent(record);

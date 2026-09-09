@@ -58,6 +58,7 @@ async function promoteCodexTrainingEndDateAssets() {
 }
 
 const SERVER_CODE_ROOT = __dirname;
+const documentWorkflow = require("./document-workflow.js");
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const {
   sanitizeDemoSharedState,
@@ -5433,7 +5434,117 @@ function applyEducationCostDiscountStatement(xml, value) {
   });
 }
 
-function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null) {
+function prepareWorkflowDocumentValues(kind, workflow, sourceValues = {}) {
+  const definition = documentWorkflow.getDefinition(kind);
+  if (!definition) throw new Error("Неизвестный вид документа документооборота.");
+  const dateText = String(sourceValues["Дата документа"] || "");
+  const date = new Date(`${dateText}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== dateText) throw new Error("Укажите корректную дату документа.");
+  if (kind !== "workflowCommercialProposal" && !String(sourceValues["Номер приказа"] || "").trim()) throw new Error("Укажите номер приказа.");
+  if (!Array.isArray(workflow?.programs) || workflow.programs.length > 10000) throw new Error("Не передан реестр программ (не более 10 000 записей).");
+  if (!Array.isArray(workflow?.fields) || !workflow.fields.length || workflow.fields.length > 200) throw new Error("Не переданы поля документа из конструктора.");
+  const fields = workflow.fields.map((field) => ({ name: String(field.name || "").trim(), formula: String(field.formula || "") }));
+  if (fields.some((field) => !field.name || field.name.length > 200 || field.formula.length > 30000)) throw new Error("Некорректное поле документа.");
+  const tableFields = definition.fields.filter((field) => /ПолучитьSQLзапрос/.test(field.formula) && /СИМВОЛ\(9\)/.test(field.formula)).map((field) => field.name);
+  for (const field of definition.fields) {
+    if (!fields.some((item) => item.name === field.name)) throw new Error(`В конструкторе отсутствует обязательное поле «${field.name}».`);
+  }
+  const values = { ...documentWorkflow.evaluateLists({documentKind: kind, fields}, workflow.programs).values };
+  const byName = new Map(fields.map((field) => [field.name, field]));
+  const visiting = new Set(), completed = new Set(Object.keys(values));
+  function evaluate(name) {
+    if (completed.has(name)) return;
+    if (visiting.has(name)) throw new Error(`Обнаружена рекурсия в формулах документа: ${name}.`);
+    const field = byName.get(name);
+    if (!field) return;
+    visiting.add(name);
+    const dependencies = [...getDocumentFormulaFieldReferences(field.formula), ...[...field.formula.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1])];
+    dependencies.filter((key) => key !== name).forEach(evaluate);
+    const context = { fieldValues: values, sourceValues, evaluatingName: name };
+    // Use the existing Assistant expression engine, but fail visibly on unsupported formulas.
+    values[name] = field.formula.startsWith("=")
+      ? formulaValueToString(evaluateDocumentFormulaExpression(stripDocumentFormulaComments(field.formula.slice(1)), context)).trim()
+      : field.formula;
+    visiting.delete(name);
+    completed.add(name);
+  }
+  fields.forEach((field) => evaluate(field.name));
+  return { values, tableFields, kind };
+}
+
+function applyWorkflowTableRows(xml, fieldName, value, fieldPositionMap) {
+  const rows = String(value ?? "").split(/[\u000b\r\n]+/u).filter((row) => row.trim()).map((row) => row.split("\t"));
+  const source = String(xml || "");
+  const matches = [...source.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+  let cursor = 0, result = "";
+  for (let index = 0; index < matches.length; index++) {
+    const match = matches[index], cells = splitWordTableRowCells(match[0]);
+    const fieldIndex = cells.findIndex((cell) => paragraphHasDocumentField(cell.xml, fieldName, fieldPositionMap));
+    if (fieldIndex < 0) continue;
+    result += source.slice(cursor, match.index);
+    result += (rows.length ? rows : [["Нет программ по условиям отбора"]]).map((row, rowIndex) => {
+      const nextCells = cells.map((cell, cellIndex) => {
+        const content = cellIndex === fieldIndex - 1 ? (rows.length ? String(rowIndex + 1) : "") : (row[cellIndex - fieldIndex] ?? "");
+        return buildWordTableCellValueXml(cell.xml.replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, ""), content);
+      });
+      return replaceWordTableRowCells(match[0], nextCells);
+    }).join("");
+    let last = index;
+    while (last + 1 < matches.length) {
+      const previous = matches[last], next = matches[last + 1];
+      if (/<\/?w:tbl\b/.test(source.slice(previous.index + previous[0].length, next.index)) || splitWordTableRowCells(next[0]).length !== cells.length) break;
+      last++;
+    }
+    cursor = matches[last].index + matches[last][0].length;
+    index = last;
+  }
+  return result + source.slice(cursor);
+}
+
+function buildWorkflowListParagraph(source, line) {
+  const pPr = getWordParagraphPropertiesXml(source).replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, "");
+  const base = getWordMarkerRunPropertiesXml(source, "").replace(/<w:b(?:Cs)?\b[^>]*(?:\/>|>[\s\S]*?<\/w:b(?:Cs)?>)/g, "");
+  const bold = /^<b>[\s\S]*<\/b>$/i.test(line);
+  const value = bold ? line.slice(3, -4) : line;
+  const rPr = base ? base.replace("</w:rPr>", `<w:b w:val="${bold ? 1 : 0}"/><w:bCs w:val="${bold ? 1 : 0}"/></w:rPr>`) : `<w:rPr><w:b w:val="${bold ? 1 : 0}"/></w:rPr>`;
+  return `${getWordClonedParagraphOpenTag(source)}${pPr}<w:r>${rPr}<w:t xml:space="preserve">${escapeXmlText(value)}</w:t></w:r></w:p>`;
+}
+
+function applyWorkflowCommissionList(xml, value, fieldPositionMap) {
+  const source = String(xml || ""), paragraphs = [...source.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  const start = paragraphs.findIndex((item) => paragraphHasDocumentField(item[0], "Список", fieldPositionMap));
+  if (start < 0) return source;
+  let end = start, depth = 0;
+  if (!paragraphs[start][0].includes("#Список#")) {
+    for (; end < paragraphs.length; end++) {
+      for (const match of paragraphs[end][0].matchAll(/<w:fldChar\b[^>]*w:fldCharType="(begin|end)"[^>]*>/g)) depth += match[1] === "begin" ? 1 : -1;
+      if (depth <= 0) break;
+    }
+    if (end >= paragraphs.length) throw new Error("В шаблоне ИАК не найден конец поля «Список».");
+  }
+  const lines = String(value || "").split(/[\r\n\u000b]+/u).filter((line) => line.trim());
+  const replacement = (lines.length ? lines : ["Нет программ по условиям отбора"]).map((line) => buildWorkflowListParagraph(paragraphs[start][0], line)).join("");
+  return source.slice(0, paragraphs[start].index) + replacement + source.slice(paragraphs[end].index + paragraphs[end][0].length);
+}
+
+function applyWorkflowDocumentContent(xml, fieldValues, fieldPositionMap, workflow) {
+  let result = String(xml || "");
+  if (!documentWorkflow.getDefinition(workflow?.kind)) return result;
+  for (const name of workflow.tableFields || []) result = applyWorkflowTableRows(result, name, fieldValues[name], fieldPositionMap);
+  if (workflow.kind === "workflowCommissionOrder") result = applyWorkflowCommissionList(result, fieldValues["Список"], fieldPositionMap);
+  if (workflow.kind !== "workflowCommercialProposal") {
+    result = result.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraph) => {
+      const text = getWordParagraphText(paragraph).trim();
+      if (/^Приказ\s*№/iu.test(text)) return buildWordParagraphFromLine(paragraph, `Приказ №${fieldValues["Номер приказа"] || ""}`);
+      if (/^\d{2}\.\d{2}\.\d{4}\s*г\.?$/u.test(text)) return buildWordParagraphFromLine(paragraph, `${fieldValues["Дата приказа"] || ""} г.`);
+      if (workflow.kind === "workflowRecruitmentOrder" && /Объявить с /u.test(text)) return buildWordParagraphFromLine(paragraph, text.replace(/Объявить с .*? года набор/u, `Объявить с ${fieldValues["Дата начала набора"] || ""} года набор`));
+      return paragraph;
+    });
+  }
+  return result;
+}
+
+function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null, workflow = null) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
     .map(([name, value]) => {
@@ -5458,6 +5569,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
   entries.forEach((entry) => {
     if (!/^word\/.+\.xml$/i.test(entry.name)) return;
     let xml = entry.content.toString("utf8");
+    xml = applyWorkflowDocumentContent(xml, fieldValues, indexedFieldPositionMap, workflow);
     xml = applyEducationCostDiscountStatement(xml, fieldValues?.["Скидка"]);
     xml = applyExpulsionOrderConditionalBlocks(xml, fieldValues, indexedFieldPositionMap);
     xml = applyEducationTrainingPlanTableRows(xml, fieldValues, indexedFieldPositionMap);
@@ -36056,10 +36168,13 @@ async function handleContractDocument(req, res, authUser) {
       templateBytes = await loadTemplateBytes("", body.fallbackTemplatePath);
     }
     const inputFieldValues = body.fieldValues || {};
-    const fieldValues = body.useCustomDocumentProperties
+    const workflow = documentWorkflow.getDefinition(body.documentKind)
+      ? prepareWorkflowDocumentValues(body.documentKind, body.workflow, body.sourceValues || {})
+      : null;
+    const fieldValues = workflow ? workflow.values : body.useCustomDocumentProperties
       ? applyCustomDocumentPropertyFormulas(templateBytes, inputFieldValues, body.sourceValues || {})
       : inputFieldValues;
-    const propertyUpdateNames = new Set(Object.keys(inputFieldValues || {}));
+    const propertyUpdateNames = new Set(Object.keys(workflow ? fieldValues : inputFieldValues || {}));
     const sourceValues = body.sourceValues || {};
     const documentIdentity = [body.templateUrl, body.templatePath, body.fileName]
       .map((value) => String(value || "").toLocaleLowerCase("ru-RU"))
@@ -36094,7 +36209,8 @@ async function handleContractDocument(req, res, authUser) {
       templateBytes,
       outputFieldValues,
       imageValues,
-      propertyUpdateNames
+      propertyUpdateNames,
+      workflow
     );
     const requestedOutputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
     let outputFormat = requestedOutputFormat;
@@ -36115,7 +36231,10 @@ async function handleContractDocument(req, res, authUser) {
         );
       }
     }
-    const outputFileName = safeDocumentFileName(body.fileName || "документ", outputFormat);
+    const workflowFileName = workflow && body.workflow?.fileNameTemplate
+      ? String(body.workflow.fileNameTemplate).replace(/#([^#]+)#/g, (_, name) => String(fieldValues[name] ?? sourceValues[name] ?? ""))
+      : "";
+    const outputFileName = safeDocumentFileName(workflowFileName || body.fileName || "документ", outputFormat);
     extraHeaders["X-Generated-Document-Format"] = outputFormat;
     extraHeaders["X-Generated-Document-File-Name"] = encodeURIComponent(outputFileName);
     const generated = {
@@ -39439,6 +39558,7 @@ const PUBLIC_STATIC_PATHS = new Set([
   "/data/seed.js",
   "/favicon.ico",
   "/field-html-links.js",
+  "/document-workflow.js",
   "/index.html",
   "/partner-app.js",
   "/styles.css"
@@ -40100,6 +40220,9 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  handleContractDocument,
+  prepareWorkflowDocumentValues,
+  inspectDocxTemplate,
   ensureStorage,
   getEmployeeAuthAccess,
   getMoscowCalendarDateKey,

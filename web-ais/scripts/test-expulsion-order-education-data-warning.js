@@ -493,7 +493,10 @@ async function run() {
   assert.equal(ppp.calls.generated, 1);
 
   assert.match(appSource, /version: "1\.7\.372"[\s\S]*?предупреждает об отсутствии реквизитов документа об образовании/u);
-  assert.match(indexSource, /20260831-html-links-visible-text-v2/u);
+  const currentBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1];
+  assert.ok(currentBuild, "В index.html должна быть версия загрузки интерфейса");
+  assert.ok(indexSource.includes(`styles.css?v=${currentBuild}`));
+  assert.ok(fs.readFileSync(path.join(root, "auth-bootstrap.js"), "utf8").includes(`AUTH_BUILD = "${currentBuild}"`));
   console.log("expulsion order education data warning checks: OK");
 }
 
