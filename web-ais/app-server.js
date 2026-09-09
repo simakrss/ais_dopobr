@@ -4595,11 +4595,11 @@ const EMPLOYEE_ACT_PAYMENT_FIELDS = new Set([
 ]);
 
 function shouldRenderDocumentFieldAsParagraphs(fieldName, value) {
-  return ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim()) && /\r|\n/.test(String(value ?? ""));
+  return ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim()) && Boolean(String(value ?? "").trim());
 }
 
 function splitDocumentFieldParagraphLines(value) {
-  return String(value ?? "").split(/\r\n|\r|\n/);
+  return String(value ?? "").split(/\r\n|\r|\n|\u000b/).filter((line) => line.trim());
 }
 
 function splitEducationTrainingPlanLines(value) {
@@ -5000,75 +5000,28 @@ function trimLeadingWordRunCloseXml(xml) {
   return String(xml || "").replace(/^\s*<\/w:r>/, "");
 }
 
-function buildComplexFieldParagraphsFromLines({
+function buildMaterializedOrderListParagraphs({
   sourceParagraphXml,
   beforeInner,
-  startXml,
-  resultXml,
-  endXml,
   afterInner,
   lines,
-  marker = "",
-  spanFieldAcrossParagraphs = true
+  marker = ""
 }) {
   if (!Array.isArray(lines) || !lines.length) return null;
   const openTag = getWordParagraphOpenTag(sourceParagraphXml);
   const clonedOpenTag = getWordClonedParagraphOpenTag(sourceParagraphXml);
   const paragraphProperties = getWordParagraphPropertiesXml(sourceParagraphXml);
-  const instruction = getComplexWordFieldInstruction(startXml);
   const beforeFieldXml = trimDanglingWordRunStartXml(beforeInner);
   const afterFieldXml = trimLeadingWordRunCloseXml(afterInner);
-  const fieldEndXml = `<w:r><w:fldChar w:fldCharType="end"/></w:r>${afterFieldXml}`;
-  if (lines.length === 1) {
-    return `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}${fieldEndXml}</w:p>`;
-  }
-  if (!spanFieldAcrossParagraphs) {
-    const firstParagraphXml = `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}${fieldEndXml}</w:p>`;
-    const restParagraphsXml = lines
-      .slice(1)
-      .map((line) => `${clonedOpenTag}${paragraphProperties}${buildWordRunFromLine(sourceParagraphXml, line, marker)}</w:p>`)
-      .join("");
-    return `${firstParagraphXml}${restParagraphsXml}`;
-  }
-  const firstParagraphXml = `${openTag}${beforeFieldXml}${buildComplexFieldStartXmlFromInstruction(instruction)}${buildWordRunFromLine(sourceParagraphXml, lines[0], marker)}</w:p>`;
-  const restParagraphsXml = lines
-    .slice(1)
-    .map((line, index, restLines) => {
-      const isLastLine = index === restLines.length - 1;
-      return `${clonedOpenTag}${paragraphProperties}${buildWordRunFromLine(sourceParagraphXml, line, marker)}${isLastLine ? fieldEndXml : ""}</w:p>`;
-    })
-    .join("");
-  return `${firstParagraphXml}${restParagraphsXml}`;
-}
-
-function buildComplexFieldStartXmlFromInstruction(instruction) {
-  const instructionText = escapeXmlText(decodeXmlText(instruction).replace(/\r\n|\r|\n/g, " "));
-  return `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">${instructionText}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
-}
-
-function buildComplexFieldParagraphsFromSimpleField({
-  sourceParagraphXml,
-  beforeInner,
-  encodedInstruction,
-  resultXml,
-  afterInner,
-  lines,
-  marker = "",
-  spanFieldAcrossParagraphs = true
-}) {
-  const startXml = buildComplexFieldStartXmlFromInstruction(encodedInstruction);
-  const endXml = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
-  return buildComplexFieldParagraphsFromLines({
-    sourceParagraphXml,
-    beforeInner,
-    startXml,
-    resultXml,
-    endXml,
-    afterInner,
-    lines,
-    marker,
-    spanFieldAcrossParagraphs
-  });
+  // A live SUBJECT/SEQ result spanning numbered paragraphs can be collapsed or
+  // moved by Office converters. Materialize list items, keeping template styles
+  // and numbering; the original template retains its Assistant fields/formulas.
+  return lines.map((line, index) => (
+    `${index ? clonedOpenTag + paragraphProperties : openTag + beforeFieldXml}`
+      + buildWordRunFromLine(sourceParagraphXml, line, marker)
+      + (index === lines.length - 1 ? afterFieldXml : "")
+      + "</w:p>"
+  )).join("");
 }
 
 function replaceTextMarkerInsideWordFieldWithParagraphs(paragraphXml, marker, lines) {
@@ -5076,30 +5029,23 @@ function replaceTextMarkerInsideWordFieldWithParagraphs(paragraphXml, marker, li
   const complexFieldPattern = /(<w:fldChar\b(?=[^>]*w:fldCharType="begin")[^>]*\/>[\s\S]*?<w:fldChar\b(?=[^>]*w:fldCharType="separate")[^>]*\/>)([\s\S]*?)(<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>)/g;
   for (const match of innerXml.matchAll(complexFieldPattern)) {
     if (!String(match[2] || "").includes(marker)) continue;
-    return buildComplexFieldParagraphsFromLines({
+    return buildMaterializedOrderListParagraphs({
       sourceParagraphXml: paragraphXml,
       beforeInner: innerXml.slice(0, match.index),
-      startXml: match[1],
-      resultXml: match[2],
-      endXml: match[3],
       afterInner: innerXml.slice(match.index + match[0].length),
       lines,
-      marker,
-      spanFieldAcrossParagraphs: true
+      marker
     });
   }
   const simpleFieldPattern = /(<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>)([\s\S]*?)(<\/w:fldSimple>)/g;
   for (const match of innerXml.matchAll(simpleFieldPattern)) {
     if (!String(match[3] || "").includes(marker)) continue;
-    return buildComplexFieldParagraphsFromSimpleField({
+    return buildMaterializedOrderListParagraphs({
       sourceParagraphXml: paragraphXml,
       beforeInner: innerXml.slice(0, match.index),
-      encodedInstruction: match[2],
-      resultXml: match[3],
       afterInner: innerXml.slice(match.index + match[0].length),
       lines,
-      marker,
-      spanFieldAcrossParagraphs: true
+      marker
     });
   }
   return null;
@@ -5107,7 +5053,7 @@ function replaceTextMarkerInsideWordFieldWithParagraphs(paragraphXml, marker, li
 
 function replaceTextMarkerWithParagraphs(xml, marker, value) {
   const lines = splitDocumentFieldParagraphLines(value);
-  if (lines.length < 2) return String(xml || "").split(marker).join(escapeXmlText(value));
+  if (!lines.length) return String(xml || "").split(marker).join("");
   let replaced = false;
   const nextXml = String(xml || "").replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraphXml) => {
     if (!paragraphXml.includes(marker)) return paragraphXml;
@@ -5136,20 +5082,11 @@ function replaceIndexedWordFieldInsideParagraphWithParagraphs(paragraphXml, fiel
     const value = fieldValues[fieldName];
     if (!shouldRenderDocumentFieldAsParagraphs(fieldName, value)) continue;
     const lines = splitDocumentFieldParagraphLines(value);
-    const isOrderListField = ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim());
-    if (isOrderListField && getWordParagraphText(match[2]).trim() === String(lines[0] || "").trim()) continue;
-    const startXml = indexedField.type === "subject"
-      ? updateSubjectFieldInstruction(match[1], lines[0])
-      : match[1];
-    return buildComplexFieldParagraphsFromLines({
+    return buildMaterializedOrderListParagraphs({
       sourceParagraphXml: paragraphXml,
       beforeInner: innerXml.slice(0, match.index),
-      startXml,
-      resultXml: match[2],
-      endXml: match[3],
       afterInner: innerXml.slice(match.index + match[0].length),
-      lines,
-      spanFieldAcrossParagraphs: true
+      lines
     });
   }
   const simpleFieldPattern = /(<w:fldSimple\b[^>]*\bw:instr="([^"]*)"[^>]*>)([\s\S]*?)(<\/w:fldSimple>)/g;
@@ -5161,16 +5098,11 @@ function replaceIndexedWordFieldInsideParagraphWithParagraphs(paragraphXml, fiel
     const value = fieldValues[fieldName];
     if (!shouldRenderDocumentFieldAsParagraphs(fieldName, value)) continue;
     const lines = splitDocumentFieldParagraphLines(value);
-    const isOrderListField = ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim());
-    if (isOrderListField && getWordParagraphText(match[3]).trim() === String(lines[0] || "").trim()) continue;
-    return buildComplexFieldParagraphsFromSimpleField({
+    return buildMaterializedOrderListParagraphs({
       sourceParagraphXml: paragraphXml,
       beforeInner: innerXml.slice(0, match.index),
-      encodedInstruction: match[2],
-      resultXml: match[3],
       afterInner: innerXml.slice(match.index + match[0].length),
-      lines,
-      spanFieldAcrossParagraphs: true
+      lines
     });
   }
   return null;
@@ -5194,7 +5126,7 @@ function replaceIndexedComplexFieldAcrossParagraphs(paragraphs, startIndex, fiel
     if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) continue;
     if (!ORDER_LIST_DOCUMENT_FIELDS.has(String(fieldName || "").trim())) continue;
     const value = fieldValues[fieldName];
-    const lines = splitDocumentFieldParagraphLines(value).filter((line) => String(line || "").trim());
+    const lines = splitDocumentFieldParagraphLines(value);
     if (!lines.length) continue;
     const sameParagraphEndMatch = /<w:fldChar\b(?=[^>]*w:fldCharType="end")[^>]*\/>/.exec(innerXml.slice(startMatch.index + startMatch[0].length));
     if (sameParagraphEndMatch) continue;
@@ -5204,17 +5136,11 @@ function replaceIndexedComplexFieldAcrossParagraphs(paragraphs, startIndex, fiel
       if (!endMatch) continue;
       return {
         endIndex,
-        xml: buildComplexFieldParagraphsFromLines({
+        xml: buildMaterializedOrderListParagraphs({
           sourceParagraphXml,
           beforeInner: innerXml.slice(0, startMatch.index),
-          startXml: indexedField.type === "subject"
-            ? updateSubjectFieldInstruction(startMatch[1], lines[0])
-            : startMatch[1],
-          resultXml: "",
-          endXml: endMatch[0],
           afterInner: endInnerXml.slice(endMatch.index + endMatch[0].length),
-          lines,
-          spanFieldAcrossParagraphs: true
+          lines
         })
       };
     }

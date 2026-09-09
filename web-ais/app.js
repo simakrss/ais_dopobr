@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.420",
+    version: "1.7.421",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.421",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Исправлен список слушателей в приказах: каждый слушатель формируется отдельным нумерованным абзацем с форматированием шаблона. Устранены пустые пункты и склеивание текста при преобразовании служебных полей Word."
+      ]
+    },
     {
       version: "1.7.420",
       releasedAt: "2026-09-09",
