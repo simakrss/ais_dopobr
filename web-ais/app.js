@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.411",
+    version: "1.7.412",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.412",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Английское название образовательной программы восстанавливается из колонки «Название программы на английском» листа «Реестр программ» даже при уже сохранённой версии справочника и надёжно подставляется в сертификаты ДОП и ПРО."
+      ]
+    },
     {
       version: "1.7.411",
       releasedAt: "2026-09-09",
@@ -7827,6 +7834,24 @@ MAX - https://bizvmax.ru/zifra_plus
       ? window.AIS_PROGRAM_PAYMENT_REGISTRY
       : [];
     const version = String(window.AIS_PROGRAM_PAYMENT_REGISTRY_VERSION || "");
+    const importedByName = new Map(registry
+      .map((item) => [normalizeProgramName(item?.name), item])
+      .filter(([name]) => name));
+    const programsWithEnglishNames = currentPrograms.map((program) => {
+      const currentEnglishName = [
+        program?.nameEnglish,
+        program?.["Название программы на английском"]
+      ].map((value) => String(value || "").trim()).find(Boolean) || "";
+      if (currentEnglishName) {
+        return program?.nameEnglish === currentEnglishName
+          ? program
+          : { ...program, nameEnglish: currentEnglishName };
+      }
+      const importedEnglishName = String(
+        importedByName.get(normalizeProgramName(program?.name))?.nameEnglish || ""
+      ).trim();
+      return importedEnglishName ? { ...program, nameEnglish: importedEnglishName } : program;
+    });
     const previousAuthorPercent = normalizePaymentPercent(
       data.meta.defaultAuthorPaymentPercent,
       50
@@ -7836,7 +7861,7 @@ MAX - https://bizvmax.ru/zifra_plus
       previousAuthorPercent
     );
     if (!registry.length || (version && data.meta.programPaymentRegistryVersion === version)) {
-      return currentPrograms;
+      return programsWithEnglishNames;
     }
 
     data.meta.defaultAuthorPaymentPercent = defaultAuthorPercent;
@@ -7849,15 +7874,15 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       );
     }
-    const importedByName = new Map(registry
-      .map((item) => [normalizeProgramName(item?.name), item])
-      .filter(([name]) => name));
-    const mergedPrograms = currentPrograms.map((program) => {
+    const mergedPrograms = programsWithEnglishNames.map((program) => {
       const imported = importedByName.get(normalizeProgramName(program?.name));
       if (!imported) return program;
       const authorSource = String(imported.authorSource || "").trim();
       const importedFields = clone(imported);
       delete importedFields.name;
+      if (!String(importedFields.nameEnglish || "").trim() && String(program.nameEnglish || "").trim()) {
+        importedFields.nameEnglish = String(program.nameEnglish).trim();
+      }
       return {
         ...program,
         ...importedFields,
@@ -69386,15 +69411,8 @@ MAX - https://bizvmax.ru/zifra_plus
       return [parts.firstName, parts.patronymic].filter(Boolean).join(" ");
     }
     if (normalized === "Прогр обуч факт_ENG") {
-      const program = findProgramByName(record.program);
-      return String(
-        program?.nameEnglish
-        || program?.["Название программы на английском"]
-        || record.programEnglish
-        || program?.shortName
-        || record.program
-        || ""
-      ).trim();
+      return getEducationProgramEnglishName(record)
+        || String(findEducationDocumentProgram(record)?.shortName || record.program || "").trim();
     }
     if (normalized === "Документ об образовании") return getIssuedEducationDocumentName(record);
     if (normalized === "Квалификация") {
@@ -69441,8 +69459,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function findEducationDocumentProgram(record) {
     const programName = String(record?.program || "").trim();
-    if (!programName) return null;
     const programs = getProgramRows();
+    const programId = String(record?.programId || "").trim();
+    if (programId) {
+      const linkedProgram = programs.find((program) => String(program?.id || "").trim() === programId);
+      if (linkedProgram) return linkedProgram;
+    }
+    if (!programName) return null;
     const exactName = normalizeProgramName(programName);
     const exactProgram = programs.find((program) => normalizeProgramName(program?.name) === exactName);
     if (exactProgram) return exactProgram;
@@ -69463,6 +69486,24 @@ MAX - https://bizvmax.ru/zifra_plus
       if (matchingHours.length === 1) return matchingHours[0];
     }
     return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function getEducationProgramEnglishName(record) {
+    const program = findEducationDocumentProgram(record) || findProgramByName(record?.program);
+    const savedEnglishName = [
+      program?.nameEnglish,
+      program?.["Название программы на английском"],
+      record?.programEnglish
+    ].map((value) => String(value || "").trim()).find(Boolean) || "";
+    if (savedEnglishName) return savedEnglishName;
+    const registry = Array.isArray(window.AIS_PROGRAM_PAYMENT_REGISTRY)
+      ? window.AIS_PROGRAM_PAYMENT_REGISTRY
+      : [];
+    const lookupNames = [program?.name, record?.program]
+      .map(normalizeProgramName)
+      .filter(Boolean);
+    const imported = registry.find((item) => lookupNames.includes(normalizeProgramName(item?.name)));
+    return String(imported?.nameEnglish || "").trim();
   }
 
   function getEducationDocumentTrainingPlanRows(record) {

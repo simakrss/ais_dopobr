@@ -49,8 +49,35 @@ function loadProgramMerge() {
   return context.mergePrograms;
 }
 
-function loadProgramEnglishCertificateSource(program) {
+function loadProgramPaymentRegistryMerge(registry, version = "test-version") {
   const context = {
+    window: {
+      AIS_PROGRAM_PAYMENT_REGISTRY: registry,
+      AIS_PROGRAM_PAYMENT_REGISTRY_VERSION: version,
+      AIS_PROGRAM_DEFAULT_AUTHOR_PAYMENT_PERCENT: 50
+    },
+    normalizeProgramName: (value) => String(value || "").trim().toLowerCase(),
+    normalizePaymentPercent: (value, fallback) => Number(value ?? fallback),
+    mergeImportedPaymentRates: (values) => values,
+    parseProgramAuthorPayments: () => [],
+    applyGlobalAuthorRateToPrograms: (programs) => programs,
+    clone: (value) => JSON.parse(JSON.stringify(value))
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function mergeProgramPaymentRegistry",
+      "\n  function normalizeProgramName"
+    ) + "\nthis.mergeProgramPaymentRegistry = mergeProgramPaymentRegistry;",
+    context
+  );
+  return context.mergeProgramPaymentRegistry;
+}
+
+function loadProgramEnglishCertificateSource(program, registry = []) {
+  const context = {
+    window: { AIS_PROGRAM_PAYMENT_REGISTRY: registry },
     resolveContractTemplateAddressSourceKey: () => "",
     getContractDocumentDiscountPercent: () => "",
     getStudentProgramHours: () => "",
@@ -59,6 +86,12 @@ function loadProgramEnglishCertificateSource(program) {
     isChecked: () => false,
     splitFullName: () => ({ firstName: "", patronymic: "" }),
     findProgramByName: () => program,
+    getProgramRows: () => [program],
+    normalizeProgramName: (value) => String(value || "").trim().toLowerCase(),
+    normalizeTrainingPlanProgramName: (value) => String(value || "")
+      .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)\s*\)\s*$/iu, "")
+      .trim()
+      .toLowerCase(),
     getIssuedEducationDocumentName: () => "",
     formatEducationDocumentTrainingPlan: () => "",
     formatEducationDocumentStudyPeriod: () => "",
@@ -66,6 +99,14 @@ function loadProgramEnglishCertificateSource(program) {
     contractTemplateSourceFieldMap: {}
   };
   vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function getTrainingPlanHours",
+      "\n  function getEducationDocumentTrainingPlanRows"
+    ),
+    context
+  );
   vm.runInContext(
     extractBetween(
       clientSource,
@@ -156,6 +197,63 @@ assert.equal(merged[0].nameEnglish, "English program name");
 assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["hours"]);
 assert.deepEqual(merged[0].webOnly, { keep: true });
 
+const mergePaymentRegistry = loadProgramPaymentRegistryMerge([{
+  name: "Программа с английским названием",
+  nameEnglish: "Program with an English name"
+}], "same-version");
+const backfilledPrograms = mergePaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "same-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-without-english",
+  name: "Программа с английским названием",
+  nameEnglish: "   "
+}]);
+assert.equal(
+  backfilledPrograms[0].nameEnglish,
+  "Program with an English name",
+  "Пустое английское название должно восстанавливаться даже при совпавшей версии реестра."
+);
+const preservedPrograms = mergePaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "same-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-with-manual-english",
+  name: "Программа с английским названием",
+  nameEnglish: "Manually edited program name"
+}]);
+assert.equal(
+  preservedPrograms[0].nameEnglish,
+  "Manually edited program name",
+  "Заполненное вручную английское название нельзя перезаписывать фоновым восстановлением."
+);
+const mergeEmptyPaymentRegistry = loadProgramPaymentRegistryMerge([{
+  name: "Программа с английским названием",
+  nameEnglish: ""
+}], "new-version");
+const preservedAfterRegistryUpdate = mergeEmptyPaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "previous-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-with-manual-english",
+  name: "Программа с английским названием",
+  nameEnglish: "Manually edited program name"
+}]);
+assert.equal(
+  preservedAfterRegistryUpdate[0].nameEnglish,
+  "Manually edited program name",
+  "Пустая XLSB-ячейка не должна стирать заполненное вручную английское название."
+);
+
 const resolveProgramEnglish = loadProgramEnglishCertificateSource({
   name: "Новое имя в Excel",
   nameEnglish: "English program name",
@@ -167,6 +265,38 @@ assert.equal(
     programEnglish: "Legacy English name"
   }),
   "English program name"
+);
+const resolveBackfilledProgramEnglish = loadProgramEnglishCertificateSource({
+  id: "program-short-name",
+  name: "Полное название программы (36 ч)",
+  nameEnglish: "   ",
+  shortName: "Краткое название программы"
+}, [{
+  name: "Полное название программы (36 ч)",
+  nameEnglish: "Full program name (36 h)"
+}]);
+assert.equal(
+  resolveBackfilledProgramEnglish("Прогр обуч факт_ENG", {
+    programId: "program-short-name",
+    program: "Краткое название программы"
+  }),
+  "Full program name (36 h)",
+  "Сертификат должен находить английское название по связи программы и резервному XLSB-реестру."
+);
+const resolveLegacyProgramEnglish = loadProgramEnglishCertificateSource({
+  id: "program-legacy-english",
+  name: "Программа с историческим полем",
+  nameEnglish: "   ",
+  "Название программы на английском": "Legacy English program name",
+  shortName: "Историческая программа"
+});
+assert.equal(
+  resolveLegacyProgramEnglish("Прогр обуч факт_ENG", {
+    programId: "program-legacy-english",
+    program: "Историческая программа"
+  }),
+  "Legacy English program name",
+  "Пробелы в основном поле не должны перекрывать английское название из исторического поля."
 );
 assert.match(
   clientSource,

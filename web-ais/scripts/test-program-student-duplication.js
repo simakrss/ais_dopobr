@@ -25,7 +25,7 @@ const context = {
     "mailingAddress", "photoPath", "photoData", "photoUrl"
   ],
   PROGRAM_DUPLICATE_FIELD_KEYS: [
-    "name", "shortName", "status", "price", "type", "hours", "landingCode",
+    "name", "nameEnglish", "shortName", "status", "price", "type", "hours", "landingCode",
     "promoMessage1", "emailMessageTemplate", "commissionSetId"
   ],
   PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS: [
@@ -153,6 +153,7 @@ assert.deepEqual(sourceStudent, sourceStudentSnapshot, "Исходная кар�
 const sourceProgram = {
   id: "program-1",
   name: "Охрана труда (72 ч)",
+  nameEnglish: "Occupational safety (72 h)",
   shortName: "Охрана труда",
   status: "Действует",
   price: 9000,
@@ -189,6 +190,7 @@ const existingPrograms = [
 const programDraft = context.buildProgramDuplicateDraftForTest(sourceProgram, existingPrograms);
 
 assert.equal(programDraft.name, "Копия 3 — Охрана труда (72 ч)");
+assert.equal(programDraft.nameEnglish, sourceProgram.nameEnglish);
 assert.equal(programDraft.shortName, "Копия 3 — Охрана труда");
 assert.match(programDraft.name, /\(72 ч\)$/u, "Суффикс с часами должен остаться в конце названия.");
 assert.equal(programDraft.status, sourceProgram.status);
@@ -395,8 +397,8 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.411"/u);
-assert.match(authSource, /20260909-partner-description-html-v1/u);
-assert.match(indexSource, /20260909-partner-description-html-v1/u);
+assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.412"/u);
+assert.match(authSource, /20260909-program-english-certificate-v2/u);
+assert.match(indexSource, /20260909-program-english-certificate-v2/u);
 
 console.log("Program and student duplication checks: OK");
