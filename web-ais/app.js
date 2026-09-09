@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.414",
+    version: "1.7.415",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.415",
+      releasedAt: "2026-09-09",
+      changes: [
+        "После импорта заявок открывается полный список слушателей выбранного статуса (по умолчанию «На зачисление»), включая ранее добавленных. Ограничение только импортированными записями и прежние фильтры по программам, датам и столбцам сбрасываются."
+      ]
+    },
     {
       version: "1.7.414",
       releasedAt: "2026-09-09",
@@ -21579,9 +21586,18 @@ MAX - https://bizvmax.ru/zifra_plus
     state.lastEditedRow = { config: "students", id: imported[0].id };
     state.view = "students";
     state.search = "";
-    state.statusFilter = "Все";
+    state.statusFilter = status;
     state.studentProgramTypeFilter = [];
-    state.studentImportedViewIds = imported.map((record) => record.id);
+    state.studentImportedViewIds = [];
+    state.studentListFilters = {
+      programs: [],
+      dateField: "",
+      datePeriod: "",
+      dateFrom: "",
+      dateTo: ""
+    };
+    state.studentListProgramQuery = "";
+    clearTableValueFilter("students");
     state.selected.students = [];
     state.sort = getStudentStatusTableSort(state.statusFilter);
     state.tablePages.students = 1;
