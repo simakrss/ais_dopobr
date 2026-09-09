@@ -154,7 +154,7 @@ assert.match(
 assert.match(appSource, /form\.elements\.partnerProgramDescriptionHtml/u);
 assert.match(appSource, /state\.data\.meta\.partnerProgramDescriptionHtml\s*=/u);
 assert.match(appSource, /data-action="save-partner-program-settings"/u);
-assert.match(appSource, /data-action="save-partner-program-settings"[\s\S]{0,1600}settings-apply-button/u);
+assert.match(settingsRenderSource, /class="[^"]*settings-apply-button[^"]*"[^>]*type="submit"/u);
 
 assert.match(authSource, /data-partner-program-description/u);
 assert.match(authSource, /payload\.descriptionHtml/u);

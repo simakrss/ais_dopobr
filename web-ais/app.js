@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.412",
+    version: "1.7.413",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.413",
+      releasedAt: "2026-09-09",
+      changes: [
+        "В настройках партнёрской программы предпросмотр и HTML-код разделены на вкладки во всю ширину панели; блоки помещаются на узких экранах, а код остаётся читаемым при поисковой подсветке."
+      ]
+    },
     {
       version: "1.7.412",
       releasedAt: "2026-09-09",
@@ -25059,23 +25066,25 @@ MAX - https://bizvmax.ru/zifra_plus
             <strong>Описание партнёрской программы</strong>
             <small>Текст показывается в публичной анкете перед полями регистрации. Изменения становятся общими после сохранения настроек.</small>
           </div>
-          <span>HTML</span>
+        </div>
+        <div class="partner-program-settings-tabs" role="tablist" aria-label="Описание партнёрской программы">
+          <button id="partner-program-preview-tab" class="active" type="button" role="tab" aria-selected="true" aria-controls="partner-program-preview-panel" data-partner-program-settings-tab="preview">Предпросмотр</button>
+          <button id="partner-program-source-tab" type="button" role="tab" aria-selected="false" aria-controls="partner-program-source-panel" tabindex="-1" data-partner-program-settings-tab="source">HTML-код</button>
         </div>
         <div class="partner-program-settings-workspace">
-          <label class="partner-program-settings-source">
-            <span>HTML-код</span>
+          <section id="partner-program-source-panel" class="partner-program-settings-source" role="tabpanel" aria-labelledby="partner-program-source-tab" data-partner-program-settings-panel="source" hidden>
             <textarea
               name="partnerProgramDescriptionHtml"
               data-partner-program-html-input
+              aria-label="HTML-код описания партнёрской программы"
               rows="20"
               maxlength="${MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH}"
-              wrap="off"
+              wrap="soft"
               spellcheck="false"
               required
             >${escapeHtml(partnerProgramDescriptionHtml)}</textarea>
-          </label>
-          <section class="partner-program-settings-preview" aria-label="Предпросмотр описания">
-            <span>Предпросмотр</span>
+          </section>
+          <section id="partner-program-preview-panel" class="partner-program-settings-preview" role="tabpanel" aria-labelledby="partner-program-preview-tab" data-partner-program-settings-panel="preview" tabindex="0">
             <div class="partner-program-description" data-partner-program-html-preview>${partnerProgramDescriptionHtml}</div>
           </section>
         </div>
@@ -42181,6 +42190,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("form[data-action='save-issued-document-settings']")?.addEventListener("submit", saveIssuedDocumentSettings);
     document.querySelector("[data-action='reset-issued-document-settings']")?.addEventListener("click", resetIssuedDocumentSettings);
     const partnerProgramSettingsForm = document.querySelector("form[data-action='save-partner-program-settings']");
+    bindPartnerProgramSettingsTabs(partnerProgramSettingsForm);
     partnerProgramSettingsForm?.addEventListener("submit", savePartnerProgramSettingsDraft);
     partnerProgramSettingsForm?.elements?.partnerProgramDescriptionHtml?.addEventListener("input", () => {
       updatePartnerProgramDescriptionPreview(partnerProgramSettingsForm);
@@ -61155,6 +61165,43 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function setPartnerProgramSettingsView(form, view) {
+    if (!form) return;
+    const target = view === "source" ? "source" : "preview";
+    form.querySelectorAll("[data-partner-program-settings-tab]").forEach((button) => {
+      const active = button.dataset.partnerProgramSettingsTab === target;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    form.querySelectorAll("[data-partner-program-settings-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.partnerProgramSettingsPanel !== target;
+    });
+    if (target === "preview") updatePartnerProgramDescriptionPreview(form);
+  }
+
+  function bindPartnerProgramSettingsTabs(form) {
+    if (!form) return;
+    const tabs = Array.from(form.querySelectorAll("[data-partner-program-settings-tab]"));
+    tabs.forEach((button, index) => {
+      button.addEventListener("click", () => {
+        setPartnerProgramSettingsView(form, button.dataset.partnerProgramSettingsTab);
+      });
+      button.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        const nextTab = tabs[nextIndex];
+        setPartnerProgramSettingsView(form, nextTab.dataset.partnerProgramSettingsTab);
+        nextTab.focus();
+      });
+    });
+    form.elements.partnerProgramDescriptionHtml?.addEventListener("invalid", () => {
+      setPartnerProgramSettingsView(form, "source");
+    });
+  }
+
   function updatePartnerProgramDescriptionPreview(form) {
     const input = form?.elements?.partnerProgramDescriptionHtml;
     const preview = form?.querySelector?.("[data-partner-program-html-preview]");
@@ -61168,12 +61215,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const source = String(form.elements.partnerProgramDescriptionHtml?.value || "");
     if (source.length > MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH) {
       alert(`HTML-описание не должно превышать ${MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH.toLocaleString("ru-RU")} символов.`);
+      setPartnerProgramSettingsView(form, "source");
       form.elements.partnerProgramDescriptionHtml?.focus();
       return;
     }
     const descriptionHtml = normalizePartnerProgramDescriptionHtml(source);
     if (!descriptionHtml) {
       alert("Введите описание партнёрской программы.");
+      setPartnerProgramSettingsView(form, "source");
       form.elements.partnerProgramDescriptionHtml?.focus();
       return;
     }
@@ -61193,6 +61242,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!input) return;
     input.value = DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML;
     input.dispatchEvent(new Event("input", { bubbles: true }));
+    setPartnerProgramSettingsView(form, "source");
     input.focus({ preventScroll: true });
     input.setSelectionRange(0, 0);
   }
