@@ -136,6 +136,22 @@ const DEFAULT_STUDENT_APPLICATIONS_EMAIL_SMTP_HOST = "smtp.timeweb.ru";
 const DEFAULT_STUDENT_APPLICATIONS_EMAIL_LOGIN = "mail@edu-plus.ru";
 const DEFAULT_WOOCOMMERCE_EMAIL_LOGIN = "mail@zifra-plus.ru";
 const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
+const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
+const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
+  <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
+  <p>📢 Приглашаем Вас в <strong>партнерскую программу</strong>, по которой Вы сможете зарабатывать вместе с нами получая процент с продаж.</p>
+  <p>Что Вы получите:</p>
+  <ul>
+    <li>✅ Партнерскую скидку в 15%</li>
+    <li>✅ Возможность получения кэшбэка за свое обучение от 10 до 25%</li>
+    <li>✅ Доход за рекомендацию нашего учебного Центра от 10 до 25%</li>
+    <li>✅ Возможность размещать на нашей платформе авторские курсы, проводить вебинары и т.д. с повышенной ставкой оплаты (50% от суммы оплаты)</li>
+  </ul>
+  <p>⚙ Механизм следующий. Вам как партнеру создается <strong>специальный купон</strong>, через который от Вас регистрируются на обучение новые слушатели на сайте <a href="https://edu-plus.ru/">edu-plus.ru</a> и получают дополнительную скидку в 15% от прайса, а Вы по этому купону получаете от 10 до 25% с суммы оплаченного заказа (конкретная ставка указывается в приказе о наборе, который находится в папке с <a href="${DEFAULT_PARTNER_MATERIALS_URL}">Материалами партнера</a>).</p>
+  <p>💳 После оплаты Вам на почту придет уведомление, от 10 до 25% суммы оплаты зачислим на Ваш партнерский счет и по итогам каждого месяца будет выплата на Вашу банковскую карту (после заключения партнерского договора).</p>
+  <p>Таким образом Вы можете распространять информацию о нашем центре среди знакомых, коллег, родственников с купоном на дополнительную скидку. Купон также действует как <strong>кэшбэк</strong>, если Вы его используете для своего обучения))</p>
+  <p><strong>Не упустите шанс сэкономить и заработать!</strong></p>
+`.trim();
 const PARTNER_FEEDBACK_RECIPIENT = DEFAULT_WOOCOMMERCE_EMAIL_LOGIN;
 const PARTNER_REGISTRATION_POLICY_URL = "https://edu-plus.ru/wp-content/uploads/policy_pers_signed.pdf";
 const PARTNER_REGISTRATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -36733,6 +36749,140 @@ function normalizePartnerIdentity(value) {
     .replace(/\s+/gu, " ");
 }
 
+function decodePartnerProgramHtmlAttribute(value) {
+  const named = { amp: "&", apos: "'", colon: ":", gt: ">", lt: "<", newline: "\n", quot: '"', tab: "\t" };
+  return String(value || "")
+    .replace(/&#x([0-9a-f]+);?/giu, (match, code) => {
+      const point = Number.parseInt(code, 16);
+      return Number.isFinite(point) && point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : "";
+    })
+    .replace(/&#([0-9]+);?/gu, (match, code) => {
+      const point = Number.parseInt(code, 10);
+      return Number.isFinite(point) && point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : "";
+    })
+    .replace(/&([a-z]+);?/giu, (match, name) => named[String(name).toLocaleLowerCase("en-US")] ?? match);
+}
+
+function escapePartnerProgramHtmlAttribute(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function normalizePartnerProgramDescriptionLink(value) {
+  const source = decodePartnerProgramHtmlAttribute(value).trim();
+  if (!source || source.startsWith("//")) return "";
+  const compact = source.replace(/[\u0000-\u0020\u007f]+/gu, "");
+  if (/^https:\/\//iu.test(compact)) {
+    try {
+      const parsed = new URL(source);
+      return parsed.protocol === "https:" ? parsed.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+  if (/^(?:mailto:[^@\s]+@[^@\s]+|tel:\+?[\d().\s-]+)$/iu.test(source)) return source;
+  if (/^\/(?!\/)|^#[\w:.-]+$/u.test(source)) return source;
+  return "";
+}
+
+function readPartnerProgramHtmlAttribute(attributes, requestedName) {
+  const source = String(attributes || "");
+  const expectedName = String(requestedName || "").toLocaleLowerCase("en-US");
+  let offset = 0;
+  while (offset < source.length) {
+    while (offset < source.length && /\s/u.test(source[offset])) offset += 1;
+    if (source[offset] === "/") {
+      offset += 1;
+      continue;
+    }
+    const nameStart = offset;
+    while (offset < source.length && !/[\s="'<>`]/u.test(source[offset])) offset += 1;
+    if (offset === nameStart) {
+      offset += 1;
+      continue;
+    }
+    const name = source.slice(nameStart, offset).toLocaleLowerCase("en-US");
+    while (offset < source.length && /\s/u.test(source[offset])) offset += 1;
+    let value = "";
+    if (source[offset] === "=") {
+      offset += 1;
+      while (offset < source.length && /\s/u.test(source[offset])) offset += 1;
+      const quote = source[offset] === '"' || source[offset] === "'" ? source[offset] : "";
+      if (quote) {
+        offset += 1;
+        const valueStart = offset;
+        while (offset < source.length && source[offset] !== quote) offset += 1;
+        value = source.slice(valueStart, offset);
+        if (source[offset] === quote) offset += 1;
+      } else {
+        const valueStart = offset;
+        while (offset < source.length && !/[\s"'=<>`]/u.test(source[offset])) offset += 1;
+        value = source.slice(valueStart, offset);
+      }
+    }
+    if (name === expectedName) return value;
+  }
+  return "";
+}
+
+function sanitizePartnerProgramDescriptionHtml(value) {
+  let source = String(value || "")
+    .replaceAll("\0", "")
+    .slice(0, MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH)
+    .trim();
+  if (!source) return "";
+  source = source.replace(/<!--[\s\S]*?-->/gu, "");
+  const blockedContentPattern = /<(script|style|iframe|object|embed|svg|math|form|button|textarea|select)\b[^>]*>[\s\S]*?<\/\1\s*>/giu;
+  let previous = "";
+  while (previous !== source) {
+    previous = source;
+    source = source.replace(blockedContentPattern, "");
+  }
+  const allowedTags = new Set([
+    "a", "b", "blockquote", "br", "code", "em", "h2", "h3", "i", "li", "ol", "p", "section", "strong", "ul"
+  ]);
+  const blockedTags = new Set([
+    "base", "button", "embed", "form", "iframe", "input", "link", "math", "meta", "object", "option", "script", "select", "style", "svg", "textarea"
+  ]);
+  const tokens = source.match(/<[^>]*>|[^<]+|</gu) || [];
+  return tokens.map((token) => {
+    if (!token.startsWith("<")) return token;
+    if (token === "<") return "&lt;";
+    const closing = /^<\s*\/\s*([a-z0-9]+)[^>]*>$/iu.exec(token);
+    if (closing) {
+      const tag = closing[1].toLocaleLowerCase("en-US");
+      return allowedTags.has(tag) && tag !== "br" ? `</${tag}>` : "";
+    }
+    const opening = /^<\s*([a-z0-9]+)\b([^>]*)>$/iu.exec(token);
+    if (!opening) return "";
+    const tag = opening[1].toLocaleLowerCase("en-US");
+    if (blockedTags.has(tag) || !allowedTags.has(tag)) return "";
+    if (tag === "br") return "<br>";
+    if (tag !== "a") return `<${tag}>`;
+    const attributes = opening[2] || "";
+    const href = normalizePartnerProgramDescriptionLink(
+      readPartnerProgramHtmlAttribute(attributes, "href")
+    );
+    return href
+      ? `<a href="${escapePartnerProgramHtmlAttribute(href)}" target="_blank" rel="noopener noreferrer">`
+      : "<a>";
+  }).join("").trim();
+}
+
+function getPartnerProgramDescriptionHtml(value) {
+  const sanitized = sanitizePartnerProgramDescriptionHtml(value);
+  const visibleText = sanitized
+    .replace(/<[^>]*>/gu, "")
+    .replace(/&(?:nbsp|#160|#x0*a0);/giu, " ")
+    .trim();
+  return visibleText
+    ? sanitized
+    : sanitizePartnerProgramDescriptionHtml(DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML);
+}
+
 function partnerRegistrationError(message, statusCode = 400, details = {}) {
   return Object.assign(new Error(message), { statusCode, ...details });
 }
@@ -37270,7 +37420,16 @@ function assertPartnerRegistrationRequest(req) {
 
 async function handlePartnerRegistrationChallenge(req, res) {
   assertPartnerRegistrationRequest(req);
-  sendJson(res, 200, await issuePartnerRegistrationSpamChallenge(req));
+  const [challenge, cachedState] = await Promise.all([
+    issuePartnerRegistrationSpamChallenge(req),
+    readSharedApplicationStateCache().catch(() => null)
+  ]);
+  sendJson(res, 200, {
+    ...challenge,
+    descriptionHtml: getPartnerProgramDescriptionHtml(
+      cachedState?.data?.meta?.partnerProgramDescriptionHtml
+    )
+  });
 }
 
 async function findExistingPartnerByEmail(email) {
@@ -40160,6 +40319,7 @@ module.exports = {
   buildTrainingEndNotificationMessage,
   buildTrainingEndStudentNotificationMessage,
   maybeRunTrainingEndNotificationJob,
+  sanitizePartnerProgramDescriptionHtml,
   sanitizePartnerRegistrationPayload,
   createPartnerRegistrationSpamChallenge,
   issuePartnerRegistrationSpamChallengeInStore,

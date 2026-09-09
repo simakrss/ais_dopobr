@@ -200,7 +200,7 @@ assert.match(serverSource, /sendEmailThroughConfiguredMailbox\(\{[\s\S]{0,800}П
 assert.match(gatewaySource, /x-ais-public-app-url/u);
 assert.match(gatewaySource, /\/api\/auth\/partner-registration\/challenge/u);
 assert.match(gatewaySource, /\/api\/auth\/partner-registration\/confirm/u);
-assert.match(authSource, /Партнёрская программа учебного центра/u);
+assert.match(authSource, /Стать партнёром учебного центра/u);
 assert.match(authSource, /data-partner-registration-form/u);
 assert.match(authSource, /data-partner-spam-challenge/u);
 assert.match(authSource, /Направления сотрудничества <b>\*<\/b>/u);

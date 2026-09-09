@@ -1,5 +1,21 @@
 (() => {
-  const AUTH_BUILD = "20260909-messenger-card-values-v1";
+  const AUTH_BUILD = "20260909-partner-description-html-v1";
+  const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
+  const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
+    <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
+    <p>📢 Приглашаем Вас в <strong>партнерскую программу</strong>, по которой Вы сможете зарабатывать вместе с нами получая процент с продаж.</p>
+    <p>Что Вы получите:</p>
+    <ul>
+      <li>✅ Партнерскую скидку в 15%</li>
+      <li>✅ Возможность получения кэшбэка за свое обучение от 10 до 25%</li>
+      <li>✅ Доход за рекомендацию нашего учебного Центра от 10 до 25%</li>
+      <li>✅ Возможность размещать на нашей платформе авторские курсы, проводить вебинары и т.д. с повышенной ставкой оплаты (50% от суммы оплаты)</li>
+    </ul>
+    <p>⚙ Механизм следующий. Вам как партнеру создается <strong>специальный купон</strong>, через который от Вас регистрируются на обучение новые слушатели на сайте <a href="https://edu-plus.ru/">edu-plus.ru</a> и получают дополнительную скидку в 15% от прайса, а Вы по этому купону получаете от 10 до 25% с суммы оплаченного заказа (конкретная ставка указывается в приказе о наборе, который находится в папке с <a href="https://disk.yandex.ru/d/9BBGBNBIum252w">Материалами партнера</a>).</p>
+    <p>💳 После оплаты Вам на почту придет уведомление, от 10 до 25% суммы оплаты зачислим на Ваш партнерский счет и по итогам каждого месяца будет выплата на Вашу банковскую карту (после заключения партнерского договора).</p>
+    <p>Таким образом Вы можете распространять информацию о нашем центре среди знакомых, коллег, родственников с купоном на дополнительную скидку. Купон также действует как <strong>кэшбэк</strong>, если Вы его используете для своего обучения))</p>
+    <p><strong>Не упустите шанс сэкономить и заработать!</strong></p>
+  `.trim();
   const DATABASE_DEMO_MODE_CHANNEL = "ais-database-demo-mode";
   const DATABASE_DEMO_MODE_STORAGE_EVENT_KEY = "ais-database-demo-mode-event";
   const DISMISSIBLE_MODAL_BACKDROP_SELECTOR = ".modal-backdrop, .partner-modal-backdrop, [data-documents-backdrop]";
@@ -491,6 +507,7 @@
     try {
       const payload = await request("api/auth/partner-registration/challenge");
       if (!form.isConnected) return false;
+      updatePartnerProgramDescription(payload.descriptionHtml);
       challengeId.value = String(payload.challengeId || "");
       question.textContent = String(payload.question || "Решите пример");
       answer.disabled = false;
@@ -521,7 +538,7 @@
             <div>
               <button class="partner-registration-back" data-auth-return-login type="button" aria-label="Вернуться ко входу">← Войти в систему</button>
               <p class="auth-eyebrow">Цифровизация Плюс</p>
-              <h1 id="partnerRegistrationTitle">Партнёрская программа учебного центра</h1>
+              <h1 id="partnerRegistrationTitle">Стать партнёром учебного центра</h1>
               <p>Заполните анкету, подтвердите email и получите доступ к личному кабинету партнёра.</p>
             </div>
             <div class="partner-registration-benefits">
@@ -531,6 +548,9 @@
               <span><strong>24/7</strong> материалы и начисления в личном кабинете</span>
             </div>
           </header>
+          <section class="partner-program-description" data-partner-program-description>
+            ${sanitizePartnerProgramDescriptionHtml(DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML)}
+          </section>
           <form class="partner-registration-form" data-partner-registration-form novalidate>
             <section class="partner-registration-section">
               <div class="partner-registration-section-head"><span>1</span><div><h2>Контактные данные</h2><p>Эти данные нужны для связи и создания кабинета.</p></div></div>
@@ -854,6 +874,71 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function normalizePartnerProgramDescriptionLink(value) {
+    const source = String(value || "").trim();
+    if (!source || source.startsWith("//")) return "";
+    const compact = source.replace(/[\u0000-\u0020\u007f]+/gu, "");
+    if (/^https:\/\//iu.test(compact)) {
+      try {
+        const parsed = new URL(source);
+        return parsed.protocol === "https:" ? parsed.toString() : "";
+      } catch {
+        return "";
+      }
+    }
+    if (/^(?:mailto:[^@\s]+@[^@\s]+|tel:\+?[\d().\s-]+)$/iu.test(source)) return source;
+    if (/^\/(?!\/)|^#[\w:.-]+$/u.test(source)) return source;
+    return "";
+  }
+
+  function sanitizePartnerProgramDescriptionHtml(value) {
+    const source = String(value || "").slice(0, MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH).trim();
+    if (!source) return "";
+    if (typeof DOMParser !== "function") return escapeHtml(source);
+    const parsed = new DOMParser().parseFromString(`<body>${source}</body>`, "text/html");
+    const output = document.createElement("div");
+    const allowedTags = new Set([
+      "a", "b", "blockquote", "br", "code", "em", "h2", "h3", "i", "li", "ol", "p", "section", "strong", "ul"
+    ]);
+    const blockedTags = new Set([
+      "base", "button", "embed", "form", "iframe", "input", "link", "math", "meta", "object", "option", "script", "select", "style", "svg", "textarea"
+    ]);
+    const appendSanitized = (sourceNode, targetNode) => {
+      if (sourceNode.nodeType === Node.TEXT_NODE) {
+        targetNode.append(document.createTextNode(sourceNode.nodeValue || ""));
+        return;
+      }
+      if (sourceNode.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = String(sourceNode.tagName || "").toLocaleLowerCase("en-US");
+      if (blockedTags.has(tag)) return;
+      if (!allowedTags.has(tag)) {
+        [...sourceNode.childNodes].forEach((child) => appendSanitized(child, targetNode));
+        return;
+      }
+      const cleanNode = document.createElement(tag);
+      if (tag === "a") {
+        const href = normalizePartnerProgramDescriptionLink(sourceNode.getAttribute("href"));
+        if (href) {
+          cleanNode.setAttribute("href", href);
+          cleanNode.setAttribute("target", "_blank");
+          cleanNode.setAttribute("rel", "noopener noreferrer");
+        }
+      }
+      [...sourceNode.childNodes].forEach((child) => appendSanitized(child, cleanNode));
+      targetNode.append(cleanNode);
+    };
+    [...parsed.body.childNodes].forEach((node) => appendSanitized(node, output));
+    return output.innerHTML.trim();
+  }
+
+  function updatePartnerProgramDescription(value) {
+    const container = app.querySelector("[data-partner-program-description]");
+    if (!container) return;
+    const sanitized = sanitizePartnerProgramDescriptionHtml(value)
+      || sanitizePartnerProgramDescriptionHtml(DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML);
+    container.innerHTML = sanitized;
   }
 
   async function startApplication(user, expiresAt, demoModeEnabled = false) {

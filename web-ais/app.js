@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.410",
+    version: "1.7.411",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.411",
+      releasedAt: "2026-09-09",
+      changes: [
+        "В публичную анкету добавлено полное описание партнёрской программы; его HTML можно безопасно редактировать и предварительно просматривать в отдельном пункте раздела «Настройки»."
+      ]
+    },
     {
       version: "1.7.410",
       releasedAt: "2026-09-09",
@@ -3564,6 +3571,22 @@
   });
   const DEFAULT_YANDEX_DISK_BASE_PATH = "ООО Цифровизация Плюс/АИС Допобразование";
   const DEFAULT_PARTNER_MATERIALS_URL = "https://disk.yandex.ru/d/9BBGBNBIum252w";
+  const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
+  const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
+    <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
+    <p>📢 Приглашаем Вас в <strong>партнерскую программу</strong>, по которой Вы сможете зарабатывать вместе с нами получая процент с продаж.</p>
+    <p>Что Вы получите:</p>
+    <ul>
+      <li>✅ Партнерскую скидку в 15%</li>
+      <li>✅ Возможность получения кэшбэка за свое обучение от 10 до 25%</li>
+      <li>✅ Доход за рекомендацию нашего учебного Центра от 10 до 25%</li>
+      <li>✅ Возможность размещать на нашей платформе авторские курсы, проводить вебинары и т.д. с повышенной ставкой оплаты (50% от суммы оплаты)</li>
+    </ul>
+    <p>⚙ Механизм следующий. Вам как партнеру создается <strong>специальный купон</strong>, через который от Вас регистрируются на обучение новые слушатели на сайте <a href="https://edu-plus.ru/">edu-plus.ru</a> и получают дополнительную скидку в 15% от прайса, а Вы по этому купону получаете от 10 до 25% с суммы оплаченного заказа (конкретная ставка указывается в приказе о наборе, который находится в папке с <a href="${DEFAULT_PARTNER_MATERIALS_URL}">Материалами партнера</a>).</p>
+    <p>💳 После оплаты Вам на почту придет уведомление, от 10 до 25% суммы оплаты зачислим на Ваш партнерский счет и по итогам каждого месяца будет выплата на Вашу банковскую карту (после заключения партнерского договора).</p>
+    <p>Таким образом Вы можете распространять информацию о нашем центре среди знакомых, коллег, родственников с купоном на дополнительную скидку. Купон также действует как <strong>кэшбэк</strong>, если Вы его используете для своего обучения))</p>
+    <p><strong>Не упустите шанс сэкономить и заработать!</strong></p>
+  `.trim();
   const DEFAULT_LOCAL_DOCUMENTS_ROOT = "Y:\\";
   const DEFAULT_STUDENT_ADDITIONAL_STATUS = "На зачисление (пока без документов)";
   const STUDENT_DATABASE_FIXED_VALUE_OVERRIDE_FIELDS = Object.freeze([
@@ -7118,6 +7141,9 @@ MAX - https://bizvmax.ru/zifra_plus
     data.meta.partnerMaterialsUrl = String(
       data.meta.partnerMaterialsUrl || DEFAULT_PARTNER_MATERIALS_URL
     ).trim();
+    data.meta.partnerProgramDescriptionHtml = normalizePartnerProgramDescriptionHtml(
+      data.meta.partnerProgramDescriptionHtml
+    );
     data.meta.localDocumentsRoot = String(
       data.meta.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
     ).trim();
@@ -23428,6 +23454,13 @@ MAX - https://bizvmax.ru/zifra_plus
       "Второй член комиссии",
       "Секретарь комиссии"
     ],
+    partnerProgramSettings: [
+      "Партнерская программа",
+      "Описание партнерской программы",
+      "HTML",
+      "Анкета партнера",
+      "Материалы партнера"
+    ],
     sdoSettings: [
       "Адреса СДО",
       "Тема письма с данными доступа",
@@ -23574,6 +23607,11 @@ MAX - https://bizvmax.ru/zifra_plus
         values: state.data.collections.commissionSets || []
       },
       {
+        key: "partnerProgramSettings",
+        title: dictionaryTitle("partnerProgramSettings"),
+        values: [getPartnerProgramDescriptionHtml()]
+      },
+      {
         key: "notificationSettings",
         title: dictionaryTitle("notificationSettings"),
         values: []
@@ -23602,9 +23640,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const isFinalAttestationSettings = selectedKey === "finalAttestationSettings";
     const isIssuedDocumentSettings = selectedKey === "issuedDocumentSettings";
     const isProgramCommissionSettings = selectedKey === "commissionSets";
+    const isPartnerProgramSettings = selectedKey === "partnerProgramSettings";
     const isNotificationSettings = selectedKey === "notificationSettings";
     const isStudentEventSettings = selectedKey === "studentEventSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isNotificationSettings || isStudentEventSettings;
+    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const hasDraftChanges = hasUnsavedSettingsChanges();
     const settingsDraftSaveBusy = isSettingsDraftSaveBusy();
@@ -23677,7 +23716,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isNotificationSettings || isStudentEventSettings ? "" : `
+                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -23721,6 +23760,8 @@ MAX - https://bizvmax.ru/zifra_plus
                            ? renderIssuedDocumentSettingsDictionary(selectedValues)
                          : isProgramCommissionSettings
                            ? renderProgramCommissionSettingsDictionary(selectedValues)
+                         : isPartnerProgramSettings
+                           ? renderPartnerProgramSettingsDictionary()
                          : isNotificationSettings
                            ? renderTrainingEndNotificationSettingsDictionary()
                          : isStudentEventSettings
@@ -24979,6 +25020,44 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="sdo-settings-actions">
           <button class="ghost-button" data-action="reset-issued-document-settings" type="button">Восстановить исходные</button>
           <button class="ghost-button settings-apply-button" type="submit" title="Применить изменения к черновику настроек">Применить</button>
+        </div>
+      </form>
+    `;
+  }
+
+  function renderPartnerProgramSettingsDictionary() {
+    const partnerProgramDescriptionHtml = getPartnerProgramDescriptionHtml();
+    return `
+      <form class="partner-program-settings sdo-settings-form" data-action="save-partner-program-settings">
+        <div class="partner-program-settings-head">
+          <div>
+            <strong>Описание партнёрской программы</strong>
+            <small>Текст показывается в публичной анкете перед полями регистрации. Изменения становятся общими после сохранения настроек.</small>
+          </div>
+          <span>HTML</span>
+        </div>
+        <div class="partner-program-settings-workspace">
+          <label class="partner-program-settings-source">
+            <span>HTML-код</span>
+            <textarea
+              name="partnerProgramDescriptionHtml"
+              data-partner-program-html-input
+              rows="20"
+              maxlength="${MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH}"
+              wrap="off"
+              spellcheck="false"
+              required
+            >${escapeHtml(partnerProgramDescriptionHtml)}</textarea>
+          </label>
+          <section class="partner-program-settings-preview" aria-label="Предпросмотр описания">
+            <span>Предпросмотр</span>
+            <div class="partner-program-description" data-partner-program-html-preview>${partnerProgramDescriptionHtml}</div>
+          </section>
+        </div>
+        <p class="sdo-settings-hint">Разрешены заголовки, абзацы, списки, жирный и курсивный текст, цитаты и безопасные ссылки. Скрипты, формы, стили и встраиваемые объекты удаляются при применении.</p>
+        <div class="sdo-settings-actions">
+          <button class="ghost-button" data-action="reset-partner-program-description" type="button">Восстановить исходный текст</button>
+          <button class="ghost-button settings-apply-button" type="submit" title="Применить HTML к черновику настроек">Применить</button>
         </div>
       </form>
     `;
@@ -42076,6 +42155,13 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='reset-final-attestation-settings']")?.addEventListener("click", resetFinalAttestationSettings);
     document.querySelector("form[data-action='save-issued-document-settings']")?.addEventListener("submit", saveIssuedDocumentSettings);
     document.querySelector("[data-action='reset-issued-document-settings']")?.addEventListener("click", resetIssuedDocumentSettings);
+    const partnerProgramSettingsForm = document.querySelector("form[data-action='save-partner-program-settings']");
+    partnerProgramSettingsForm?.addEventListener("submit", savePartnerProgramSettingsDraft);
+    partnerProgramSettingsForm?.elements?.partnerProgramDescriptionHtml?.addEventListener("input", () => {
+      updatePartnerProgramDescriptionPreview(partnerProgramSettingsForm);
+    });
+    document.querySelector("[data-action='reset-partner-program-description']")
+      ?.addEventListener("click", resetPartnerProgramDescriptionDraft);
     document.querySelector("form[data-action='save-training-end-notification-settings']")
       ?.addEventListener("submit", saveTrainingEndNotificationSettingsDraft);
     document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
@@ -61044,6 +61130,48 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function updatePartnerProgramDescriptionPreview(form) {
+    const input = form?.elements?.partnerProgramDescriptionHtml;
+    const preview = form?.querySelector?.("[data-partner-program-html-preview]");
+    if (!input || !preview) return;
+    preview.innerHTML = normalizePartnerProgramDescriptionHtml(input.value);
+  }
+
+  function savePartnerProgramSettingsDraft(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const source = String(form.elements.partnerProgramDescriptionHtml?.value || "");
+    if (source.length > MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH) {
+      alert(`HTML-описание не должно превышать ${MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH.toLocaleString("ru-RU")} символов.`);
+      form.elements.partnerProgramDescriptionHtml?.focus();
+      return;
+    }
+    const descriptionHtml = normalizePartnerProgramDescriptionHtml(source);
+    if (!descriptionHtml) {
+      alert("Введите описание партнёрской программы.");
+      form.elements.partnerProgramDescriptionHtml?.focus();
+      return;
+    }
+    state.data.meta.partnerProgramDescriptionHtml = descriptionHtml;
+    addAudit(
+      "Изменено описание партнёрской программы",
+      dictionaryTitle("partnerProgramSettings"),
+      `HTML-код: ${descriptionHtml.length} символов`
+    );
+    persist();
+    render();
+  }
+
+  function resetPartnerProgramDescriptionDraft(event) {
+    const form = event.currentTarget.closest("form[data-action='save-partner-program-settings']");
+    const input = form?.elements?.partnerProgramDescriptionHtml;
+    if (!input) return;
+    input.value = DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(0, 0);
+  }
+
   function saveTrainingEndNotificationSettingsDraft(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -70038,6 +70166,7 @@ MAX - https://bizvmax.ru/zifra_plus
       expenseInventoryLinks: "Связи затрат: запасы",
       employeePaymentBases: "Основания выплат сотрудникам",
       commissionSets: "Комиссии",
+      partnerProgramSettings: "Партнёрская программа",
       paymentSettings: "Оплата",
       sdoSettings: "Настройки СДО",
       documentPathSettings: "Пути сохранения документов",
@@ -70081,6 +70210,77 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function escapeAttr(value) {
     return escapeHtml(value).replaceAll("\n", " ");
+  }
+
+  function normalizePartnerProgramDescriptionLink(value) {
+    const source = String(value || "").trim();
+    if (!source || source.startsWith("//")) return "";
+    const compact = source.replace(/[\u0000-\u0020\u007f]+/gu, "");
+    if (/^https:\/\//iu.test(compact)) {
+      try {
+        const parsed = new URL(source);
+        return parsed.protocol === "https:" ? parsed.toString() : "";
+      } catch {
+        return "";
+      }
+    }
+    if (/^(?:mailto:[^@\s]+@[^@\s]+|tel:\+?[\d().\s-]+)$/iu.test(source)) return source;
+    if (/^\/(?!\/)|^#[\w:.-]+$/u.test(source)) return source;
+    return "";
+  }
+
+  function sanitizePartnerProgramDescriptionHtml(value) {
+    const source = String(value || "").slice(0, MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH).trim();
+    if (!source) return "";
+    if (typeof DOMParser !== "function") return escapeHtml(source);
+    const parsed = new DOMParser().parseFromString(`<body>${source}</body>`, "text/html");
+    const output = document.createElement("div");
+    const allowedTags = new Set([
+      "a", "b", "blockquote", "br", "code", "em", "h2", "h3", "i", "li", "ol", "p", "section", "strong", "ul"
+    ]);
+    const blockedTags = new Set([
+      "base", "button", "embed", "form", "iframe", "input", "link", "math", "meta", "object", "option", "script", "select", "style", "svg", "textarea"
+    ]);
+    const appendSanitized = (sourceNode, targetNode) => {
+      if (sourceNode.nodeType === Node.TEXT_NODE) {
+        targetNode.append(document.createTextNode(sourceNode.nodeValue || ""));
+        return;
+      }
+      if (sourceNode.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = String(sourceNode.tagName || "").toLocaleLowerCase("en-US");
+      if (blockedTags.has(tag)) return;
+      if (!allowedTags.has(tag)) {
+        [...sourceNode.childNodes].forEach((child) => appendSanitized(child, targetNode));
+        return;
+      }
+      const cleanNode = document.createElement(tag);
+      if (tag === "a") {
+        const href = normalizePartnerProgramDescriptionLink(sourceNode.getAttribute("href"));
+        if (href) {
+          cleanNode.setAttribute("href", href);
+          cleanNode.setAttribute("target", "_blank");
+          cleanNode.setAttribute("rel", "noopener noreferrer");
+        }
+      }
+      [...sourceNode.childNodes].forEach((child) => appendSanitized(child, cleanNode));
+      targetNode.append(cleanNode);
+    };
+    [...parsed.body.childNodes].forEach((node) => appendSanitized(node, output));
+    return output.innerHTML.trim();
+  }
+
+  function normalizePartnerProgramDescriptionHtml(value) {
+    const sanitized = sanitizePartnerProgramDescriptionHtml(value);
+    if (sanitized) {
+      const probe = document.createElement("div");
+      probe.innerHTML = sanitized;
+      if (String(probe.textContent || "").trim()) return sanitized;
+    }
+    return sanitizePartnerProgramDescriptionHtml(DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML);
+  }
+
+  function getPartnerProgramDescriptionHtml() {
+    return normalizePartnerProgramDescriptionHtml(state.data?.meta?.partnerProgramDescriptionHtml);
   }
 
   function escapeMultilineAttr(value) {
