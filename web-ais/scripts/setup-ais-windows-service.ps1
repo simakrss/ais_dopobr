@@ -455,6 +455,7 @@ function Grant-InteractiveAppAccess([pscustomobject]$PathInfo) {
   $gitConfigPath = [IO.Path]::GetFullPath([IO.Path]::Combine($repositoryRoot, ".git\config"))
   $gitHeadPath = [IO.Path]::GetFullPath([IO.Path]::Combine($repositoryRoot, ".git\HEAD"))
   $gitObjectsPath = [IO.Path]::GetFullPath([IO.Path]::Combine($repositoryRoot, ".git\objects"))
+  $appServerPath = [IO.Path]::GetFullPath([IO.Path]::Combine($PathInfo.ServiceAppRoot, "app-server.js"))
   if (
     $repositoryRoot -ieq $volumeRoot -or
     -not (Test-Path -LiteralPath $gitConfigPath -PathType Leaf) -or
@@ -463,11 +464,20 @@ function Grant-InteractiveAppAccess([pscustomobject]$PathInfo) {
   ) {
     throw "Родительская папка АИС не прошла проверку как корень Git-репозитория: $repositoryRoot"
   }
+  $appServerItem = Get-Item -LiteralPath $appServerPath -Force
+  if (
+    $appServerItem.PSIsContainer -or
+    ($appServerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+  ) {
+    throw "Обязательный файл АИС является папкой или ссылкой; настройка прав остановлена: $appServerPath"
+  }
   $userAccessRule = "*$($userSid):(OI)(CI)M"
   $systemAccessRule = "*S-1-5-18:(OI)(CI)M"
   # Applying inheritable ACEs only to the two trusted roots avoids traversing a
-  # user-writable tree with elevated privileges. Windows propagates the ACEs to
-  # existing inheriting children; the checks below fail closed if inheritance is disabled.
+  # user-writable tree with elevated privileges. Synchronized source files may
+  # keep a protected ACL; Git can still replace them atomically through the
+  # writable parent directory, while SYSTEM access to the server entry point is
+  # verified explicitly below.
   & $icaclsPath $repositoryRoot /grant:r $userAccessRule /Q | Out-Null
   $userGrantExitCode = $LASTEXITCODE
   & $icaclsPath $PathInfo.ServiceAppRoot /grant:r $systemAccessRule /Q | Out-Null
@@ -479,9 +489,9 @@ function Grant-InteractiveAppAccess([pscustomobject]$PathInfo) {
   $checks = @(
     @{ Path = $repositoryRoot; Sid = $userSid },
     @{ Path = $gitConfigPath; Sid = $userSid },
-    @{ Path = (Join-Path $PathInfo.ServiceAppRoot "app-server.js"); Sid = $userSid },
+    @{ Path = $PathInfo.ServiceAppRoot; Sid = $userSid },
     @{ Path = $PathInfo.ServiceAppRoot; Sid = "S-1-5-18" },
-    @{ Path = (Join-Path $PathInfo.ServiceAppRoot "app-server.js"); Sid = "S-1-5-18" }
+    @{ Path = $appServerPath; Sid = "S-1-5-18" }
   )
   foreach ($check in $checks) {
     if (-not (Test-Path -LiteralPath $check.Path)) {
@@ -747,6 +757,9 @@ $bootstrapPath = Join-Path $pathInfo.ServiceAppRoot "scripts\bootstrap-local-sys
   -Action Validate -LauncherArguments "--skip-docker"
 if ($LASTEXITCODE -ne 0) { throw "Проверка окружения АИС завершилась с кодом $LASTEXITCODE." }
 
+Write-InstallStep "Проверка доступа интерактивного пользователя к рабочей папке..."
+Grant-InteractiveAppAccess $pathInfo
+
 Write-InstallStep "Остановка прежнего консольного экземпляра с сохранением Docker..."
 Remove-ExistingService
 Stop-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
@@ -755,8 +768,6 @@ Remove-AisScheduledTasks
 
 Write-InstallStep "Защита служебных файлов от изменения обычными пользователями..."
 Protect-ProgramDataRoot
-Write-InstallStep "Настройка рабочей папки для интерактивного пользователя..."
-Grant-InteractiveAppAccess $pathInfo
 Install-ProtectedStopScript $pathInfo
 Write-InstallStep "Компиляция штатного хоста Windows-службы..."
 Compile-ServiceHost

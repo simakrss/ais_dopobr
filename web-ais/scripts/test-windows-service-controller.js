@@ -363,7 +363,10 @@ assert.match(controllerSource, /Задача планировщика не по�
 assert.match(controllerSource, /\$runningFromProtectedRoot[\s\S]*?\$protectedTrayPath/u);
 assert.match(controllerSource, /function Test-AisTrayReady/u);
 assert.match(controllerSource, /function Wait-AisTrayReady/u);
-assert.match(controllerSource, /\(-not \$workerTask -or -not \$trayTask\)[\s\S]*?Install-AisService/u);
+assert.match(
+  controllerSource,
+  /-not \$workerTask\s+-or\s+-not \$trayTask\s+-or\s+-not \$workerTaskCompatible\s+-or\s+-not \$trayTaskCompatible[\s\S]*?\$serviceWasPresent[\s\S]*?\$InstallIfMissing[\s\S]*?Install-AisService/u
+);
 assert.doesNotMatch(controllerSource, /if\s*\(\$ShowTray\)\s*\{\s*Start-AisTray/u);
 assert.match(controllerSource, /"Start"\s*\{[\s\S]*?Start-AisService[\s\S]*?Start-AisTray\s+\$true/u);
 assert.match(controllerSource, /"Restart"\s*\{[\s\S]*?Start-AisService[\s\S]*?Start-AisTray\s+\$true/u);
@@ -371,7 +374,10 @@ assert.match(
   controllerSource,
   /function Start-AisTray[\s\S]*?Start-ScheduledTask[\s\S]*?Wait-AisTrayReady/u
 );
-assert.match(controllerSource, /CreateNoWindow\s*=\s*\$true/u);
+assert.match(
+  controllerSource,
+  /function Start-AisTrayDirect[\s\S]*?\$startInfo\.FileName\s*=\s*\$wscriptPath[\s\S]*?WindowStyle\s*=\s*\[Diagnostics\.ProcessWindowStyle\]::Hidden/u
+);
 assert.doesNotMatch(controllerSource, /function Start-AisInteractiveWorker/u);
 assert.doesNotMatch(controllerSource, /Join-Path\s+\$PSScriptRoot\s+"install-ais-service\.ps1"/u);
 assert.match(installerSource, /start= delayed-auto/u);
@@ -389,6 +395,17 @@ assert.match(installerSource, /Protect-ProgramDataRoot/u);
 assert.match(installerSource, /SetAccessRuleProtection\(\$true,\s*\$false\)/u);
 assert.match(installerSource, /FileSystemRights\]::ReadAndExecute/u);
 assert.match(installerSource, /Grant-InteractiveAppAccess/u);
+assert.match(
+  installerSource,
+  /\$appServerPath[\s\S]*?\$appServerItem[\s\S]*?ReparsePoint/u
+);
+assert.doesNotMatch(installerSource, /& \$icaclsPath \$appServerPath \/grant/u);
+assert.match(installerSource, /@\{ Path = \$PathInfo\.ServiceAppRoot; Sid = \$userSid \}/u);
+assert.doesNotMatch(installerSource, /& \$icaclsPath \$repositoryRoot[^\r\n]*\/T/u);
+assert.match(
+  installerSource,
+  /Проверка доступа интерактивного пользователя[\s\S]*?Grant-InteractiveAppAccess \$pathInfo[\s\S]*?Remove-ExistingService/u
+);
 assert.match(installerSource, /Grant-InteractiveServiceControl/u);
 assert.match(installerSource, /LCRPWPLO/u);
 assert.match(installerSource, /--stop-script/u);
