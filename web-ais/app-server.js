@@ -14507,14 +14507,17 @@ const OCR_FIELD_SOURCE_KIND_BY_KEY = Object.freeze({
 });
 
 const OCR_EXPLICIT_SOURCE_KIND_PATTERNS = Object.freeze({
-  passport: /(?:паспорт|passport)/iu,
-  snils: /(?:снилс|snils|страхов)/iu,
-  inn: /(?:\bинн\b|\binn\b|налог)/iu,
-  education: /(?:диплом|аттестат|образован|удостоверен)/iu
+  passport: /(?:^| )(?:паспорт(?:а|ом|у)?|passport|pasport|прописка|propiska)(?= |$)/u,
+  snils: /(?:^| )(?:снилс|snils|ади рег|страховое свидетельство)(?= |$)/u,
+  inn: /(?:^| )(?:инн|inn|налоговое свидетельство)(?= |$)/u,
+  education: /(?:^| )(?:диплом(?:а|у|ом)?|diplom|diploma|аттестат(?:а)?|attestat|документ об образовании|удостоверение о повышении квалификации)(?= |$)/u
 });
 
 function getOcrExplicitSourceKinds(fileResult) {
-  const fileName = String(fileResult?.relativeName || fileResult?.fileName || "");
+  const fileName = String(fileResult?.fileName || fileResult?.relativeName || "")
+    .replace(/\\/g, "/").split("/").pop().replace(/\.[^.]*$/, "")
+    .normalize("NFKC").replace(/([а-яёa-z])([А-ЯЁA-Z])/g, "$1 $2")
+    .toLocaleLowerCase("ru-RU").replace(/[^а-яёa-z]+/g, " ").trim();
   return Object.entries(OCR_EXPLICIT_SOURCE_KIND_PATTERNS)
     .filter(([, pattern]) => pattern.test(fileName))
     .map(([kind]) => kind);
@@ -14524,14 +14527,19 @@ function getOcrFieldSourceSuitability(fieldKey, fileResult) {
   const expectedKind = OCR_FIELD_SOURCE_KIND_BY_KEY[String(fieldKey || "")];
   if (!expectedKind) return 0;
   const explicitKinds = getOcrExplicitSourceKinds(fileResult);
-  if (explicitKinds.length && !explicitKinds.includes(expectedKind)) return -1000;
+  const contentKinds = Array.isArray(fileResult?.contentDocumentTypes) ? fileResult.contentDocumentTypes : [];
+  const sourceKinds = contentKinds.length ? contentKinds : explicitKinds;
+  if (!sourceKinds.some((kind) => kind === "application" || kind === "contract")
+    && sourceKinds.some((kind) => Object.hasOwn(OCR_EXPLICIT_SOURCE_KIND_PATTERNS, kind))
+    && !sourceKinds.includes(expectedKind)) return -1000;
   const documentTypes = new Set(
     (Array.isArray(fileResult?.documentTypes) ? fileResult.documentTypes : [])
       .map((item) => String(item || "").trim().toLowerCase())
       .filter(Boolean)
   );
   let score = 0;
-  if (explicitKinds.includes(expectedKind)) score += 100;
+  if (contentKinds.includes(expectedKind)) score += 160;
+  else if (explicitKinds.includes(expectedKind)) score += 100;
   if (documentTypes.has(expectedKind)) score += 40;
   if (
     documentTypes.size
@@ -14550,6 +14558,9 @@ function aggregateOcrFieldCandidates(fileResults) {
       const sourceSuitability = getOcrFieldSourceSuitability(candidate.key, fileResult);
       if (sourceSuitability <= -1000) return;
       candidate.sourceSuitability = sourceSuitability;
+      candidate.sourceDocumentTypes = Array.isArray(fileResult.contentDocumentTypes)
+        ? fileResult.contentDocumentTypes.filter((kind) => typeof kind === "string").slice(0, 8)
+        : [];
       const candidates = candidatesByKey.get(candidate.key) || [];
       const duplicate = candidates.find((item) => (
         item.value.toLocaleLowerCase("ru-RU") === candidate.value.toLocaleLowerCase("ru-RU")
@@ -14672,6 +14683,9 @@ async function runStudentDocumentRecognitionJob(job, options) {
             : [],
           documentTypes: Array.isArray(payload.documentTypes)
             ? payload.documentTypes.map((item) => String(item || "")).filter(Boolean)
+            : [],
+          contentDocumentTypes: Array.isArray(payload.contentDocumentTypes)
+            ? payload.contentDocumentTypes.map((item) => String(item || "")).filter(Boolean).slice(0, 8)
             : [],
           fields: Array.isArray(payload.fields) ? payload.fields : [],
           pagePreviews: Array.isArray(payload.pagePreviews)

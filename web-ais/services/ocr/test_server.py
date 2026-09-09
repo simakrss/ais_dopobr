@@ -25,6 +25,123 @@ class OcrExtractionTests(unittest.TestCase):
         kinds, fields = extract_fields(text, file_name)
         return kinds, {field["key"]: field["value"] for field in fields}
 
+    def test_filename_document_hints_handle_separators_case_and_latin_names(self):
+        examples = {
+            "01_ИНН_Иванова.JPG": ["inn"],
+            "ИНН7707083893.pdf": ["inn"],
+            "INN-Ivanova.PDF": ["inn"],
+            "Копия_СНИЛС (2).png": ["snils"],
+            "snils_ivanova.pdf": ["snils"],
+            "АДИ-РЕГ.pdf": ["snils"],
+            "Pasport2.JPG": ["passport"],
+            "ПаспортИванова.pdf": ["passport"],
+            "прописка.png": ["passport"],
+            "diploma_ivanova.pdf": ["education"],
+            "Приложение_к_диплому.pdf": ["education"],
+            "Аттестат.pdf": ["education"],
+            "Документ_об_образовании.pdf": ["education"],
+            "Заявление.pdf": ["application"],
+            "Договор.pdf": ["contract"],
+            "Заявление+договор_Иванова.pdf": ["application", "contract"],
+            "Паспорт_СНИЛС.pdf": ["passport", "snils"],
+            r"C:\ИНН\Иванова_Инна.pdf": [],
+            "СНИЛС/scan001.pdf": [],
+            "Инна_Винникова.pdf": [],
+            "Страховка_авто.pdf": [],
+        }
+        for name, expected in examples.items():
+            with self.subTest(name=name):
+                self.assertEqual(ocr_server.document_filename_kinds(name), expected)
+                self.assertEqual(ocr_server.classify_document("Неразборчивый заголовок", name), expected)
+
+    def test_filename_hints_recover_numbers_from_scan_not_from_filename(self):
+        kinds, fields = self.field_map("7707083893", "ИНН_Иванова.pdf")
+        self.assertEqual(kinds, ["inn"])
+        self.assertEqual(fields["inn"], "7707083893")
+        _, wrong_number = self.field_map("7707083894", "ИНН_7707083893.pdf")
+        self.assertNotIn("inn", wrong_number)
+        _, missing_number = self.field_map("Номер не читается", "ИНН_7707083893.pdf")
+        self.assertNotIn("inn", missing_number)
+        kinds, fields = self.field_map("75-578-921 18", "snils_ivanova.jpg")
+        self.assertEqual(kinds, ["snils"])
+        self.assertEqual(fields["snils"], "075-578-921 18")
+
+    def test_explicit_scan_content_wins_over_misleading_filename(self):
+        kinds, fields = self.field_map("ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ\nСерия 107724 Номер 1234567", "Паспорт.pdf")
+        self.assertEqual(kinds, ["education"])
+        self.assertNotIn("passportNumber", fields)
+        self.assertEqual(fields["educationDocumentNumber"], "1234567")
+        kinds, fields = self.field_map("СТРАХОВОЕ СВИДЕТЕЛЬСТВО\n112-233-445 95", "Диплом.pdf")
+        self.assertEqual(kinds, ["snils"])
+        self.assertNotIn("educationDocument", fields)
+        self.assertEqual(fields["snils"], "112-233-445 95")
+
+    def test_snils_filename_wins_over_generic_passport_labels(self):
+        kinds, fields = self.field_map("РОССИЙСКАЯ ФЕДЕРАЦИЯ\nМесто рождения\n75-578-921 18", "snils.jpg")
+        self.assertEqual(kinds, ["snils"])
+        self.assertNotIn("passportType", fields)
+        self.assertEqual(fields["snils"], "075-578-921 18")
+
+    def test_education_subtype_filename_hint_has_lower_confidence(self):
+        _, field_list = extract_fields("Серия 107724 Номер 1234567", "Диплом_СПО.pdf")
+        fields = {field["key"]: field for field in field_list}
+        self.assertEqual(fields["educationDocument"]["value"], "Диплом о среднем профессиональном образовании")
+        self.assertEqual(fields["educationLevel"]["value"], "СПО")
+        self.assertLess(fields["educationDocument"]["confidence"], 0.8)
+        self.assertIn("Имя файла", fields["educationDocument"]["evidence"])
+        _, explicit = self.field_map("ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ\nКвалификация Бакалавр", "Диплом_СПО.pdf")
+        self.assertEqual(explicit["educationDocument"], "Диплом о высшем образовании")
+        self.assertEqual(explicit["educationLevel"], "Бакалавр")
+        _, attestat = self.field_map("Серия 107724 Номер 1234567", "Аттестат.pdf")
+        self.assertNotIn("educationDocument", attestat, "An attestat must not become a university diploma")
+        _, wrong_title = self.field_map("АТТЕСТАТ О СРЕДНЕМ ОБЩЕМ ОБРАЗОВАНИИ", "Диплом.pdf")
+        self.assertNotIn("educationDocument", wrong_title, "A filename must not replace an explicit non-diploma title")
+
+    def test_filename_enables_application_fields_for_missing_heading(self):
+        text = "Фамилия Иванова\nИмя Анна\nОтчество Сергеевна\nАдрес электронной почты student@example.org"
+        for name, expected_kind in [("Заявление.pdf", "application"), ("Договор.pdf", "contract")]:
+            with self.subTest(name=name):
+                kinds, fields = self.field_map(text, name)
+                self.assertIn(expected_kind, kinds)
+                self.assertEqual(fields["email"], "student@example.org")
+
+    def test_recognize_preserves_content_evidence_independently_of_filename(self):
+        text = "ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ\nСерия 107724 Номер 1234567\nДата выдачи 30.06.2015"
+        result = ocr_server.recognize({
+            "fileName": "Паспорт.txt", "mimeType": "text/plain",
+            "base64": base64.b64encode(text.encode("utf8")).decode("ascii"),
+        })
+        self.assertEqual(result["documentTypes"], ["education"])
+        self.assertEqual(result["contentDocumentTypes"], ["education"])
+        self.assertEqual(result["fileName"], "Паспорт.txt")
+
+    def test_filename_hint_reaches_visual_ocr_and_content_blocks_wrong_passport_regions(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        examples = [
+            ("snils_ivanova.png", "75-578-921 18", True, ""),
+            ("diploma_ivanova.png", "Серия 107724 Номер 1234567", False, "education"),
+            ("Паспорт.png", "ДИПЛОМ О ВЫСШЕМ ОБРАЗОВАНИИ", False, ""),
+        ]
+        for name, text, snils_rotation, document_hint in examples:
+            with (
+                self.subTest(name=name),
+                patch.object(ocr_server, "render_pages", return_value=[Path("page.png")]),
+                patch.object(ocr_server, "ocr_image", return_value=(text, Path("page.png"), [], 0, False)) as ocr_mock,
+                patch.object(ocr_server, "ocr_passport_regions") as passport_mock,
+                patch.object(ocr_server, "attach_field_previews"),
+                patch.object(ocr_server, "render_referenced_page_previews", return_value=[]),
+                patch.object(ocr_server, "detect_photo_candidates", return_value=[]),
+            ):
+                result = ocr_server.recognize({
+                    "fileName": name, "mimeType": "image/png",
+                    "base64": base64.b64encode(png).decode("ascii"),
+                })
+                self.assertEqual(ocr_mock.call_args.kwargs["try_snils_rotations"], snils_rotation)
+                self.assertEqual(ocr_mock.call_args.kwargs["document_hint"], document_hint)
+                passport_mock.assert_not_called()
+                if name == "Паспорт.png":
+                    self.assertEqual(result["contentDocumentTypes"], ["education"])
+
     def test_tesseract_orientation_is_detected(self):
         completed = ocr_server.subprocess.CompletedProcess(
             args=["tesseract"],

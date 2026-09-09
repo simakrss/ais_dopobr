@@ -1444,15 +1444,33 @@ def extract_education_surname(
         add_field(fields, "educationDocumentSurname", surname, 0.78, evidence)
 
 
-def classify_document(text: str, file_name: str) -> list[str]:
-    source = f"{file_name}\n{text}".casefold()
-    file_source = file_name.casefold()
+def document_filename_hint(file_name: str) -> str:
+    # Do not classify by a parent directory or by parts of a person's surname.
+    name = str(file_name or "").replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = re.sub(r"([а-яёa-z])([А-ЯЁA-Z])", r"\1 \2", unicodedata.normalize("NFKC", name))
+    return re.sub(r"[^а-яёa-z]+", " ", name.casefold()).strip()
+
+
+def document_filename_kinds(file_name: str) -> list[str]:
+    source = document_filename_hint(file_name)
+    patterns = {
+        "passport": r"\b(?:паспорт(?:а|ом|у)?|passport|pasport|прописка|propiska)\b",
+        "snils": r"\b(?:снилс|snils|ади рег|страховое свидетельство)\b",
+        "inn": r"\b(?:инн|inn|налоговое свидетельство)\b",
+        "education": r"\b(?:диплом(?:а|у|ом)?|diplom|diploma|аттестат(?:а)?|attestat|документ об образовании|удостоверение о повышении квалификации)\b",
+        "application": r"\b(?:заявлени[ея]|анкета|application|zayavlenie|anketa)\b",
+        "contract": r"\b(?:договор(?:а)?|contract|dogovor)\b",
+    }
+    return [kind for kind, pattern in patterns.items() if re.search(pattern, source)]
+
+
+def classify_document_text(text: str, infer_passport: bool = True) -> list[str]:
+    source = text.casefold()
     snils_score = sum(marker in source for marker in (
-        "снилс", "страховое свидетельство", "индивидуального лицевого счета"
+        "снилс", "snils", "страховое свидетельство", "индивидуального лицевого счета"
     ))
     passport_explicit = bool(
-        re.search(r"(?:паспорт|passport)", file_source, re.IGNORECASE)
-        or re.search(r"\b(?:паспорт|passport)\b|код\s+подразделения", source, re.IGNORECASE)
+        re.search(r"\b(?:паспорт|passport)\b|код\s+подразделения", source, re.IGNORECASE)
     )
     passport_identity_score = sum(marker in source for marker in (
         "российская федерация", "дата выдачи", "место рождения", "личный код"
@@ -1463,7 +1481,7 @@ def classify_document(text: str, file_name: str) -> list[str]:
     passport_score = int(
         passport_explicit
         or (
-            not education_explicit
+            infer_passport and not education_explicit
             and snils_score == 0
             and passport_identity_score >= 2
         )
@@ -1472,12 +1490,12 @@ def classify_document(text: str, file_name: str) -> list[str]:
         "passport": passport_score,
         "snils": snils_score,
         "inn": sum(bool(re.search(pattern, source, re.IGNORECASE)) for pattern in (
-            r"\bинн\b",
+            r"\b(?:инн|inn)\b",
             r"идентификационный\s+номер\s+налогоплательщика",
             r"налоговом\s+органе",
         )),
         "education": sum(marker in source for marker in (
-            "диплом", "документ об образовании", "квалификац", "специальност",
+            "диплом", "аттестат", "документ об образовании", "квалификац", "специальност",
             "направление подготовки", "направления подготовки",
         )),
         "application": sum(marker in source for marker in (
@@ -1488,6 +1506,16 @@ def classify_document(text: str, file_name: str) -> list[str]:
         )),
     }
     return [name for name, score in scores.items() if score > 0]
+
+
+def classify_document(text: str, file_name: str) -> list[str]:
+    # Explicit content wins over a misleading filename. Filename hints are used
+    # before weak common labels such as "Russian Federation / place of birth".
+    return (
+        classify_document_text(text, infer_passport=False)
+        or document_filename_kinds(file_name)
+        or classify_document_text(text)
+    )
 
 
 def add_field(
@@ -1806,6 +1834,15 @@ def extract_identity_numbers(
                 f"OCR: {raw}" if corrected else raw,
             )
 
+    if "inn" in kinds and "inn" not in fields and not {"application", "contract"}.intersection(kinds):
+        # An INN scan may have lost its heading. The filename only identifies
+        # the document; the number must still be present and checksum-valid.
+        for line in lines:
+            for match in re.finditer(r"(?<!\d)(\d(?:[ \t-]?\d){9,11})(?!\d)", line):
+                value = only_digits(match.group(1))
+                if is_valid_inn(value):
+                    add_field(fields, "inn", value, 0.88, line)
+
 
 REGISTRATION_ADDRESS_LABEL = re.compile(
     r"(?:(?:почтовый\s+)?адрес(?:\s+(?:фактического|постоянного))?\s+места\s+жительства|"
@@ -2022,9 +2059,21 @@ def extract_education(
     text: str,
     lines: list[str],
     fields: dict[str, dict[str, Any]],
+    file_name: str = "",
 ) -> None:
     folded = text.casefold()
-    document_type = "Диплом о высшем образовании"
+    file_hint = document_filename_hint(file_name)
+    type_from_filename = False
+    if not re.search(r"средн\w* профессиональн|начальн\w* профессиональн|высш\w* образован|бакалавр|магистр|специалист|аттестат", folded):
+        if re.search(r"\bспо\b|средн\w* профессиональн", file_hint):
+            folded += " среднем профессиональном"
+            type_from_filename = True
+        elif re.search(r"\bнпо\b|начальн\w* профессиональн", file_hint):
+            folded += " начальном профессиональном"
+            type_from_filename = True
+    non_diploma_title = bool(re.search(r"аттестат|удостоверени[ея]|свидетельств[оа]", folded))
+    diploma_hint = not non_diploma_title and bool(re.search(r"\b(?:диплом\w*|diplom|diploma)\b", file_hint))
+    document_type = "Диплом о высшем образовании" if "диплом" in folded or diploma_hint else ""
     level = ""
     if "среднем профессиональном" in folded or "среднего профессионального" in folded:
         document_type = "Диплом о среднем профессиональном образовании"
@@ -2037,9 +2086,12 @@ def extract_education(
         level = "Магистр"
     elif "специалист" in folded:
         level = "Специалист"
-    add_field(fields, "educationDocument", document_type, 0.88, "Диплом")
+    if document_type and "диплом" not in text.casefold() and not level:
+        type_from_filename = True
+    evidence = f"Имя файла: {file_name}" if type_from_filename else "Диплом"
+    add_field(fields, "educationDocument", document_type, 0.65 if type_from_filename else 0.88, evidence)
     if level:
-        add_field(fields, "educationLevel", level, 0.82, document_type)
+        add_field(fields, "educationLevel", level, 0.65 if type_from_filename else 0.82, evidence if type_from_filename else document_type)
 
     labeled_number = re.search(
         r"(?:серия|сер\.?)\s*([A-ZА-ЯЁ0-9-]{2,12}).{0,30}?(?:номер|№)\s*([A-ZА-ЯЁ0-9-]{4,20})",
@@ -2221,8 +2273,8 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
         extract_registration_address(lines, fields)
     if "passport" in kinds:
         extract_passport(text, lines, fields)
-        passport_source = f"{file_name}\n{text}".casefold()
-        passport_file_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
+        passport_source = text.casefold()
+        passport_file_hint = "passport" in document_filename_kinds(file_name)
         passport_identity_score = sum(marker in passport_source for marker in (
             "российская федерация",
             "код подразделения",
@@ -2234,7 +2286,7 @@ def extract_fields(text: str, file_name: str) -> tuple[list[str], list[dict[str,
         ):
             extract_registration_address(lines, fields)
     if "education" in kinds and not is_application_document:
-        extract_education(text, lines, fields)
+        extract_education(text, lines, fields, file_name)
     kinds = [
         kind
         for kind in kinds
@@ -3315,6 +3367,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                     "method": "text",
                 }],
                 "documentTypes": document_types,
+                "contentDocumentTypes": classify_document_text(text, infer_passport=False),
                 "fields": fields,
                 "pagePreviews": [],
                 "photoCandidates": [],
@@ -3325,11 +3378,10 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
 
         page_paths = embedded_docx_pages or render_pages(source_path, mime_type, workdir)
         pdf_text_pages = extract_pdf_text_pages(source_path) if mime_type == "application/pdf" else []
-        passport_hint = bool(re.search(r"(?:паспорт|passport)", file_name, re.IGNORECASE))
-        snils_hint = bool(re.search(r"(?:снилс|snils|страхов)", file_name, re.IGNORECASE))
-        education_hint = bool(EDUCATION_DOCUMENT_HINT_PATTERN.search(
-            f"{file_name}\n{document_text_layer}"
-        ))
+        filename_kinds = document_filename_kinds(file_name)
+        passport_hint = "passport" in filename_kinds
+        snils_hint = "snils" in filename_kinds
+        education_hint = "education" in filename_kinds or bool(EDUCATION_DOCUMENT_HINT_PATTERN.search(document_text_layer))
 
         def recognize_page(item: tuple[int, Path]) -> dict[str, Any]:
             page_number, page_path = item
@@ -3355,21 +3407,22 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 extraction_method = "ocr"
             page_source = page_text.casefold()
+            page_is_passport = "passport" in classify_document(page_text, file_name)
             registration_hint = (
                 page_number > 1
                 or bool(re.search(r"(?:мест\w*\s+житель|регистрац|пропис)", page_source))
                 or (
                     len(page_paths) == 1
                     and bool(re.search(
-                        r"(?:passport|паспорт).*?(?:2|пропис|регистрац)",
+                        r"(?:passport|pasport|паспорт).*?2|пропис|propiska|регистрац",
                         file_name,
                         re.IGNORECASE,
                     ))
                 )
             )
-            if extraction_method == "ocr" and passport_hint and page_number == 1 and not registration_hint:
+            if extraction_method == "ocr" and passport_hint and page_is_passport and page_number == 1 and not registration_hint:
                 page_text = merge_ocr_text(page_text, ocr_passport_regions(prepared_path))
-            if extraction_method == "ocr" and passport_hint and registration_hint:
+            if extraction_method == "ocr" and passport_hint and page_is_passport and registration_hint:
                 page_text = merge_ocr_text(page_text, ocr_passport_registration_region(prepared_path))
             return {
                 "page": page_number,
@@ -3443,6 +3496,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
             "pageCount": len(page_paths),
             "pages": page_results,
             "documentTypes": document_types,
+            "contentDocumentTypes": classify_document_text(text, infer_passport=False),
             "fields": fields,
             "pagePreviews": page_previews,
             "photoCandidates": photo_candidates,

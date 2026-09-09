@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.416",
+    version: "1.7.417",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.417",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Распознавание учитывает тип документа в названии файла, включая ИНН, СНИЛС, паспорт, диплом, заявление и договор, разделители и латинские названия. Явно распознанное содержимое имеет приоритет над именем файла."
+      ]
+    },
     {
       version: "1.7.416",
       releasedAt: "2026-09-09",
@@ -50574,16 +50581,14 @@ MAX - https://bizvmax.ru/zifra_plus
       expectedKind = "education";
     }
     if (!expectedKind) return true;
+    const contentKinds = Array.isArray(field?.sourceDocumentTypes) ? field.sourceDocumentTypes : [];
+    if (contentKinds.length) {
+      return contentKinds.includes(expectedKind) || contentKinds.some((kind) => kind === "application" || kind === "contract");
+    }
     const explicitKinds = String(field?.sourceFile || "")
       .split(/;\s*/g)
-      .flatMap((sourceName) => {
-        const kinds = [];
-        if (/(?:паспорт|passport)/iu.test(sourceName)) kinds.push("passport");
-        if (/(?:снилс|snils|страхов)/iu.test(sourceName)) kinds.push("snils");
-        if (/(?:\bинн\b|\binn\b|налог)/iu.test(sourceName)) kinds.push("inn");
-        if (/(?:диплом|аттестат|образован|удостоверен)/iu.test(sourceName)) kinds.push("education");
-        return kinds;
-      });
+      .flatMap((sourceName) => getStudentRecognitionFileSourceKinds({ fileName: sourceName }))
+      .filter((kind) => kind !== "application");
     return !explicitKinds.length || explicitKinds.includes(expectedKind);
   }
 
@@ -51613,15 +51618,18 @@ MAX - https://bizvmax.ru/zifra_plus
   });
 
   const studentRecognitionSourceKindPatterns = Object.freeze({
-    passport: /(?:паспорт|passport)/iu,
-    snils: /(?:снилс|snils|страхов)/iu,
-    inn: /(?:\bинн\b|\binn\b|налог)/iu,
-    education: /(?:диплом|аттестат|образован|удостоверен)/iu,
-    application: /(?:заявлен|договор|сведен)/iu
+    passport: /(?:^| )(?:паспорт(?:а|ом|у)?|passport|pasport|прописка|propiska)(?= |$)/u,
+    snils: /(?:^| )(?:снилс|snils|ади рег|страховое свидетельство)(?= |$)/u,
+    inn: /(?:^| )(?:инн|inn|налоговое свидетельство)(?= |$)/u,
+    education: /(?:^| )(?:диплом(?:а|у|ом)?|diplom|diploma|аттестат(?:а)?|attestat|документ об образовании|удостоверение о повышении квалификации)(?= |$)/u,
+    application: /(?:^| )(?:заявлени[ея]|анкета|application|zayavlenie|anketa|договор(?:а)?|contract|dogovor|сведения)(?= |$)/u
   });
 
   function getStudentRecognitionFileSourceKinds(file) {
-    const fileName = String(file?.relativeName || file?.fileName || "");
+    const fileName = String(file?.fileName || file?.relativeName || "")
+      .replace(/\\/g, "/").split("/").pop().replace(/\.[^.]*$/, "")
+      .normalize("NFKC").replace(/([а-яёa-z])([А-ЯЁA-Z])/g, "$1 $2")
+      .toLocaleLowerCase("ru-RU").replace(/[^а-яёa-z]+/g, " ").trim();
     return Object.entries(studentRecognitionSourceKindPatterns)
       .filter(([, pattern]) => pattern.test(fileName))
       .map(([kind]) => kind);
@@ -51634,16 +51642,22 @@ MAX - https://bizvmax.ru/zifra_plus
     let score = sourcePosition === 0 ? 20 : 0;
     if (!preference) return score + (file?.error ? 0 : 4);
     const explicitKinds = getStudentRecognitionFileSourceKinds(file);
+    const contentKinds = Array.isArray(file?.contentDocumentTypes)
+      ? file.contentDocumentTypes.map((kind) => kind === "contract" ? "application" : kind)
+      : [];
+    const sourceKinds = contentKinds.length ? contentKinds : explicitKinds;
     const identityKinds = ["passport", "snils", "inn", "education"];
     if (
       preference.strict
-      && explicitKinds.some((kind) => identityKinds.includes(kind))
-      && !explicitKinds.some((kind) => preference.kinds.includes(kind))
+      && !sourceKinds.includes("application")
+      && sourceKinds.some((kind) => identityKinds.includes(kind))
+      && !sourceKinds.some((kind) => preference.kinds.includes(kind))
     ) return -1000;
     const documentTypes = (Array.isArray(file?.documentTypes) ? file.documentTypes : [])
       .map((item) => String(item || "").trim().toLowerCase())
       .filter(Boolean);
-    if (explicitKinds.some((kind) => preference.kinds.includes(kind))) score += 120;
+    if (contentKinds.some((kind) => preference.kinds.includes(kind))) score += 180;
+    else if (explicitKinds.some((kind) => preference.kinds.includes(kind))) score += 120;
     if (documentTypes.some((kind) => preference.kinds.includes(kind))) score += 60;
     if (!file?.error) score += 4;
     return score;

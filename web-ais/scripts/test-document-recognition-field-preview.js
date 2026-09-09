@@ -41,6 +41,23 @@ async function main() {
     aggregatedPassportFields.find((field) => field.key === "passportCode")?.value,
     "610-068"
   );
+  for (const sourceName of ["01_ИНН_Иванова.pdf", "INN-Ivanova.pdf", "ИНН7707083893.pdf"]) {
+    assert.ok(server.getOcrFieldSourceSuitability("inn", { relativeName: sourceName }) >= 100);
+    assert.strictEqual(server.getOcrFieldSourceSuitability("passportNumber", { relativeName: sourceName }), -1000);
+  }
+  assert.strictEqual(server.getOcrFieldSourceSuitability("passportNumber", { relativeName: "ИНН/Иванова_Инна.pdf" }), 0);
+  const contentBasedFields = server.aggregateOcrFieldCandidates([
+    {
+      relativeName: "Паспорт.pdf", documentTypes: ["education"], contentDocumentTypes: ["education"],
+      fields: [{ key: "educationDocumentNumber", value: "1234567", confidence: 0.9 }]
+    },
+    {
+      relativeName: "Диплом.pdf", documentTypes: ["education"], contentDocumentTypes: [],
+      fields: [{ key: "educationDocumentNumber", value: "1111111", confidence: 0.99 }]
+    }
+  ]);
+  assert.strictEqual(contentBasedFields[0].value, "1234567", "Explicit content outranks a filename-only guess");
+  assert.deepStrictEqual(contentBasedFields[0].sourceDocumentTypes, ["education"]);
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ais-ocr-preview-"));
   try {
@@ -174,7 +191,10 @@ async function main() {
   );
   assert.ok(sourceCompatibilityStart >= 0 && sourceCompatibilityEnd > sourceCompatibilityStart);
   const isSourceCompatible = new Function(
-    `${clientSource.slice(sourceCompatibilityStart, sourceCompatibilityEnd)}\nreturn isStudentDocumentRecognitionFieldSourceCompatible;`
+    clientSource.slice(
+      clientSource.indexOf("  const studentRecognitionSourceKindPatterns"),
+      clientSource.indexOf("  function getStudentRecognitionFieldSourceScore")
+    ) + `${clientSource.slice(sourceCompatibilityStart, sourceCompatibilityEnd)}\nreturn isStudentDocumentRecognitionFieldSourceCompatible;`
   )();
   assert.strictEqual(isSourceCompatible({ key: "passportCode", sourceFile: "СНИЛС.jpg" }), false);
   assert.strictEqual(isSourceCompatible({ key: "passportCode", sourceFile: "паспорт Колюпановой.pdf" }), true);
@@ -184,6 +204,10 @@ async function main() {
     sourceFile: "СНИЛС.jpg; паспорт Колюпановой.pdf"
   }), true);
   assert.strictEqual(isSourceCompatible({ key: "snils", sourceFile: "паспорт Колюпановой.pdf" }), false);
+  assert.strictEqual(isSourceCompatible({ key: "passportNumber", sourceFile: "01_ИНН_Иванова.pdf" }), false);
+  assert.strictEqual(isSourceCompatible({ key: "inn", sourceFile: "01_ИНН_Иванова.pdf" }), true);
+  assert.strictEqual(isSourceCompatible({ key: "passportNumber", sourceFile: "ИНН/Иванова_Инна.pdf" }), true);
+  assert.strictEqual(isSourceCompatible(contentBasedFields[0]), true, "The UI must not discard content-backed fields due to a misleading filename");
   assert.match(
     clientSource,
     /value\.fields\.slice\(0, 40\)\.filter\(isStudentDocumentRecognitionFieldSourceCompatible\)/u

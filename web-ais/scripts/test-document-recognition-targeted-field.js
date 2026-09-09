@@ -252,6 +252,14 @@ async function main() {
     sourceHelpers.getStudentRecognitionFieldSourceScore(passportCodeField, sourceFiles[1])
       > sourceHelpers.getStudentRecognitionFieldSourceScore(passportCodeField, sourceFiles[0])
   );
+  assert.strictEqual(sourceHelpers.findStudentRecognitionRecommendedSourceFilePosition([
+    { relativeName: "Диплом.pdf", documentTypes: ["education"] },
+    { relativeName: "01_ИНН_Иванова.pdf", documentTypes: [] }
+  ], { key: "inn" }), 1);
+  assert.strictEqual(sourceHelpers.findStudentRecognitionRecommendedSourceFilePosition([
+    { relativeName: "Диплом.pdf", documentTypes: ["education"] },
+    { relativeName: "Паспорт.pdf", documentTypes: ["education"], contentDocumentTypes: ["education"] }
+  ], { key: "educationDocumentNumber" }), 1, "Content-backed source must stay selectable despite its filename");
 
   console.log("document recognition targeted-field tests: OK");
 }
