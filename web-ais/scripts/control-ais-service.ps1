@@ -261,6 +261,8 @@ function Write-AisStartupLogProgress([ref]$Offset) {
   $stream = $null
   $reader = $null
   $text = ""
+  $trimmedHistory = $false
+  $maxProgressBytes = [long](64 * 1024)
   try {
     if (-not (Test-Path -LiteralPath $workerLogPath -PathType Leaf)) { return }
     $stream = [IO.FileStream]::new(
@@ -270,7 +272,15 @@ function Write-AisStartupLogProgress([ref]$Offset) {
       ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
     )
     $position = [long]$Offset.Value
-    if ($position -lt 0 -or $position -gt $stream.Length) { $position = 0 }
+    if ($position -lt 0) { $position = 0 }
+    if ($position -gt $stream.Length) {
+      $position = [Math]::Max([long]0, $stream.Length - $maxProgressBytes)
+      $trimmedHistory = $position -gt 0
+    }
+    if (($stream.Length - $position) -gt $maxProgressBytes) {
+      $position = $stream.Length - $maxProgressBytes
+      $trimmedHistory = $true
+    }
     [void]$stream.Seek($position, [IO.SeekOrigin]::Begin)
     $reader = [IO.StreamReader]::new($stream, $utf8, $true, 4096, $true)
     $text = $reader.ReadToEnd()
@@ -282,6 +292,11 @@ function Write-AisStartupLogProgress([ref]$Offset) {
     if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
   }
 
+  if ($trimmedHistory) {
+    $firstLineBreak = $text.IndexOf("`n", [StringComparison]::Ordinal)
+    if ($firstLineBreak -ge 0) { $text = $text.Substring($firstLineBreak + 1) }
+    Write-Host "[Запуск] Большой журнал сокращён до последних 64 КБ; устаревшие строки пропущены."
+  }
   foreach ($line in @([regex]::Split([string]$text, '\r?\n'))) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     $match = [regex]::Match($line, '^\[[^\]]+\]\s+\[(?<source>[^\]]+)\]\s+(?<message>.*)$')
