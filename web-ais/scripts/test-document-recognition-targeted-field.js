@@ -183,6 +183,31 @@ async function main() {
   );
   assert.match(fieldPopupSource, /data-action="select-student-document-field-area"/u);
   assert.match(fieldPopupSource, /Источник, область и распознать/u);
+  const popupMarkupSource = extractSource(fieldPopupSource, "    popup.innerHTML = `", "    const menuItems =");
+  const renderPopupMarkup = new Function("selectRecognitionArea", "settingsDictionary", `
+    const popup = {};
+    const control = {};
+    const historyEditable = true;
+    const canUndoFieldControl = () => false;
+    const canRedoFieldControl = () => false;
+    const escapeHtml = (value) => value;
+    const recognitionActionLabel = "Источник, область и распознать";
+    ${popupMarkupSource}
+    return popup.innerHTML;
+  `);
+  for (const settingsDictionary of ["", "educationDocumentTypes"]) {
+    for (const recognitionEnabled of [true, false]) {
+      const markup = renderPopupMarkup(recognitionEnabled ? () => {} : null, settingsDictionary);
+      const actions = [...markup.matchAll(/data-action="([^"]+)"/gu)].map((match) => match[1]);
+      assert.strictEqual(actions[0], recognitionEnabled ? "select-student-document-field-area" : "copy-field-value");
+      assert.strictEqual(actions.filter((action) => action === "select-student-document-field-area").length, recognitionEnabled ? 1 : 0);
+      assert.ok(markup.trimStart().startsWith("<button"), "The menu must not start with an empty divider");
+      assert.deepStrictEqual(actions.filter((action) => action !== "select-student-document-field-area"), [
+        "copy-field-value", "paste-field-value", "delete-field-value", "undo-field-change", "redo-field-change",
+        ...(settingsDictionary ? ["edit-settings-list"] : [])
+      ], "The order of the remaining field actions stays unchanged");
+    }
+  }
   const previewBindingSource = extractSource(
     appSource,
     "  function bindStudentDocumentRecognitionFieldPreviews",

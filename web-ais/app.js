@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.417",
+    version: "1.7.418",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.418",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Команда «Источник, область и распознать» перенесена на первое место контекстного меню поля."
+      ]
+    },
     {
       version: "1.7.417",
       releasedAt: "2026-09-09",
@@ -44988,6 +44995,19 @@ MAX - https://bizvmax.ru/zifra_plus
     popup.fieldCopyPopupOpener = opener;
     popup.fieldCopyPopupReturnTarget = opener || control;
     popup.innerHTML = `
+      ${selectRecognitionArea ? `
+        <button data-action="select-student-document-field-area" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4"></path>
+            <path d="M15 4h4a1 1 0 0 1 1 1v4"></path>
+            <path d="M20 15v4a1 1 0 0 1-1 1h-4"></path>
+            <path d="M9 20H5a1 1 0 0 1-1-1v-4"></path>
+            <rect x="7" y="8" width="10" height="8" rx="1"></rect>
+          </svg>
+          <span>${escapeHtml(recognitionActionLabel)}</span>
+        </button>
+        <span class="field-copy-divider" aria-hidden="true"></span>
+      ` : ""}
       <button data-action="copy-field-value" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <rect x="9" y="9" width="10" height="10" rx="2"></rect>
@@ -45039,19 +45059,6 @@ MAX - https://bizvmax.ru/zifra_plus
             <path d="m16 17 4-4 2 2-4 4-3 1z"></path>
           </svg>
           <span>Редактировать список</span>
-        </button>
-      ` : ""}
-      ${selectRecognitionArea ? `
-        <span class="field-copy-divider" aria-hidden="true"></span>
-        <button data-action="select-student-document-field-area" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M4 9V5a1 1 0 0 1 1-1h4"></path>
-            <path d="M15 4h4a1 1 0 0 1 1 1v4"></path>
-            <path d="M20 15v4a1 1 0 0 1-1 1h-4"></path>
-            <path d="M9 20H5a1 1 0 0 1-1-1v-4"></path>
-            <rect x="7" y="8" width="10" height="8" rx="1"></rect>
-          </svg>
-          <span>${escapeHtml(recognitionActionLabel)}</span>
         </button>
       ` : ""}
     `;
