@@ -11,6 +11,9 @@ const stylesPath = path.resolve(__dirname, "..", "styles.css");
 const maxIconPath = path.resolve(__dirname, "..", "data", "max-messenger-icon.png");
 const appSource = fs.readFileSync(appPath, "utf8");
 const stylesSource = fs.readFileSync(stylesPath, "utf8");
+const openedMessengerUrls = [];
+const messengerAlerts = [];
+let currentMessengerCardValues = {};
 
 function extractBetween(startMarker, endMarker) {
   const start = appSource.indexOf(startMarker);
@@ -24,18 +27,29 @@ const context = {
   URLSearchParams,
   Set,
   String,
-  encodeURIComponent
+  encodeURIComponent,
+  state: { modal: { draft: {} } },
+  document: {
+    getElementById: (id) => id === "recordForm" ? { dataset: { config: "students" } } : null
+  },
+  collectStudentFormDraft: () => ({ ...currentMessengerCardValues }),
+  collectContractFormDraft: () => ({ ...currentMessengerCardValues }),
+  alert: (message) => messengerAlerts.push(String(message)),
+  openExternalUrl: (url) => openedMessengerUrls.push(String(url)),
+  openMaxMessenger: async (url) => openedMessengerUrls.push(String(url))
 };
 vm.createContext(context);
 vm.runInContext(
   `${extractBetween("  function normalizeMessengerPhone", "  function preferredMessengerDisplayName")}
    ${extractBetween("  function getMessengerLaunchUrl", "  async function openStudentMessenger")}
+   ${extractBetween("  async function openStudentMessenger", "  function openStudentMessengerUrl")}
    ${extractBetween("  function getMessengerCustomUrl", "  function normalizeExternalUrl")}
    ${extractBetween("  function getMessengerPhoneUrl", "  function openExternalUrl")}
    this.getMessengerLaunchUrl = getMessengerLaunchUrl;
    this.getMessengerCustomUrl = getMessengerCustomUrl;
    this.getTelegramAppUrl = getTelegramAppUrl;
-   this.getMessengerPhoneUrl = getMessengerPhoneUrl;`,
+   this.getMessengerPhoneUrl = getMessengerPhoneUrl;
+   this.openStudentMessenger = openStudentMessenger;`,
   context
 );
 
@@ -144,6 +158,23 @@ assert.equal(
   "whatsapp://send?phone=79033839647"
 );
 assert.equal(context.getMessengerLaunchUrl("viber", { phone: "+7 (903) 383-96-47" }), "");
+
+// Header messenger buttons must use the full card draft when the Main tab is not rendered.
+currentMessengerCardValues = {
+  phone: "+7 (903) 383-96-47",
+  telegram: "",
+  messengerUrl: ""
+};
+void context.openStudentMessenger("whatsapp");
+assert.deepEqual(openedMessengerUrls, ["whatsapp://send?phone=79033839647"]);
+assert.deepEqual(messengerAlerts, []);
+
+// A deliberately cleared visible field must not fall back to an older draft value.
+context.state.modal.draft = { phone: "+7 (903) 383-96-47" };
+currentMessengerCardValues = { phone: "", telegram: "", messengerUrl: "" };
+void context.openStudentMessenger("whatsapp");
+assert.deepEqual(openedMessengerUrls, ["whatsapp://send?phone=79033839647"]);
+assert.deepEqual(messengerAlerts, ["Укажите телефон или ссылку мессенджера."]);
 
 // The MAX button must use the official local brand asset, not the former letter-M SVG.
 assert.ok(fs.existsSync(maxIconPath), "Не найдена официальная иконка MAX");

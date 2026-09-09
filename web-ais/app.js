@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.409",
+    version: "1.7.410",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.410",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Кнопки MAX, Telegram и WhatsApp находят телефон и адрес мессенджера во всей карточке слушателя, даже когда вкладка «Основное» не открыта."
+      ]
+    },
     {
       version: "1.7.409",
       releasedAt: "2026-09-09",
@@ -65299,15 +65306,23 @@ MAX - https://bizvmax.ru/zifra_plus
     return telegramAccountUrl || customUrl || getMessengerPhoneUrl(kind, phone);
   }
 
+  function collectCurrentMessengerCardValues() {
+    const formElement = document.getElementById("recordForm");
+    if (formElement?.dataset.config === "contracts") {
+      return collectContractFormDraft({ recalculatePaymentAccounting: false });
+    }
+    if (formElement?.dataset.config === "students") return collectStudentFormDraft();
+    return state.modal?.draft || {};
+  }
+
   async function openStudentMessenger(messenger) {
-    const phoneInput = document.querySelector("[name='phone']");
-    const telegramInput = document.querySelector("#recordForm [name='telegram']");
-    const messengerUrlInput = document.querySelector("[name='messengerUrl']");
-    const phone = normalizeMessengerPhone(phoneInput?.value || "");
-    const phoneForCopy = phone ? `+${phone}` : String(phoneInput?.value || "").trim();
+    const values = collectCurrentMessengerCardValues();
+    const phoneValue = String(values.phone || "");
+    const phone = normalizeMessengerPhone(phoneValue);
+    const phoneForCopy = phone ? `+${phone}` : phoneValue.trim();
     const url = getMessengerLaunchUrl(messenger, {
-      telegramAccount: telegramInput?.value || state.modal?.draft?.telegram || "",
-      messengerUrl: messengerUrlInput?.value || "",
+      telegramAccount: values.telegram || "",
+      messengerUrl: values.messengerUrl || "",
       phone
     });
     if (!url) {
@@ -65322,8 +65337,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function openStudentMessengerUrl() {
-    const input = document.querySelector("[name='messengerUrl']");
-    const url = parseMessengerUrl(input?.value || "");
+    const input = document.querySelector("#recordForm [name='messengerUrl']");
+    const values = collectCurrentMessengerCardValues();
+    const url = parseMessengerUrl(values.messengerUrl || "");
     if (!url) {
       alert("Укажите корректный адрес мессенджера.");
       input?.focus();
