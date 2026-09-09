@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.419",
+    version: "1.7.420",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.420",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Кнопки сохранения, обновления сессии, продолжения и отмены изменений в редакторе документа объединены в один компактный ряд. На узких экранах кнопки переносятся без растягивания."
+      ]
+    },
     {
       version: "1.7.419",
       releasedAt: "2026-09-09",
@@ -67154,11 +67161,13 @@ MAX - https://bizvmax.ru/zifra_plus
           <iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>
           <footer class="modal-actions generated-document-preview-actions">
             <small data-generated-document-preview-hint>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
-            <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
-            <button class="ghost-button" data-action="refresh-generated-document-editor" type="button" hidden disabled>Обновить сессию</button>
-            <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
-            <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
-            <button class="icon-button form-cancel-button" data-action="cancel-generated-document-editor-or-preview" type="button" title="Отменить формирование документа" aria-label="Отменить формирование документа">×</button>
+            <div class="generated-document-preview-buttons">
+              <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
+              <button class="ghost-button" data-action="refresh-generated-document-editor" type="button" hidden disabled>Обновить сессию</button>
+              <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
+              <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
+              <button class="icon-button form-cancel-button" data-action="cancel-generated-document-editor-or-preview" type="button" title="Отменить формирование документа" aria-label="Отменить формирование документа">×</button>
+            </div>
           </footer>
         </section>
       `;

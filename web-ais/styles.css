@@ -13393,20 +13393,32 @@ body.card-window-moving {
 }
 
 .generated-document-preview-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
 }
 
-.generated-document-preview-actions button {
+.generated-document-preview-actions small {
+  flex: 1 1 300px;
   min-width: 0;
 }
 
-.generated-document-preview-actions [data-action="confirm-generated-document-preview"] {
-  grid-column: auto;
-  grid-row: auto;
-  justify-self: end;
-  width: max-content;
+.generated-document-preview-buttons {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.generated-document-preview-buttons button {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: auto;
   max-width: 100%;
   white-space: nowrap;
 }
@@ -25077,34 +25089,26 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-preview-actions {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
   }
 
   .generated-document-preview-actions small {
-    grid-column: 1 / -1;
+    flex-basis: 100%;
+  }
+
+  .generated-document-preview-buttons {
+    gap: 6px;
   }
 
   .generated-document-preview-actions button {
-    width: 100%;
     padding-inline: 7px;
     font-size: 12px;
-    white-space: normal;
   }
 
   .generated-document-preview-actions button.icon-button.form-cancel-button {
     width: 32px;
     padding-inline: 0;
-    justify-self: end;
     font-size: 22px;
-  }
-
-  .generated-document-preview-actions [data-action="confirm-generated-document-preview"] {
-    grid-column: auto;
-    grid-row: auto;
-    width: max-content;
-    justify-self: end;
-    white-space: nowrap;
   }
 
   .generated-document-email-summary {

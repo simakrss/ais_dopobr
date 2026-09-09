@@ -1304,19 +1304,33 @@ const desktopPreviewActionsRule = getCssRule(
   stylesSource,
   ".generated-document-preview-actions"
 );
-assert.match(
-  desktopPreviewActionsRule,
-  /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*repeat\(3,\s*auto\)/u
+assert.match(desktopPreviewActionsRule, /display:\s*flex/u);
+assert.match(desktopPreviewActionsRule, /flex-wrap:\s*wrap/u);
+assert.doesNotMatch(desktopPreviewActionsRule, /grid-template-columns/u);
+const previewButtonsMarkup = previewModalSource.match(/<div class="generated-document-preview-buttons">([\s\S]*?)<\/div>/u)?.[1];
+assert.ok(previewButtonsMarkup, "Кнопки предпросмотра и редактора должны находиться в общей панели.");
+assert.deepEqual(
+  Array.from(previewButtonsMarkup.matchAll(/data-action="([^"]+)"/gu), (match) => match[1]),
+  [
+    "edit-generated-document-preview",
+    "refresh-generated-document-editor",
+    "save-generated-document-editor",
+    "confirm-generated-document-preview",
+    "cancel-generated-document-editor-or-preview"
+  ],
+  "Сохранение и отмена должны стоять в одном ряду с остальными действиями, в прежнем порядке."
 );
-const continuePreviewActionRule = getCssRule(
+const previewButtonsRule = getCssRule(stylesSource, ".generated-document-preview-buttons");
+assert.match(previewButtonsRule, /display:\s*flex/u);
+assert.match(previewButtonsRule, /flex-wrap:\s*wrap/u);
+assert.match(previewButtonsRule, /justify-content:\s*flex-end/u);
+const previewButtonRule = getCssRule(
   stylesSource,
-  '.generated-document-preview-actions [data-action="confirm-generated-document-preview"]'
+  ".generated-document-preview-buttons button"
 );
-assert.match(
-  continuePreviewActionRule,
-  /grid-column:\s*auto;[\s\S]*grid-row:\s*auto;/u
-);
-assert.doesNotMatch(continuePreviewActionRule, /grid-column:\s*1\s*\/\s*-1|grid-row:\s*2/u);
+assert.match(previewButtonRule, /flex:\s*0\s+0\s+auto/u);
+assert.match(previewButtonRule, /width:\s*auto/u);
+assert.match(previewButtonRule, /white-space:\s*nowrap/u);
 const mobilePreviewStart = stylesSource.indexOf("@media (max-width: 720px)", stylesSource.indexOf(".student-mailbox-dialog"));
 assert.notEqual(mobilePreviewStart, -1, "Не найден адаптивный блок предварительного просмотра.");
 const mobilePreviewActionsRule = getCssRule(
@@ -1324,16 +1338,15 @@ const mobilePreviewActionsRule = getCssRule(
   ".generated-document-preview-actions",
   mobilePreviewStart
 );
-assert.match(
-  mobilePreviewActionsRule,
-  /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/u
-);
+assert.doesNotMatch(mobilePreviewActionsRule, /grid-template-columns/u);
 const mobilePreviewHintRule = getCssRule(
   stylesSource,
   ".generated-document-preview-actions small",
   mobilePreviewStart
 );
-assert.match(mobilePreviewHintRule, /grid-column:\s*1\s*\/\s*-1/u);
+assert.match(mobilePreviewHintRule, /flex-basis:\s*100%/u);
+const mobilePreviewButtonRule = getCssRule(stylesSource, ".generated-document-preview-actions button", mobilePreviewStart);
+assert.doesNotMatch(mobilePreviewButtonRule, /width:\s*100%/u, "Кнопки не должны растягиваться и на мобильном экране.");
 assert.doesNotMatch(stylesSource, /generated-document-preview-actions \[data-action="edit-generated-document-preview"\][\s\S]*?grid-column:\s*1\s*\/\s*-1/u);
 
 console.log("Document generation preview tests passed.");
