@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.418",
+    version: "1.7.419",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.419",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Дата подачи заявки отображается после ФИО на вкладке «Основное» карточки слушателя. Используется существующее поле из АИС Допобразование.xlsb без дублирования в блоке сроков обучения."
+      ]
+    },
     {
       version: "1.7.418",
       releasedAt: "2026-09-09",
@@ -5828,6 +5835,7 @@ MAX - https://bizvmax.ru/zifra_plus
           title: "Обучающийся",
           fields: [
             field("name", "ФИО", "text", true),
+            field("applicationDate", "Дата подачи заявки", "date"),
             field("nameEnglish", "ФИО анг."),
             field("gender", "Пол"),
             field("noDeclension", "Не склоняется фамилия", "checkbox"),
@@ -5857,7 +5865,6 @@ MAX - https://bizvmax.ru/zifra_plus
         {
           title: "Сроки обучения",
           fields: [
-            field("applicationDate", "Дата подачи заявки", "date"),
             field("startDate", "Дата начала обучения", "date"),
             field("endDate", "Дата окончания обучения", "date"),
             field("extendedEndDate", "Продленная дата окончания", "date")
@@ -34188,8 +34195,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentMainIdentity(section, record) {
-    const hiddenKeys = new Set(["name", "nameEnglish", "gender", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "additionalStatus", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
+    const hiddenKeys = new Set(["name", "applicationDate", "nameEnglish", "gender", "noDeclension", "addressByFirstName", "uid", "photoPath", "status", "additionalStatus", "program", "studyForm", "educationType", "hours", "registrationAddress", "mailingAddress", "workPlace", "position", "employmentCategory", "ovzStatus", "internship", "group", "source", "tags"]);
     const nameField = section.fields.find((item) => item.key === "name");
+    const applicationDateField = section.fields.find((item) => item.key === "applicationDate");
     const nameEnglishField = section.fields.find((item) => item.key === "nameEnglish");
     const uidField = section.fields.find((item) => item.key === "uid");
     const photoPathField = section.fields.find((item) => item.key === "photoPath");
@@ -34219,6 +34227,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div class="student-name-stack">
               ${renderStudentField(nameField, record)}
               ${renderStudentNameOptions(record)}
+              ${renderStudentField(applicationDateField, record)}
               ${renderStudentEnglishNameField(nameEnglishField, record)}
             </div>
             <div class="student-status-stack">
