@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.408",
+    version: "1.7.409",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.409",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Список «Подставить из другой программы» в карточке программы приведён к единому поисковому стилю поля «Программа» карточки слушателя."
+      ]
+    },
     {
       version: "1.7.408",
       releasedAt: "2026-09-09",
@@ -32144,6 +32151,9 @@ MAX - https://bizvmax.ru/zifra_plus
       : 0;
     const sourcePrograms = getProgramRows()
       .filter((program) => String(program?.id || "") !== String(record?.id || ""));
+    const sourceProgramNames = sortProgramNames(
+      sourcePrograms.map((program) => String(program?.name || "").trim()).filter(Boolean)
+    );
     return `
       <section class="form-section program-commission-section" data-program-commission-section>
         <div class="form-section-head">
@@ -32169,18 +32179,13 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="program-commission-source-panel">
           <label>
             <span>Подставить из другой программы</span>
-            <input
-              type="search"
-              list="program-commission-source-list"
-              placeholder="Введите название программы"
-              autocomplete="off"
-              data-program-commission-source-search
-            >
-            <datalist id="program-commission-source-list">
-              ${sourcePrograms.map((program) => `<option value="${escapeAttr(program.name || "")}"></option>`).join("")}
-            </datalist>
+            ${renderComboField({
+              type: "search",
+              options: sourceProgramNames,
+              attrs: 'placeholder="Введите название программы" aria-label="Подставить комиссию из другой программы" data-program-commission-source-search'
+            })}
           </label>
-          <button class="ghost-button" data-action="apply-program-commission-source" type="button" ${sourcePrograms.length ? "" : "disabled"}>Подставить</button>
+          <button class="ghost-button" data-action="apply-program-commission-source" type="button" ${sourceProgramNames.length ? "" : "disabled"}>Подставить</button>
         </div>
         <div class="program-commission-preview" data-program-commission-preview>
           ${fields.map((item) => {
@@ -35346,13 +35351,13 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderComboField({ name, type = "text", value = "", required = "", options = [], action = "", attrs = "", dictionary = "" }) {
+  function renderComboField({ name = "", type = "text", value = "", required = "", options = [], action = "", attrs = "", dictionary = "" }) {
     const normalizedOptions = unique(options.map((option) => String(option)).filter(Boolean));
     return `
       <div class="combo-field" data-combo-field>
         <div class="combo-input-wrap">
           <input
-            name="${escapeAttr(name)}"
+            ${name ? `name="${escapeAttr(name)}"` : ""}
             type="${escapeAttr(type)}"
             value="${escapeAttr(value)}"
             autocomplete="off"

@@ -7,6 +7,7 @@ const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n?/gu, "\n");
+const styleSource = fs.readFileSync(path.join(root, "styles.css"), "utf8").replace(/\r\n?/gu, "\n");
 const serverSource = fs.readFileSync(path.join(root, "app-server.js"), "utf8").replace(/\r\n?/gu, "\n");
 const registrySource = fs.readFileSync(
   path.join(root, "data", "program-payment-registry.js"),
@@ -437,6 +438,21 @@ const programCommissionSectionSource = extractBetween(
 );
 assert.match(programCommissionSectionSource, /select name="commissionSetId" data-program-commission-set-select/u);
 assert.match(programCommissionSectionSource, /data-action="apply-program-commission-source"/u);
+assert.match(
+  programCommissionSectionSource,
+  /renderComboField\(\{[\s\S]*?type:\s*"search"[\s\S]*?options:\s*sourceProgramNames[\s\S]*?data-program-commission-source-search/u,
+  "Источник комиссии должен использовать тот же поисковый комбобокс, что и поле программы слушателя."
+);
+assert.doesNotMatch(
+  programCommissionSectionSource,
+  /<datalist|program-commission-source-list/u,
+  "Системный datalist не должен задавать отдельный стиль списка источников комиссии."
+);
+assert.match(
+  styleSource,
+  /\.program-commission-source-panel \.combo-input-wrap input\s*\{[\s\S]*?padding:\s*6px 40px 6px 8px/u,
+  "Текст комбобокса источника комиссии не должен заходить под кнопку очистки."
+);
 assert.match(programCommissionSectionSource, /Настройки → Комиссии/u);
 assert.doesNotMatch(programCommissionSectionSource, /PROGRAM_COMMISSION_NEW_SET_VALUE|commissionSetName|data-program-commission-set-name/u);
 assert.doesNotMatch(
