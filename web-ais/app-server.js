@@ -26650,6 +26650,36 @@ function createImapResponseReader(socket) {
   };
 }
 
+function createImapCommandMatcher(tag) {
+  let cursor = 0;
+  let literalEnd = 0;
+  return (buffer) => {
+    if (buffer.length < literalEnd) return null;
+    cursor = Math.max(cursor, literalEnd);
+    while (cursor < buffer.length) {
+      const lineEnd = buffer.indexOf("\r\n", cursor);
+      if (lineEnd < 0) return null;
+      const line = buffer.subarray(cursor, lineEnd).toString("latin1");
+      cursor = lineEnd + 2;
+      if (line.toUpperCase().startsWith(`${tag.toUpperCase()} `)) {
+        const match = /^(OK|NO|BAD)(?: (.*))?$/i.exec(line.slice(tag.length + 1));
+        if (match) return { end: cursor, status: match[1].toUpperCase(), message: String(match[2] || "").trim() };
+      }
+      // Literal contents are arbitrary bytes, not protocol lines. In particular,
+      // a line in an email that resembles a tagged OK must not finish the fetch.
+      const literal = /\{(\d+)\+?\}$/.exec(line);
+      if (literal) {
+        const length = Number(literal[1]);
+        if (!Number.isSafeInteger(length)) throw new Error("IMAP-сервер вернул неверный размер данных.");
+        literalEnd = cursor + length;
+        if (buffer.length < literalEnd) return null;
+        cursor = literalEnd;
+      }
+    }
+    return null;
+  };
+}
+
 async function connectStudentApplicationsImap(mailboxSettings = null) {
   const settings = mailboxSettings || getStudentApplicationsEmailSettings();
   if (!settings.host || !settings.login || !settings.password) {
@@ -26683,20 +26713,7 @@ async function connectStudentApplicationsImap(mailboxSettings = null) {
   let commandNumber = 0;
   const command = async (commandText, timeout = 30000) => {
     const tag = `A${String(++commandNumber).padStart(4, "0")}`;
-    const responsePromise = reader.waitFor((buffer) => {
-      // A tagged IMAP completion line is short and always arrives at the end
-      // of the response. Inspect only the tail instead of converting a growing
-      // multi-megabyte message to text again for every network chunk.
-      const tailOffset = Math.max(0, buffer.length - 8192);
-      const text = buffer.subarray(tailOffset).toString("latin1");
-      const match = new RegExp(`(?:^|\\r\\n)${tag} (OK|NO|BAD)(?: ([^\\r\\n]*))?\\r\\n`, "i").exec(text);
-      if (!match) return null;
-      return {
-        end: tailOffset + match.index + match[0].length,
-        status: match[1].toUpperCase(),
-        message: String(match[2] || "").trim()
-      };
-    }, `IMAP-сервер не ответил на команду ${tag}.`, timeout);
+    const responsePromise = reader.waitFor(createImapCommandMatcher(tag), `IMAP-сервер не ответил на команду ${tag}.`, timeout);
     socket.write(`${tag} ${commandText}\r\n`, "utf8");
     const result = await responsePromise;
     if (result.status !== "OK") {
@@ -27011,18 +27028,70 @@ async function fetchImapSubjects(client, uids, warnings) {
   return subjects;
 }
 
+const IMAP_MESSAGE_CHUNK_BYTES = 4 * 1024 * 1024;
+// Allow MIME/base64 overhead above the existing 100 MiB saved-file limit,
+// while bounding both a single message and the accumulated import batch.
+const MAX_IMAP_MESSAGE_BYTES = 150 * 1024 * 1024;
+const MAX_IMAP_MESSAGE_BATCH_BYTES = 150 * 1024 * 1024;
+
+function extractImapMessageChunk(response, uid, offset, expectedLength) {
+  const bytes = Buffer.isBuffer(response) ? response : Buffer.from(response || "");
+  const text = bytes.toString("latin1");
+  const pattern = /(?:^|\r\n)\* \d+ FETCH \(([^\r\n]*\bBODY\[\]<(\d+)> \{(\d+)\})\r\n/gi;
+  let match;
+  let chunk = null;
+  while ((match = pattern.exec(text))) {
+    const start = match.index + match[0].length;
+    const length = Number(match[3]);
+    const end = start + length;
+    const trailerEnd = bytes.indexOf("\r\n", end);
+    if (!Number.isSafeInteger(length) || end > bytes.length || trailerEnd < 0
+      || !text.slice(end, trailerEnd).trimEnd().endsWith(")")) {
+      throw new Error("IMAP-сервер вернул неполную часть письма. Повторите загрузку.");
+    }
+    // Servers may return UID either before or after the BODY literal.
+    const attributes = `${match[1]} ${text.slice(end, trailerEnd)}`;
+    const responseUid = /\bUID\s+(\d+)\b/i.exec(attributes)?.[1];
+    if (responseUid === uid) {
+      if (chunk || Number(match[2]) !== offset || length !== expectedLength) {
+        throw new Error("IMAP-сервер вернул неверный размер или порядок частей письма. Повторите загрузку.");
+      }
+      chunk = bytes.subarray(start, end);
+    }
+    pattern.lastIndex = trailerEnd;
+  }
+  if (!chunk) throw new Error("IMAP-сервер не вернул запрошенную часть письма. Повторите загрузку.");
+  return chunk;
+}
+
 async function fetchImapMessages(client, uids, warnings) {
   const messages = [];
-  const readResponse = (response) => {
-    messages.push(...extractImapFetchLiterals(response));
-  };
-  // Full messages can contain large attachments. Fetch them one at a time so
-  // the response reader never accumulates several multi-megabyte literals in
-  // a single buffer (Timeweb closes the connection after an oversized batch).
-  for (const uid of uids) {
+  let totalBytes = 0;
+  for (const value of uids) {
+    const uid = String(value);
     try {
-      const response = await client.command(`UID FETCH ${uid} (UID BODY.PEEK[])`, 60000);
-      readResponse(response);
+      if (!/^[1-9]\d*$/.test(uid)) throw new Error("Неверный идентификатор письма.");
+      const sizeResponse = await client.command(`UID FETCH ${uid} (UID RFC822.SIZE)`, 30000);
+      const sizeLine = Buffer.from(sizeResponse).toString("latin1").split("\r\n").find((line) =>
+        /^\* \d+ FETCH \(/i.test(line) && /\bUID\s+(\d+)\b/i.exec(line)?.[1] === uid
+        && /\bRFC822\.SIZE\s+\d+\b/i.test(line));
+      const size = Number(/\bRFC822\.SIZE\s+(\d+)\b/i.exec(sizeLine || "")?.[1]);
+      if (!Number.isSafeInteger(size) || size < 1) {
+        throw new Error("IMAP-сервер не вернул размер письма. Обновите список писем и повторите загрузку.");
+      }
+      if (size > MAX_IMAP_MESSAGE_BYTES) throw new Error("Размер письма с вложениями превышает 150 МБ.");
+      if (totalBytes + size > MAX_IMAP_MESSAGE_BATCH_BYTES) {
+        throw new Error("Общий размер загружаемых писем превышает 150 МБ. Загрузите это письмо отдельно.");
+      }
+      const chunks = [];
+      for (let offset = 0; offset < size; offset += IMAP_MESSAGE_CHUNK_BYTES) {
+        const count = Math.min(IMAP_MESSAGE_CHUNK_BYTES, size - offset);
+        const response = await client.command(`UID FETCH ${uid} (UID BODY.PEEK[]<${offset}.${count}>)`, 60000);
+        chunks.push(extractImapMessageChunk(response, uid, offset, count));
+      }
+      // Publish only a complete, validated message, never a truncated MIME file.
+      messages.push({ uid, bytes: Buffer.concat(chunks, size) });
+      totalBytes += size;
     } catch (error) {
       warnings.push(`Письмо UID ${uid} пропущено: ${error.message}`);
     }
@@ -40364,6 +40433,12 @@ module.exports = {
   parseStudentApplicationOrderEmail,
   mergeStudentApplicationRows,
   parseImapBodyStructureAttachments,
+  createImapResponseReader,
+  createImapCommandMatcher,
+  fetchImapMessages,
+  IMAP_MESSAGE_CHUNK_BYTES,
+  MAX_IMAP_MESSAGE_BYTES,
+  MAX_IMAP_MESSAGE_BATCH_BYTES,
   parseStudentMailboxMessage,
   prepareStudentMailboxAttachmentForSave,
   getStudentMailboxArchiveKind,

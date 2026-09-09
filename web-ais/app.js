@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.415",
+    version: "1.7.416",
     releasedAt: "2026-09-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.416",
+      releasedAt: "2026-09-09",
+      changes: [
+        "Исправлена загрузка документов из крупных писем: содержимое с вложениями поступает по частям с проверкой целостности, без превышения лимита ответа IMAP в 32 МБ."
+      ]
+    },
     {
       version: "1.7.415",
       releasedAt: "2026-09-09",
