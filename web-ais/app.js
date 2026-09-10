@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.421",
-    releasedAt: "2026-09-09"
+    version: "1.7.422",
+    releasedAt: "2026-09-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.422",
+      releasedAt: "2026-09-10",
+      changes: [
+        "При дублировании общих затрат дата оплаты устанавливается на текущую дату. Значение «личная карта» в поле «Номер в расходах» сохраняется, остальные номера очищаются. Правило действует и при дублировании общей затраты из выплат сотруднику."
+      ]
+    },
     {
       version: "1.7.421",
       releasedAt: "2026-09-09",
@@ -44454,19 +44461,20 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const tbody = row.closest("tbody");
     if (tbody && !getEmployeePaymentSort().key) syncEmployeePaymentOrderFromTable(tbody);
-    const nextId = makeId(sourceType === "general" ? "general-expense" : "direct-expense");
     const duplicate = {
-      ...source,
-      id: nextId,
-      date: todayIso(),
-      ...(sourceType === "general" ? { bkExpenseNo: "" } : {}),
-      act: "",
-      actStatus: "",
-      paid: "",
-      isPaid: "",
-      accountingClosed: "",
+      ...(sourceType === "general" ? createGeneralExpenseDuplicate(source) : {
+        ...source,
+        id: makeId("direct-expense"),
+        date: todayIso(),
+        act: "",
+        actStatus: "",
+        paid: "",
+        isPaid: "",
+        accountingClosed: ""
+      }),
       employeePaymentOrder: (Number(source.employeePaymentOrder) || 0) + 5
     };
+    const nextId = duplicate.id;
     let inserted = false;
     if (sourceType === "general") {
       const collections = getEmployeePaymentCollections({ create: true });
@@ -55113,10 +55121,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ...duplicate,
       id: makeId("general-expense"),
       date: currentDate,
-      paid: "",
+      paid: currentDate,
       isPaid: "",
       accountingClosed: "",
-      bkExpenseNo: "",
+      bkExpenseNo: /^личная\s+карта$/iu.test(String(source.bkExpenseNo || "").trim()) ? source.bkExpenseNo : "",
       act: "",
       actStatus: ""
     });
@@ -55146,7 +55154,7 @@ MAX - https://bizvmax.ru/zifra_plus
     persist();
     render();
     showDocumentGenerationNotice(
-      `Продублировано общих расходов: ${copies.length}. Копии созданы текущей датой и не отмечены оплаченными.`
+      `Продублировано общих расходов: ${copies.length}. Дата расхода и оплаты — сегодня; номер «личная карта» сохраняется.`
     );
   }
 

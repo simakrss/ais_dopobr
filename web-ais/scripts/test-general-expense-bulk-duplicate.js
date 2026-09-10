@@ -49,7 +49,8 @@ const second = {
   date: "2026-08-03",
   workType: "Услуги",
   description: "Проверка",
-  amount: "2500"
+  amount: "2500",
+  bkExpenseNo: "личная карта"
 };
 const untouched = { id: "expense-3", counterparty: "Не выбран" };
 const state = {
@@ -61,7 +62,7 @@ const state = {
 const context = {
   state,
   configs: { generalExpenses: { title: "Общие затраты" } },
-  todayIso: () => "2026-09-07",
+  todayIso: () => "2026-09-10",
   clone: (value) => JSON.parse(JSON.stringify(value)),
   makeId: () => "general-expense-copy-" + (++nextId),
   normalizeGeneralExpenseRecord: (value) => ({ ...value, amount: Number(value.amount || 0) }),
@@ -136,8 +137,11 @@ assert.equal(copies[0].amount, first.amount);
 assert.equal(copies[0].section, first.section);
 assert.equal(copies[0].workType, first.workType);
 assert.equal(copies[0].otherExpenses, first.otherExpenses);
-assert.equal(copies[0].date, "2026-09-07");
-["paid", "isPaid", "accountingClosed", "bkExpenseNo", "act", "actStatus"].forEach((field) => {
+assert.equal(copies[0].date, "2026-09-10");
+assert.equal(copies[0].paid, "2026-09-10", "Старая дата оплаты заменяется текущей.");
+assert.equal(copies[1].paid, "2026-09-10", "Дата оплаты заполняется и для ранее неоплаченного расхода.");
+assert.equal(copies[1].bkExpenseNo, "личная карта", "Личная карта сохраняется при массовом дублировании.");
+["isPaid", "accountingClosed", "bkExpenseNo", "act", "actStatus"].forEach((field) => {
   assert.equal(copies[0][field], "", "Не очищено поле нового расхода: " + field);
 });
 [
@@ -167,6 +171,8 @@ assert.equal(state.lastEditedRow.id, "general-expense-copy-2");
 assert.match(confirmation, /Выбрано записей: 2/u);
 assert.equal(audit[0], "Продублированы общие расходы");
 assert.match(notice, /Продублировано общих расходов: 2/u);
+assert.match(notice, /Дата расхода и оплаты — сегодня/u);
+assert.doesNotMatch(notice, /не отмечены оплаченными/u);
 assert.equal(persistCount, 1);
 assert.equal(renderCount, 1);
 assert.match(
@@ -174,5 +180,35 @@ assert.match(
   /data-action="bulk-duplicate-general-expenses"[\s\S]{0,240}Дублировать/u
 );
 assert.doesNotMatch(appSource, /bulk-copy-general-expenses/u);
+
+for (const expenseNumber of ["личная карта", "Личная карта", "ЛИЧНАЯ КАРТА", " личная  карта ", "личная\u00a0карта"]) {
+  const source = { ...first, bkExpenseNo: expenseNumber };
+  const duplicate = context.createGeneralExpenseDuplicate(source);
+  assert.equal(duplicate.bkExpenseNo, expenseNumber, "Значение личной карты сохраняется без изменения.");
+  assert.equal(duplicate.paid, "2026-09-10");
+  assert.equal(source.paid, "2026-08-02");
+  assert.equal(source.bkExpenseNo, expenseNumber);
+}
+for (const expenseNumber of ["15", 15, "", null, undefined, "корпоративная карта", "личная карта другого лица"]) {
+  const duplicate = context.createGeneralExpenseDuplicate({ ...first, bkExpenseNo: expenseNumber }, "2026-12-31");
+  assert.equal(duplicate.bkExpenseNo, "", "Прочие номера не переносятся в новый расход.");
+  assert.equal(duplicate.date, "2026-12-31");
+  assert.equal(duplicate.paid, "2026-12-31", "Дата оплаты совпадает с датой операции, а не датой исходной записи.");
+}
+
+const employeeHandler = extractBetween(appSource, "  function duplicateEmployeePaymentAccountingRow", "  function removeEmployeePaymentSourceRecord");
+const employeeDuplicateBlock = extractBetween(employeeHandler, "  const duplicate = {", "  let inserted = false;");
+const buildEmployeeDuplicate = vm.runInContext(`(function(source, sourceType) { ${employeeDuplicateBlock}; return duplicate; })`, context);
+const generalPaymentCopy = buildEmployeeDuplicate({ ...first, bkExpenseNo: "Личная карта" }, "general");
+assert.equal(generalPaymentCopy.paid, "2026-09-10", "Общая затрата из карточки сотрудника дублируется по тому же правилу.");
+assert.equal(generalPaymentCopy.bkExpenseNo, "Личная карта");
+assert.equal(generalPaymentCopy.employeePaymentOrder, 25);
+assert.equal(generalPaymentCopy.databaseSync, undefined);
+const directPaymentCopy = buildEmployeeDuplicate(first, "direct");
+assert.equal(directPaymentCopy.date, "2026-09-10");
+assert.equal(directPaymentCopy.paid, "", "Правило оплаты прямых расходов не изменяется.");
+assert.equal(directPaymentCopy.isPaid, "");
+assert.equal(directPaymentCopy.bkExpenseNo, "15");
+assert.equal(directPaymentCopy.employeePaymentOrder, 25);
 
 console.log("General expense bulk duplicate checks: OK");
