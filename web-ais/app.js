@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.422",
+    version: "1.7.423",
     releasedAt: "2026-09-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.423",
+      releasedAt: "2026-09-10",
+      changes: [
+        "В списках даты, телефоны и числовые значения отображаются без разрыва на строки. Для них резервируется минимальная ширина столбца; слишком длинные значения сокращаются с подсказкой полного текста."
+      ]
+    },
     {
       version: "1.7.422",
       releasedAt: "2026-09-10",
@@ -22450,6 +22457,20 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function isSingleLineTableValue(fieldItem, displayValue) {
+    const type = String(fieldItem.type || "");
+    if (["date", "datetime-local", "time", "number", "tel"].includes(type)) return true;
+    if (/phone|telephone/i.test(fieldItem.key)) return true;
+    return /^[+−-]?\d[\d\s.,:/()-]*(?:₽|руб\.?|%|шт\.?|ч\.?|дн\.?)?$/u.test(String(displayValue || "").trim());
+  }
+
+  function getSingleLineTableColumnMinWidth(fieldItem, displayValue) {
+    if (!isSingleLineTableValue(fieldItem, displayValue)) return 0;
+    const text = String(displayValue || "").trim();
+    const baseline = fieldItem.type === "date" ? 96 : (fieldItem.type === "tel" || /phone|telephone/i.test(fieldItem.key) ? 116 : 48);
+    return Math.min(200, Math.max(baseline, Math.ceil(text.length * 7.5) + 22));
+  }
+
   function renderTable(config, rows, configId = state.view) {
     const fields = getTableFields(config, configId);
     const selected = getSelected(configId);
@@ -22463,6 +22484,13 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const pagination = getTablePagination(configId, rows.length);
     const pageRows = rows.slice(pagination.start, pagination.end);
+    const columnMinWidths = new Map(fields.map((fieldItem) => [
+      fieldItem.key,
+      pageRows.reduce((minimum, row) => Math.max(minimum, getSingleLineTableColumnMinWidth(
+        fieldItem,
+        valueForDisplay(fieldItem.key, getTableCellValue(config, row, fieldItem.key), configId)
+      )), 0)
+    ]));
     const selectableRows = configId === "students" ? rows : pageRows;
     const allVisibleSelected = selectableRows.length > 0
       && selectableRows.every((row) => selected.includes(String(row?.id || "").trim()));
@@ -22479,7 +22507,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <input type="checkbox" data-action="toggle-all-selection" data-config="${configId}" ${allVisibleSelected ? "checked" : ""} aria-label="${selectAllLabel}">
               </th>
               ${fields.map((fieldItem) => `
-                <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} ${columnStyleAttr(configId, fieldItem.key)} data-table-header-full-label="${escapeAttr(fieldItem.fullLabel || fieldItem.label)}" draggable="true" title="Перетащите заголовок для смены порядка">
+                <th class="table-column-head" ${columnDataAttrs(configId, fieldItem.key)} data-table-column-min-width="${columnMinWidths.get(fieldItem.key)}" ${columnStyleAttr(configId, fieldItem.key, columnMinWidths.get(fieldItem.key))} data-table-header-full-label="${escapeAttr(fieldItem.fullLabel || fieldItem.label)}" draggable="true" title="Перетащите заголовок для смены порядка">
                   <div class="table-head-cell">
                     <button data-action="sort" data-config="${escapeAttr(configId)}" data-key="${fieldItem.key}" type="button">
                       ${escapeHtml(fieldItem.label)}
@@ -22536,9 +22564,10 @@ MAX - https://bizvmax.ru/zifra_plus
                   const value = externalUrl
                     ? `<a class="table-edit-link" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener noreferrer" title="Открыть страницу промосайта">${escapeHtml(displayValue)}</a>`
                     : escapeHtml(displayValue);
-                  const clampedValue = `<span class="table-cell-clamp" data-table-cell-full-text="${escapeAttr(displayValue)}">${value}</span>`;
-                  const style = columnStyleAttr(configId, fieldItem.key);
-                  const attrs = columnDataAttrs(configId, fieldItem.key);
+                  const clampedValue = `<span class="table-cell-clamp" data-table-cell-full-text="${escapeAttr(displayValue)}" ${isSingleLineTableValue(fieldItem, displayValue) ? "data-table-cell-nowrap" : ""}>${value}</span>`;
+                  const minimumWidth = columnMinWidths.get(fieldItem.key);
+                  const style = columnStyleAttr(configId, fieldItem.key, minimumWidth);
+                  const attrs = `${columnDataAttrs(configId, fieldItem.key)} data-table-column-min-width="${minimumWidth}"`;
                   const hoursMismatch = configId === "programs"
                     && fieldItem.key === "hours"
                     && programHoursSummary?.mismatch;
@@ -22691,7 +22720,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return Math.max(820, Math.round(columnsWidth));
   }
 
-  function columnStyleAttr(configId, key) {
+  function columnStyleAttr(configId, key, minimumWidth = 0) {
     const config = getTableLayoutConfig(configId);
     if (!config) return "";
     const columns = getTableFields(config, configId);
@@ -22699,7 +22728,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ? 100
       : (configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID ? 96.8 : 96.5);
     const percentage = getRegistryColumnPercentages(configId, columns, "", 0, totalPercent).get(key) || 0;
-    return `style="width:${percentage.toFixed(4)}%;min-width:0"`;
+    // Fixed-layout tables treat mixed percentage/length max() widths as auto.
+    // Reserve a concrete width for indivisible values and keep text columns flexible.
+    const width = minimumWidth > 0 ? `${Math.max(minimumWidth, Number(getColumnWidth(configId, key)) || 0)}px` : `${percentage.toFixed(4)}%`;
+    return `style="width:${width};min-width:0"`;
   }
 
   function columnDataAttrs(configId, key) {
@@ -23077,7 +23109,11 @@ MAX - https://bizvmax.ru/zifra_plus
       if (cell.dataset.tableConfig !== configId) return;
       const percentage = percentages.get(cell.dataset.columnKey);
       if (!percentage) return;
-      cell.style.width = `${percentage.toFixed(4)}%`;
+      const minimumWidth = Number(cell.dataset.tableColumnMinWidth) || 0;
+      const savedWidth = cell.dataset.columnKey === fieldKey ? width : Number(getColumnWidth(configId, cell.dataset.columnKey)) || 0;
+      cell.style.width = minimumWidth > 0
+        ? `${Math.max(minimumWidth, savedWidth)}px`
+        : `${percentage.toFixed(4)}%`;
       cell.style.minWidth = "0";
     });
   }

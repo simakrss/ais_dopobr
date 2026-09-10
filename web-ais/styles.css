@@ -6120,6 +6120,16 @@ body.long-press-dragging * {
   text-underline-offset: 2px;
 }
 
+.table-cell-clamp[data-table-cell-nowrap] {
+  display: block;
+  max-height: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-variant-numeric: tabular-nums;
+  -webkit-line-clamp: unset;
+}
+
 .communication-template-html-link:hover {
   background: #dbeafe;
   text-decoration-color: #2563eb;
