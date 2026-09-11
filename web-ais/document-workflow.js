@@ -17,6 +17,7 @@
     {
       id: "workflow-commission-order", documentKind: "workflowCommissionOrder",
       title: "Приказ об утверждении состава ИАК", fileName: "ПРИКАЗ об утверждении состава ИАК.docx",
+      orderNumberContext: "ИАК",
       templatePath: "storage/document-templates/workflow-commission-order.docx",
       fileNameTemplate: "Приказ_ИАК_#Номер приказа#_#Дата приказа#",
       saveFolderTemplate: "Документы/ИАК",
@@ -27,6 +28,7 @@
     {
       id: "workflow-recruitment-order", documentKind: "workflowRecruitmentOrder",
       title: "Приказ о наборе", fileName: "Приказ о наборе.docx",
+      orderNumberContext: "НАБОР",
       templatePath: "storage/document-templates/workflow-recruitment-order.docx",
       fileNameTemplate: "Приказ_о_наборе_#Номер приказа#_#Дата приказа#",
       saveFolderTemplate: "Документы/Приказы о наборе", condition: activeCondition,
@@ -60,6 +62,17 @@
   const normalize = value => String(value ?? "").trim().toLocaleLowerCase("ru-RU");
   const columns = new Map(Object.entries(columnMap).map(([name, key]) => [normalize(name), key]));
   Object.values(columnMap).forEach(key => columns.set(normalize(key), key));
+  function formatDefaultOrderNumber(dateValue, contextValue) {
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateValue || "").trim());
+    const context = String(contextValue || "").trim().toLocaleUpperCase("ru-RU");
+    if (!dateMatch || !/^[\p{L}\p{N}]+$/u.test(context)) return "";
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "";
+    return `${month}${String(day).padStart(2, "0")}-${String(year).slice(-2)}/${context}`;
+  }
   function tokenize(sql) {
     if (sql.length > 30000) throw new Error("SQL-формула слишком длинная.");
     const result = [];
@@ -197,5 +210,5 @@
     });
     return {values, tableFields, programs: [...selected.values()]};
   }
-  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition};
+  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition, formatDefaultOrderNumber};
 });

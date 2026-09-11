@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.423",
-    releasedAt: "2026-09-10"
+    version: "1.7.424",
+    releasedAt: "2026-09-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.424",
+      releasedAt: "2026-09-11",
+      changes: [
+        "В документообороте номера приказов автоматически формируются из даты и контекста: например, 11.09.2026 даёт 911-26/ИАК или 911-26/НАБОР. Ручная правка номера сохраняется."
+      ]
+    },
     {
       version: "1.7.423",
       releasedAt: "2026-09-10",
@@ -23218,8 +23225,24 @@ MAX - https://bizvmax.ru/zifra_plus
     return getProgramRows().map((program) => resolveProgramCommissionRecord(program));
   }
 
+  function syncDocumentWorkflowDefaultOrderNumber(draft, definition) {
+    if (!definition?.orderNumberContext) return String(draft?.orderNo || "");
+    const generatedOrderNo = window.AIS_DOCUMENT_WORKFLOW.formatDefaultOrderNumber(
+      draft?.date,
+      definition.orderNumberContext
+    );
+    const currentOrderNo = String(draft?.orderNo || "");
+    const previousGeneratedOrderNo = String(draft?.generatedOrderNo || "");
+    if (typeof draft.orderNoIsManual !== "boolean") {
+      draft.orderNoIsManual = Boolean(currentOrderNo && currentOrderNo !== previousGeneratedOrderNo);
+    }
+    if (!draft.orderNoIsManual) draft.orderNo = generatedOrderNo;
+    draft.generatedOrderNo = generatedOrderNo;
+    return String(draft.orderNo || "");
+  }
+
   function getDocumentWorkflowDraft() {
-    if (!state.documentWorkflowDraft) state.documentWorkflowDraft = { documentId: "", date: todayIso(), orderNo: "", format: "" };
+    if (!state.documentWorkflowDraft) state.documentWorkflowDraft = { documentId: "", date: todayIso(), orderNo: "", generatedOrderNo: "", orderNoIsManual: false, format: "" };
     return state.documentWorkflowDraft;
   }
 
@@ -23230,6 +23253,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!selected) return '<section class="panel"><p>Добавьте шаблон с привязкой «Документооборот» в конструкторе документов.</p></section>';
     const definition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(selected.documentKind);
     const isOrder = selected.documentKind !== "workflowCommercialProposal";
+    if (isOrder) syncDocumentWorkflowDefaultOrderNumber(draft, definition);
     let programs = [], error = "";
     try { programs = window.AIS_DOCUMENT_WORKFLOW.evaluateLists(selected, getWorkflowPrograms()).programs; }
     catch (failure) { error = failure.message; }
@@ -23271,8 +23295,21 @@ MAX - https://bizvmax.ru/zifra_plus
       draft.orderNo = form.elements.orderNo?.value ?? draft.orderNo;
       draft.format = form.elements.format.value;
     };
-    form.addEventListener("input", saveDraft);
+    form.addEventListener("input", (event) => {
+      saveDraft();
+      if (event.target === form.elements.orderNo) {
+        getDocumentWorkflowDraft().orderNoIsManual = Boolean(String(form.elements.orderNo.value || "").trim());
+      }
+    });
     form.addEventListener("change", saveDraft);
+    const refreshDefaultOrderNumber = () => {
+      saveDraft();
+      const template = getWorkflowDocuments().find((item) => item.id === form.dataset.documentId);
+      const definition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(template?.documentKind);
+      if (!form.elements.orderNo || !definition) return;
+      form.elements.orderNo.value = syncDocumentWorkflowDefaultOrderNumber(getDocumentWorkflowDraft(), definition);
+    };
+    form.elements.date?.addEventListener("input", refreshDefaultOrderNumber);
     document.querySelectorAll("[data-workflow-document]").forEach((button) => button.addEventListener("click", () => {
       saveDraft();
       state.documentWorkflowDraft.documentId = button.dataset.workflowDocument;

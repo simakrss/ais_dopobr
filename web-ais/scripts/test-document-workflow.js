@@ -16,6 +16,15 @@ const programs = [
   {id: "f", name: "Без комиссии (260 ч)", type: "ППП", status: "Набор", price: 20000, commissionChair: ""}
 ];
 const sourceValues = {"Дата документа": "2026-09-09", "Номер приказа": "ТЕСТ-017"};
+assert.equal(workflow.formatDefaultOrderNumber("2026-09-11", "иак"), "911-26/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2026-01-05", "НАБОР"), "105-26/НАБОР");
+assert.equal(workflow.formatDefaultOrderNumber("2026-11-01", "АТТЕСТАЦИЯ"), "1101-26/АТТЕСТАЦИЯ");
+assert.equal(workflow.formatDefaultOrderNumber("2028-02-29", "ИАК"), "229-28/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2026-02-31", "ИАК"), "");
+assert.equal(workflow.formatDefaultOrderNumber("2026-09-11", "два слова"), "");
+for (const definition of workflow.definitions.filter(item => item.documentKind !== "workflowCommercialProposal")) {
+  assert.match(definition.orderNumberContext, /^[\p{L}\p{N}]+$/u, `Для ${definition.documentKind} нужен однословный контекст номера.`);
+}
 const docXml = bytes => server.readDocxZipEntries(bytes).find(entry => entry.name === "word/document.xml").content.toString("utf8");
 const text = xml => [...xml.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)].map(m => m[1]).join(" ").replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
 const outputArg = process.argv.indexOf("--samples");
@@ -72,6 +81,12 @@ for (const definition of workflow.definitions) {
 }
 
 const recruitment = workflow.definitions[1];
+const generatedRecruitment = server.prepareWorkflowDocumentValues(
+  recruitment.documentKind,
+  {fields: recruitment.fields, programs},
+  {"Дата документа": "2026-09-11"}
+);
+assert.equal(generatedRecruitment.values["Номер приказа"], "911-26/НАБОР");
 const edited = {...recruitment, fields: recruitment.fields.map(field => field.name === "Список" ? {...field, formula: field.formula.replace("Стоимость,", "Стоимость * 2,").replace("WHERE [Условие отбора]", "WHERE [Тип]='КПК'")} : field)};
 const editedValues = server.prepareWorkflowDocumentValues(edited.documentKind, {fields: edited.fields, programs}, sourceValues).values;
 assert.match(editedValues["Список"], /\t5000\t10%/);
@@ -102,7 +117,17 @@ const context = {
   getDocumentTemplateInspectionSignature: () => "test", validateContractTemplateFormulaGraph: () => ""
 };
 vm.createContext(context);
-for (const name of ["getWorkflowDocuments", "getWorkflowPrograms", "getDocumentWorkflowDraft", "renderDocumentWorkflow", "applyDocumentTemplateInspection"]) vm.runInContext(functionSource(name), context);
+for (const name of ["getWorkflowDocuments", "getWorkflowPrograms", "syncDocumentWorkflowDefaultOrderNumber", "getDocumentWorkflowDraft", "renderDocumentWorkflow", "applyDocumentTemplateInspection"]) vm.runInContext(functionSource(name), context);
+context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-11", orderNo: "", generatedOrderNo: "", format: "pdf"};
+assert.match(context.renderDocumentWorkflow(), /value="911-26\/ИАК"/);
+context.state.documentWorkflowDraft = {documentId: workflow.definitions[1].id, date: "2026-09-11", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", format: "pdf"};
+assert.match(context.renderDocumentWorkflow(), /value="911-26\/НАБОР"/);
+context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", format: "pdf"};
+assert.match(context.renderDocumentWorkflow(), /value="912-26\/ИАК"/);
+context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "РУЧНОЙ-7", generatedOrderNo: "911-26/ИАК", format: "pdf"};
+assert.match(context.renderDocumentWorkflow(), /value="РУЧНОЙ-7"/);
+context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", orderNoIsManual: true, format: "pdf"};
+assert.match(context.renderDocumentWorkflow(), /value="911-26\/ИАК"/);
 for (const definition of workflow.definitions) {
   context.state.documentWorkflowDraft = {documentId: definition.id, date: "2026-09-09", orderNo: "ТЕСТ-017"};
   const html = context.renderDocumentWorkflow();

@@ -397,8 +397,8 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.423"/u);
-assert.match(authSource, /20260910-table-numeric-nowrap-v1/u);
-assert.match(indexSource, /20260910-table-numeric-nowrap-v1/u);
+assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.424"/u);
+assert.match(authSource, /20260911-workflow-order-number-v1/u);
+assert.match(indexSource, /20260911-workflow-order-number-v1/u);
 
 console.log("Program and student duplication checks: OK");

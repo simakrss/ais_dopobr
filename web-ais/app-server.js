@@ -5363,10 +5363,15 @@ function applyEducationCostDiscountStatement(xml, value) {
 function prepareWorkflowDocumentValues(kind, workflow, sourceValues = {}) {
   const definition = documentWorkflow.getDefinition(kind);
   if (!definition) throw new Error("Неизвестный вид документа документооборота.");
-  const dateText = String(sourceValues["Дата документа"] || "");
+  const resolvedSourceValues = { ...sourceValues };
+  const dateText = String(resolvedSourceValues["Дата документа"] || "");
   const date = new Date(`${dateText}T12:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== dateText) throw new Error("Укажите корректную дату документа.");
-  if (kind !== "workflowCommercialProposal" && !String(sourceValues["Номер приказа"] || "").trim()) throw new Error("Укажите номер приказа.");
+  if (kind !== "workflowCommercialProposal") {
+    resolvedSourceValues["Номер приказа"] = String(resolvedSourceValues["Номер приказа"] || "").trim()
+      || documentWorkflow.formatDefaultOrderNumber(dateText, definition.orderNumberContext);
+    if (!resolvedSourceValues["Номер приказа"]) throw new Error("Укажите номер приказа.");
+  }
   if (!Array.isArray(workflow?.programs) || workflow.programs.length > 10000) throw new Error("Не передан реестр программ (не более 10 000 записей).");
   if (!Array.isArray(workflow?.fields) || !workflow.fields.length || workflow.fields.length > 200) throw new Error("Не переданы поля документа из конструктора.");
   const fields = workflow.fields.map((field) => ({ name: String(field.name || "").trim(), formula: String(field.formula || "") }));
@@ -5386,7 +5391,7 @@ function prepareWorkflowDocumentValues(kind, workflow, sourceValues = {}) {
     visiting.add(name);
     const dependencies = [...getDocumentFormulaFieldReferences(field.formula), ...[...field.formula.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1])];
     dependencies.filter((key) => key !== name).forEach(evaluate);
-    const context = { fieldValues: values, sourceValues, evaluatingName: name };
+    const context = { fieldValues: values, sourceValues: resolvedSourceValues, evaluatingName: name };
     // Use the existing Assistant expression engine, but fail visibly on unsupported formulas.
     values[name] = field.formula.startsWith("=")
       ? formulaValueToString(evaluateDocumentFormulaExpression(stripDocumentFormulaComments(field.formula.slice(1)), context)).trim()
