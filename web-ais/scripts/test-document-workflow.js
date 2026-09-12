@@ -16,10 +16,13 @@ const programs = [
   {id: "f", name: "Без комиссии (260 ч)", type: "ППП", status: "Набор", price: 20000, commissionChair: ""}
 ];
 const sourceValues = {"Дата документа": "2026-09-09", "Номер приказа": "ТЕСТ-017"};
-assert.equal(workflow.formatDefaultOrderNumber("2026-09-11", "иак"), "911-26/ИАК");
-assert.equal(workflow.formatDefaultOrderNumber("2026-01-05", "НАБОР"), "105-26/НАБОР");
-assert.equal(workflow.formatDefaultOrderNumber("2026-11-01", "АТТЕСТАЦИЯ"), "1101-26/АТТЕСТАЦИЯ");
-assert.equal(workflow.formatDefaultOrderNumber("2028-02-29", "ИАК"), "229-28/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2026-09-12", "НАБОР"), "609-12/НАБОР");
+assert.equal(workflow.formatDefaultOrderNumber("2026-09-11", "иак"), "609-11/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2026-01-05", "НАБОР"), "601-05/НАБОР");
+assert.equal(workflow.formatDefaultOrderNumber("2026-11-01", "АТТЕСТАЦИЯ"), "611-01/АТТЕСТАЦИЯ");
+assert.equal(workflow.formatDefaultOrderNumber("2028-02-29", "ИАК"), "802-29/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2030-01-01", "ИАК"), "001-01/ИАК");
+assert.equal(workflow.formatDefaultOrderNumber("2029-12-31", "НАБОР"), "912-31/НАБОР");
 assert.equal(workflow.formatDefaultOrderNumber("2026-02-31", "ИАК"), "");
 assert.equal(workflow.formatDefaultOrderNumber("2026-09-11", "два слова"), "");
 for (const definition of workflow.definitions.filter(item => item.documentKind !== "workflowCommercialProposal")) {
@@ -92,7 +95,17 @@ const generatedRecruitment = server.prepareWorkflowDocumentValues(
   {fields: recruitment.fields, programs},
   {"Дата документа": "2026-09-11"}
 );
-assert.equal(generatedRecruitment.values["Номер приказа"], "911-26/НАБОР");
+assert.equal(generatedRecruitment.values["Номер приказа"], "609-11/НАБОР");
+for (const definition of workflow.definitions.filter(item => item.orderNumberContext)) {
+  const prepared = server.prepareWorkflowDocumentValues(definition.documentKind, {fields: definition.fields, programs}, {"Дата документа": "2026-09-12"});
+  const number = `609-12/${definition.orderNumberContext}`;
+  assert.equal(prepared.values["Номер приказа"], number, "Единый формат применяется ко всем нумеруемым документам раздела.");
+  for (const target of definition.additionalSaveTargets || []) {
+    if (!target.fileNameTemplate.includes("#Номер приказа#")) continue;
+    const name = workflow.safeOutputFileName(workflow.resolveOutputTemplate(target.fileNameTemplate, prepared.values), target.generationFormat);
+    assert.ok(name.includes(number.replace(/\//g, "-")), "В имени дополнительной копии используется новый номер.");
+  }
+}
 const edited = {...recruitment, fields: recruitment.fields.map(field => field.name === "Список" ? {...field, formula: field.formula.replace("Стоимость,", "Стоимость * 2,").replace("WHERE [Условие отбора]", "WHERE [Тип]='КПК'")} : field)};
 const editedValues = server.prepareWorkflowDocumentValues(edited.documentKind, {fields: edited.fields, programs}, sourceValues).values;
 assert.match(editedValues["Список"], /\t5000\t10%/);
@@ -125,11 +138,11 @@ const context = {
 vm.createContext(context);
 for (const name of ["getWorkflowDocuments", "getWorkflowPrograms", "syncDocumentWorkflowDefaultOrderNumber", "getDocumentWorkflowDraft", "renderDocumentWorkflow", "applyDocumentTemplateInspection"]) vm.runInContext(functionSource(name), context);
 context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-11", orderNo: "", generatedOrderNo: "", format: "pdf"};
-assert.match(context.renderDocumentWorkflow(), /value="911-26\/ИАК"/);
+assert.match(context.renderDocumentWorkflow(), /value="609-11\/ИАК"/);
 context.state.documentWorkflowDraft = {documentId: workflow.definitions[1].id, date: "2026-09-11", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", format: "pdf"};
-assert.match(context.renderDocumentWorkflow(), /value="911-26\/НАБОР"/);
+assert.match(context.renderDocumentWorkflow(), /value="609-11\/НАБОР"/);
 context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", format: "pdf"};
-assert.match(context.renderDocumentWorkflow(), /value="912-26\/ИАК"/);
+assert.match(context.renderDocumentWorkflow(), /value="609-12\/ИАК"/);
 context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "РУЧНОЙ-7", generatedOrderNo: "911-26/ИАК", format: "pdf"};
 assert.match(context.renderDocumentWorkflow(), /value="РУЧНОЙ-7"/);
 context.state.documentWorkflowDraft = {documentId: workflow.definitions[0].id, date: "2026-09-12", orderNo: "911-26/ИАК", generatedOrderNo: "911-26/ИАК", orderNoIsManual: true, format: "pdf"};

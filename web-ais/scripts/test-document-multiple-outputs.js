@@ -23,7 +23,7 @@ async function main() {
   assert.equal(dateValues["Месяц и год генерации"], "09.2026", "Month rollover uses Moscow time");
   assert.equal(workflow.getGenerationDateValues(new Date("2026-12-31T21:01:00Z"))["Месяц и год генерации"], "01.2027");
   assert.equal(workflow.safeOutputFileName("ПРИКАЗ об утверждении состава ИАК_09.2026.docx", "pdf"), "ПРИКАЗ об утверждении состава ИАК_09.2026.pdf");
-  assert.equal(workflow.safeOutputFileName("Приказ о наборе 912-26/НАБОР", "pdf"), "Приказ о наборе 912-26-НАБОР.pdf");
+  assert.equal(workflow.safeOutputFileName("Приказ о наборе 609-12/НАБОР", "pdf"), "Приказ о наборе 609-12-НАБОР.pdf");
   assert.equal(workflow.safeOutputFileName("CON", "docx"), "_CON.docx");
   assert.ok(!/[\\/]/.test(workflow.safeOutputFileName("../../escape", "pdf")));
   assert.equal(workflow.normalizeAdditionalSaveTargets(new Array(20).fill({})).length, 10);

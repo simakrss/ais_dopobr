@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.428",
+    version: "1.7.429",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.429",
+      releasedAt: "2026-09-12",
+      changes: [
+        "В документообороте изменён формат автоматических номеров: последняя цифра года, двухзначный месяц, дефис, двухзначный день и контекст документа. Например, 12.09.2026 — 609-12/НАБОР или 609-12/ИАК."
+      ]
+    },
     {
       version: "1.7.428",
       releasedAt: "2026-09-12",

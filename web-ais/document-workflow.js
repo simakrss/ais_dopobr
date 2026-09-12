@@ -81,7 +81,7 @@
     const day = Number(dateMatch[3]);
     const date = new Date(Date.UTC(year, month - 1, day));
     if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "";
-    return `${month}${String(day).padStart(2, "0")}-${String(year).slice(-2)}/${context}`;
+    return `${String(year).slice(-1)}${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}/${context}`;
   }
   function tokenize(sql) {
     if (sql.length > 30000) throw new Error("SQL-формула слишком длинная.");
