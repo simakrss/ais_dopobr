@@ -311,7 +311,8 @@ assert.match(
 const duplicateHandlerSource = extractFunction("copyEmployeeForNewContract");
 assert.match(duplicateHandlerSource, /!state\.modal\?\.id/u);
 assert.match(duplicateHandlerSource, /id:\s*""/u);
-assert.match(duplicateHandlerSource, /buildEmployeeContractDuplicateDraft\(source\)/u);
+assert.match(duplicateHandlerSource, /buildEmployeeContractDuplicateDraft\(source, state\.data\.collections\.contracts \|\| \[\]\)/u);
+assert.match(duplicateHandlerSource, /duplicateAutomaticContractNo: duplicateDraft\.contractNo/u);
 assert.match(duplicateHandlerSource, /releaseRecordLock\(lock\)/u);
 assert.match(duplicateHandlerSource, /contractCardTab\s*=\s*"contract"/u);
 
@@ -418,6 +419,9 @@ const duplicateContext = {
 };
 vm.createContext(duplicateContext);
 vm.runInContext(`
+  ${extractFunction("getNextEmployeeContractNumber")}
+  ${extractFunction("resolveDuplicateEmployeeContractNumber")}
+  ${extractFunction("buildContractPortalCredentials")}
   ${extractFunction("buildEmployeeContractDuplicateDraft")}
   this.buildEmployeeContractDuplicateDraft = buildEmployeeContractDuplicateDraft;
 `, duplicateContext);
@@ -505,7 +509,14 @@ const sourceContract = {
 };
 const sourceContractSnapshot = JSON.parse(JSON.stringify(sourceContract));
 deepFreeze(sourceContract);
-const duplicateDraft = duplicateContext.buildEmployeeContractDuplicateDraft(sourceContract);
+const numberingRows = [
+  sourceContract,
+  {contractNo: "24", section: ACTIVE_SECTION},
+  {contractNo: "39", section: EXPIRED_SECTION},
+  {contractNo: "", section: PARTNER_SECTION},
+  {contractNo: "-"}, {contractNo: "0038"}, {contractNo: "Д-500"}
+];
+const duplicateDraft = duplicateContext.buildEmployeeContractDuplicateDraft(sourceContract, numberingRows);
 const duplicatePlain = JSON.parse(JSON.stringify(duplicateDraft));
 
 const copiedFields = [
@@ -520,17 +531,18 @@ const copiedFields = [
   "educationType", "educationLevel", "educationSeries", "educationNumber",
   "educationIssueDate", "educationIssuer", "educationSpecialty", "educationQualification",
   "address", "snils", "inn", "login", "password", "sourceStudentId", "sourceStudentUid",
-  "city", "partnerDirections", "additionalInfo"
+  "city", "partnerDirections", "additionalInfo", "portalCredentials"
 ];
 copiedFields.forEach((key) => {
   assert.deepEqual(duplicatePlain[key], sourceContractSnapshot[key], `Поле ${key} должно переноситься в новый договор.`);
 });
 assert.equal(duplicatePlain.section, ACTIVE_SECTION);
 assert.equal(duplicatePlain.status, "Действует");
+assert.equal(duplicatePlain.contractNo, "40", "Номер определяется по всему столбцу, включая истёкшие договоры, а не только по исходному договору.");
 
 for (const key of [
-  "id", "contractNo", "contractDate", "type", "startDate", "endDate", "subject", "paymentTerms", "note",
-  "portalCredentials", "message1", "message9"
+  "id", "contractDate", "type", "startDate", "endDate", "subject", "paymentTerms", "note",
+  "message1", "message9"
 ]) {
   assert.equal(String(duplicatePlain[key] ?? ""), "", `Поле ${key} старого договора должно очищаться.`);
 }
@@ -551,5 +563,72 @@ for (const key of [
   );
 }
 assert.deepEqual(sourceContract, sourceContractSnapshot, "Создание дубликата не должно мутировать исходный договор.");
+
+const nextNumber = duplicateContext.getNextEmployeeContractNumber;
+assert.equal(nextNumber([]), "1");
+assert.equal(nextNumber([{contractNo: "-"}, {contractNo: ""}, {contractNo: null}]), "1");
+assert.equal(nextNumber([{contractNo: "9"}, {contractNo: "10"}, {contractNo: "2"}]), "11", "Сравнение числовое, не строковое.");
+assert.equal(nextNumber([{contractNo: 4}, {contractNo: " 0007 "}, {contractNo: "1.5"}, {contractNo: "-25"}]), "8");
+assert.equal(nextNumber([{contractNo: "9007199254740993"}]), "9007199254740994", "Длинные номера не должны терять точность.");
+assert.equal(duplicateContext.buildEmployeeContractDuplicateDraft(sourceContract).contractNo, "18");
+const duplicateModal = {config: "contracts", id: "", duplicateSourceId: sourceContract.id, duplicateAutomaticContractNo: "40"};
+const resolveNumber = duplicateContext.resolveDuplicateEmployeeContractNumber;
+assert.equal(resolveNumber({contractNo: "40"}, duplicateModal, [...numberingRows, {contractNo: "40"}]), "41",
+  "Перед сохранением автоматический номер пересчитывается по актуальной коллекции.");
+assert.equal(resolveNumber({contractNo: "Ручной-42"}, duplicateModal, numberingRows), "Ручной-42");
+assert.equal(resolveNumber({contractNo: ""}, duplicateModal, numberingRows), "40");
+assert.equal(resolveNumber({contractNo: "17"}, {...duplicateModal, id: "existing"}, numberingRows), "17");
+assert.equal(resolveNumber({contractNo: ""}, {config: "contracts", id: ""}, numberingRows), "",
+  "Обычное создание договора без номера остаётся допустимым.");
+
+const portalMessage = duplicateContext.buildContractPortalCredentials;
+assert.equal(portalMessage(duplicatePlain), sourceContract.portalCredentials,
+  "Очистка типа договора не должна скрывать скопированное сообщение.");
+assert.equal(portalMessage({...duplicatePlain, type: "Новый тип"}), sourceContract.portalCredentials);
+const customMessage = "  Особый текст\nhttps://portal.edu-plus.ru/\n\nЛогин: example\n";
+assert.equal(portalMessage({portalCredentials: customMessage}), customMessage, "Сообщение переносится без изменения пробелов, ссылок и строк.");
+assert.equal(portalMessage({}), "");
+const generatedDraft = duplicateContext.buildEmployeeContractDuplicateDraft({login: "test.login", password: "test-password", contractNo: "3"}, []);
+assert.match(generatedDraft.portalCredentials, /Логин: test\.login/u);
+assert.match(generatedDraft.portalCredentials, /Пароль: test-password/u);
+assert.match(portalMessage({...generatedDraft, password: "changed"}, {regenerate: true}), /Пароль: changed/u);
+
+// Exercise the same draft collection and message synchronization used when changing tabs or saving.
+const form = {dataset: {config: "contracts", id: ""}, elements: {
+  contractNo: {value: "40"}, type: {value: ""}, login: {value: "test.login"},
+  password: {value: "test-password"}, portalCredentials: {value: customMessage}
+}};
+Object.assign(duplicateContext, {
+  document: {getElementById: () => form},
+  state: {data: {collections: {contracts: numberingRows}}, modal: {...duplicateModal, draft: {...duplicatePlain, portalCredentials: customMessage}}},
+  configs: {contracts: {fields: Object.keys(form.elements).map(key => ({key, type: "text"}))}},
+  FormData: class {
+    constructor(element) {this.values = new Map(Object.entries(element.elements).map(([key, input]) => [key, input.value]));}
+    has(key) {return this.values.has(key);}
+    get(key) {return this.values.get(key);}
+    forEach(callback) {this.values.forEach(callback);}
+  },
+  getEmployeePaymentCollections: () => ({contracts: numberingRows}),
+  normalizePreferredMessenger: value => value || "",
+  clearUnchangedGeneratedEmployeeCommunicationMessages: () => {}
+});
+vm.runInContext(`${extractFunction("collectContractFormDraft")}\n${extractFunction("syncContractPortalCredentials")}`, duplicateContext);
+let collectedDraft = duplicateContext.collectContractFormDraft({recalculatePaymentAccounting: false});
+assert.equal(collectedDraft.portalCredentials, customMessage);
+assert.equal(collectedDraft.contractNo, "40");
+duplicateContext.syncContractPortalCredentials(form);
+assert.equal(form.elements.portalCredentials.value, customMessage);
+form.elements.password.value = "changed";
+duplicateContext.syncContractPortalCredentials(form, {regenerate: true});
+assert.match(form.elements.portalCredentials.value, /Пароль: changed/u);
+assert.doesNotMatch(form.elements.portalCredentials.value, /test-password/u);
+collectedDraft = duplicateContext.collectContractFormDraft({recalculatePaymentAccounting: false});
+assert.match(collectedDraft.portalCredentials, /Пароль: changed/u);
+form.elements.portalCredentials.value = customMessage;
+delete form.elements.login;
+delete form.elements.password;
+duplicateContext.syncContractPortalCredentials(form);
+assert.equal(form.elements.portalCredentials.value, customMessage, "Скрытые поля не должны стирать сообщение.");
+assert.match(appSource, /values\.contractNo = resolveDuplicateEmployeeContractNumber\(values, state\.modal, rows\)/u);
 
 console.log("Employee contract lifecycle tests passed.");

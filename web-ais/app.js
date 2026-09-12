@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.427",
+    version: "1.7.428",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.428",
+      releasedAt: "2026-09-12",
+      changes: [
+        "При дублировании договора сотрудника номер определяется как максимальный числовой номер реестра плюс один. Сообщение о доступе к порталу копируется и сохраняется независимо от выбранного типа договора."
+      ]
+    },
     {
       version: "1.7.427",
       releasedAt: "2026-09-12",
@@ -8910,7 +8917,25 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function buildEmployeeContractDuplicateDraft(source = {}) {
+  function getNextEmployeeContractNumber(contracts = []) {
+    let maximum = 0n;
+    (Array.isArray(contracts) ? contracts : []).forEach((contract) => {
+      const value = String(contract?.contractNo ?? "").trim();
+      if (!/^\d+$/.test(value)) return;
+      const number = BigInt(value);
+      if (number > maximum) maximum = number;
+    });
+    return String(maximum + 1n);
+  }
+
+  function resolveDuplicateEmployeeContractNumber(values, modal, contracts) {
+    const current = String(values.contractNo || "").trim();
+    if (modal?.config !== "contracts" || modal.id || !modal.duplicateSourceId) return current;
+    if (current && current !== modal.duplicateAutomaticContractNo) return current;
+    return getNextEmployeeContractNumber(contracts);
+  }
+
+  function buildEmployeeContractDuplicateDraft(source = {}, contracts = []) {
     const fields = [
       "name", "position", "degree", "academicTitle",
       "phone", "whatsapp", "email", "telegram", "preferredMessenger",
@@ -8934,7 +8959,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...draft,
       section: CONTRACT_SECTIONS[0],
       status: "Действует",
-      contractNo: "",
+      contractNo: getNextEmployeeContractNumber([...contracts, source]),
       contractDate: "",
       type: "",
       startDate: "",
@@ -8946,7 +8971,7 @@ MAX - https://bizvmax.ru/zifra_plus
       paid: 0,
       agencyAmount: 0,
       balance: 0,
-      portalCredentials: ""
+      portalCredentials: buildContractPortalCredentials(source)
     });
   }
 
@@ -30122,8 +30147,10 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function buildContractPortalCredentials(record = {}) {
-    if (!String(record.type || "").trim()) return "";
+  function buildContractPortalCredentials(record = {}, options = {}) {
+    const savedMessage = String(record.portalCredentials || "");
+    if (!options.regenerate && savedMessage.trim()) return savedMessage;
+    if (![record.type, record.login, record.password].some((value) => String(value || "").trim())) return "";
     return [
       "Данные для доступа к порталу дистанционного обучения (https://portal.edu-plus.ru):",
       "",
@@ -30176,14 +30203,19 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function syncContractPortalCredentials(form = document.querySelector("#recordForm[data-config='contracts']")) {
+  function syncContractPortalCredentials(form = document.querySelector("#recordForm[data-config='contracts']"), options = {}) {
     const output = form?.elements?.portalCredentials;
     if (!form || !output) return;
+    const record = {
+      ...(state.data.collections.contracts || []).find((item) => item.id === form.dataset.id),
+      ...(state.modal?.draft || {})
+    };
     output.value = buildContractPortalCredentials({
-      type: form.elements.type?.value || "",
-      login: form.elements.login?.value || "",
-      password: form.elements.password?.value || ""
-    });
+      portalCredentials: output.value,
+      type: form.elements.type?.value ?? record.type ?? "",
+      login: form.elements.login?.value ?? record.login ?? "",
+      password: form.elements.password?.value ?? record.password ?? ""
+    }, options);
   }
 
   function getContractCardTitle(record = {}) {
@@ -41477,8 +41509,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }, true);
     ["type", "login", "password"].forEach((key) => {
       const control = contractForm?.elements?.[key];
-      control?.addEventListener("input", () => syncContractPortalCredentials(contractForm));
-      control?.addEventListener("change", () => syncContractPortalCredentials(contractForm));
+      const syncCredentials = () => syncContractPortalCredentials(contractForm, { regenerate: ["login", "password"].includes(control?.name) });
+      control?.addEventListener("input", syncCredentials);
+      control?.addEventListener("change", syncCredentials);
     });
     document.querySelectorAll("[data-payment-index]").forEach((input) => {
       input.addEventListener("input", () => {
@@ -43293,10 +43326,12 @@ MAX - https://bizvmax.ru/zifra_plus
     state.employeeExpenseEditor = null;
     state.openPaymentRows = [];
     state.contractCardTab = "contract";
+    const duplicateDraft = buildEmployeeContractDuplicateDraft(source, state.data.collections.contracts || []);
     state.modal = {
       config: "contracts",
       id: "",
-      draft: buildEmployeeContractDuplicateDraft(source),
+      draft: duplicateDraft,
+      duplicateAutomaticContractNo: duplicateDraft.contractNo,
       duplicateSourceId: sourceId,
       hasDraftChanges: true
     };
@@ -47781,6 +47816,15 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isContractCard) {
       values.inn = normalizeInn(values.inn);
       values.snils = formatSnils(values.snils);
+      if (!currentRecordId && state.modal?.duplicateSourceId) {
+        const previousNumber = String(values.contractNo || "").trim();
+        values.contractNo = resolveDuplicateEmployeeContractNumber(values, state.modal, rows);
+        if (!previousNumber || previousNumber === state.modal.duplicateAutomaticContractNo) {
+          state.modal.duplicateAutomaticContractNo = values.contractNo;
+        }
+        const numberInput = formElement.querySelector("[name='contractNo']");
+        if (numberInput) numberInput.value = values.contractNo;
+      }
       values.portalCredentials = buildContractPortalCredentials({ ...currentRecord, ...values });
       const portalCredentialsInput = formElement.querySelector("[name='portalCredentials']");
       if (portalCredentialsInput) portalCredentialsInput.value = values.portalCredentials;
