@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.429",
+    version: "1.7.430",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.430",
+      releasedAt: "2026-09-12",
+      changes: [
+        "Окна локального сохранения документа и подтверждения замены оформлены в фирменных цветах системы с русскими подписями. В окне сохранения доступны имя файла и папка, а замена существующего файла требует явного подтверждения."
+      ]
+    },
     {
       version: "1.7.429",
       releasedAt: "2026-09-12",

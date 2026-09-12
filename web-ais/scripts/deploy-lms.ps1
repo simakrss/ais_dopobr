@@ -24,6 +24,7 @@ $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
   "document-workflow.js",
+  "local-document-save-dialog.js",
   "audit-lib.php",
   "auth-lib.php",
   "demo-mode-privacy.js",
@@ -65,6 +66,7 @@ function Test-DeployablePath([string]$PathValue) {
     "favicon.ico",
     "field-html-links.js",
     "document-workflow.js",
+    "local-document-save-dialog.js",
     "gateway.php",
     "index.html",
     "partner-app.js",
