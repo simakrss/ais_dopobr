@@ -9268,6 +9268,17 @@ body.long-press-dragging * {
   color: var(--text);
 }
 
+.admin-local-documents-path-help {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-local-documents-path-help p {
+  margin: 0;
+}
+
 .sdo-settings-fields .admin-yandex-autosave,
 .sdo-settings-fields .admin-open-documents-mode {
   display: flex;

@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.432",
+    version: "1.7.433",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.433",
+      releasedAt: "2026-09-12",
+      changes: [
+        "Уточнены подписи настройки локальной базы документов и пояснение построения путей, включая маркер [-1] для соседних папок. Сохранённые настройки и правила поиска документов не изменены."
+      ]
+    },
     {
       version: "1.7.432",
       releasedAt: "2026-09-12",
@@ -28231,16 +28238,21 @@ MAX - https://bizvmax.ru/zifra_plus
                 </label>
                 <div class="admin-local-documents-root-row">
                   <label>
-                    <span>Расположение всех документов на локальном диске</span>
-                    <input name="localDocumentsRoot" type="text" value="${escapeAttr(localDocumentsRoot)}" required spellcheck="false" placeholder="Y:\">
+                    <span>Базовая папка на локальном диске</span>
+                    <input name="localDocumentsRoot" type="text" value="${escapeAttr(localDocumentsRoot)}" required spellcheck="false" placeholder="Y:\\" aria-describedby="local-documents-root-help">
                     <small class="sdo-settings-hint">${openDocumentsLocally
                       ? "Используется при обычном щелчке по кнопке документов."
                       : "Используется при Shift + щелчке по кнопке документов."}</small>
                   </label>
                   <label class="admin-local-documents-root-mode">
-                    <input name="localDocumentsRootIsSystemParent" type="checkbox" ${localDocumentsRootIsSystemParent ? "checked" : ""}>
-                    <span>Корневая папка документов системы</span>
+                    <input name="localDocumentsRootIsSystemParent" type="checkbox" ${localDocumentsRootIsSystemParent ? "checked" : ""} aria-describedby="local-documents-root-help">
+                    <span>База содержит папку системы</span>
                   </label>
+                </div>
+                <div id="local-documents-root-help" class="sdo-settings-hint admin-local-documents-path-help">
+                  <p><strong>Как строится путь.</strong> С включённой галочкой к базе добавляется только последнее имя из поля «Путь папки в Яндекс-Диске». С выключенной — весь указанный там путь.</p>
+                  <p>Например, при базе <code>Y:\\</code>, пути <code>ООО Цифровизация Плюс/АИС Допобразование</code> и включённой галочке документы ищутся внутри <code>Y:\\АИС Допобразование</code>, а не непосредственно в <code>Y:\\</code>.</p>
+                  <p>Для соседней папки используйте маркер <code>[-1]</code>: в этом примере <code>[-1]/Реклама/Коммерческие/…</code> соответствует <code>Y:\\Реклама\\Коммерческие\\…</code>. Текущие значения менять не требуется.</p>
                 </div>
                 <label class="admin-open-documents-mode admin-local-mode-default ${isLocalDocumentsAvailable() ? "is-available" : "is-unavailable"}">
                   <input name="openDocumentsLocally" type="checkbox" ${openDocumentsLocally ? "checked" : ""}>
