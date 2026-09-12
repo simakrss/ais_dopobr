@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.431",
+    version: "1.7.432",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.432",
+      releasedAt: "2026-09-12",
+      changes: [
+        "После успешного формирования и сохранения документа в документообороте показывается сообщение с именем файла. При наличии дополнительных копий учитывается подтверждение сохранения каждой из них."
+      ]
+    },
     {
       version: "1.7.431",
       releasedAt: "2026-09-12",
@@ -66987,6 +66994,24 @@ MAX - https://bizvmax.ru/zifra_plus
     window.setTimeout(close, 9000);
   }
 
+  function showDocumentWorkflowSaveSuccess(fileName, storageResult, additionalSaveResult, expectedAdditionalCopies = 0) {
+    const saves = [storageResult?.localSaveResult, storageResult?.yandexSaveResult].filter(Boolean);
+    if (!saves.length || saves.some((result) => result.saved !== true || result.cancelled)) return false;
+    // Keep existing storage/reveal/copy warnings visible instead of replacing them with success.
+    if (storageResult.saveWarning || storageResult.localSaveResult?.revealed === false) return false;
+    if (additionalSaveResult?.cancelled || additionalSaveResult?.failed?.length) return false;
+    if (expectedAdditionalCopies > 0 && (
+      !additionalSaveResult
+      || !Array.isArray(additionalSaveResult.failed)
+      || additionalSaveResult.saved !== expectedAdditionalCopies
+    )) return false;
+    const savedName = String(saves[0].path || "").replace(/\\/g, "/").split("/").filter(Boolean).at(-1)
+      || fileName || "Документ";
+    const copies = expectedAdditionalCopies > 0 ? ` Дополнительные копии сохранены: ${expectedAdditionalCopies}.` : "";
+    showDocumentGenerationNotice(`Документ «${savedName}» успешно сформирован и сохранён.${copies}`, "success");
+    return true;
+  }
+
   async function finishStudentDocumentGeneration(
     response,
     fileName,
@@ -68519,6 +68544,14 @@ MAX - https://bizvmax.ru/zifra_plus
           skipConfirmation: true,
           quiet: options.quietEmail === true
         });
+      }
+      if (options.workflow && !responseDetails.conversionFallback) {
+        showDocumentWorkflowSaveSuccess(
+          responseDetails.fileName,
+          storageResult,
+          additionalSaveResult,
+          generationRequest.additionalSaveTargets.length
+        );
       }
       if (storageRequest.openAfterGeneration) {
         setDocumentGenerationStatus(generationTaskId, `Открытие документа: ${responseDetails.fileName}`);
