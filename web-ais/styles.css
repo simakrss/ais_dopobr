@@ -6528,8 +6528,63 @@ body.long-press-dragging * {
 .document-template-main-document-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.25fr) minmax(110px, 0.35fr);
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
   gap: 9px 12px;
+}
+
+.document-output-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 12px;
+}
+
+.document-additional-outputs {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border-top: 1px solid #d5dfdc;
+  padding-top: 12px;
+}
+
+.document-additional-outputs > small {
+  color: #697a75;
+  line-height: 1.45;
+}
+
+.document-additional-outputs .document-template-main-card-head {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.document-additional-outputs .document-template-main-card-head button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.document-output-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) 82px 32px;
+  align-items: end;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.document-output-row > button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px;
+}
+
+@media (max-width: 700px) {
+  .document-output-row {
+    grid-template-columns: minmax(0, 1fr) 82px 32px;
+    border-bottom: 1px solid #e4eae8;
+  }
+  .document-output-row > label:first-child {
+    grid-column: 1 / -1;
+  }
 }
 
 .document-template-main-card label {

@@ -72,6 +72,7 @@ async function main() {
   assert.equal(requests[2].body.preferLocalTemplate, false);
 
   const migrationContext = {
+    window: { AIS_DOCUMENT_WORKFLOW: workflow },
     // Keep the actual factory AND record normalizer in the regression path.
     // Only unrelated email, folder and field-editor services are stubbed.
     createDefaultDocumentTemplate: () => ({id:"contract-default", title:"Договор", fileNameTemplate:"Договор", fields:[], originalFields:[], createdAt:""}),
@@ -118,6 +119,16 @@ async function main() {
   const next = migrationContext.normalizeDocumentTemplates([migrated]).find(item => item.id === old.id);
   assert.equal(next.fileNameTemplate, migrated.fileNameTemplate);
   assert.equal(next.fields[0].formula, migrated.fields[0].formula);
+  const legacyWithoutCopies = {...old};
+  delete legacyWithoutCopies.additionalSaveTargets;
+  delete legacyWithoutCopies.additionalSaveTargetsVersion;
+  const withCopies = migrationContext.normalizeDocumentTemplates([legacyWithoutCopies]).find(item => item.id === old.id);
+  assert.deepEqual(JSON.parse(JSON.stringify(withCopies.additionalSaveTargets)), recruitment.additionalSaveTargets);
+  withCopies.additionalSaveTargets = [];
+  assert.equal(migrationContext.normalizeDocumentTemplates([withCopies]).find(item => item.id === old.id).additionalSaveTargets.length, 0,
+    "Deleting the default extra copy must persist across normalization");
+  withCopies.additionalSaveTargets = [{saveFolderTemplate: "Custom", fileNameTemplate: "Custom #Номер приказа#", generationFormat: "docx"}];
+  assert.deepEqual(JSON.parse(JSON.stringify(migrationContext.normalizeDocumentTemplates([withCopies]).find(item => item.id === old.id).additionalSaveTargets)), withCopies.additionalSaveTargets);
   const snapshotArg = process.argv.indexOf("--snapshot");
   if (snapshotArg >= 0) {
     const snapshotPath = path.resolve(process.argv[snapshotArg + 1]);
@@ -125,6 +136,9 @@ async function main() {
     const saved = JSON.parse(before).data.dictionaries.documentTemplates;
     const normalized = migrationContext.normalizeDocumentTemplates(saved);
     const current = normalized.find(item => item.id === recruitment.id);
+    assert.equal(current.additionalSaveTargets[0].fileNameTemplate, "Приказ о наборе #Номер приказа#");
+    assert.equal(normalized.find(item => item.id === workflow.definitions[0].id).additionalSaveTargets[0].fileNameTemplate,
+      "ПРИКАЗ об утверждении состава ИАК_#Месяц и год генерации#");
     assert.equal(current.fileNameTemplate, recruitment.fileNameTemplate);
     assert.equal(normalized.find(item => item.id === workflow.definitions[0].id).fileNameTemplate, workflow.definitions[0].fileNameTemplate);
     for (const key of ["fields", "originalFields"]) {

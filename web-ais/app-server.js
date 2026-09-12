@@ -1356,7 +1356,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
 };
 
 const MIME_TYPES = {
@@ -6111,7 +6111,9 @@ async function saveStudentDocumentLocally(bytes, fileName, body) {
   if (!serverSettings.openDocumentsLocally) {
     throw new Error("Включите режим работы с документами на локальном компьютере.");
   }
-  const canonicalPath = resolveLocalDocumentFile(body.studentFolder, fileName);
+  const canonicalPath = body.additionalOutput === true
+    ? path.join(resolveLocalDocumentsFolder(body.studentFolder), documentWorkflow.safeOutputFileName(fileName, body.outputFormat))
+    : resolveLocalDocumentFile(body.studentFolder, fileName);
   const folderPath = path.dirname(canonicalPath);
   await fs.mkdir(folderPath, { recursive: true });
   for (let attempt = 0; attempt < 10000; attempt += 1) {
@@ -15010,7 +15012,10 @@ async function uploadStudentDocumentToYandexDisk(bytes, fileName, body) {
   const basePath = resolveYandexDiskBasePath(useParentFolder);
   const folderPath = normalizeWebDavPath(`${basePath}/${relativeFolder}`);
   await ensureYandexDiskFolder(folderPath);
-  const targetPath = normalizeWebDavPath(`${folderPath}/${safeDocumentFileName(fileName, outputFormat)}`);
+  const outputName = body.additionalOutput === true
+    ? documentWorkflow.safeOutputFileName(fileName, outputFormat)
+    : safeDocumentFileName(fileName, outputFormat);
+  const targetPath = normalizeWebDavPath(`${folderPath}/${outputName}`);
   await requestYandexWebDav("PUT", targetPath, {
     acceptedStatuses: [200, 201, 204],
     body: bytes,
@@ -33931,6 +33936,7 @@ function encodeGeneratedDocumentPreviewMetadata(preview) {
     expiresAt: preview.expiresAt,
     outputFormat: preview.outputFormat,
     fileName: preview.fileName,
+    additionalSaveTargets: preview.additionalSaveTargets || [],
     extraHeaders: preview.extraHeaders || {},
     size: Number(preview.bytes?.length || preview.size || 0),
     editableSize: Number(preview.editableBytes?.length || preview.editableSize || 0),
@@ -33949,6 +33955,7 @@ function decodeGeneratedDocumentPreviewMetadata(metadata, bytes) {
     bytes,
     outputFormat: normalizeGeneratedDocumentFormat(metadata?.outputFormat),
     fileName: String(metadata?.fileName || "документ"),
+    additionalSaveTargets: Array.isArray(metadata?.additionalSaveTargets) ? metadata.additionalSaveTargets : [],
     extraHeaders: metadata?.extraHeaders && typeof metadata.extraHeaders === "object"
       ? metadata.extraHeaders
       : {},
@@ -34655,6 +34662,9 @@ async function takeGeneratedDocumentPreview(token, authUser) {
       const bytes = await fs.readFile(generatedDocumentPreviewFilePath(normalizedToken));
       return {
         ...decodeGeneratedDocumentPreviewMetadata(metadata, bytes),
+        editableBytes: metadata.editableUsesPrimary === true ? bytes
+          : (metadata.additionalSaveTargets?.some((target) => target.outputFormat !== metadata.outputFormat) && metadata.editableSize > 0
+            ? await fs.readFile(generatedDocumentPreviewEditableFilePath(normalizedToken)) : undefined),
         previewToken: normalizedToken
       };
     });
@@ -36065,6 +36075,62 @@ async function proxyOnlyOfficeWebSocket(req, socket, head) {
   proxyRequest.end();
 }
 
+function prepareAdditionalDocumentSaveTargets(body, values) {
+  if (!Array.isArray(body.additionalSaveTargets)) return [];
+  if (body.additionalSaveTargets.length > 10) throw new Error("Можно сохранить не более 10 дополнительных копий.");
+  return body.additionalSaveTargets.map((target) => {
+    const outputFormat = normalizeGeneratedDocumentFormat(target.outputFormat);
+    const fileName = documentWorkflow.resolveOutputTemplate(target.fileNameTemplate, values);
+    if (!fileName.trim() || !String(target.studentFolder || "").trim()) {
+      throw new Error("Не указано имя или папка дополнительной копии документа.");
+    }
+    if (target.autoSaveLocal !== true && target.saveToYandexDisk !== true) {
+      throw new Error("Не выбран способ сохранения дополнительной копии документа.");
+    }
+    return {
+      fileName: documentWorkflow.safeOutputFileName(fileName, outputFormat),
+      outputFormat,
+      studentFolder: String(target.studentFolder).trim(),
+      autoSaveLocal: target.autoSaveLocal === true,
+      saveToYandexDisk: target.autoSaveLocal !== true && target.saveToYandexDisk === true,
+      additionalOutput: true
+    };
+  });
+}
+
+async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders) {
+  const targets = generated.additionalSaveTargets || [];
+  const report = { saved: 0, failed: [], cancelled: primaryHeaders["X-Local-Document-Cancelled"] === "true" };
+  if (report.cancelled) return report;
+  // Use the final preview/editor bytes, never regenerate from the original template.
+  const formats = new Map([[normalizeGeneratedDocumentFormat(generated.outputFormat), Promise.resolve(generated.bytes)]]);
+  if (generated.editableBytes?.length) formats.set("docx", Promise.resolve(generated.editableBytes));
+  const completedPaths = new Set();
+  for (const [index, target] of targets.entries()) {
+    try {
+      if (!formats.has(target.outputFormat)) {
+        if (target.outputFormat !== "pdf" || !formats.has("docx")) throw new Error("Редактируемая версия документа не найдена.");
+        formats.set("pdf", formats.get("docx").then(async (bytes) => {
+          const pdf = await convertDocxBytesToPdf(bytes);
+          return generated.removeBlankInteriorPages ? removeBlankInteriorPdfPages(pdf) : pdf;
+        }));
+      }
+      const bytes = await formats.get(target.outputFormat);
+      const pathLabel = `${target.autoSaveLocal ? "local" : "webdav"}:${target.studentFolder.replace(/\\/g, "/").replace(/\/+$/g, "")}/${target.fileName}`;
+      const pathKey = target.autoSaveLocal ? pathLabel.toLocaleLowerCase("ru-RU") : pathLabel;
+      if (!completedPaths.has(pathKey)) {
+        if (target.autoSaveLocal) await saveStudentDocumentLocally(bytes, target.fileName, target);
+        else await uploadStudentDocumentToYandexDisk(bytes, target.fileName, target);
+        completedPaths.add(pathKey);
+      }
+      report.saved += 1;
+    } catch (error) {
+      report.failed.push({ index, error: String(error.message || error).slice(0, 120) });
+    }
+  }
+  return report;
+}
+
 async function sendGeneratedDocumentResponse(res, generated, body = {}) {
   const result = Buffer.isBuffer(generated.bytes)
     ? generated.bytes
@@ -36116,14 +36182,11 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
       extraHeaders["X-Yandex-Disk-Error"] = encodeURIComponent(uploadError.message);
     }
   }
-  sendFile(
-    res,
-    200,
-    result,
-    outputFileName,
-    generatedDocumentContentType(outputFormat),
-    extraHeaders
-  );
+  if (generated.additionalSaveTargets?.length) {
+    const additionalReport = await saveAdditionalGeneratedDocuments(generated, body, extraHeaders);
+    extraHeaders["X-Additional-Documents-Result"] = encodeURIComponent(JSON.stringify(additionalReport));
+  }
+  sendFile(res, 200, result, outputFileName, generatedDocumentContentType(outputFormat), extraHeaders);
 }
 
 async function handleGeneratedDocumentPreviewFinalize(req, res, authUser) {
@@ -36177,6 +36240,7 @@ async function handleGeneratedDocumentPreviewCancel(req, res, authUser) {
 async function handleContractDocument(req, res, authUser) {
   try {
     const body = await readJsonBody(req);
+    const generationDateValues = documentWorkflow.getGenerationDateValues();
     if (body.previewOnly) await assertGeneratedDocumentPreviewRequestAllowed(authUser);
     let templateBytes;
     try {
@@ -36194,6 +36258,8 @@ async function handleContractDocument(req, res, authUser) {
       : inputFieldValues;
     const propertyUpdateNames = new Set(Object.keys(workflow ? fieldValues : inputFieldValues || {}));
     const sourceValues = body.sourceValues || {};
+    const outputTemplateValues = { ...sourceValues, ...fieldValues, ...generationDateValues };
+    const additionalSaveTargets = prepareAdditionalDocumentSaveTargets(body, outputTemplateValues);
     const documentIdentity = [body.templateUrl, body.templatePath, body.fileName]
       .map((value) => String(value || "").toLocaleLowerCase("ru-RU"))
       .join("\n");
@@ -36250,7 +36316,7 @@ async function handleContractDocument(req, res, authUser) {
       }
     }
     const workflowFileName = workflow && body.workflow?.fileNameTemplate
-      ? String(body.workflow.fileNameTemplate).replace(/#([^#]+)#/g, (_, name) => String(fieldValues[name] ?? sourceValues[name] ?? ""))
+      ? documentWorkflow.resolveOutputTemplate(body.workflow.fileNameTemplate, outputTemplateValues)
       : "";
     const outputFileName = safeDocumentFileName(workflowFileName || body.fileName || "документ", outputFormat);
     extraHeaders["X-Generated-Document-Format"] = outputFormat;
@@ -36261,6 +36327,7 @@ async function handleContractDocument(req, res, authUser) {
       outputFormat,
       fileName: outputFileName,
       extraHeaders,
+      additionalSaveTargets,
       removeBlankInteriorPages: documentIdentity.includes("диплом о переподготовке")
     };
     if (body.previewOnly) {

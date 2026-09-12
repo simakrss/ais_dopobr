@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.426",
+    version: "1.7.427",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.427",
+      releasedAt: "2026-09-12",
+      changes: [
+        "В конструкторе документов доступны дополнительные папки, имена и форматы сохранения. Для ИАК добавлена копия с месяцем и годом генерации, для приказа о наборе — копия с номером приказа. Все копии сохраняются из окончательной версии после редактирования."
+      ]
+    },
     {
       version: "1.7.426",
       releasedAt: "2026-09-12",
@@ -4799,6 +4806,8 @@ MAX - https://bizvmax.ru/zifra_plus
       fileName: definition.fileName,
       fileNameTemplate: definition.fileNameTemplate,
       fileNameTemplateVersion: String(definition.fileNameTemplateVersion || ""),
+      additionalSaveTargets: window.AIS_DOCUMENT_WORKFLOW.normalizeAdditionalSaveTargets(definition.additionalSaveTargets),
+      additionalSaveTargetsVersion: String(definition.additionalSaveTargetsVersion || ""),
       legacyListFormula: String(definition.legacyListFormula || ""),
       saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
       generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
@@ -8147,6 +8156,12 @@ MAX - https://bizvmax.ru/zifra_plus
             });
           }
         }
+        if (defaultTemplate.additionalSaveTargetsVersion && existing.additionalSaveTargetsVersion !== defaultTemplate.additionalSaveTargetsVersion) {
+          if (!existing.additionalSaveTargets.length) {
+            existing.additionalSaveTargets = defaultTemplate.additionalSaveTargets.map((target) => ({ ...target }));
+          }
+          existing.additionalSaveTargetsVersion = defaultTemplate.additionalSaveTargetsVersion;
+        }
         if (!existing.saveFolderTemplate && defaultTemplate.saveFolderTemplate) existing.saveFolderTemplate = defaultTemplate.saveFolderTemplate;
         if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
         if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
@@ -8253,6 +8268,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templateUrl: normalizeDocumentTemplateSource(item?.templateUrl || ""),
       templatePath: String(item?.templatePath || "").trim(),
       fileNameTemplateVersion: String(item?.fileNameTemplateVersion || ""),
+      additionalSaveTargets: window.AIS_DOCUMENT_WORKFLOW.normalizeAdditionalSaveTargets(item?.additionalSaveTargets),
+      additionalSaveTargetsVersion: String(item?.additionalSaveTargetsVersion || ""),
       fileNameTemplate: normalizeOrderDocumentFileNameTemplate({
         id: item?.id || fallback.id,
         fileNameTemplate: String(item?.fileNameTemplate || fallback.fileNameTemplate).trim()
@@ -25861,17 +25878,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     `).join("")}
                   </select>
                 </label>
-                <label class="document-template-main-format">
-                  <span>Формат</span>
-                  <select name="generationFormat">
-                    <option value="pdf" ${activeDocument.generationFormat === "pdf" ? "selected" : ""}>PDF</option>
-                    <option value="docx" ${activeDocument.generationFormat === "docx" ? "selected" : ""}>DOCX</option>
-                  </select>
-                </label>
-                <label class="document-template-main-file-name">
-                  <span>Название итогового файла</span>
-                  <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
-                </label>
               </div>
             </section>
             <section class="document-template-main-card is-source">
@@ -25904,10 +25910,23 @@ MAX - https://bizvmax.ru/zifra_plus
             <section class="document-template-main-card is-save">
               <header class="document-template-main-card-head">
                 <div>
-                  <strong>Сохранение</strong>
-                  <span>Укажите рекомендуемую папку или выберите системное поле.</span>
+                  <strong>Основное сохранение</strong>
+                  <span>Папка, имя и формат основного документа.</span>
                 </div>
               </header>
+              <div class="document-output-primary">
+                <label>
+                  <span>Название итогового файла</span>
+                  <input name="fileNameTemplate" value="${escapeAttr(activeDocument.fileNameTemplate)}" autocomplete="off" required>
+                </label>
+                <label>
+                  <span>Формат</span>
+                  <select name="generationFormat">
+                    <option value="pdf" ${activeDocument.generationFormat === "pdf" ? "selected" : ""}>PDF</option>
+                    <option value="docx" ${activeDocument.generationFormat === "docx" ? "selected" : ""}>DOCX</option>
+                  </select>
+                </label>
+              </div>
               <div class="document-template-main-wide-field" title="Можно ввести путь относительно папки системы или добавить поле. Поле «Папка Загрузки» использует стандартную папку загрузок браузера на компьютере.">
                 <span>Папка сохранения</span>
                 <div class="document-save-folder-control">
@@ -25927,6 +25946,17 @@ MAX - https://bizvmax.ru/zifra_plus
                   </select>
                   <input name="saveFolderTemplate" type="hidden" value="${escapeAttr(activeDocument.saveFolderTemplate)}">
                 </div>
+              </div>
+              <div class="document-additional-outputs">
+                <header class="document-template-main-card-head">
+                  <strong>Дополнительные сохранения</strong>
+                  <button class="ghost-button" data-add-document-output type="button">Добавить копию</button>
+                </header>
+                <small>Копии сохраняются автоматически в локальные папки или на Яндекс-Диск — в текущем режиме работы с документами. Пустая папка означает основную папку из настроек.</small>
+                <div data-document-output-list>
+                  ${activeDocument.additionalSaveTargets.map(renderAdditionalDocumentOutputRow).join("")}
+                </div>
+                <small>В именах и путях доступны поля документа, например #Номер приказа#, и #Месяц и год генерации# (09.2026, московское время). Расширение добавляется по выбранному формату. Символ / в номере заменяется дефисом.</small>
               </div>
               <label class="document-template-main-checkbox">
                 <input name="openAfterGeneration" type="checkbox" value="1" ${activeDocument.openAfterGeneration ? "checked" : ""}>
@@ -42435,6 +42465,15 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     });
     document.querySelector("[data-action='add-contract-template-field']")?.addEventListener("click", addContractTemplateField);
+    document.querySelector("[data-add-document-output]")?.addEventListener("click", () => {
+      const list = document.querySelector("[data-document-output-list]");
+      if (!list || list.children.length >= 10) { alert("Можно добавить не более 10 копий."); return; }
+      list.insertAdjacentHTML("beforeend", renderAdditionalDocumentOutputRow({ saveFolderTemplate: "", fileNameTemplate: "", generationFormat: "pdf" }));
+      list.lastElementChild.querySelector("[data-output-name]")?.focus();
+    });
+    document.querySelector("[data-document-output-list]")?.addEventListener("click", (event) => {
+      event.target.closest("[data-remove-document-output]")?.closest("[data-document-output-row]")?.remove();
+    });
     document.querySelectorAll("[data-action='remove-contract-template-field']").forEach((button) => {
       button.addEventListener("click", () => removeContractTemplateField(button.dataset.index));
     });
@@ -56647,6 +56686,13 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: String(form?.elements.templatePath?.value || currentDocument.templatePath || "").trim(),
       fileNameTemplate: String(form?.elements.fileNameTemplate?.value || currentDocument.fileNameTemplate || "").trim(),
       saveFolderTemplate: String(form?.elements.saveFolderTemplate?.value || currentDocument.saveFolderTemplate || "").trim(),
+      additionalSaveTargets: form?.querySelector("[data-document-output-list]")
+        ? Array.from(form.querySelectorAll("[data-document-output-row]")).map((row) => ({
+            saveFolderTemplate: row.querySelector("[data-output-folder]").value,
+            fileNameTemplate: row.querySelector("[data-output-name]").value,
+            generationFormat: row.querySelector("[data-output-format]").value
+          }))
+        : currentDocument.additionalSaveTargets,
       generationFormat: normalizeDocumentGenerationFormat(
         form?.elements.generationFormat?.value || currentDocument.generationFormat
       ),
@@ -56765,6 +56811,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return normalizeContractTemplateDocumentFields([...fieldsByName.values()]);
   }
 
+  function renderAdditionalDocumentOutputRow(target) {
+    return `<div class="document-output-row" data-document-output-row>
+      <label><span>Папка</span><input data-output-folder value="${escapeAttr(target.saveFolderTemplate)}" placeholder="Та же, что основная" autocomplete="off"></label>
+      <label><span>Имя файла</span><input data-output-name value="${escapeAttr(target.fileNameTemplate)}" placeholder="Название копии" autocomplete="off"></label>
+      <label><span>Формат</span><select data-output-format><option value="pdf" ${target.generationFormat === "pdf" ? "selected" : ""}>PDF</option><option value="docx" ${target.generationFormat === "docx" ? "selected" : ""}>DOCX</option></select></label>
+      <button class="ghost-button danger-text-button" data-remove-document-output type="button" title="Удалить дополнительное сохранение" aria-label="Удалить дополнительное сохранение">×</button>
+    </div>`;
+  }
+
   function getDocumentTemplateEditSnapshot(documentTemplate) {
     const normalized = normalizeDocumentTemplate(documentTemplate, 0);
     return {
@@ -56773,6 +56828,7 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: normalized.templatePath,
       fileNameTemplate: normalized.fileNameTemplate,
       saveFolderTemplate: normalized.saveFolderTemplate,
+      additionalSaveTargets: normalized.additionalSaveTargets,
       generationFormat: normalized.generationFormat,
       openAfterGeneration: normalized.openAfterGeneration,
       previewBeforeGeneration: normalized.previewBeforeGeneration,
@@ -56855,6 +56911,13 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Укажите папку сохранения документа.");
       switchDocumentTemplateSettingsTab("main");
       form.querySelector("[data-document-save-folder-editor]")?.focus();
+      return false;
+    }
+    const invalidOutput = document.additionalSaveTargets.find((target) => !target.fileNameTemplate
+      || (target.saveFolderTemplate || document.saveFolderTemplate) === downloadsFolderTemplateMarker);
+    if (invalidOutput) {
+      alert("Для каждой дополнительной копии укажите имя и папку системы. Папка загрузок браузера для автоматических копий не поддерживается.");
+      switchDocumentTemplateSettingsTab("main");
       return false;
     }
     if (document.emailDeliveryMode !== "off" && !document.emailSubjectTemplate.trim()) {
@@ -66596,12 +66659,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return getDocumentsFolderUrl(getStudentYandexDocumentsFolder(record), record);
   }
 
-  function getStudentDocumentStorageFolder(record, documentTemplate = {}) {
+  function getStudentDocumentStorageFolder(record, documentTemplate = {}, outputValues = {}) {
     const studentFolder = getStudentYandexDocumentsFolder(record);
     const configuredTemplate = getDefaultDocumentSaveFolderTemplate(documentTemplate);
     const sourceValues = collectContractTemplateSourceValues(record);
     const pathValues = {
       ...sourceValues,
+      ...outputValues,
       "Папка документов слушателя": studentFolder
     };
     normalizeDocumentPathSettings(state.data.dictionaries.documentPathSettings).forEach((setting) => {
@@ -66623,7 +66687,24 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${useParentFolder ? "[-1]/" : ""}${parts.join("/")}`;
   }
 
-  function getStudentDocumentStorageRequest(record, documentTemplate = {}) {
+  function getAdditionalDocumentStorageRequests(record, documentTemplate, values) {
+    return window.AIS_DOCUMENT_WORKFLOW.normalizeAdditionalSaveTargets(documentTemplate.additionalSaveTargets).map((target) => {
+      const folder = target.saveFolderTemplate || getDefaultDocumentSaveFolderTemplate(documentTemplate);
+      if (!target.fileNameTemplate || folder === downloadsFolderTemplateMarker) {
+        throw new Error("Укажите имя и папку системы для дополнительной копии в настройках документа.");
+      }
+      const local = getEffectiveLocalDocumentsMode();
+      return {
+        fileNameTemplate: target.fileNameTemplate,
+        outputFormat: target.generationFormat,
+        studentFolder: getStudentDocumentStorageFolder(record, { ...documentTemplate, saveFolderTemplate: folder }, values),
+        autoSaveLocal: local,
+        saveToYandexDisk: !local
+      };
+    });
+  }
+
+  function getStudentDocumentStorageRequest(record, documentTemplate = {}, outputValues = {}) {
     const configuredFolder = getDefaultDocumentSaveFolderTemplate(documentTemplate);
     const useBrowserDownloads = configuredFolder === downloadsFolderTemplateMarker;
     if (useBrowserDownloads) {
@@ -66643,7 +66724,7 @@ MAX - https://bizvmax.ru/zifra_plus
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
       openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
-      studentFolder: getStudentDocumentStorageFolder(record, documentTemplate),
+      studentFolder: getStudentDocumentStorageFolder(record, documentTemplate, outputValues),
       studentName: String(record?.name || "")
     };
   }
@@ -66671,8 +66752,8 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  async function prepareStudentDocumentStorageRequest(record, documentTemplate, fileName) {
-    return getStudentDocumentStorageRequest(record, documentTemplate);
+  async function prepareStudentDocumentStorageRequest(record, documentTemplate, fileName, outputValues = {}) {
+    return getStudentDocumentStorageRequest(record, documentTemplate, outputValues);
   }
 
   function readLocalDocumentSaveResult(response, requested) {
@@ -68191,7 +68272,7 @@ MAX - https://bizvmax.ru/zifra_plus
     try {
       const fieldValues = options.fieldValues || evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = options.sourceValues || collectContractTemplateSourceValues(record);
-      const fileNameValues = { ...sourceValues, ...fieldValues };
+      const fileNameValues = { ...sourceValues, ...fieldValues, ...window.AIS_DOCUMENT_WORKFLOW.getGenerationDateValues() };
       const outputFormat = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
       const fileName = ensureGeneratedDocumentFileName(
         applyContractTemplateMarkers(fileNameTemplate, fileNameValues),
@@ -68212,6 +68293,7 @@ MAX - https://bizvmax.ru/zifra_plus
         templatePath,
         fallbackTemplatePath,
         fileName,
+        additionalSaveTargets: getAdditionalDocumentStorageRequests(record, documentTemplate, fileNameValues),
         fieldValues,
         sourceValues,
         documentKind: documentTemplate.documentKind,
@@ -68261,7 +68343,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const requestedStorage = options.storageRequest || await prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
-        fileName
+        fileName,
+        fileNameValues
       );
       const preparedStorage = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
       if (!preparedStorage) {
@@ -68317,6 +68400,16 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       if (finalizingPreview) pendingPreviewToken = "";
       const { response, responseDetails, blob: generatedBlob } = generatedDocument;
+      const additionalSaveHeader = response.headers.get("X-Additional-Documents-Result");
+      let additionalSaveResult = null;
+      if (additionalSaveHeader) {
+        try { additionalSaveResult = JSON.parse(decodeURIComponent(additionalSaveHeader)); } catch { /* Older gateways may truncate custom headers. */ }
+      }
+      if (generationRequest.additionalSaveTargets.length && !additionalSaveResult) {
+        showDocumentGenerationNotice("Сервер не подтвердил сохранение дополнительных копий. Проверьте папки сохранения и обновите локальный сервис.", "warning");
+      } else if (additionalSaveResult?.failed?.length) {
+        alert(`Основной документ сформирован, но не все дополнительные копии сохранены:\n${additionalSaveResult.failed.map((item) => `Копия ${item.index + 1}: ${item.error}`).join("\n")}`);
+      }
       setDocumentGenerationStatus(generationTaskId, `Завершение формирования: ${documentTemplate.title}`);
       const storageResult = await finishStudentDocumentGeneration(
         response,
@@ -68385,6 +68478,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fileName: responseDetails.fileName,
         storageRequest,
         storageResult,
+        additionalSaveResult,
         outputFormat: responseDetails.outputFormat,
         conversionFallback: responseDetails.conversionFallback
       };

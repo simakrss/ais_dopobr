@@ -23,6 +23,8 @@
       fileNameTemplate: "ПРИКАЗ об утверждении состава ИАК",
       fileNameTemplateVersion: "2026-09-12-workflow-output-names",
       saveFolderTemplate: "Документы/ИАК",
+      additionalSaveTargetsVersion: "2026-09-12-multiple-outputs",
+      additionalSaveTargets: [{ saveFolderTemplate: "", fileNameTemplate: "ПРИКАЗ об утверждении состава ИАК_#Месяц и год генерации#", generationFormat: "pdf" }],
       condition: "Тип='ППП' and Статус='Набор' and not isNull(Председатель)",
       description: "Составы итоговых аттестационных комиссий по программам профессиональной переподготовки, открытым для набора.",
       fields: [{name: "Список", position: 1, fieldNumber: 1, formula: sqlFormula("SELECT '<b><№№>. По дополнительной профессиональной программе «' & [Наименование программы] & '»:</b>' & chr(13) & '1. Председатель – ' & [Председатель] & '.' & chr(13) & '2. Член комиссии – ' & [Член1] & '.' & chr(13) & '3. Член комиссии – ' & [Член2] & '.' & chr(13) & 'Секретарь – ' & [Секретарь] & '.' & chr(13) FROM [Реестр программ$] WHERE [Условие отбора]", false)}, ...datedFields.slice(0, 2)]
@@ -36,6 +38,8 @@
       fileNameTemplate: "Действующий приказ о наборе",
       fileNameTemplateVersion: "2026-09-12-workflow-output-names",
       saveFolderTemplate: "Документы/Приказы о наборе", condition: activeCondition,
+      additionalSaveTargetsVersion: "2026-09-12-multiple-outputs",
+      additionalSaveTargets: [{ saveFolderTemplate: "", fileNameTemplate: "Приказ о наборе #Номер приказа#", generationFormat: "pdf" }],
       description: "Программы со статусом «Набор», стоимость обучения и партнёрские ставки по формуле шаблона.",
       legacyListFormula: sqlFormula(`SELECT ${programTitleSql}, Стоимость, iif(iif(isNull(Автор),'',Автор)='','25%','10%') as Процент FROM [Реестр программ$] WHERE [Условие отбора] ORDER BY [Тип], [Наименование программы]`),
       fields: [{name: "Список", position: 1, fieldNumber: 6, formula: sqlFormula(`SELECT ${programTitleSql}, Стоимость, iif(Стоимость=0,'–', iif(iif(isNull(Автор),'',Автор)='','25%','10%')) as Процент FROM [Реестр программ$] WHERE [Условие отбора] ORDER BY [Тип], [Наименование программы]`)}, ...datedFields]
@@ -221,5 +225,37 @@
     });
     return {values, tableFields, programs: [...selected.values()]};
   }
-  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition, formatDefaultOrderNumber, getFixedOutputFileName};
+  function normalizeAdditionalSaveTargets(value) {
+    return (Array.isArray(value) ? value : []).slice(0, 10).map((target) => ({
+      saveFolderTemplate: String(target?.saveFolderTemplate || "").trim(),
+      fileNameTemplate: String(target?.fileNameTemplate || "").trim(),
+      generationFormat: String(target?.generationFormat || "").toLowerCase() === "docx" ? "docx" : "pdf"
+    }));
+  }
+
+  function getGenerationDateValues(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Moscow", month: "2-digit", year: "numeric"
+    }).formatToParts(date);
+    const month = parts.find((part) => part.type === "month").value;
+    const year = parts.find((part) => part.type === "year").value;
+    return { "Месяц генерации": month, "Год генерации": year, "Месяц и год генерации": `${month}.${year}` };
+  }
+
+  function resolveOutputTemplate(template, values) {
+    return String(template || "").replace(/#([^#]+)#/g, (_, name) => String(values[name] ?? ""));
+  }
+
+  // Additional copies keep the configured spaces; path separators in an order number are not directories.
+  function safeOutputFileName(value, format) {
+    const extension = String(format).toLowerCase() === "docx" ? "docx" : "pdf";
+    let name = String(value || "").normalize("NFC").trim().replace(/\.(?:pdf|docx)$/iu, "")
+      .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/\s+/g, " ")
+      .replace(/^[. ]+|[. ]+$/g, "").slice(0, 160).replace(/[. ]+$/g, "");
+    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name)) name = `_${name}`;
+    return `${name || "документ"}.${extension}`;
+  }
+
+  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition, formatDefaultOrderNumber, getFixedOutputFileName,
+    normalizeAdditionalSaveTargets, getGenerationDateValues, resolveOutputTemplate, safeOutputFileName};
 });
