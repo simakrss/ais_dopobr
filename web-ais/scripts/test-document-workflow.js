@@ -150,6 +150,8 @@ assert.match(context.renderDocumentWorkflow(), /value="911-26\/ИАК"/);
 for (const definition of workflow.definitions) {
   context.state.documentWorkflowDraft = {documentId: definition.id, date: "2026-09-09", orderNo: "ТЕСТ-017"};
   const html = context.renderDocumentWorkflow();
+  assert.match(html, /<div class="document-workflow-heading"><h2>Документооборот<\/h2><\/div>/);
+  assert.doesNotMatch(html, /Генерация по формулам Ассистента/);
   assert.match(html, /Документооборот/);
   assert.ok(html.includes(definition.title));
   assert.equal(html.includes('name="orderNo"'), definition.documentKind !== "workflowCommercialProposal");

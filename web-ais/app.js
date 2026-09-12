@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.430",
+    version: "1.7.431",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.431",
+      releasedAt: "2026-09-12",
+      changes: [
+        "Убрана дополнительная надпись рядом с заголовком раздела «Документооборот»."
+      ]
+    },
     {
       version: "1.7.430",
       releasedAt: "2026-09-12",
@@ -23345,7 +23352,7 @@ MAX - https://bizvmax.ru/zifra_plus
     catch (failure) { error = failure.message; }
     return `
       <section class="panel document-workflow-panel">
-        <div class="document-workflow-heading"><h2>Документооборот</h2><span class="muted">Генерация по формулам Ассистента</span></div>
+        <div class="document-workflow-heading"><h2>Документооборот</h2></div>
         <div class="document-workflow-layout">
           <nav class="document-workflow-list" aria-label="Документы для формирования">
             ${documents.map((item) => `<button type="button" class="document-workflow-choice ${item.id === selected.id ? "is-active" : ""}" data-workflow-document="${escapeAttr(item.id)}" aria-pressed="${item.id === selected.id}">${escapeHtml(item.title)}</button>`).join("")}
