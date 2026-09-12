@@ -1,0 +1,40 @@
+services:
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: ais-onlyoffice
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_IN_BODY: "true"
+      JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET}"
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      EXAMPLE_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: C:/Windows/Fonts
+        target: /usr/share/fonts/truetype/windows
+        read_only: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  ocr:
+    build:
+      context: ./services/ocr
+    container_name: ais-ocr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      OCR_PORT: "8083"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8083/health', timeout=3))['ok']"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

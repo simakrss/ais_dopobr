@@ -1,0 +1,521 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const serverPath = path.resolve(__dirname, "..", "app-server.js");
+const clientPath = path.resolve(__dirname, "..", "app.js");
+const syncScriptPath = path.resolve(__dirname, "sync-student-database.ps1");
+const programRegistryGeneratorPath = path.resolve(__dirname, "generate-program-payment-registry.js");
+const serverSource = fs.readFileSync(serverPath, "utf8");
+const clientSource = fs.readFileSync(clientPath, "utf8");
+const syncScriptSource = fs.readFileSync(syncScriptPath, "utf8");
+const programRegistryGeneratorSource = fs.readFileSync(programRegistryGeneratorPath, "utf8");
+const { sanitizeStudentDatabaseExportPayload } = require(serverPath);
+
+function extractBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0, "Не найдено начало блока: " + startMarker);
+  assert.ok(end > start, "Не найден конец блока: " + endMarker);
+  return source.slice(start, end).replace(/^  /gmu, "");
+}
+
+function loadProgramMerge() {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function normalizeStudentDatabaseImportIdentityValue",
+      "  function mergeImportedStudentAgentPaymentMetadata"
+    ),
+    context
+  );
+  Object.assign(context, {
+    normalizeProgramName: (value) => String(value || "").trim().toLowerCase(),
+    clone: (value) => JSON.parse(JSON.stringify(value)),
+    buildLegacyRecordId: () => "new-program",
+    parseProgramAuthorPayments: () => []
+  });
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function getProgramWorkbookIdentity",
+      "  async function importStudentsFromDatabase"
+    ) + "\nthis.mergePrograms = mergeImportedProgramPaymentSettings;",
+    context
+  );
+  return context.mergePrograms;
+}
+
+function loadProgramPaymentRegistryMerge(registry, version = "test-version") {
+  const context = {
+    window: {
+      AIS_PROGRAM_PAYMENT_REGISTRY: registry,
+      AIS_PROGRAM_PAYMENT_REGISTRY_VERSION: version,
+      AIS_PROGRAM_DEFAULT_AUTHOR_PAYMENT_PERCENT: 50
+    },
+    normalizeProgramName: (value) => String(value || "").trim().toLowerCase(),
+    normalizePaymentPercent: (value, fallback) => Number(value ?? fallback),
+    mergeImportedPaymentRates: (values) => values,
+    parseProgramAuthorPayments: () => [],
+    applyGlobalAuthorRateToPrograms: (programs) => programs,
+    clone: (value) => JSON.parse(JSON.stringify(value))
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function mergeProgramPaymentRegistry",
+      "\n  function normalizeProgramName"
+    ) + "\nthis.mergeProgramPaymentRegistry = mergeProgramPaymentRegistry;",
+    context
+  );
+  return context.mergeProgramPaymentRegistry;
+}
+
+function loadProgramEnglishCertificateSource(program, registry = []) {
+  const context = {
+    window: { AIS_PROGRAM_PAYMENT_REGISTRY: registry },
+    resolveContractTemplateAddressSourceKey: () => "",
+    getContractDocumentDiscountPercent: () => "",
+    getStudentProgramHours: () => "",
+    getStudentProgramTypeCode: () => "",
+    inferStudentGender: () => "",
+    isChecked: () => false,
+    splitFullName: () => ({ firstName: "", patronymic: "" }),
+    findProgramByName: () => program,
+    getProgramRows: () => [program],
+    normalizeProgramName: (value) => String(value || "").trim().toLowerCase(),
+    normalizeTrainingPlanProgramName: (value) => String(value || "")
+      .replace(/\s*\(\s*\d+(?:[.,]\d+)?\s*(?:ч|час|часа|часов)\s*\)\s*$/iu, "")
+      .trim()
+      .toLowerCase(),
+    getIssuedEducationDocumentName: () => "",
+    formatEducationDocumentTrainingPlan: () => "",
+    formatEducationDocumentStudyPeriod: () => "",
+    getProgramPromoUrl: () => "",
+    contractTemplateSourceFieldMap: {}
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function getTrainingPlanHours",
+      "\n  function getEducationDocumentTrainingPlanRows"
+    ),
+    context
+  );
+  vm.runInContext(
+    extractBetween(
+      clientSource,
+      "  function getContractTemplateRawSourceValue",
+      "\n  function getContractDocumentDiscountPercent"
+    ) + "\nthis.resolveProgramEnglish = getContractTemplateRawSourceValue;",
+    context
+  );
+  return context.resolveProgramEnglish;
+}
+
+const payload = sanitizeStudentDatabaseExportPayload({
+  students: [{ id: "student-1", uid: "1", name: "Тест" }],
+  contracts: [],
+  directExpenses: [],
+  generalExpenses: [],
+  programs: [{
+    id: "program-stable",
+    name: "Новое имя в Web",
+    xlsbProgramName: "Старое имя в Excel",
+    xlsbProgramLandingCode: "old-code",
+    xlsbProgramRow: 2,
+    nameEnglish: "New program name",
+    shortName: "Новое краткое имя",
+    hours: 36,
+    databaseSyncFormulaFields: ["hours"]
+  }],
+  programDictionaries: {
+    frdoProfessionalAreas: ["Образование", " образование ", "Здравоохранение"],
+    economicActivities: ["85.42", "85.41"]
+  }
+});
+
+assert.equal(payload.programColumnMap["Наименование программы"], "name");
+assert.equal(payload.programColumnMap["Название программы на английском"], "nameEnglish");
+assert.ok(payload.programs[0].providedFields.includes("name"));
+assert.ok(payload.programs[0].providedFields.includes("nameEnglish"));
+assert.equal(payload.programs[0].name, "Новое имя в Web");
+assert.equal(payload.programs[0].nameEnglish, "New program name");
+assert.deepEqual(payload.programs[0].databaseSyncFormulaFields, ["hours"]);
+assert.equal(payload.programDictionariesProvided, true);
+assert.deepEqual(payload.programDictionaries, {
+  frdoProfessionalAreas: ["Образование", "Здравоохранение"],
+  economicActivities: ["85.42", "85.41"]
+});
+assert.throws(
+  () => sanitizeStudentDatabaseExportPayload({
+    students: [{ id: "student-1", uid: "1", name: "Тест" }],
+    contracts: [],
+    directExpenses: [],
+    generalExpenses: [],
+    programDictionaries: { frdoProfessionalAreas: [] }
+  }),
+  /economicActivities/u
+);
+
+const mergePrograms = loadProgramMerge();
+const merged = mergePrograms(
+  [{
+    id: "program-stable",
+    name: "Старое имя в Web",
+    xlsbProgramName: "Старое имя в Excel",
+    xlsbProgramRow: 2,
+    xlsbProgramLandingCode: "old-code",
+    webOnly: { keep: true }
+  }],
+  [{
+    id: "program-stable",
+    databaseSync: { recordId: "program-stable" },
+    name: "Новое имя в Excel",
+    xlsbProgramRow: 2,
+    xlsbProgramLandingCode: "new-code",
+    nameEnglish: "English program name",
+    shortName: "Excel short",
+    hours: 36,
+    databaseSyncFormulaFields: ["hours"]
+  }],
+  50,
+  ["name", "nameEnglish", "shortName"]
+);
+assert.equal(merged.length, 1);
+assert.equal(merged[0].id, "program-stable");
+assert.equal(merged[0].name, "Новое имя в Excel");
+assert.equal(merged[0].xlsbProgramName, "Новое имя в Excel");
+assert.equal(merged[0].xlsbProgramRow, 2);
+assert.equal(merged[0].xlsbProgramLandingCode, "new-code");
+assert.equal(merged[0].nameEnglish, "English program name");
+assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["hours"]);
+assert.deepEqual(merged[0].webOnly, { keep: true });
+
+const mergePaymentRegistry = loadProgramPaymentRegistryMerge([{
+  name: "Программа с английским названием",
+  nameEnglish: "Program with an English name"
+}], "same-version");
+const backfilledPrograms = mergePaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "same-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-without-english",
+  name: "Программа с английским названием",
+  nameEnglish: "   "
+}]);
+assert.equal(
+  backfilledPrograms[0].nameEnglish,
+  "Program with an English name",
+  "Пустое английское название должно восстанавливаться даже при совпавшей версии реестра."
+);
+const preservedPrograms = mergePaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "same-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-with-manual-english",
+  name: "Программа с английским названием",
+  nameEnglish: "Manually edited program name"
+}]);
+assert.equal(
+  preservedPrograms[0].nameEnglish,
+  "Manually edited program name",
+  "Заполненное вручную английское название нельзя перезаписывать фоновым восстановлением."
+);
+const mergeEmptyPaymentRegistry = loadProgramPaymentRegistryMerge([{
+  name: "Программа с английским названием",
+  nameEnglish: ""
+}], "new-version");
+const preservedAfterRegistryUpdate = mergeEmptyPaymentRegistry({
+  meta: {
+    defaultAuthorPaymentPercent: 50,
+    programPaymentRegistryVersion: "previous-version"
+  },
+  dictionaries: { paymentSettings: [] }
+}, [{
+  id: "program-with-manual-english",
+  name: "Программа с английским названием",
+  nameEnglish: "Manually edited program name"
+}]);
+assert.equal(
+  preservedAfterRegistryUpdate[0].nameEnglish,
+  "Manually edited program name",
+  "Пустая XLSB-ячейка не должна стирать заполненное вручную английское название."
+);
+
+const resolveProgramEnglish = loadProgramEnglishCertificateSource({
+  name: "Новое имя в Excel",
+  nameEnglish: "English program name",
+  shortName: "Русское краткое имя"
+});
+assert.equal(
+  resolveProgramEnglish("Прогр обуч факт_ENG", {
+    program: "Новое имя в Excel",
+    programEnglish: "Legacy English name"
+  }),
+  "English program name"
+);
+const resolveBackfilledProgramEnglish = loadProgramEnglishCertificateSource({
+  id: "program-short-name",
+  name: "Полное название программы (36 ч)",
+  nameEnglish: "   ",
+  shortName: "Краткое название программы"
+}, [{
+  name: "Полное название программы (36 ч)",
+  nameEnglish: "Full program name (36 h)"
+}]);
+assert.equal(
+  resolveBackfilledProgramEnglish("Прогр обуч факт_ENG", {
+    programId: "program-short-name",
+    program: "Краткое название программы"
+  }),
+  "Full program name (36 h)",
+  "Сертификат должен находить английское название по связи программы и резервному XLSB-реестру."
+);
+const resolveLegacyProgramEnglish = loadProgramEnglishCertificateSource({
+  id: "program-legacy-english",
+  name: "Программа с историческим полем",
+  nameEnglish: "   ",
+  "Название программы на английском": "Legacy English program name",
+  shortName: "Историческая программа"
+});
+assert.equal(
+  resolveLegacyProgramEnglish("Прогр обуч факт_ENG", {
+    programId: "program-legacy-english",
+    program: "Историческая программа"
+  }),
+  "Legacy English program name",
+  "Пробелы в основном поле не должны перекрывать английское название из исторического поля."
+);
+assert.match(
+  clientSource,
+  /field\("nameEnglish", "Название программы на английском"/u,
+  "Поле английского названия должно отображаться в карточке программы."
+);
+assert.match(
+  programRegistryGeneratorSource,
+  /\["Название программы на английском", "nameEnglish"\]/u,
+  "Статический реестр должен читать английское название из XLSB."
+);
+assert.match(
+  programRegistryGeneratorSource,
+  /2026-09-07-program-english-name-/u,
+  "Версия статического реестра должна принудительно обновить данные у существующих клиентов."
+);
+
+assert.match(syncScriptSource, /function Update-ProgramDictionaries/u);
+assert.match(syncScriptSource, /Name = "Деятельность"/u);
+assert.match(syncScriptSource, /Name = "ВидыДеятПК1"/u);
+assert.match(syncScriptSource, /\$currentRange\.ClearContents\(\)/u);
+assert.match(syncScriptSource, /\$definedName\.RefersTo = Get-ExcelRangeReference/u);
+assert.match(syncScriptSource, /Название программы в строке \$Row вычисляется формулой/u);
+assert.match(syncScriptSource, /function Sort-ProgramRegistryRows/u);
+assert.match(syncScriptSource, /programRowsInserted = \$programPromoResult\.InsertedRows/u);
+assert.match(
+  clientSource,
+  /values\.databaseSyncFormulaFields[\s\S]{0,300}!formData\.has\(fieldName\)[\s\S]{0,180}studentDatabaseFixedValuesEqual/u,
+  "После ручного изменения формульного поля программы оно должно стать явным Web-значением."
+);
+assert.match(
+  clientSource,
+  /changedFormulaFields[\s\S]{0,900}programFixedValueOverrides\.add\(fieldName\)/u,
+  "Ручное изменение формульного поля программы должно запросить замену формулы XLSB."
+);
+assert.doesNotMatch(
+  serverSource,
+  /STUDENT_DATABASE_CRITICAL_PROGRAM_EXCLUDED_FIELDS = new Set\(\[\s*"shortName"/u,
+  "Краткое название программы не должно безусловно исключаться из контроля изменений."
+);
+assert.match(
+  syncScriptSource,
+  /emailMessageTemplateColumn[\s\S]{0,180}-IndicatorText "Сообщ"/u,
+  "Заполненное поле СообщПочты должно получать видимый маркер в ячейке Excel."
+);
+assert.match(
+  syncScriptSource,
+  /\$IndicatorText[\s\S]{0,180}\$cell\.ClearContents\(\)/u,
+  "Системный маркер должен удаляться при очистке почтового сообщения."
+);
+assert.match(
+  clientSource,
+  /function buildStudentDatabaseExportTrainingPlans\(\)[\s\S]*?programNameById[\s\S]*?programName: currentProgramName/u,
+  "Учебный план должен экспортироваться с актуальным названием связанной программы."
+);
+assert.doesNotMatch(
+  syncScriptSource,
+  /\$fieldName -in @\("promoMessage1", "promoMessage2", "emailMessageTemplate", "name"\)/u
+);
+
+const commitBlock = extractBetween(
+  serverSource,
+  "async function handleStudentDatabaseExportCommit",
+  "\nfunction getStudentExportJob"
+);
+const saveWorkbookIndex = commitBlock.indexOf("const savedResult = await saveStudentDatabaseSyncResult");
+const applySettingsIndex = commitBlock.lastIndexOf(
+  "await applyPendingStudentDatabaseServerSettings(job)"
+);
+assert.ok(applySettingsIndex >= 0, "Серверные настройки должны применяться в commit-фазе.");
+assert.ok(
+  applySettingsIndex > saveWorkbookIndex,
+  "Серверные настройки применяются только после успешного commit примечаний XLSB."
+);
+assert.match(
+  serverSource,
+  /const \{[\s\S]*?serverMacroSettingsImport,[\s\S]*?\.\.\.publicResult[\s\S]*?\} = result;/u
+);
+assert.match(
+  serverSource,
+  /function buildStudentDatabaseImportResult[\s\S]*?const \{[\s\S]*?macroSettingsSecret,[\s\S]*?\.\.\.publicResult[\s\S]*?\} = result;/u,
+  "Пароль не должен попадать в публичный import payload."
+);
+
+async function testDeferredBackendSettings() {
+  const calls = [];
+  const context = {
+    process: { env: {} },
+    serverSettings: {
+      sharedRecordLocksMySqlConnectionString: "",
+      sharedRecordLocksMySqlUseApplicationsConnection: false
+    },
+    normalizeStudentApplicationsSqlQuery: () => "SELECT normalized",
+    parseSharedRecordLocksMySqlConnectionString: () => ({}),
+    getStudentApplicationsMySqlConnectionString: () => "",
+    buildStudentApplicationsMySqlConnectionString: (values) => JSON.stringify(values),
+    saveServerSettings: async (patch) => calls.push(patch),
+    publicStudentApplicationsMySqlSettings: () => ({
+      applicationsMysqlHost: "mysql.example.org",
+      applicationsMysqlPort: 3306,
+      applicationsMysqlDatabase: "shop",
+      applicationsMysqlUser: "reader",
+      applicationsMysqlHasPassword: true,
+      applicationsMysqlConfigured: true,
+      applicationsSqlQuery: "SELECT default"
+    })
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractBetween(
+      serverSource,
+      "function studentDatabaseSharedStateUsesApplicationsMySqlConnection",
+      "\nfunction getStudentDatabaseHumanCommentText"
+    )
+      + "\nthis.applySettings = applyImportedStudentDatabaseMacroSettings;"
+      + "\nthis.applyPendingSettings = applyPendingStudentDatabaseServerSettings;",
+    context
+  );
+  const imported = {
+    macroSettings: {
+      provided: true,
+      applicationsSqlQuery: "SELECT source",
+      applicationsMysqlHost: "mysql.example.org",
+      applicationsMysqlDatabase: "shop",
+      applicationsMysqlUser: "reader"
+    },
+    macroSettingsSecret: { applicationsMysqlPassword: "top-secret" }
+  };
+  await context.applySettings(imported);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].studentApplicationsSqlQuery, "SELECT normalized");
+  assert.match(calls[0].studentApplicationsMySqlConnectionString, /top-secret/u);
+  assert.doesNotMatch(JSON.stringify(imported.macroSettings), /top-secret/u);
+
+  await assert.rejects(
+    () => context.applySettings({
+      macroSettings: {
+        provided: true,
+        applicationsMysqlHost: "bad;host",
+        applicationsMysqlDatabase: "shop",
+        applicationsMysqlUser: "reader"
+      },
+      macroSettingsSecret: { applicationsMysqlPassword: "secret" }
+    }),
+    /некорректный сервер MySQL/u
+  );
+  assert.equal(calls.length, 1, "Некорректные настройки не должны сохраняться.");
+
+  const cleared = {
+    macroSettings: {
+      provided: true,
+      applicationsSqlQuery: "",
+      applicationsMysqlHost: "",
+      applicationsMysqlDatabase: "",
+      applicationsMysqlUser: ""
+    },
+    macroSettingsSecret: { applicationsMysqlPassword: "" }
+  };
+  await context.applySettings(cleared);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].studentApplicationsSqlQuery, "");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(calls[1], "studentApplicationsMySqlConnectionString"),
+    false,
+    "Пустые реквизиты XLSB не должны отключать MySQL, используемый общей Web-базой."
+  );
+  assert.equal(cleared.macroSettings.applicationsSqlQuery, "SELECT default");
+  assert.equal(cleared.macroSettings.applicationsMysqlConfigured, true);
+
+  context.serverSettings.sharedRecordLocksMySqlUseApplicationsConnection = true;
+  await assert.rejects(
+    () => context.applySettings(imported),
+    /одновременно используется общей Web-базой/u
+  );
+  assert.equal(calls.length, 2, "Опасное переключение общей MySQL-базы не должно сохраняться.");
+  context.serverSettings.sharedRecordLocksMySqlUseApplicationsConnection = false;
+
+  const pendingJob = {
+    result: {
+      syncDirection: "excel-to-web",
+      importPayload: { macroSettings: { provided: true } }
+    },
+    pendingServerMacroSettingsImport: {
+      macroSettings: {
+        provided: true,
+        applicationsMysqlHost: "mysql.example.org",
+        applicationsMysqlDatabase: "shop",
+        applicationsMysqlUser: "reader"
+      },
+      macroSettingsSecret: { applicationsMysqlPassword: "retry-secret" }
+    }
+  };
+  await context.applyPendingSettings(pendingJob);
+  assert.equal(pendingJob.pendingServerMacroSettingsImport, null);
+  assert.equal(pendingJob.result.importPayload.macroSettings.applicationsMysqlHasPassword, true);
+  assert.doesNotMatch(JSON.stringify(pendingJob.result), /retry-secret/u);
+}
+
+const directionalExportSource = extractBetween(
+  serverSource,
+  "async function buildStudentDatabaseExport",
+  "async function handleStudentDatabaseExportStart"
+);
+const mysqlPreflightIndex = directionalExportSource.indexOf(
+  "prepareImportedStudentDatabaseServerSettings({"
+);
+const annotationIndex = directionalExportSource.indexOf(
+  "buildStudentDatabaseSyncAnnotationPayload(sourceData)"
+);
+assert.ok(
+  mysqlPreflightIndex >= 0 && mysqlPreflightIndex < annotationIndex,
+  "Настройки MySQL должны проверяться до создания и commit XLSB."
+);
+
+testDeferredBackendSettings()
+  .then(() => console.log(
+    "Program names, dictionaries and backend settings are covered in both sync directions."
+  ))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

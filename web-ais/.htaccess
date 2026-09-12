@@ -1,0 +1,29 @@
+DirectoryIndex index.html
+Options -Indexes
+
+<IfModule mod_alias.c>
+  RedirectMatch 404 "(?i)^/(?:.*/)?(?:storage|scripts|services|tmp|\.runtime)(?:/|$)"
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(?:storage|scripts|services|tmp|\.runtime)(?:/|$) - [R=404,L]
+  RewriteRule ^data/(?:program-registry|program-payment-registry|seed)\.js$ gateway.php [QSA,L]
+  RewriteRule ^data/max-messenger-icon\.png$ gateway.php [QSA,L]
+  RewriteRule ^data(?:/|$) - [R=404,L]
+  RewriteRule ^api(?:/|$) gateway.php [QSA,L]
+  RewriteRule ^$ - [L]
+  RewriteRule ^(?:app\.js|auth-bootstrap\.js|favicon\.ico|field-html-links\.js|gateway\.php|index\.html|partner-app\.js|send-mail\.php|styles\.css)$ - [L]
+  RewriteRule ^ - [R=404,L]
+</IfModule>
+
+<FilesMatch "^(?:\.htpasswd|auth-lib\.php|audit-lib\.php|app-server\.js|demo-mode-privacy\.js|demo-mode-settings\.php|server-cli\.js)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set Cache-Control "no-store"
+</IfModule>
