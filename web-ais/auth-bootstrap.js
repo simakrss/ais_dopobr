@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260912-local-template-refresh-v1";
+  const AUTH_BUILD = "20260912-workflow-settings-migration-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

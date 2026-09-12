@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.425",
+    version: "1.7.426",
     releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.426",
+      releasedAt: "2026-09-12",
+      changes: [
+        "Исправлено применение обновлений к сохранённым настройкам приказов: новое имя файла и формула с прочерком для бесплатных программ теперь доходят до конструктора документов."
+      ]
+    },
     {
       version: "1.7.425",
       releasedAt: "2026-09-12",
@@ -4791,6 +4798,8 @@ MAX - https://bizvmax.ru/zifra_plus
       templatePath: definition.templatePath,
       fileName: definition.fileName,
       fileNameTemplate: definition.fileNameTemplate,
+      fileNameTemplateVersion: String(definition.fileNameTemplateVersion || ""),
+      legacyListFormula: String(definition.legacyListFormula || ""),
       saveFolderTemplate: definition.saveFolderTemplate || studentDocumentsFolderTemplateMarker,
       generationFormat: normalizeDocumentGenerationFormat(definition.generationFormat),
       generationFormatVersion: String(definition.generationFormatVersion || ""),

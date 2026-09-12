@@ -72,13 +72,43 @@ async function main() {
   assert.equal(requests[2].body.preferLocalTemplate, false);
 
   const migrationContext = {
-    normalizeDocumentTemplate: value => JSON.parse(JSON.stringify(value)),
-    getDefaultDocumentTemplates: () => workflow.definitions,
+    // Keep the actual factory AND record normalizer in the regression path.
+    // Only unrelated email, folder and field-editor services are stubbed.
+    createDefaultDocumentTemplate: () => ({id:"contract-default", title:"Договор", fileNameTemplate:"Договор", fields:[], originalFields:[], createdAt:""}),
+    contractTemplateSettingDefaults: [],
+    postalEnvelopeDocumentTemplateId: "envelope",
+    documentOpenAfterGenerationDefaultVersion: "test",
+    isDocumentTemplateMarkerFieldMode: mode => mode === "document-markers",
+    normalizeDocumentTemplateFieldList: (_document, fields) => JSON.parse(JSON.stringify(fields || [])),
+    normalizeDocumentTemplateSource: value => String(value || ""),
+    normalizeOrderDocumentFileNameTemplate: value => value.fileNameTemplate,
+    getDefaultDocumentSaveFolderTemplate: value => value.saveFolderTemplate || "",
+    isChecked: value => value === true || value === "1",
+    normalizeDocumentEmailDeliveryMode: value => value || "off",
+    getDefaultDocumentEmailSubjectTemplate: () => "",
+    getDefaultDocumentEmailMessageTemplate: () => "",
+    normalizeDocumentEmailTemplateValues: value => value || {},
+    normalizeEducationProgramType: value => value,
+    getDefaultDocumentTemplates: () => workflow.definitions.map(definition => migrationContext.createEducationDocumentTemplate({
+      ...definition,
+      markers: definition.fields.map(field => field.name),
+      formulas: Object.fromEntries(definition.fields.map(field => [field.name, field.formula]))
+    })),
+    educationDocumentTemplateFieldFormulaMap: {},
+    studentDocumentsFolderTemplateMarker: "#Папка слушателя#",
+    documentPreviewDefaultVersion: "test",
+    normalizeDocumentGenerationFormat: value => value === "docx" ? "docx" : "pdf",
+    getDefaultDocumentOpenAfterGeneration: () => false,
     trainingExtensionDocumentTemplateId: "extension", trainingReductionDocumentTemplateId: "reduction"
   };
   vm.createContext(migrationContext);
+  vm.runInContext(extract(appSource, "createEducationDocumentTemplate", "  "), migrationContext);
+  vm.runInContext(extract(appSource, "normalizeDocumentTemplate", "  "), migrationContext);
   vm.runInContext(extract(appSource, "normalizeDocumentTemplates", "  "), migrationContext);
   const recruitment = workflow.definitions[1];
+  const defaults = migrationContext.getDefaultDocumentTemplates();
+  assert.equal(defaults[1].fileNameTemplateVersion, recruitment.fileNameTemplateVersion, "The real document factory must retain filename migration metadata");
+  assert.equal(defaults[1].legacyListFormula, recruitment.legacyListFormula, "The real document factory must retain formula migration metadata");
   const old = {...recruitment, fileNameTemplate: "OLD", fileNameTemplateVersion: "", fields: [{name: "Список", formula: recruitment.legacyListFormula}]};
   const migrated = migrationContext.normalizeDocumentTemplates([old]).find(item => item.id === old.id);
   assert.equal(migrated.fileNameTemplate, recruitment.fileNameTemplate);
@@ -88,6 +118,24 @@ async function main() {
   const next = migrationContext.normalizeDocumentTemplates([migrated]).find(item => item.id === old.id);
   assert.equal(next.fileNameTemplate, migrated.fileNameTemplate);
   assert.equal(next.fields[0].formula, migrated.fields[0].formula);
+  const snapshotArg = process.argv.indexOf("--snapshot");
+  if (snapshotArg >= 0) {
+    const snapshotPath = path.resolve(process.argv[snapshotArg + 1]);
+    const before = fs.readFileSync(snapshotPath);
+    const saved = JSON.parse(before).data.dictionaries.documentTemplates;
+    const normalized = migrationContext.normalizeDocumentTemplates(saved);
+    const current = normalized.find(item => item.id === recruitment.id);
+    assert.equal(current.fileNameTemplate, recruitment.fileNameTemplate);
+    assert.equal(normalized.find(item => item.id === workflow.definitions[0].id).fileNameTemplate, workflow.definitions[0].fileNameTemplate);
+    for (const key of ["fields", "originalFields"]) {
+      assert.equal(current[key].find(field => field.name === "Список").formula, recruitment.fields[0].formula);
+    }
+    const values = workflow.evaluateLists(current, [{id:"test-free",name:"Бесплатная программа",status:"Набор",type:"ПРО",price:0}]).values;
+    assert.match(values["Список"], /\t0\t–$/u, "A migrated saved template uses a dash for zero price");
+    assert.equal(JSON.stringify(migrationContext.normalizeDocumentTemplates(JSON.parse(JSON.stringify(normalized)))), JSON.stringify(normalized), "Reloading saved settings is idempotent");
+    assert.deepEqual(fs.readFileSync(snapshotPath), before, "Verification must not modify the shared database snapshot");
+    console.log("Saved document settings: both filenames, active/original formulas and zero-price commission verified without database writes");
+  }
   const fileNameContext = {window: {AIS_DOCUMENT_WORKFLOW: workflow}, normalizeDocumentGenerationFormat: value => value === "docx" ? "docx" : "pdf"};
   vm.createContext(fileNameContext);
   vm.runInContext(extract(appSource, "ensureGeneratedDocumentFileName", "  "), fileNameContext);
