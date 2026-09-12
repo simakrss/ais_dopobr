@@ -2761,6 +2761,8 @@ function safeDocumentFileName(value, format = "") {
   const extension = format
     ? normalizeGeneratedDocumentFormat(format)
     : (/\.docx$/i.test(source) ? "docx" : "pdf");
+  const fixedWorkflowName = documentWorkflow.getFixedOutputFileName(source, extension);
+  if (fixedWorkflowName) return fixedWorkflowName;
   const base = safeNamePart(source.replace(/\.(?:pdf|docx)$/i, ""), "документ");
   return `${base}.${extension}`;
 }
@@ -5730,9 +5732,13 @@ async function resolveLocalDocumentTemplateFile(templateUrl, templatePath) {
   }
   const storedSource = String(templatePath || "").trim();
   if (storedSource) {
-    candidates.push(path.isAbsolute(storedSource)
-      ? path.resolve(storedSource)
-      : path.resolve(ROOT, storedSource));
+    const storedPath = path.resolve(ROOT, storedSource);
+    const workflowDefinition = !remoteSource && documentWorkflow.definitions.find((definition) => (
+      path.resolve(ROOT, definition.templatePath) === storedPath
+    ));
+    candidates.push(workflowDefinition?.localTemplateSource
+      ? resolveLocalDocumentsPath(workflowDefinition.localTemplateSource)
+      : storedPath);
   }
   if (!candidates.length) {
     throw new Error("Для шаблона не задан локальный путь.");
@@ -31233,23 +31239,21 @@ async function loadTemplateBytesForRequest(body) {
   const templateUrl = String(body?.templateUrl || "").trim();
   const templatePath = String(body?.templatePath || "").trim();
   if (!body?.preferLocalTemplate) return loadTemplateBytes(templateUrl, templatePath);
-  const errors = [];
   if (templateUrl) {
-    try {
-      const localTemplatePath = resolveLocalTemplatePathFromWebDavSource(templateUrl);
-      if (localTemplatePath) return await loadLocalTemplateBytes(localTemplatePath);
-    } catch (error) {
-      errors.push(error.message);
-    }
+    const localTemplatePath = resolveLocalTemplatePathFromWebDavSource(templateUrl);
+    // A missing local source must not silently fall back to an old bundled copy.
+    if (localTemplatePath) return loadLocalTemplateBytes(localTemplatePath);
   }
   if (templatePath) {
-    try {
-      return await loadLocalTemplateBytes(templatePath);
-    } catch (error) {
-      errors.push(error.message);
+    const workflowDefinition = documentWorkflow.definitions.find((definition) => (
+      path.resolve(ROOT, definition.templatePath) === path.resolve(ROOT, templatePath)
+    ));
+    if (!templateUrl && workflowDefinition?.localTemplateSource) {
+      return loadLocalTemplateBytes(resolveLocalDocumentsPath(workflowDefinition.localTemplateSource));
     }
+    return loadLocalTemplateBytes(templatePath);
   }
-  throw new Error(errors.filter(Boolean).join(" ") || "Не удалось найти шаблон документа на локальном диске.");
+  throw new Error("Не удалось найти шаблон документа на локальном диске.");
 }
 
 function getWordTemplateExtension(fileName) {

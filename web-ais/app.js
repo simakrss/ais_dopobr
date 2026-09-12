@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.424",
-    releasedAt: "2026-09-11"
+    version: "1.7.425",
+    releasedAt: "2026-09-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.425",
+      releasedAt: "2026-09-12",
+      changes: [
+        "В локальном режиме поля документов перечитываются локальным сервисом из исходных файлов на диске без подмены старой копией. Обновлён приказ о наборе и его формула для бесплатных программ. Имена выгрузки: «Действующий приказ о наборе» и «ПРИКАЗ об утверждении состава ИАК»."
+      ]
+    },
     {
       version: "1.7.424",
       releasedAt: "2026-09-11",
@@ -8118,6 +8125,19 @@ MAX - https://bizvmax.ru/zifra_plus
         existing.fileName = existing.fileName || defaultTemplate.fileName;
         existing.documentKind = existing.documentKind || defaultTemplate.documentKind;
         if (!existing.fileNameTemplate && defaultTemplate.fileNameTemplate) existing.fileNameTemplate = defaultTemplate.fileNameTemplate;
+        if (defaultTemplate.fileNameTemplateVersion && existing.fileNameTemplateVersion !== defaultTemplate.fileNameTemplateVersion) {
+          existing.fileNameTemplate = defaultTemplate.fileNameTemplate;
+          existing.fileNameTemplateVersion = defaultTemplate.fileNameTemplateVersion;
+        }
+        if (defaultTemplate.legacyListFormula) {
+          for (const list of [existing.fields, existing.originalFields]) {
+            (list || []).forEach((field) => {
+              if (field.name === "Список" && field.formula === defaultTemplate.legacyListFormula) {
+                field.formula = defaultTemplate.fields.find((item) => item.name === "Список").formula;
+              }
+            });
+          }
+        }
         if (!existing.saveFolderTemplate && defaultTemplate.saveFolderTemplate) existing.saveFolderTemplate = defaultTemplate.saveFolderTemplate;
         if (!existing.fields?.length && defaultTemplate.fields?.length) existing.fields = defaultTemplate.fields.map((field) => ({ ...field }));
         if (!existing.originalFields?.length && defaultTemplate.originalFields?.length) existing.originalFields = defaultTemplate.originalFields.map((field) => ({ ...field }));
@@ -8223,6 +8243,7 @@ MAX - https://bizvmax.ru/zifra_plus
       title: String(item?.title || item?.name || item?.label || fallback.title).trim(),
       templateUrl: normalizeDocumentTemplateSource(item?.templateUrl || ""),
       templatePath: String(item?.templatePath || "").trim(),
+      fileNameTemplateVersion: String(item?.fileNameTemplateVersion || ""),
       fileNameTemplate: normalizeOrderDocumentFileNameTemplate({
         id: item?.id || fallback.id,
         fileNameTemplate: String(item?.fileNameTemplate || fallback.fileNameTemplate).trim()
@@ -57129,18 +57150,27 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function inspectDocumentTemplateSource(source) {
+    const preferLocalTemplate = getEffectiveLocalDocumentsMode();
+    let origin = photoServerOrigin();
+    if (preferLocalTemplate) {
+      const capabilities = await probeLocalDocumentServices();
+      if (!capabilities.appServerAvailable || !capabilities.localDocumentsAvailable) {
+        throw new Error("Локальный сервис или папка документов недоступны. Проверьте запуск локальной системы и повторите обновление.");
+      }
+      origin = capabilities.apiOrigin || localDocumentServicesOrigin;
+    }
     let response;
     try {
-      response = await fetch(photoApiUrl("/api/documents/template-inspect"), {
+      response = await fetch(documentProcessingApiUrl("/api/documents/template-inspect", origin), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
         body: JSON.stringify({
           ...source,
-          preferLocalTemplate: getEffectiveLocalDocumentsMode()
+          preferLocalTemplate
         })
       });
     } catch (error) {
-      throw new Error(`не удалось подключиться к app-server.js (${photoServerOrigin()})`);
+      throw new Error(`не удалось подключиться к app-server.js (${origin})`);
     }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "не удалось прочитать свойства файла Word");
@@ -57219,12 +57249,19 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  function applyDocumentTemplateInspection(documentTemplate, inspection, baseFields = documentTemplate?.fields || []) {
+  function applyDocumentTemplateInspection(documentTemplate, inspection, baseFields = documentTemplate?.fields || [], options = {}) {
     const emailProperties = getDocumentEmailPropertiesFromInspection(inspection);
     const workflowDefinition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(documentTemplate?.documentKind);
+    const inspectedWorkflowFormulas = new Map((inspection?.properties || [])
+      .filter((field) => field.name && /^=\s*Получить\s*SQL\s*запрос/iu.test(field.formula || ""))
+      .map((field) => [field.name, field.formula]));
     const workflowDefaults = workflowDefinition?.fields.map((field, index) => ({
-      ...field, id: `${documentTemplate.id}-field-${index + 1}`, position: index + 1, custom: true, hideEmpty: false
+      ...field, formula: inspectedWorkflowFormulas.get(field.name) || field.formula,
+      id: `${documentTemplate.id}-field-${index + 1}`, position: index + 1, custom: true, hideEmpty: false
     }));
+    const workflowBaseFields = options.reloadWorkflowFormulas
+      ? baseFields.map((field) => ({ ...field, formula: inspectedWorkflowFormulas.get(field.name) || field.formula }))
+      : baseFields;
     // The generic inspector drops SQL formulas and fields absent from the Word body.
     // Workflow templates need their SQL and the extra date/number parameters intact.
     const mergeWorkflowFields = (base) => normalizeContractTemplateDocumentFields([
@@ -57234,7 +57271,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ]);
     const nextDocument = {
       ...documentTemplate,
-      fields: workflowDefinition ? mergeWorkflowFields(baseFields) : mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
+      fields: workflowDefinition ? mergeWorkflowFields(workflowBaseFields) : mergeDocumentTemplateFieldsFromInspection(inspection, baseFields),
       originalFields: workflowDefinition ? mergeWorkflowFields([]) : mergeDocumentTemplateFieldsFromInspection(inspection, []),
       fieldsMode: "document-markers",
       ...(emailProperties.subject.found
@@ -57563,7 +57600,7 @@ MAX - https://bizvmax.ru/zifra_plus
         templatePath: document.templatePath
       });
       const emailProperties = getDocumentEmailPropertiesFromInspection(inspection);
-      const nextDocument = applyDocumentTemplateInspection(document, inspection, document.fields);
+      const nextDocument = applyDocumentTemplateInspection(document, inspection, document.fields, { reloadWorkflowFormulas: true });
       const loadedFieldsCount = nextDocument.fields.length;
       const markerCount = unique((inspection?.markers || []).map((marker) => (
         String(marker || "").replace(/^#+|#+$/g, "").trim()
@@ -70082,6 +70119,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function ensureGeneratedDocumentFileName(value, format = "pdf") {
     const extension = normalizeDocumentGenerationFormat(format);
+    const fixedWorkflowName = window.AIS_DOCUMENT_WORKFLOW.getFixedOutputFileName(value, extension);
+    if (fixedWorkflowName) return fixedWorkflowName;
     const cleaned = String(value || "договор")
       .trim()
       .replace(/\.(?:pdf|docx)$/i, "")

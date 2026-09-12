@@ -19,7 +19,9 @@
       title: "Приказ об утверждении состава ИАК", fileName: "ПРИКАЗ об утверждении состава ИАК.docx",
       orderNumberContext: "ИАК",
       templatePath: "storage/document-templates/workflow-commission-order.docx",
-      fileNameTemplate: "Приказ_ИАК_#Номер приказа#_#Дата приказа#",
+      localTemplateSource: "Документы/ИАК/ПРИКАЗ об утверждении состава ИАК.docx",
+      fileNameTemplate: "ПРИКАЗ об утверждении состава ИАК",
+      fileNameTemplateVersion: "2026-09-12-workflow-output-names",
       saveFolderTemplate: "Документы/ИАК",
       condition: "Тип='ППП' and Статус='Набор' and not isNull(Председатель)",
       description: "Составы итоговых аттестационных комиссий по программам профессиональной переподготовки, открытым для набора.",
@@ -30,15 +32,19 @@
       title: "Приказ о наборе", fileName: "Приказ о наборе.docx",
       orderNumberContext: "НАБОР",
       templatePath: "storage/document-templates/workflow-recruitment-order.docx",
-      fileNameTemplate: "Приказ_о_наборе_#Номер приказа#_#Дата приказа#",
+      localTemplateSource: "Документы/Приказы о наборе/Приказ о наборе.docx",
+      fileNameTemplate: "Действующий приказ о наборе",
+      fileNameTemplateVersion: "2026-09-12-workflow-output-names",
       saveFolderTemplate: "Документы/Приказы о наборе", condition: activeCondition,
       description: "Программы со статусом «Набор», стоимость обучения и партнёрские ставки по формуле шаблона.",
-      fields: [{name: "Список", position: 1, fieldNumber: 6, formula: sqlFormula(`SELECT ${programTitleSql}, Стоимость, iif(iif(isNull(Автор),'',Автор)='','25%','10%') as Процент FROM [Реестр программ$] WHERE [Условие отбора] ORDER BY [Тип], [Наименование программы]`)}, ...datedFields]
+      legacyListFormula: sqlFormula(`SELECT ${programTitleSql}, Стоимость, iif(iif(isNull(Автор),'',Автор)='','25%','10%') as Процент FROM [Реестр программ$] WHERE [Условие отбора] ORDER BY [Тип], [Наименование программы]`),
+      fields: [{name: "Список", position: 1, fieldNumber: 6, formula: sqlFormula(`SELECT ${programTitleSql}, Стоимость, iif(Стоимость=0,'–', iif(iif(isNull(Автор),'',Автор)='','25%','10%')) as Процент FROM [Реестр программ$] WHERE [Условие отбора] ORDER BY [Тип], [Наименование программы]`)}, ...datedFields]
     },
     {
       id: "workflow-commercial-proposal", documentKind: "workflowCommercialProposal",
       title: "Коммерческое предложение Цифровизация Плюс", fileName: "Коммерческое предложение Цифровизация Плюс.docx",
       templatePath: "storage/document-templates/workflow-commercial-proposal.docx",
+      localTemplateSource: "[-1]/Реклама/Коммерческие/Коммерческое предложение Цифровизация Плюс.docx",
       fileNameTemplate: "Коммерческое_предложение_#ТекДата#",
       saveFolderTemplate: "Документы/Коммерческие предложения", condition: activeCondition,
       description: "Актуальные программы и цены, сгруппированные по видам: КПК, ППП, ДОП и ПРО.",
@@ -197,6 +203,11 @@
     return {text, rows, table: Boolean(separators)};
   }
   function getDefinition(kind) { return definitions.find(item => item.documentKind === kind || item.id === kind) || null; }
+  function getFixedOutputFileName(value, format = "pdf") {
+    const base = String(value || "").trim().replace(/\.(?:pdf|docx)$/iu, "");
+    const definition = definitions.find(item => item.fileNameTemplateVersion && item.fileNameTemplate === base);
+    return definition ? `${definition.fileNameTemplate}.${format === "docx" ? "docx" : "pdf"}` : "";
+  }
   function evaluateLists(document, programs) {
     const definition = getDefinition(document.documentKind);
     if (!definition) throw new Error("Неизвестный вид документа документооборота.");
@@ -210,5 +221,5 @@
     });
     return {values, tableFields, programs: [...selected.values()]};
   }
-  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition, formatDefaultOrderNumber};
+  return {definitions, columnMap, compileQuery, evaluateSqlField, evaluateLists, getDefinition, formatDefaultOrderNumber, getFixedOutputFileName};
 });

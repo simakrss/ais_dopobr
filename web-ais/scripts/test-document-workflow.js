@@ -81,6 +81,12 @@ for (const definition of workflow.definitions) {
 }
 
 const recruitment = workflow.definitions[1];
+assert.equal(workflow.definitions[0].fileNameTemplate, "ПРИКАЗ об утверждении состава ИАК");
+assert.equal(recruitment.fileNameTemplate, "Действующий приказ о наборе");
+const recruitmentInspection = server.inspectDocxTemplate(fs.readFileSync(path.join(root, recruitment.templatePath)));
+const inspectedRecruitmentFields = recruitment.fields.map(field => ({...field, formula: recruitmentInspection.properties.find(item => item.name === field.name)?.formula || field.formula}));
+assert.equal(workflow.evaluateLists(recruitment, programs).values["Список"], workflow.evaluateLists({...recruitment, fields: inspectedRecruitmentFields}, programs).values["Список"], "Bundled defaults match the current source Word formula");
+assert.match(workflow.evaluateLists(recruitment, programs).values["Список"], /Практический вебинар[^\t]*\t0\t–/u);
 const generatedRecruitment = server.prepareWorkflowDocumentValues(
   recruitment.documentKind,
   {fields: recruitment.fields, programs},
@@ -140,6 +146,9 @@ for (const definition of workflow.definitions) {
   assert.equal(inspected.fields[0].formula, modified[0].formula, "Re-inspection must retain edited SQL formulas");
   assert.equal(inspected.originalFields[0].formula, definition.fields[0].formula);
 }
+const reloaded = context.applyDocumentTemplateInspection(recruitment, recruitmentInspection, recruitment.fields.map(field => ({...field, formula: field.name === "Список" ? recruitment.legacyListFormula : field.formula})), {reloadWorkflowFormulas: true});
+assert.equal(reloaded.fields.find(field => field.name === "Список").formula, recruitmentInspection.properties[0].formula);
+assert.ok(reloaded.fields.some(field => field.name === "Дата начала набора"), "Refresh keeps workflow date parameters absent from Word");
 assert.match(app, /state\.view === "documentWorkflow"\) return renderDocumentWorkflow\(\)/);
 assert.match(app, /bindDocumentWorkflowEvents\(\)/);
 assert.match(app, /options\.skipEmail \? null : prepareStudentDocumentEmailRequest/);
@@ -158,7 +167,9 @@ async function testDocumentEndpoint() {
     }, {});
     assert.equal(status, 200, Buffer.isBuffer(bytes) && bytes[0] === 123 ? bytes.toString() : `Endpoint failed: ${definition.id}`);
     assert.equal(headers["X-Generated-Document-Format"], "docx");
-    assert.ok(decodeURIComponent(headers["X-Generated-Document-File-Name"]).includes("09.09.2026"));
+    const outputName = decodeURIComponent(headers["X-Generated-Document-File-Name"]);
+    if (definition.documentKind === "workflowCommercialProposal") assert.ok(outputName.includes("09.09.2026"));
+    else assert.equal(outputName, `${definition.fileNameTemplate}.docx`);
     assert.doesNotMatch(text(docXml(bytes)), /STALE CLIENT VALUE/);
   }
   assert.throws(() => server.prepareWorkflowDocumentValues(recruitment.documentKind, {fields: recruitment.fields, programs}, {...sourceValues, "Дата документа": "2026-02-31"}), /корректную дату/);
