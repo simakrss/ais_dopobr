@@ -4486,8 +4486,17 @@ function matchNameLetterCase(source, replacement) {
 function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceValues) {
   const entries = readDocxZipEntries(templateBytes);
   const values = { ...(fieldValues || {}) };
-  const context = { fieldValues: values, sourceValues: sourceValues || {} };
+  const context = { fieldValues: values, sourceValues: { ...(sourceValues || {}) } };
+  const internshipFlag = String(context.sourceValues["Стажировка"] ?? "").trim().toLowerCase();
+  const hasInternship = Boolean(internshipFlag && !["0", "false", "off", "нет", "не", "ложь"].includes(internshipFlag));
+  context.sourceValues["Стажировка"] = hasInternship ? "+" : "";
+  if (!hasInternship && Object.prototype.hasOwnProperty.call(values, "Стажировка")) values["Стажировка"] = "";
   orderDocumentFormulaProperties(getDocumentFormulaPropertiesFromEntries(entries)).forEach((property) => {
+    // The checkbox is authoritative; a template formula must not enable it.
+    if (property.name === "Стажировка" && !hasInternship) {
+      values[property.name] = "";
+      return;
+    }
     context.evaluatingName = property.name;
     if (isGetSqlQueryFormula(property.value)) {
       const existingValue = getFormulaContextValue(property.name, context) || values[property.name] || "";
@@ -5183,6 +5192,14 @@ function applyIndexedComplexFieldValues(xml, fieldValues, fieldPositionMap) {
       if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
       const value = fieldValues[fieldName];
       if (shouldRenderDocumentFieldAsParagraphs(fieldName, value)) return match;
+      if (fieldName === "Стажировка") {
+        // SUBJECT "" is recalculated from the document's Subject by Office/PDF
+        // converters. Keep only the computed result, preserving its run styles.
+        const materializedStartXml = startXml
+          .replace(/<w:fldChar\b[^>]*\/>/g, "")
+          .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/g, "");
+        return `${materializedStartXml}${replaceWordFieldResultXml(resultXml, value)}`;
+      }
       const nextStartXml = indexedField.type === "subject"
         ? updateSubjectFieldInstruction(startXml, value)
         : startXml;
@@ -5200,6 +5217,7 @@ function applyIndexedSimpleFieldValues(xml, fieldValues, fieldPositionMap) {
       const fieldName = fieldPositionMap.get(String(indexedField.position));
       if (!fieldName || !Object.prototype.hasOwnProperty.call(fieldValues, fieldName)) return match;
       if (shouldRenderDocumentFieldAsParagraphs(fieldName, fieldValues[fieldName])) return match;
+      if (fieldName === "Стажировка") return replaceWordFieldResultXml(resultXml, fieldValues[fieldName]);
       return `${startXml}${replaceWordFieldResultXml(resultXml, fieldValues[fieldName])}${endXml}`;
     }
   );

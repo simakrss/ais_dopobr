@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.445",
+    version: "1.7.446",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.446",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Поле «Стажировка» в документах остаётся пустым при снятой галочке, а при установленной рассчитывается по формуле шаблона. Результат фиксируется в итоговом документе, чтобы Word и PDF-конвертер не подставляли вместо него тему документа, например «Итоговая аттестация»."
+      ]
+    },
     {
       version: "1.7.445",
       releasedAt: "2026-09-13",
@@ -70057,6 +70064,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function evaluateContractTemplateField(field, record, values, evaluateByName = null) {
     const fieldName = String(field.name || "").trim();
+    if (fieldName === "Стажировка" && !isChecked(record?.internship)) return "";
     if (
       record?.employeeActDocument
       && record.employeeActDocumentValues
