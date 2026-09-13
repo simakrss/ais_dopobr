@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.443",
+    version: "1.7.444",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.444",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Название программы в заголовке карточки слушателя переносится до блока статуса и кнопок, не заходя под элементы управления. Длинные слова также остаются в пределах текстовой области."
+      ]
+    },
     {
       version: "1.7.443",
       releasedAt: "2026-09-13",

@@ -16521,8 +16521,12 @@ body.card-window-moving {
 }
 
 .student-modal-title {
+  min-width: 0;
+  flex: 1 1 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
+  overflow-wrap: anywhere;
 }
 
 .student-modal-title p {
@@ -16545,6 +16549,7 @@ body.card-window-moving {
 }
 
 .student-modal-head .modal-head-actions {
+  flex: 0 0 auto;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
