@@ -1,164 +1,88 @@
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const {spawnSync} = require("node:child_process");
 const {buildLocalDocumentSaveDialogLauncher} = require("../app-server.js");
 const root = path.resolve(__dirname, "..");
 const launcher = buildLocalDocumentSaveDialogLauncher();
 
-assert.match(launcher, /#0f766e/u);
-assert.match(launcher, /#f4f6f2/u);
-assert.match(launcher, /Segoe UI/u);
+assert.match(launcher, /New-Object System.Windows.Forms.SaveFileDialog/u);
+assert.match(launcher, /\$dialog.AutoUpgradeEnabled = \$true/u, "Use the modern Explorer dialog");
 assert.match(launcher, /CurrentUICulture = .*'ru-RU'/u);
-assert.match(launcher, /'Сохранение документа'/u);
-assert.match(launcher, /'Имя файла \(без расширения\)'/u);
-assert.match(launcher, /'Папка сохранения'/u);
-assert.match(launcher, /'Сохранить'/u);
-assert.match(launcher, /'Заменить файл'/u);
-assert.match(launcher, /\$form.AcceptButton = \$cancel/u);
-assert.match(launcher, /\$form.CancelButton = \$cancel/u);
-assert.match(launcher, /AutoScaleMode.*Dpi/u);
+assert.match(launcher, /\$dialog.Title = 'Сохранить как'/u);
+assert.match(launcher, /\$dialog.OverwritePrompt = \$true/u, "Windows must confirm replacement");
 assert.match(launcher, /\$owner.TopMost = \$true/u);
-assert.match(launcher, /\$dialog.ShowDialog\(\$owner\)/u);
-assert.match(launcher, /\$form.ShowDialog\(\$DialogOwner\)/u);
+assert.match(launcher, /\$owner.ShowInTaskbar = \$false/u);
+assert.match(launcher, /\$dialog.ShowDialog\(\$owner\) -eq \[System.Windows.Forms.DialogResult\]::OK/u);
 assert.match(launcher, /\$dialog.Dispose\(\)/u);
 assert.match(launcher, /\$owner.Dispose\(\)/u);
-assert.match(launcher, /\$picker.Dispose\(\)/u);
-assert.match(launcher, /Test-Path -LiteralPath \$selectedPath -PathType Leaf/u);
-assert.match(launcher, /-not \(Confirm-AisFileReplacement \$selectedPath \$window\)\) \{ return \}/u);
 assert.match(launcher, /AIS_SAVE_PATH:/u);
-assert.doesNotMatch(launcher, /System.Windows.Forms.SaveFileDialog/u, "The main save window must not depend on Windows language or styling");
-assert.doesNotMatch(launcher, /WriteAllBytes|WriteAllText|Remove-Item|Set-Content/u, "The dialog selects a path but never writes or deletes user files");
-assert.ok(Buffer.from(launcher, "utf16le").toString("base64").length < 30000, "Encoded launcher must fit Windows command-line limits");
+assert.match(launcher, /GetBytes\(\$dialog.FileName\)/u, "Return the exact confirmed native path");
+assert.doesNotMatch(launcher, /FolderBrowserDialog|New-AisDialog|Add-AisTextInput|Confirm-AisFileReplacement|#0f766e/u, "Do not replace Explorer with a custom form");
+assert.doesNotMatch(launcher, /WriteAllBytes|WriteAllText|Remove-Item|Set-Content/u, "The dialog never writes or deletes user files");
+assert.ok(Buffer.from(launcher, "utf16le").toString("base64").length < 30000);
 const deployment = fs.readFileSync(path.join(root, "scripts/deploy-lms.ps1"), "utf8");
-assert.equal((deployment.match(/"local-document-save-dialog.js"/g) || []).length, 2, "Dialog module must ship to public and protected runtime locations");
+assert.equal((deployment.match(/"local-document-save-dialog.js"/g) || []).length, 2);
 
 if (process.platform === "win32") {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ais-save-dialog-test-"));
-  fs.writeFileSync(path.join(temp, "existing.pdf"), "original test content");
   const definitionsOnly = launcher.replace(/\r?\nShow-AisDocumentSaveDialog\s*$/u, "");
-  assert.notEqual(definitionsOnly, launcher, "Tests must never open a live dialog");
-  const render = process.argv.includes("--render");
+  assert.notEqual(definitionsOnly, launcher, "Unit tests must never open a live dialog");
   const tests = String.raw`
 function Assert-AisTest([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-function Assert-AisInvalidPath([string]$Folder, [string]$Name, [string]$Format) {
-  $failed = $false
-  try { [void](Resolve-AisDocumentSavePath $Folder $Name $Format) } catch { $failed = $true }
-  Assert-AisTest $failed ('Validation unexpectedly accepted: ' + $Name)
+$script:extensionWarnings = 0
+function Show-AisSaveExtensionError([string]$Extension) { $script:extensionWarnings++ }
+foreach ($format in @('pdf', 'docx')) {
+  $name = 'Приказ о наборе 609-14_09.2026.' + $format
+  $initial = [IO.Path]::Combine($env:TEMP, $name)
+  $dialog = New-AisDocumentSaveDialog $initial $format.ToUpperInvariant()
+  try {
+    Assert-AisTest ($dialog -is [Windows.Forms.SaveFileDialog]) 'Not the native save dialog'
+    Assert-AisTest $dialog.AutoUpgradeEnabled 'Modern Explorer navigation disabled'
+    Assert-AisTest ($dialog.Title -eq 'Сохранить как') 'Save title missing'
+    Assert-AisTest ($dialog.InitialDirectory -eq $env:TEMP) 'Initial folder changed'
+    Assert-AisTest ($dialog.FileName -eq $name) 'Filename or date suffix changed'
+    Assert-AisTest ($dialog.DefaultExt -eq $format) 'Wrong default extension'
+    Assert-AisTest ($dialog.Filter.Split('|').Length -eq 2 -and $dialog.Filter.Split('|')[1] -eq ('*.' + $format)) 'Wrong file filter'
+    Assert-AisTest ($dialog.FilterIndex -eq 1) 'Wrong filter index'
+    Assert-AisTest $dialog.AddExtension 'Automatic extension missing'
+    Assert-AisTest $dialog.SupportMultiDottedExtensions 'Dotted filenames unsupported'
+    Assert-AisTest $dialog.CheckPathExists 'Missing path validation'
+    Assert-AisTest $dialog.ValidateNames 'Missing name validation'
+    Assert-AisTest (-not $dialog.CheckFileExists) 'New files cannot be saved'
+    Assert-AisTest $dialog.OverwritePrompt 'Replacement confirmation disabled'
+    Assert-AisTest $dialog.RestoreDirectory 'Dialog can change process working directory'
+    $fileOk = [Windows.Forms.FileDialog].GetMethod('OnFileOk', [Reflection.BindingFlags]'NonPublic,Instance')
+    $event = New-Object ComponentModel.CancelEventArgs
+    [void]$fileOk.Invoke($dialog, @($event.PSObject.BaseObject))
+    Assert-AisTest (-not $event.Cancel) 'Valid path was rejected'
+    $dialog.FileName = [IO.Path]::Combine($env:TEMP, ('ПРИКАЗ №609-14.' + $format.ToUpperInvariant()))
+    [void]$fileOk.Invoke($dialog, @($event.PSObject.BaseObject))
+    Assert-AisTest (-not $event.Cancel) 'Uppercase extension was rejected'
+    $invalidPath = [IO.Path]::Combine($env:TEMP, 'wrong-extension.txt')
+    $dialog.FileName = $invalidPath
+    [void]$fileOk.Invoke($dialog, @($event.PSObject.BaseObject))
+    Assert-AisTest $event.Cancel 'Format mismatch accepted'
+    Assert-AisTest ($dialog.FileName -eq $invalidPath) 'Do not rewrite the target after overwrite confirmation'
+  } finally { $dialog.Dispose() }
 }
-# Exercise the real click handler on hidden test controls, with confirmation
-# stubbed so no live desktop window can appear or touch user documents.
-$script:confirmationCalls = 0
-$script:allowReplacement = $false
-function Confirm-AisFileReplacement([string]$FilePath, $DialogOwner) {
-  $script:confirmationCalls++
-  Assert-AisTest ($null -ne $DialogOwner) 'Replacement confirmation needs an owner'
-  return $script:allowReplacement
-}
-function Invoke-AisTestSave($Window) {
-  $click = [Windows.Forms.Button].GetMethod('OnClick', [Reflection.BindingFlags]'NonPublic,Instance')
-  [void]$click.Invoke($Window.AcceptButton, @([EventArgs]::Empty))
-}
-$testFolder = $env:AIS_DIALOG_TEST_ROOT
-$initial = [IO.Path]::Combine($testFolder, 'ПРИКАЗ об утверждении состава ИАК.pdf')
-$save = New-AisDocumentSaveDialog $initial 'pdf'
-$replace = New-AisReplacementDialog $initial
+Assert-AisTest ($script:extensionWarnings -eq 2) 'Format mismatch must explain how to fix the filename'
+$rejected = $false
+try { [void](New-AisDocumentSaveDialog 'C:\test.exe' 'exe') } catch { $rejected = $true }
+Assert-AisTest $rejected 'Unsupported document format accepted'
+$unc = New-AisDocumentSaveDialog '\\server\share\Документы\Приказ_09.2026.pdf' 'pdf'
 try {
-  Assert-AisTest ($save.Text -eq 'Сохранение документа — АИС Допобразование') 'Russian save title missing'
-  Assert-AisTest ($save.Font.Name -eq 'Segoe UI') 'System font missing'
-  Assert-AisTest ($save.Tag.FileName.Text -eq 'ПРИКАЗ об утверждении состава ИАК') 'Spaced Cyrillic name changed'
-  Assert-AisTest ($save.Tag.Folder.Text -eq $testFolder) 'Initial folder changed'
-  Assert-AisTest ($save.Controls['DocumentFormat'].Text -eq 'PDF') 'Output format missing'
-  Assert-AisTest ($save.Controls['DocumentFormat'].ReadOnly) 'Output format must match the generated bytes'
-  Assert-AisTest ($save.AcceptButton.Text -eq 'Сохранить') 'Save caption missing'
-  Assert-AisTest ($save.CancelButton.Text -eq 'Отмена') 'Cancel caption missing'
-  Assert-AisTest ($save.AcceptButton.BackColor.ToArgb() -eq [Drawing.ColorTranslator]::FromHtml('#0f766e').ToArgb()) 'Primary color differs from system'
-  Assert-AisTest ($replace.AcceptButton.Name -eq 'CancelReplacement') 'Replacement must default to cancel'
-  Assert-AisTest ($replace.CancelButton.DialogResult -eq [Windows.Forms.DialogResult]::Cancel) 'Escape must cancel replacement'
-  Assert-AisTest ($replace.Controls['ConfirmReplacement'].DialogResult -eq [Windows.Forms.DialogResult]::Yes) 'Explicit replacement missing'
-  Assert-AisTest (-not $save.Visible -and -not $replace.Visible) 'Unit tests must stay off-screen'
-  foreach ($window in @($save, $replace)) {
-    foreach ($control in $window.Controls) {
-      Assert-AisTest ($control.Right -le $window.ClientSize.Width -and $control.Bottom -le $window.ClientSize.Height) 'Control outside dialog bounds'
-    }
-  }
-  Assert-AisTest ((Resolve-AisDocumentSavePath $testFolder 'ПРИКАЗ об утверждении состава ИАК.pdf' 'pdf') -eq $initial) 'Extension added twice'
-  Assert-AisTest ((Resolve-AisDocumentSavePath $testFolder 'Пример.docx' 'pdf') -eq [IO.Path]::Combine($testFolder, 'Пример.pdf')) 'Format mismatch'
-  Assert-AisTest ((Resolve-AisDocumentSavePath $testFolder 'existing' 'pdf') -eq [IO.Path]::Combine($testFolder, 'existing.pdf')) 'Existing file path changed before confirmation'
-  Assert-AisTest ((Resolve-AisDocumentSavePath $testFolder 'Копия_09.2026' 'docx') -eq [IO.Path]::Combine($testFolder, 'Копия_09.2026.docx')) 'Date-like filename damaged'
-  foreach ($name in @('', '   ', '..', '../escape', 'folder/name', 'CON', 'LPT1', 'PRN.pdf', 'trailing.', 'quote"', 'a|b')) {
-    Assert-AisInvalidPath $testFolder $name 'pdf'
-  }
-  Assert-AisInvalidPath 'relative-folder' 'test' 'pdf'
-  Assert-AisInvalidPath ([IO.Path]::Combine($testFolder, 'missing-folder')) 'test' 'pdf'
-  Assert-AisInvalidPath $testFolder 'test' 'exe'
-  $save.Tag.FileName.Text = 'invalid|name'
-  Invoke-AisTestSave $save
-  Assert-AisTest ($save.Tag.ErrorLabel.Text -match 'Укажите имя файла') 'Validation error must appear inside the save form in Russian'
-  Assert-AisTest ($save.DialogResult -eq [Windows.Forms.DialogResult]::None -and -not $save.Tag.SelectedPath) 'Invalid name closed the form'
-  $save.Tag.ErrorLabel.Text = ''
-  $save.Tag.FileName.Text = 'existing'
-  Invoke-AisTestSave $save
-  Assert-AisTest ($script:confirmationCalls -eq 1) 'Existing file skipped confirmation'
-  Assert-AisTest ($save.DialogResult -eq [Windows.Forms.DialogResult]::None -and -not $save.Tag.SelectedPath) 'Cancelled replacement must leave the save form open'
-  $script:allowReplacement = $true
-  Invoke-AisTestSave $save
-  Assert-AisTest ($save.DialogResult -eq [Windows.Forms.DialogResult]::OK) 'Confirmed replacement did not select the file'
-  Assert-AisTest ($save.Tag.SelectedPath -eq [IO.Path]::Combine($testFolder, 'existing.pdf')) 'Selected replacement path changed'
-  $save.DialogResult = [Windows.Forms.DialogResult]::None
-  $save.Tag.SelectedPath = ''
-  $save.Tag.FileName.Text = [IO.Path]::GetFileNameWithoutExtension($initial)
-  Invoke-AisTestSave $save
-  Assert-AisTest ($save.DialogResult -eq [Windows.Forms.DialogResult]::OK -and $save.Tag.SelectedPath -eq $initial) 'New file selection failed'
-  Assert-AisTest ($script:confirmationCalls -eq 2) 'A new file must not request replacement confirmation'
-  $save.DialogResult = [Windows.Forms.DialogResult]::None
-  Assert-AisTest (-not $save.Visible -and -not $replace.Visible) 'Event tests must stay off-screen'
-  if ($env:AIS_DIALOG_TEST_RENDER -eq '1') {
-    foreach ($pair in @(@($save, 'save.png'), @($replace, 'replace.png'))) {
-      $window = $pair[0]
-      [void]$window.Handle
-      $window.PerformLayout()
-      $bitmap = New-Object Drawing.Bitmap($window.Width, $window.Height)
-      try {
-        $window.DrawToBitmap($bitmap, [Drawing.Rectangle]::new(0, 0, $window.Width, $window.Height))
-        # Hidden forms skip their children in DrawToBitmap; compose those controls
-        # separately without ever showing or interacting with a desktop window.
-        $graphics = [Drawing.Graphics]::FromImage($bitmap)
-        try {
-          $clientOrigin = $window.PointToScreen([Drawing.Point]::Empty)
-          $offsetX = $clientOrigin.X - $window.Left
-          $offsetY = $clientOrigin.Y - $window.Top
-          foreach ($control in $window.Controls) {
-            [void]$control.Handle
-            $childBitmap = New-Object Drawing.Bitmap($control.Width, $control.Height)
-            try {
-              $control.DrawToBitmap($childBitmap, [Drawing.Rectangle]::new(0, 0, $control.Width, $control.Height))
-              $graphics.DrawImageUnscaled($childBitmap, $offsetX + $control.Left, $offsetY + $control.Top)
-            } finally { $childBitmap.Dispose() }
-          }
-        } finally { $graphics.Dispose() }
-        $bitmap.Save([IO.Path]::Combine($testFolder, $pair[1]), [Drawing.Imaging.ImageFormat]::Png)
-      } finally { $bitmap.Dispose() }
-    }
-  }
-  [Console]::WriteLine('Native dialog construction, localization, colors, keyboard defaults, bounds, path validation and save/replace/cancel handlers: OK')
-} finally { $replace.Tag.Tooltip.Dispose(); $replace.Dispose(); $save.Dispose() }
+  Assert-AisTest ($unc.InitialDirectory -eq '\\server\share\Документы') 'Network folder damaged'
+  Assert-AisTest ($unc.FileName -eq 'Приказ_09.2026.pdf') 'Network filename damaged'
+} finally { $unc.Dispose() }
+[Console]::WriteLine('Native Explorer save dialog: PDF/DOCX, initial paths, network folders, name validation, overwrite protection and extension guard: OK')
 `;
   const powershell = path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
   const result = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-STA", "-NonInteractive", "-Command",
     "[Console]::InputEncoding = [Text.UTF8Encoding]::new($false); & ([ScriptBlock]::Create([Console]::In.ReadToEnd()))"], {
-    input: `${definitionsOnly}\n${tests}`, encoding: "utf8", windowsHide: true, timeout: 60000,
-    env: {...process.env, AIS_DIALOG_TEST_ROOT: temp, AIS_DIALOG_TEST_RENDER: render ? "1" : "0"}
+    input: definitionsOnly + "\n" + tests, encoding: "utf8", windowsHide: true, timeout: 30000
   });
   assert.equal(result.status, 0, String(result.stderr || result.error || result.stdout));
-  assert.equal(fs.readFileSync(path.join(temp, "existing.pdf"), "utf8"), "original test content");
   console.log(result.stdout.trim());
-  if (render) console.log(`Off-screen renders: ${path.join(temp, "save.png")}\n${path.join(temp, "replace.png")}`);
-  else {
-    assert.equal(path.dirname(temp), os.tmpdir());
-    fs.rmSync(temp, {recursive: true, force: true});
-  }
 }
 console.log("Local document save flow checks passed.");

@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.441",
+    version: "1.7.442",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.442",
+      releasedAt: "2026-09-13",
+      changes: [
+        "При сохранении документов на компьютере открывается стандартное окно Windows «Сохранить как» с подстановкой папки, имени и формата файла и обычным подтверждением замены."
+      ]
+    },
     {
       version: "1.7.441",
       releasedAt: "2026-09-13",
