@@ -335,8 +335,13 @@ assert.equal(api.normalizePastedInputValue(visibleIsoDate, "20260907"), "2026-09
 const recognitionRenderer = extractFunction("renderStudentDocumentRecognitionField");
 assert.match(recognitionRenderer, /data-date-input-format="\$\{dateInputFormat\}"/u);
 const recognitionFormatSource = extractFunction("getStudentDocumentRecognitionDateInputFormat");
-assert.match(recognitionFormatSource, /return "ru"/u);
-assert.match(recognitionFormatSource, /return "iso"/u);
+const recognitionDateKeysSource = appSource.match(/const studentDocumentRecognitionDisplayDateKeys = new Set\(\[[\s\S]*?\]\);/u)?.[0];
+assert.ok(recognitionDateKeysSource);
+const recognitionDateFormat = new Function(`${recognitionDateKeysSource}\n${recognitionFormatSource}\nreturn getStudentDocumentRecognitionDateInputFormat;`)();
+for (const key of ["birthDate", "educationDocumentDate", "passportDate", "identityIssueDate", "applicationDate", "startDate", "endDate", "contractDate"]) {
+  assert.equal(recognitionDateFormat(key), "ru", `Дата ${key} должна отображаться как ДД.ММ.ГГГГ.`);
+}
+assert.equal(recognitionDateFormat("passportNumber"), "");
 
 const initializationSource = extractFunction("initializeDateTextInputMasks");
 assert.match(initializationSource, /input\[data-date-input-format\]/u);

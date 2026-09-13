@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.437",
+    version: "1.7.438",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.438",
+      releasedAt: "2026-09-13",
+      changes: [
+        "В примечаниях карточек слушателя и сотрудника сочетания Ctrl+Shift+D и Ctrl+Shift+4 вставляют текущую дату в формате ДД.ММ.ГГГГ на место курсора или выделения. Поддерживаются русская раскладка и отмена вставки."
+      ]
+    },
     {
       version: "1.7.437",
       releasedAt: "2026-09-13",
@@ -35004,7 +35011,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ${collapsed ? "hidden inert" : ""}
       >
       <section class="student-note-block">
-        <textarea name="note" placeholder="${escapeAttr(notePlaceholder)}">${escapeHtml(record.note || "")}</textarea>
+        <textarea name="note" placeholder="${escapeAttr(notePlaceholder)}" title="Вставить текущую дату (ДД.ММ.ГГГГ): Ctrl+Shift+D или Ctrl+Shift+4" aria-keyshortcuts="Control+Shift+D Control+Shift+4">${escapeHtml(record.note || "")}</textarea>
       </section>
       <section class="student-events-block">
         <div class="student-side-head">
@@ -46330,6 +46337,23 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
+  function handlePersonNoteDateShortcut(event) {
+    if (event.defaultPrevented || event.isComposing || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return false;
+    const code = String(event.code || "");
+    const key = String(event.key || "").toLowerCase();
+    const isDateShortcut = code
+      ? ["KeyD", "Digit4"].includes(code)
+      : ["d", "в", "4", "$", ";"].includes(key);
+    if (!isDateShortcut) return false;
+    const control = getFieldHistoryControlFromEvent(event);
+    if (control?.tagName !== "TEXTAREA" || !["note", "expenseNotes", "orderNotes", "portalNotes", "reviewNotes", "finalWorkNotes"].includes(control.name)) return false;
+    if (!control.closest("#recordForm[data-config='students'], #recordForm[data-config='contracts']") || control.matches(":disabled")) return false;
+    event.preventDefault();
+    if (event.repeat) return true;
+    initializeFieldControlHistory(control);
+    return pasteTextIntoControl(control, formatDateInputClipboardValue(todayIso(), "ru"));
+  }
+
   function bindFieldEditHistory() {
     initializeNativeDateInputFormats(document);
     initializeDateTextInputMasks(document);
@@ -46383,6 +46407,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (control && !isContentEditableTextControl(control)) recordFieldControlHistoryChange(control);
     });
     document.addEventListener("keydown", (event) => {
+      if (handlePersonNoteDateShortcut(event)) return;
       if (handleDateTextInputKeydown(event)) return;
       if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey) return;
       const control = getFieldHistoryControlFromEvent(event);
