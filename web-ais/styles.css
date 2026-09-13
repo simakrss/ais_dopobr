@@ -25436,6 +25436,20 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font: inherit;
 }
 
+.student-mailbox-text-link {
+  color: var(--teal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.student-mailbox-text-link:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 .student-mailbox-import-items {
   display: flex;
   align-items: center;

@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260912-local-documents-root-label-v1";
+  const AUTH_BUILD = "20260913-mailbox-single-click-links-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

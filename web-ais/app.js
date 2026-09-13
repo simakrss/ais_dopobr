@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.433",
-    releasedAt: "2026-09-12"
+    version: "1.7.434",
+    releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.434",
+      releasedAt: "2026-09-13",
+      changes: [
+        "В просмотре писем слушателей и сотрудников ссылки в тексте открываются обычным щелчком в новой вкладке. Выделение текста, выбор вложений и переход через Ctrl в редактируемых полях сохранены."
+      ]
+    },
     {
       version: "1.7.433",
       releasedAt: "2026-09-12",
@@ -49414,6 +49421,19 @@ MAX - https://bizvmax.ru/zifra_plus
     return date.toISOString().slice(0, 10);
   }
 
+  function renderStudentMailboxMessageText(value) {
+    const source = String(value ?? "");
+    const links = globalThis.window?.AISFieldHtmlLinks?.getMatches(source) || [];
+    let result = "";
+    let offset = 0;
+    links.forEach((link) => {
+      result += escapeHtml(source.slice(offset, link.start));
+      result += `<a class="student-mailbox-text-link" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer" title="Открыть ссылку в новой вкладке">${escapeHtml(link.url)}</a>`;
+      offset = link.end;
+    });
+    return `${result}${escapeHtml(source.slice(offset))}`;
+  }
+
   async function openStudentMailboxDocuments(event) {
     const button = event.currentTarget;
     const isContract = button.dataset.mailboxEntityType === "contract";
@@ -49542,7 +49562,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div class="student-mailbox-message-title"><strong>${escapeHtml(message.subject || "Без темы")}</strong><time>${escapeHtml(formatDateTimeRu(message.date))}</time></div>
             <p><b>От:</b> ${escapeHtml(message.from || "—")}</p>
             <p><b>Кому:</b> ${escapeHtml(message.to || "—")}</p>
-            ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${escapeHtml(message.excerpt)}</pre></details>` : ""}
+            ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${renderStudentMailboxMessageText(message.excerpt)}</pre></details>` : ""}
             <div class="student-mailbox-import-items" aria-label="Содержимое для загрузки">
               <span class="student-mailbox-import-items-label">Загрузить:</span>
               <label class="student-mailbox-import-item is-message-text"><input type="checkbox" data-message-part="text"><span>Текст письма (.txt)</span></label>
