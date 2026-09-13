@@ -6135,6 +6135,16 @@ body.long-press-dragging * {
   text-decoration-color: #2563eb;
 }
 
+::highlight(ais-editable-html-links) {
+  color: #1d4ed8;
+  background-color: rgba(37, 99, 235, 0.12);
+  text-decoration: underline #2563eb;
+}
+
+.editable-html-link-modifier-hover {
+  cursor: pointer !important;
+}
+
 .native-html-link-field-host {
   position: relative;
 }
@@ -6145,7 +6155,9 @@ body.long-press-dragging * {
   overflow: hidden;
   border-color: transparent !important;
   background: transparent;
-  -webkit-text-fill-color: currentColor;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
   pointer-events: none;
   user-select: none;
 }
@@ -6173,19 +6185,18 @@ body.long-press-dragging * {
   word-break: break-word;
 }
 
-.native-html-link-highlight.is-native-text-selection-active .native-html-link-highlight-content {
-  opacity: 0;
-}
-
 .native-html-link-highlight .communication-template-html-link {
-  background-color: transparent;
+  background-color: rgba(37, 99, 235, 0.12);
+  color: transparent !important;
+  text-decoration-color: #2563eb;
   cursor: inherit;
   font: inherit !important;
   letter-spacing: inherit !important;
   line-height: inherit !important;
   text-transform: inherit !important;
   word-spacing: inherit !important;
-  -webkit-text-fill-color: currentColor;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
 }
 
 .native-html-link-modifier-active
@@ -6193,25 +6204,6 @@ body.long-press-dragging * {
   .communication-template-html-link {
   cursor: pointer;
   pointer-events: auto;
-}
-
-.has-native-html-links {
-  color: transparent !important;
-  caret-color: var(--text);
-  text-shadow: none !important;
-  -webkit-text-fill-color: transparent;
-}
-
-.has-native-html-links::-moz-selection {
-  background-color: rgba(47, 111, 237, 0.24);
-  color: transparent;
-  text-shadow: none;
-}
-
-.has-native-html-links::selection {
-  background-color: rgba(47, 111, 237, 0.24);
-  color: transparent;
-  text-shadow: none;
 }
 
 .communication-template-editor.is-drop-target {

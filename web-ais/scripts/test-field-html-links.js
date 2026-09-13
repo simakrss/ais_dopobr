@@ -81,6 +81,7 @@ class MockField {
     this.classList = new MockClassList();
     this.dataset = {};
     this.clientWidth = 300;
+    this.clientHeight = 36;
     this.top = 10;
     this.scrollLeft = 0;
     this.scrollTop = 0;
@@ -233,7 +234,7 @@ const window = {
       ...defaultFieldStyle,
       ...(element.computedStyleOverrides || {}),
       get color() {
-        return element.forceTransparentColor || element.classList.contains("has-native-html-links")
+        return element.forceTransparentColor
           ? "rgba(0, 0, 0, 0)"
           : defaultFieldStyle.color;
       }
@@ -300,7 +301,7 @@ assert.ok(documentListeners.has("visibilitychange"));
 assert.equal(mutationObservers.length, 1);
 assert.deepEqual(
   JSON.parse(JSON.stringify(mutationObservers[0].options)),
-  { childList: true, subtree: true }
+  { childList: true, characterData: true, subtree: true }
 );
 
 const firstUrl = "https://example.test/a?x=1&y=2";
@@ -397,23 +398,26 @@ assert.equal(linkedField.classList.contains("has-native-html-links"), true);
 assert.equal(linkedHost.classList.contains("native-html-link-field-host"), true);
 assert.match(linkedHost.children[0].innerHTML, /native-html-link-highlight-content/u);
 assert.match(linkedHost.children[0].innerHTML, /communication-template-html-link/u);
-assert.equal(linkedHost.children[0].style.color, defaultFieldStyle.color);
-assert.equal(linkedHost.children[0].style.webkitTextFillColor, defaultFieldStyle.color);
+assert.equal(linkedHost.children[0].style.color, "transparent");
+assert.equal(linkedHost.children[0].style.webkitTextFillColor, "transparent");
+assert.equal(window.getComputedStyle(linkedField).color, defaultFieldStyle.color);
+assert.equal(linkedHost.children[0].style.lineHeight, "22px");
+assert.equal(linkedHost.children[0].style.clipPath, "inset(8px 10px 8px 10px)");
 assert.equal(resizeObservers[0].observed.has(linkedField), true);
 
 document.activeElement = linkedField;
 linkedField.selectionStart = matches[0].start;
 linkedField.selectionEnd = matches[0].end;
 documentListeners.get("select").listener({ type: "select", target: linkedField });
-assert.equal(linkedField.classList.contains("has-native-html-links"), false);
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 linkedField.selectionEnd = linkedField.selectionStart;
 documentListeners.get("selectionchange").listener({ type: "selectionchange", target: document });
-assert.equal(linkedField.classList.contains("has-native-html-links"), false);
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 documentListeners.get("select").listener({ type: "select", target: linkedField });
-assert.equal(linkedField.classList.contains("has-native-html-links"), false);
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 linkedField.selectionEnd = matches[1].end;
 documentListeners.get("keyup").listener({
   type: "keyup",
@@ -423,17 +427,17 @@ documentListeners.get("keyup").listener({
   ctrlKey: false,
   metaKey: false
 });
-assert.equal(linkedField.classList.contains("has-native-html-links"), false);
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
 linkedField.scrollLeft = 17;
 documentListeners.get("scroll").listener({ target: linkedField });
 assert.match(linkedHost.children[0].content.style.transform, /translate\(-17px, 0px\)/u);
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 windowListeners.get("blur")();
 assert.equal(linkedField.classList.contains("has-native-html-links"), true);
 assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 windowListeners.get("focus")();
-assert.equal(linkedField.classList.contains("has-native-html-links"), false);
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedField.classList.contains("has-native-html-links"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 documentListeners.get("focusout").listener({ type: "focusout", target: linkedField });
 assert.equal(linkedField.classList.contains("has-native-html-links"), true);
 assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
@@ -447,11 +451,11 @@ emailField.parentElement = emailHost;
 documentListeners.get("input").listener({ target: emailField });
 document.activeElement = emailField;
 documentListeners.get("select").listener({ type: "select", target: emailField });
-assert.equal(emailField.classList.contains("has-native-html-links"), false);
-assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(emailField.classList.contains("has-native-html-links"), true);
+assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), false);
 documentListeners.get("pointerup").listener({ type: "pointerup", target: emailField });
-assert.equal(emailField.classList.contains("has-native-html-links"), false);
-assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(emailField.classList.contains("has-native-html-links"), true);
+assert.equal(emailHost.children[0].classList.contains("is-native-text-selection-active"), false);
 document.activeElement = null;
 mutationObservers[0].callback([{
   removedNodes: [emailField],
@@ -481,24 +485,24 @@ assert.equal(emailHost.children.length, 0);
   documentListeners.get("input").listener({ type: "input", target: field });
   assert.equal(
     field.classList.contains("has-native-html-links"),
-    false,
-    `${label}: во время набора должен отображаться нативный текст с нативной кареткой.`
+    true,
+    `${label}: подсветка должна появляться во время набора, не скрывая нативные символы и каретку.`
   );
-  assert.equal(host.children[0].classList.contains("is-native-text-selection-active"), true);
+  assert.equal(host.children[0].classList.contains("is-native-text-selection-active"), false);
   assert.equal(field.selectionStart, field.value.length);
   assert.equal(field.selectionEnd, field.value.length);
   field.value += "/profile";
   field.selectionStart = field.value.length;
   field.selectionEnd = field.selectionStart;
   documentListeners.get("input").listener({ type: "input", target: field });
-  assert.equal(field.classList.contains("has-native-html-links"), false);
+  assert.equal(field.classList.contains("has-native-html-links"), true);
   assert.equal(field.selectionStart, field.value.length);
   assert.equal(field.selectionEnd, field.value.length);
   documentListeners.get("keydown").listener({ ctrlKey: true, metaKey: false });
   assert.equal(
     field.classList.contains("has-native-html-links"),
-    false,
-    `${label}: Ctrl не должен возвращать несовпадающий текстовый overlay поверх каретки.`
+    true,
+    `${label}: Ctrl не должен скрывать подсветку или менять нативную каретку.`
   );
   documentListeners.get("keyup").listener({
     type: "keyup",
@@ -518,8 +522,8 @@ const transparentFallbackField = new MockTextarea("Текст " + firstUrl + " �
 transparentFallbackField.forceTransparentColor = true;
 transparentFallbackField.parentElement = transparentFallbackHost;
 documentListeners.get("input").listener({ target: transparentFallbackField });
-assert.equal(transparentFallbackHost.children[0].style.color, defaultFieldStyle.color);
-assert.equal(transparentFallbackHost.children[0].style.webkitTextFillColor, defaultFieldStyle.color);
+assert.equal(transparentFallbackHost.children[0].style.color, "transparent");
+assert.equal(transparentFallbackHost.children[0].style.webkitTextFillColor, "transparent");
 assert.match(transparentFallbackHost.children[0].innerHTML, /^<span[^>]*>Текст /u);
 assert.match(transparentFallbackHost.children[0].innerHTML, / хвост<\/span>$/u);
 
@@ -527,7 +531,7 @@ document.activeElement = linkedField;
 linkedField.selectionStart = 0;
 linkedField.selectionEnd = linkedField.value.length;
 documentListeners.get("select").listener({ type: "select", target: linkedField });
-assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(linkedHost.children[0].classList.contains("is-native-text-selection-active"), false);
 linkedField.value = "Ссылка удалена";
 documentListeners.get("input").listener({ target: linkedField });
 assert.equal(linkedField.classList.contains("has-native-html-links"), false);
@@ -559,12 +563,12 @@ document.activeElement = dynamicField;
 dynamicField.selectionStart = 0;
 dynamicField.selectionEnd = dynamicField.value.length;
 documentListeners.get("pointerup").listener({ type: "pointerup", target: dynamicField });
-assert.equal(dynamicField.classList.contains("has-native-html-links"), false);
-assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(dynamicField.classList.contains("has-native-html-links"), true);
+assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), false);
 dynamicField.selectionEnd = dynamicField.selectionStart;
 documentListeners.get("pointerup").listener({ type: "pointerup", target: dynamicField });
-assert.equal(dynamicField.classList.contains("has-native-html-links"), false);
-assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), true);
+assert.equal(dynamicField.classList.contains("has-native-html-links"), true);
+assert.equal(dynamicHost.children[0].classList.contains("is-native-text-selection-active"), false);
 document.activeElement = null;
 mutationObservers[0].callback([{
   removedNodes: [dynamicField],
@@ -654,11 +658,13 @@ assert.match(linkSource, /getComputedStyle\(host\)\.display === "contents"/u);
 assert.match(linkSource, /String\(host\.tagName \|\| ""\)\.toUpperCase\(\) === "FIELDSET"/u);
 assert.match(linkSource, /event\.stopImmediatePropagation/u);
 assert.match(linkSource, /rel = "noopener noreferrer"/u);
-assert.match(
-  linkSource,
-  /function syncNativeFieldSelectionRendering\(field\) \{[\s\S]*?field === document\.activeElement[\s\S]*?\);/u,
-  "Активное поле должно всегда использовать нативный текст, чтобы каретка и символы имели одну геометрию."
-);
+assert.doesNotMatch(linkSource, /is-native-text-selection-active|setNativeFieldSelectionRendering/u);
+assert.doesNotMatch(linkSource, /editor\.(?:innerHTML|textContent)\s*=/u,
+  "Живая подсветка редакторов не должна пересоздавать текст и сбрасывать выделение или историю.");
+assert.match(linkSource, /window\.CSS\?\.highlights/u);
+assert.match(stylesSource, /::highlight\(ais-editable-html-links\)/u);
+assert.doesNotMatch(linkSource, /field\.(?:value|selectionStart|selectionEnd)\s*=/u,
+  "Подсветка не должна записывать текст или менять выделение в нативном поле.");
 assert.match(appSource, /return window\.AISFieldHtmlLinks\?\.renderLinks\(value\) \|\| escapeHtml\(value\);/u);
 assert.doesNotMatch(appSource, /bindNativeHtmlLinkFields|nativeHtmlLinkFieldOverlays/u);
 assert.match(appSource, /function renderProtectedPathEditorContent[\s\S]*?AISFieldHtmlLinks\?\.renderLinks\(part\)/u);
@@ -672,19 +678,8 @@ assert.match(partnerSource, /window\.AISFieldHtmlLinks\?\.renderLinks\(content\)
 assert.match(stylesSource, /\.native-html-link-field-host\s*\{[\s\S]*?position:\s*relative/u);
 assert.match(stylesSource, /\.native-html-link-highlight\s*\{[\s\S]*?position:\s*absolute/u);
 assert.match(stylesSource, /\.native-html-link-highlight\s*\{[\s\S]*?pointer-events:\s*none/u);
-assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?color:\s*transparent\s*!important/u);
-assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?caret-color:/u);
-assert.match(stylesSource, /\.has-native-html-links\s*\{[\s\S]*?text-shadow:\s*none\s*!important/u);
-const nativeSelectionCss = /\.has-native-html-links::selection\s*\{([^}]*)\}/u
-  .exec(stylesSource)?.[1] || "";
-assert.match(nativeSelectionCss, /background-color:\s*rgba\(47, 111, 237, 0\.24\);/u);
-assert.match(nativeSelectionCss, /color:\s*transparent(?:\s*!important)?\s*;/u);
-assert.match(nativeSelectionCss, /text-shadow:\s*none(?:\s*!important)?\s*;/u);
-const firefoxSelectionCss = /\.has-native-html-links::-moz-selection\s*\{([^}]*)\}/u
-  .exec(stylesSource)?.[1] || "";
-assert.match(firefoxSelectionCss, /background-color:\s*rgba\(47, 111, 237, 0\.24\);/u);
-assert.match(firefoxSelectionCss, /color:\s*transparent(?:\s*!important)?\s*;/u);
-assert.match(firefoxSelectionCss, /text-shadow:\s*none(?:\s*!important)?\s*;/u);
+assert.doesNotMatch(stylesSource, /\.has-native-html-links(?:::selection|::-moz-selection)?\s*\{/u,
+  "Нативный цвет символов, каретка и выделение не должны подменяться слоем подсветки.");
 const nativeOverlayLinkCss = /\.native-html-link-highlight \.communication-template-html-link\s*\{([^}]*)\}/u
   .exec(stylesSource)?.[1] || "";
 const sharedRenderedLinkCss = /\.communication-template-html-link\s*\{([^}]*)\}/u
@@ -692,14 +687,14 @@ const sharedRenderedLinkCss = /\.communication-template-html-link\s*\{([^}]*)\}/
 assert.match(sharedRenderedLinkCss, /font:\s*inherit\s*!important;/u);
 assert.match(sharedRenderedLinkCss, /letter-spacing:\s*inherit\s*!important;/u);
 assert.match(sharedRenderedLinkCss, /line-height:\s*inherit\s*!important;/u);
-assert.match(nativeOverlayLinkCss, /background-color:\s*transparent;/u);
+assert.match(nativeOverlayLinkCss, /background-color:\s*rgba\(37, 99, 235, 0\.12\);/u);
 assert.match(nativeOverlayLinkCss, /cursor:\s*inherit;/u);
 assert.match(
   stylesSource,
   /\.native-html-link-modifier-active[\s\S]*?\.native-html-link-highlight[\s\S]*?\.communication-template-html-link\s*\{[\s\S]*?cursor:\s*pointer;[\s\S]*?pointer-events:\s*auto;/u
 );
-assert.match(stylesSource, /\.native-html-link-highlight[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
-assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link[\s\S]*?-webkit-text-fill-color:\s*currentColor/u);
+assert.match(stylesSource, /\.native-html-link-highlight[\s\S]*?-webkit-text-fill-color:\s*transparent\s*!important/u);
+assert.match(stylesSource, /\.native-html-link-highlight \.communication-template-html-link[\s\S]*?-webkit-text-fill-color:\s*transparent\s*!important/u);
 const nativeOverlayContentCss = /\.native-html-link-highlight-content\s*\{([^}]*)\}/u
   .exec(stylesSource)?.[1] || "";
 assert.match(nativeOverlayContentCss, /font:\s*inherit\s*!important;/u);
@@ -712,10 +707,7 @@ assert.match(
   stylesSource,
   /\.native-html-link-highlight\.is-textarea \.native-html-link-highlight-content\s*\{[\s\S]*?min-width:\s*0/u
 );
-assert.match(
-  stylesSource,
-  /\.native-html-link-highlight\.is-native-text-selection-active \.native-html-link-highlight-content\s*\{[^}]*opacity:\s*0;/u
-);
+assert.doesNotMatch(stylesSource, /\.native-html-link-highlight\.is-native-text-selection-active/u);
 
 const styleBuild = /styles\.css\?v=([^"']+)/u.exec(indexSource)?.[1] || "";
 const indexBuild = /const build = "([^"]+)"/u.exec(indexSource)?.[1] || "";

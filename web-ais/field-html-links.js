@@ -7,6 +7,9 @@
   }
 
   const fieldOverlays = new WeakMap();
+  const editableLinkRanges = new Map();
+  const editableHighlightName = "ais-editable-html-links";
+  let editablePointer = null;
   let eventsBound = false;
   let resizeObserver = null;
   let mutationObserver = null;
@@ -112,6 +115,113 @@
     );
   }
 
+  function getEditableRoot(node) {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    const editor = element?.closest?.("[contenteditable]");
+    return editor?.isContentEditable ? editor : null;
+  }
+
+  function supportsEditableHighlights() {
+    return Boolean(window.CSS?.highlights && typeof window.Highlight === "function");
+  }
+
+  function getEditableFields(root) {
+    if (!supportsEditableHighlights()) return [];
+    const editors = new Set([getEditableRoot(root)]);
+    root?.querySelectorAll?.('[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]')
+      .forEach((editor) => editors.add(editor));
+    return Array.from(editors).filter(Boolean);
+  }
+
+  function publishEditableHighlights() {
+    if (!supportsEditableHighlights()) return;
+    const highlight = new window.Highlight();
+    for (const [editor, links] of editableLinkRanges) {
+      if (!editor.isConnected) { editableLinkRanges.delete(editor); continue; }
+      links.forEach((link) => highlight.add(link.range));
+    }
+    if (highlight.size) window.CSS.highlights.set(editableHighlightName, highlight);
+    else window.CSS.highlights.delete(editableHighlightName);
+  }
+
+  function syncEditableHighlight(editor, publish = true) {
+    if (!editor || !supportsEditableHighlights()) return;
+    const nodes = [];
+    let text = "";
+    const visit = (node) => {
+      if (node.nodeType === 3) {
+        const value = node.nodeValue || "";
+        if (value) nodes.push({ node, start: text.length, end: text.length + value.length });
+        text += value;
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      if (node !== editor && node.matches('[contenteditable="false"], [data-template-token], script, style, input, textarea')) {
+        text += "\n";
+        return;
+      }
+      // URLs may span adjacent inline nodes, but not tokens or separate blocks.
+      const boundary = /^(BR|DIV|P|LI|PRE|H[1-6])$/u.test(node.tagName);
+      if (boundary) text += "\n";
+      Array.from(node.childNodes).forEach(visit);
+      if (boundary) text += "\n";
+    };
+    visit(editor);
+    const links = getMatches(text).map((link) => {
+      const first = nodes.find((item) => item.end > link.start);
+      const last = nodes.find((item) => item.end >= link.end);
+      if (!first || !last) return null;
+      const range = document.createRange();
+      range.setStart(first.node, link.start - first.start);
+      range.setEnd(last.node, link.end - last.start);
+      return { ...link, range };
+    }).filter(Boolean);
+    if (links.length) editableLinkRanges.set(editor, links);
+    else editableLinkRanges.delete(editor);
+    if (editablePointer?.editor === editor) updateEditableLinkPointer();
+    if (publish) publishEditableHighlights();
+  }
+
+  function getEditableLinkAtPoint(editor, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return (editableLinkRanges.get(editor) || []).find((link) => (
+      Array.from(link.range.getClientRects()).some((rect) => (
+        x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+      ))
+    )) || null;
+  }
+
+  function updateEditableLinkPointer() {
+    if (!editablePointer) return;
+    const { editor, x, y } = editablePointer;
+    editor.classList.toggle("editable-html-link-modifier-hover", Boolean(
+      linkModifierActive && editor.isConnected && getEditableLinkAtPoint(editor, x, y)
+    ));
+  }
+
+  function handleDocumentPointerMove(event) {
+    syncLinkModifierState(event);
+    const editor = getEditableRoot(event.target);
+    if (editablePointer?.editor !== editor) {
+      editablePointer?.editor.classList.remove("editable-html-link-modifier-hover");
+    }
+    editablePointer = editor ? { editor, x: event.clientX, y: event.clientY } : null;
+    updateEditableLinkPointer();
+  }
+
+  function handleEditableFieldClick(event) {
+    const editor = getEditableRoot(event.target);
+    if (!editor) return;
+    syncEditableHighlight(editor);
+    const link = getEditableLinkAtPoint(editor, event.clientX, event.clientY);
+    const url = normalizeHttpUrl(link?.url || "");
+    if (!url) return;
+    event.preventDefault();
+    event.stopImmediatePropagation?.();
+    event.stopPropagation();
+    openExternalHttpUrl(url);
+  }
+
   function removeFieldHighlight(field) {
     const overlay = fieldOverlays.get(field);
     if (!overlay) {
@@ -154,25 +264,6 @@
     return host;
   }
 
-  function isTransparentCssColor(value) {
-    const color = String(value || "").trim().toLowerCase();
-    if (!color || color === "transparent") return true;
-    if (!/^rgba?\(/u.test(color)) return false;
-    const body = color.slice(color.indexOf("(") + 1, color.lastIndexOf(")"));
-    const slashIndex = body.lastIndexOf("/");
-    if (slashIndex >= 0) return Number.parseFloat(body.slice(slashIndex + 1)) === 0;
-    if (!color.startsWith("rgba(")) return false;
-    const parts = body.split(",");
-    return parts.length === 4 && Number.parseFloat(parts[3]) === 0;
-  }
-
-  function getVisibleTextColor(computedFieldStyle, host) {
-    const fieldColor = String(computedFieldStyle?.color || "").trim();
-    if (!isTransparentCssColor(fieldColor)) return fieldColor;
-    const hostColor = String(window.getComputedStyle(host)?.color || "").trim();
-    return isTransparentCssColor(hostColor) ? "#1f2926" : hostColor;
-  }
-
   function createFieldHighlight(field) {
     const host = getFieldHighlightHost(field);
     if (!host) return null;
@@ -199,10 +290,7 @@
       return;
     }
     overlay.hidden = false;
-    const wasHighlighted = field.classList.contains("has-native-html-links");
-    if (wasHighlighted) field.classList.remove("has-native-html-links");
     const computedFieldStyle = window.getComputedStyle(field);
-    const visibleTextColor = getVisibleTextColor(computedFieldStyle, host);
     const fieldStyle = {
       boxSizing: computedFieldStyle.boxSizing,
       paddingTop: computedFieldStyle.paddingTop,
@@ -222,19 +310,27 @@
       fontSize: computedFieldStyle.fontSize,
       fontStyle: computedFieldStyle.fontStyle,
       fontWeight: computedFieldStyle.fontWeight,
+      fontStretch: computedFieldStyle.fontStretch,
+      fontVariant: computedFieldStyle.fontVariant,
+      fontKerning: computedFieldStyle.fontKerning,
+      fontFeatureSettings: computedFieldStyle.fontFeatureSettings,
+      fontVariationSettings: computedFieldStyle.fontVariationSettings,
       lineHeight: computedFieldStyle.lineHeight,
       letterSpacing: computedFieldStyle.letterSpacing,
-      color: visibleTextColor,
-      webkitTextFillColor: visibleTextColor,
+      wordSpacing: computedFieldStyle.wordSpacing,
+      // The native control owns all glyphs, selection and caret, even at rest.
+      // The mirror only paints link backgrounds/underlines, never a second text.
+      color: "transparent",
+      webkitTextFillColor: "transparent",
       opacity: computedFieldStyle.opacity,
       textAlign: computedFieldStyle.textAlign,
       textIndent: computedFieldStyle.textIndent,
-      textShadow: computedFieldStyle.textShadow,
+      textShadow: "none",
+      textRendering: computedFieldStyle.textRendering,
       textTransform: computedFieldStyle.textTransform,
       direction: computedFieldStyle.direction,
       tabSize: computedFieldStyle.tabSize
     };
-    if (wasHighlighted) field.classList.add("has-native-html-links");
     const left = fieldRect.left - hostRect.left - host.clientLeft + host.scrollLeft;
     const top = fieldRect.top - hostRect.top - host.clientTop + host.scrollTop;
     Object.assign(overlay.style, {
@@ -244,6 +340,14 @@
       height: `${fieldRect.height}px`,
       ...fieldStyle
     });
+    const borderLeft = Number.parseFloat(fieldStyle.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(fieldStyle.borderTopWidth) || 0;
+    const rightInset = Math.max(Number.parseFloat(fieldStyle.borderRightWidth) || 0,
+      fieldRect.width - Number(field.clientWidth || fieldRect.width) - borderLeft);
+    const bottomInset = Math.max(Number.parseFloat(fieldStyle.borderBottomWidth) || 0,
+      fieldRect.height - Number(field.clientHeight || fieldRect.height) - borderTop);
+    // Clip decorations to the text viewport, including native scrollbar gutters.
+    overlay.style.clipPath = `inset(${borderTop + (Number.parseFloat(fieldStyle.paddingTop) || 0)}px ${rightInset + (Number.parseFloat(fieldStyle.paddingRight) || 0)}px ${bottomInset + (Number.parseFloat(fieldStyle.paddingBottom) || 0)}px ${borderLeft + (Number.parseFloat(fieldStyle.paddingLeft) || 0)}px)`;
     const content = overlay.querySelector(".native-html-link-highlight-content");
     if (!content) return;
     const isTextarea = String(field.tagName || "").toUpperCase() === "TEXTAREA";
@@ -261,6 +365,12 @@
         - (Number.parseFloat(fieldStyle.paddingRight) || 0);
       content.style.width = `${Math.max(0, contentWidth)}px`;
     } else {
+      // Single-line inputs center their text vertically inside the content box.
+      // Match that box instead of assuming that padding alone sets the baseline.
+      const contentHeight = field.clientHeight
+        - (Number.parseFloat(fieldStyle.paddingTop) || 0)
+        - (Number.parseFloat(fieldStyle.paddingBottom) || 0);
+      if (contentHeight > 0) overlay.style.lineHeight = `${contentHeight}px`;
       Object.assign(content.style, {
         minWidth: "100%",
         whiteSpace: "pre",
@@ -270,34 +380,6 @@
       content.style.width = "max-content";
     }
     content.style.transform = `translate(${-Number(field.scrollLeft || 0)}px, ${-Number(field.scrollTop || 0)}px)`;
-  }
-
-  function getNativeFieldTextSelectionState(field) {
-    if (!isNativeField(field)) return null;
-    try {
-      const start = field.selectionStart;
-      const end = field.selectionEnd;
-      if (typeof start !== "number" || typeof end !== "number") return null;
-      return end > start;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  function setNativeFieldSelectionRendering(field, active) {
-    const overlay = fieldOverlays.get(field);
-    if (!overlay) return false;
-    const useNativeRendering = Boolean(active);
-    overlay.classList.toggle("is-native-text-selection-active", useNativeRendering);
-    field.classList.toggle("has-native-html-links", !useNativeRendering);
-    return useNativeRendering;
-  }
-
-  function syncNativeFieldSelectionRendering(field) {
-    return setNativeFieldSelectionRendering(
-      field,
-      field === document.activeElement
-    );
   }
 
   function syncFieldHighlight(field) {
@@ -316,7 +398,6 @@
     field.classList.add("has-native-html-links");
     field.dataset.nativeHtmlLinkField = "";
     positionFieldHighlight(field, overlay);
-    syncNativeFieldSelectionRendering(field);
   }
 
   function handleNativeFieldClick(event) {
@@ -358,7 +439,7 @@
     ) return;
     const renderedLink = event.target.closest?.("[data-template-external-url]");
     if (!renderedLink) {
-      handleNativeFieldClick(event);
+      if (!handleNativeFieldClick(event)) handleEditableFieldClick(event);
       return;
     }
     const visibleValue = String(renderedLink.textContent || "").trim();
@@ -380,6 +461,7 @@
       "native-html-link-modifier-active",
       linkModifierActive
     );
+    updateEditableLinkPointer();
   }
 
   function syncLinkModifierState(event) {
@@ -394,21 +476,7 @@
   function syncNativeFieldSelectionFromEvent(event) {
     const field = getNativeFieldFromSelectionEvent(event);
     if (!field) return;
-    if (
-      event?.type === "select"
-      && field === document.activeElement
-      && getNativeFieldTextSelectionState(field) === null
-    ) {
-      setNativeFieldSelectionRendering(field, true);
-      return;
-    }
-    syncNativeFieldSelectionRendering(field);
-  }
-
-  function handleNativeFieldFocusOut(event) {
-    if (isNativeField(event?.target)) {
-      setNativeFieldSelectionRendering(event.target, false);
-    }
+    syncFieldHighlight(field);
   }
 
   function handleDocumentKeyUp(event) {
@@ -430,6 +498,13 @@
     if (root?.matches?.("[data-native-html-link-field]")) fields.push(root);
     root?.querySelectorAll?.("[data-native-html-link-field]").forEach((field) => fields.push(field));
     fields.forEach(removeFieldHighlight);
+    for (const editor of editableLinkRanges.keys()) {
+      if (root === editor || root?.contains?.(editor)) editableLinkRanges.delete(editor);
+    }
+    if (editablePointer && !editablePointer.editor.isConnected) {
+      editablePointer.editor.classList.remove("editable-html-link-modifier-hover");
+      editablePointer = null;
+    }
   }
 
   function scheduleFieldLayoutSync() {
@@ -444,10 +519,13 @@
 
   function bind(root = document) {
     getFields(root).forEach(syncFieldHighlight);
+    getEditableFields(root).forEach((editor) => syncEditableHighlight(editor, false));
+    publishEditableHighlights();
     if (eventsBound) return;
     eventsBound = true;
     document.addEventListener("input", (event) => {
       if (isNativeField(event.target)) syncFieldHighlight(event.target);
+      else syncEditableHighlight(getEditableRoot(event.target));
     }, true);
     document.addEventListener("change", (event) => {
       if (isNativeField(event.target)) syncFieldHighlight(event.target);
@@ -458,12 +536,12 @@
     }, true);
     document.addEventListener("keydown", syncLinkModifierState, true);
     document.addEventListener("keyup", handleDocumentKeyUp, true);
-    document.addEventListener("pointermove", syncLinkModifierState, true);
+    document.addEventListener("pointermove", handleDocumentPointerMove, true);
     document.addEventListener("pointerup", syncNativeFieldSelectionFromEvent, true);
     document.addEventListener("select", syncNativeFieldSelectionFromEvent, true);
     document.addEventListener("selectionchange", syncNativeFieldSelectionFromEvent, true);
     document.addEventListener("focusin", syncNativeFieldSelectionFromEvent, true);
-    document.addEventListener("focusout", handleNativeFieldFocusOut, true);
+    document.addEventListener("focusout", syncNativeFieldSelectionFromEvent, true);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         setLinkModifierActive(false);
@@ -474,8 +552,6 @@
     document.addEventListener("click", handleDocumentClick, true);
     window.addEventListener("blur", () => {
       setLinkModifierActive(false);
-      const activeField = isNativeField(document.activeElement) ? document.activeElement : null;
-      if (activeField) setNativeFieldSelectionRendering(activeField, false);
     });
     window.addEventListener("focus", () => {
       syncNativeFieldSelectionFromEvent({ target: document.activeElement });
@@ -485,16 +561,23 @@
     });
     if (typeof window.MutationObserver === "function" && document.body) {
       mutationObserver = new window.MutationObserver((entries) => {
+        const changedEditors = new Set();
         entries.forEach((entry) => {
+          changedEditors.add(getEditableRoot(entry.target));
           entry.removedNodes.forEach(cleanupFields);
           entry.addedNodes.forEach((node) => {
-            if (node?.nodeType === 1) bind(node);
+            if (node?.nodeType !== 1) return;
+            getFields(node).forEach(syncFieldHighlight);
+            getEditableFields(node).forEach((editor) => changedEditors.add(editor));
           });
         });
+        changedEditors.forEach((editor) => syncEditableHighlight(editor, false));
+        publishEditableHighlights();
         scheduleFieldLayoutSync();
       });
       mutationObserver.observe(document.body, {
         childList: true,
+        characterData: true,
         subtree: true
       });
     }
