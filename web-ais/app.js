@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.436",
+    version: "1.7.437",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.437",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Дата подачи заявки перенесена вправо от ФИО в карточке слушателя. Поля имени, источника и пола выровнены по общей сетке; на мобильном экране сохраняется последовательное расположение без наложений."
+      ]
+    },
     {
       version: "1.7.436",
       releasedAt: "2026-09-13",
@@ -34471,10 +34478,14 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="student-main-fields">
           <div class="student-name-status-grid">
-            <div class="student-name-stack">
+            <div class="student-name-date-row">
               ${renderStudentField(nameField, record)}
+              <div class="student-application-date-field" title="Дата подачи заявки">
+                ${renderStudentField({ ...applicationDateField, label: "Дата заявки" }, record)}
+              </div>
+            </div>
+            <div class="student-name-stack">
               ${renderStudentNameOptions(record)}
-              ${renderStudentField(applicationDateField, record)}
               ${renderStudentEnglishNameField(nameEnglishField, record)}
             </div>
             <div class="student-status-stack">
