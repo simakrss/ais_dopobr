@@ -3707,7 +3707,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AISLocalOCR/1.2"
+    server_version = "AISLocalOCR/1.3"
 
     def log_message(self, format_string: str, *args: Any) -> None:
         # Do not write document names, OCR text or personal data to logs.
@@ -3773,12 +3773,14 @@ def runtime_health() -> dict[str, Any]:
     missing_languages = sorted(required_languages - available_languages)
     if missing_languages:
         raise RuntimeError("Не установлены языки OCR: " + ", ".join(missing_languages))
+    neural_ready = get_neural_ocr() is not None
     return {
         "ok": True,
-        "engine": "rapidocr+tesseract" if get_neural_ocr() is not None else "tesseract",
+        "engine": "rapidocr+tesseract" if neural_ready else "tesseract",
+        "neuralReady": neural_ready,
         "languages": sorted(required_languages),
         "mode": "cli",
-        "version": "1.2",
+        "version": "1.3",
         "formats": ["jpg", "png", "pdf", "docx"],
         "features": ["document-recognition", "field-recognition", "page-rendering", "dynamic-passport-layout"],
     }

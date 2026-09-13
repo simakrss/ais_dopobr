@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const { Readable } = require("node:stream");
 const {
   ensureStorage,
+  startOcrRuntimePreparation,
   closeSharedRecordLocksStorage,
   closeStudentApplicationsMySqlStorage,
   closeAssistantStatisticsMySqlStorage,
@@ -51,6 +52,8 @@ async function main() {
     }
   };
 
+  // One detached, machine-local installer; CGI requests never wait for downloads.
+  startOcrRuntimePreparation();
   await ensureStorage();
   await route(req, res);
   if (!ended) res.end();

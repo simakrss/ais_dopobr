@@ -13974,11 +13974,30 @@ function shouldUseOcrCli() {
   return ["1", "true", "yes"].includes(String(process.env.AIS_OCR_CLI || "").trim().toLowerCase());
 }
 
+let ocrRuntimeBootstrap = null;
+function getOcrRuntimeBootstrap() {
+  if (!ocrRuntimeBootstrap) {
+    const { createOcrRuntimeBootstrap } = require("./services/ocr/runtime-bootstrap");
+    ocrRuntimeBootstrap = createOcrRuntimeBootstrap();
+  }
+  return ocrRuntimeBootstrap;
+}
+
+function startOcrRuntimePreparation(force = false) {
+  if (!shouldUseOcrCli()) return "external";
+  try { return getOcrRuntimeBootstrap().start({ force }); } catch {
+    console.warn("[OCR] Автоматическая подготовка дополнительного движка недоступна. Основная АИС продолжает работу.");
+    return "unavailable";
+  }
+}
+
 function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000, maxStdoutBytes = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
-    const pythonBinary = String(process.env.OCR_PYTHON_BINARY || (
+    let runtime = { python: String(process.env.OCR_PYTHON_BINARY || (
       process.platform === "win32" ? "python" : "/usr/bin/python3"
-    )).trim();
+    )).trim(), env: {} };
+    try { runtime = getOcrRuntimeBootstrap().launchSettings(); } catch { /* Keep the existing Tesseract fallback. */ }
+    const pythonBinary = runtime.python;
     const binaryRoot = path.join(OCR_CLI_RUNTIME_ROOT, "bin");
     const libraryRoot = path.join(OCR_CLI_RUNTIME_ROOT, "lib");
     const tessdataRoot = path.join(OCR_CLI_RUNTIME_ROOT, "tessdata");
@@ -13987,6 +14006,7 @@ function runOcrCli(argumentsList, payload = null, timeoutMs = 6 * 60 * 1000, max
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...runtime.env,
         PATH: `${binaryRoot}${path.delimiter}${process.env.PATH || ""}`,
         LD_LIBRARY_PATH: `${libraryRoot}${path.delimiter}${process.env.LD_LIBRARY_PATH || ""}`,
         TESSDATA_PREFIX: tessdataRoot,
@@ -14894,7 +14914,10 @@ function handleStudentDocumentRecognitionResult(req, res, requestUrl) {
 }
 
 async function readOcrHealthPayload() {
-  if (shouldUseOcrCli()) return runOcrCli(["--health"], null, 30 * 1000);
+  if (shouldUseOcrCli()) {
+    const health = await runOcrCli(["--health"], null, 30 * 1000);
+    return { ...health, installation: getOcrRuntimeBootstrap().status() };
+  }
   const serviceUrl = String(
     process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL
   ).trim().replace(/\/+$/g, "");
@@ -40215,6 +40238,7 @@ if (isMainThread && require.main === module) {
     promoteCodexTrainingEndDateAssets()
       .then(() => ensureStorage())
       .then(() => {
+        startOcrRuntimePreparation(true);
         startSharedApplicationStateMirror();
         startAutomaticContractExpirationScheduler();
         startTrainingEndNotificationScheduler();
@@ -40237,6 +40261,7 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  startOcrRuntimePreparation,
   handleContractDocument,
   prepareWorkflowDocumentValues,
   inspectDocxTemplate,

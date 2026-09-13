@@ -821,6 +821,13 @@ function startTrackedServer(definition, commonEnvironment) {
   return trackedOperation;
 }
 
+function verifyOcrContainer(dockerPath) {
+  execFileSync(dockerPath, ["exec", "ais-ocr", "python", "-c",
+    "import server; h=server.runtime_health(); assert h.get('ok') and h.get('neuralReady'), 'Additional OCR engine or models are missing'"], {
+    timeout: 90000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+
 function startDocumentServices(commonEnvironment) {
   if (skipDocker) {
     console.log("OCR and OnlyOffice launch was skipped by command-line option.");
@@ -842,20 +849,20 @@ function startDocumentServices(commonEnvironment) {
   try {
     console.log("Starting OCR and OnlyOffice containers...");
     try {
-      console.log("Checking the local OCR image for source updates...");
+      console.log("Проверка и автоматическая установка OCR: библиотеки и кириллические модели. При первой установке требуется интернет...");
       execFileSync(
         dockerPath,
         ["compose", "-f", composePath, "build", "ocr"],
         {
           cwd: appRoot,
           env: { ...process.env, ...commonEnvironment },
-          timeout: 300000,
+          timeout: 900000,
           windowsHide: true,
           stdio: "inherit",
         },
       );
     } catch (_error) {
-      console.log("The OCR image could not be refreshed; the existing local image will be used.");
+      console.log("Обновить OCR не удалось. Проверяется имеющийся движок; недостающие компоненты будут повторно установлены при следующем запуске.");
     }
     try {
       execFileSync(
@@ -869,11 +876,12 @@ function startDocumentServices(commonEnvironment) {
           stdio: "inherit",
         },
       );
+      verifyOcrContainer(dockerPath);
       ensureOnlyOfficeDocumentFonts(dockerPath);
       console.log("OCR and OnlyOffice containers are running from local images.");
       return "running";
     } catch (_error) {
-      console.log("Local Docker images need to be prepared. Starting one-time build...");
+      console.log("Движок OCR не прошёл проверку. Выполняется автоматическое восстановление контейнера...");
     }
     execFileSync(
       dockerPath,
@@ -881,11 +889,16 @@ function startDocumentServices(commonEnvironment) {
       {
         cwd: appRoot,
         env: { ...process.env, ...commonEnvironment },
-        timeout: 300000,
+        timeout: 900000,
         windowsHide: true,
         stdio: "inherit",
       },
     );
+    execFileSync(dockerPath, ["compose", "-f", composePath, "up", "-d", "--no-build", "--no-deps", "--force-recreate", "ocr"], {
+      cwd: appRoot, env: { ...process.env, ...commonEnvironment }, timeout: 120000,
+      windowsHide: true, stdio: "inherit"
+    });
+    verifyOcrContainer(dockerPath);
     ensureOnlyOfficeDocumentFonts(dockerPath);
     console.log("OCR and OnlyOffice containers are running.");
     return "running";
@@ -1109,6 +1122,7 @@ async function main() {
   const previousStatus = readLauncherStatus();
   if (previousStatus && processExists(Number(previousStatus.launcherPid))) {
     if (await existingSystemRuntimeMatches(previousStatus, commonEnvironment)) {
+      previousStatus.documentServices = startDocumentServices(commonEnvironment);
       printExistingSystemStatus(previousStatus);
       openLocalBrowser();
       await releaseLauncherGuard();
@@ -1142,11 +1156,13 @@ async function main() {
     pendingChangeCount: offlineState.pendingCount,
   };
 
-  console.log("\n[AIS] Starting document services");
-  status.documentServices = startDocumentServices(commonEnvironment);
-
   console.log("\n[AIS] Starting main servers");
   await ensureServers(commonEnvironment, status);
+  // First installation may download large images/models; the main AIS stays available.
+  status.documentServices = "preparing";
+  writeStatus(status);
+  console.log("\n[AIS] Starting document services");
+  status.documentServices = startDocumentServices(commonEnvironment);
   if (shuttingDown) {
     throw new ShutdownRequestedError(
       "Запуск внешнего туннеля отменён из-за остановки супервизора.",

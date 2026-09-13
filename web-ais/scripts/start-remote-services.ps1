@@ -278,11 +278,31 @@ function Test-ManagedTunnelOrigin(
   return Test-ApplicationRuntime "http://127.0.0.1:$appPort/api/health" $Secret $OnlyOfficeSecret 15
 }
 
+function Test-NeuralOcrHealth {
+  try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:8083/health" -TimeoutSec 15
+    return $health.ok -eq $true -and $health.PSObject.Properties['neuralReady'] -and $health.neuralReady -eq $true
+  } catch { return $false }
+}
+
+function Wait-NeuralOcrHealth {
+  $deadline = (Get-Date).AddSeconds(60)
+  do {
+    if (Test-NeuralOcrHealth) { return $true }
+    Start-Sleep -Seconds 1
+  } while ((Get-Date) -lt $deadline)
+  return $false
+}
+
+$script:lastContainerPreparation = [datetime]::MinValue
 function Ensure-Containers([string]$OnlyOfficeSecret) {
   $servicesHealthy = (Test-Health "http://127.0.0.1:8082/healthcheck") `
-    -and (Test-Health "http://127.0.0.1:8083/health") `
+    -and (Test-NeuralOcrHealth) `
     -and (Test-OnlyOfficeContainerSecret $OnlyOfficeSecret)
   if ($servicesHealthy) { return }
+  if (((Get-Date) - $script:lastContainerPreparation).TotalMinutes -lt 5) { return }
+  $script:lastContainerPreparation = Get-Date
+  Write-ServiceLog "Проверка и автоматическая установка недостающего движка OCR и моделей."
   $composePath = Join-Path $appRoot "docker-compose.onlyoffice.yml"
   $previousSecret = [Environment]::GetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", "Process")
   [Environment]::SetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", $OnlyOfficeSecret, "Process")
@@ -290,6 +310,10 @@ function Ensure-Containers([string]$OnlyOfficeSecret) {
     $output = & (Get-DockerPath) compose -f $composePath up -d --build 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
       throw "Не удалось запустить OCR и ONLYOFFICE: $($output.Trim())"
+    }
+    if (-not (Wait-NeuralOcrHealth)) {
+      & (Get-DockerPath) compose -f $composePath up -d --no-build --no-deps --force-recreate ocr 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0 -or -not (Wait-NeuralOcrHealth)) { throw "Дополнительный OCR не готов после установки. Проверьте интернет и журнал Docker; проверка будет повторена." }
     }
   } finally {
     [Environment]::SetEnvironmentVariable("ONLYOFFICE_JWT_SECRET", $previousSecret, "Process")
