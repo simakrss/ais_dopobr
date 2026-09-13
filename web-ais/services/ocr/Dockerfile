@@ -7,16 +7,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         imagemagick \
+        libgl1 \
+        libglib2.0-0 \
         poppler-utils \
         tesseract-ocr \
         tesseract-ocr-eng \
         tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir opencv-python-headless==4.10.0.84
-
 WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY server.py /app/server.py
+# Download public model weights only at installation, not while reading documents.
+RUN python -c "import server; assert server.get_neural_ocr(download_models=True) is not None"
 
 RUN useradd --create-home --uid 10001 ocr \
     && chown -R ocr:ocr /app

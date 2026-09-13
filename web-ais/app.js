@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.435",
+    version: "1.7.436",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.436",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Распознавание паспортов ищет поля по подписям и расположению текста без фиксированных участков, разделяет фотографии на одной странице и проверяет повороты. Добавлен локальный OCR для кириллицы. Все даты в окне распознавания отображаются как ДД.ММ.ГГГГ."
+      ]
+    },
     {
       version: "1.7.435",
       releasedAt: "2026-09-13",
@@ -51565,9 +51572,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   const studentDocumentRecognitionDisplayDateKeys = new Set([
     "birthDate",
-    "educationDocumentDate"
-  ]);
-  const studentDocumentRecognitionIsoDateKeys = new Set([
+    "educationDocumentDate",
     "passportDate",
     "identityIssueDate",
     "applicationDate",
@@ -51579,7 +51584,6 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentDocumentRecognitionDateInputFormat(key) {
     const normalizedKey = String(key || "");
     if (studentDocumentRecognitionDisplayDateKeys.has(normalizedKey)) return "ru";
-    if (studentDocumentRecognitionIsoDateKeys.has(normalizedKey)) return "iso";
     return "";
   }
 

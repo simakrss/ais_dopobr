@@ -283,13 +283,19 @@ async function main() {
   const dateHelpers = new Function(
     inputDateHelpersSource
       + dateHelpersSource
-      + "\nreturn { normalizeStudentDocumentRecognitionDate, formatStudentDocumentRecognitionDate, normalizeRecognitionComparisonValue };"
+      + "\nreturn { normalizeStudentDocumentRecognitionDate, formatStudentDocumentRecognitionDate, normalizeRecognitionComparisonValue, getStudentDocumentRecognitionDateInputFormat, formatDateTextInputValue };"
   )();
   assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05"), "05.03.2016");
   assert.strictEqual(dateHelpers.formatStudentDocumentRecognitionDate("2016-03-05T00:00:00.000Z"), "05.03.2016");
   assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("05.03.2016"), "2016-03-05");
   assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("29.02.2016"), "2016-02-29");
   assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("29.02.2015"), "");
+  for (const key of ["birthDate", "passportDate", "identityIssueDate", "educationDocumentDate", "applicationDate", "startDate", "endDate", "contractDate"]) {
+    const format = dateHelpers.getStudentDocumentRecognitionDateInputFormat(key);
+    assert.strictEqual(format, "ru", key);
+    assert.strictEqual(dateHelpers.formatDateTextInputValue("2020-08-14", format), "14.08.2020", key);
+    assert.strictEqual(dateHelpers.normalizeRecognitionComparisonValue(key, "14.08.2020"), "2020-08-14", key);
+  }
   assert.strictEqual(dateHelpers.normalizeStudentDocumentRecognitionDate("31.04.2016"), "");
   assert.strictEqual(
     dateHelpers.normalizeRecognitionComparisonValue("educationDocumentDate", "05.03.2016"),

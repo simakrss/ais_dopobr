@@ -127,7 +127,7 @@ class OcrExtractionTests(unittest.TestCase):
                 self.subTest(name=name),
                 patch.object(ocr_server, "render_pages", return_value=[Path("page.png")]),
                 patch.object(ocr_server, "ocr_image", return_value=(text, Path("page.png"), [], 0, False)) as ocr_mock,
-                patch.object(ocr_server, "ocr_passport_regions") as passport_mock,
+                patch.object(ocr_server, "recognize_passport_layout") as passport_mock,
                 patch.object(ocr_server, "attach_field_previews"),
                 patch.object(ocr_server, "render_referenced_page_previews", return_value=[]),
                 patch.object(ocr_server, "detect_photo_candidates", return_value=[]),
@@ -449,7 +449,7 @@ class OcrExtractionTests(unittest.TestCase):
         }
         with (
             patch.object(ocr_server, "ocr_image", side_effect=lambda image_path, **kwargs: (recognized_text, image_path, [], 0, False)),
-            patch.object(ocr_server, "ocr_passport_regions", return_value=""),
+            patch.object(ocr_server, "recognize_passport_layout", return_value=("", [], [])),
             patch.object(ocr_server, "attach_field_previews"),
             patch.object(ocr_server, "render_referenced_page_previews", return_value=[]),
             patch.object(ocr_server, "detect_photo_candidates", return_value=[]),

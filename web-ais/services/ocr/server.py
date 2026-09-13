@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import zipfile
@@ -56,7 +57,7 @@ MAX_DOCX_EMBEDDED_IMAGES_TOTAL_BYTES = 64 * 1024 * 1024
 PAGE_PREVIEW_MAX_BYTES = 220 * 1024
 PHOTO_CANDIDATE_MAX_BYTES = 220 * 1024
 MAX_PHOTO_CANDIDATES = 8
-DATE_PATTERN = re.compile(r"\b([0-3]?\d)[.\-/]([01]?\d)[.\-/]((?:19|20)?\d{2})\b")
+DATE_PATTERN = re.compile(r"\b([0-3]?\d)\s*[.\-/]\s*([01]?\d)\s*[.\-/]\s*((?:19|20)?\d{2})\b")
 MONTHS = {
     "января": 1,
     "февраля": 2,
@@ -153,6 +154,7 @@ def run_command(arguments: list[str], timeout: int = 120) -> str:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if completed.returncode:
         error = completed.stderr.decode("utf-8", "replace").strip()
@@ -409,7 +411,9 @@ def tesseract_text(
 
 def parse_tesseract_words(tsv_text: str) -> list[dict[str, Any]]:
     words: list[dict[str, Any]] = []
-    for row in csv.DictReader(io.StringIO(tsv_text or ""), delimiter="\t"):
+    # OCR text is literal TSV, not CSV: a recognized quote must not swallow
+    # subsequent rows (and their field coordinates).
+    for row in csv.DictReader(io.StringIO(tsv_text or ""), delimiter="\t", quoting=csv.QUOTE_NONE):
         text = str(row.get("text") or "").strip()
         if not text or str(row.get("level") or "") != "5":
             continue
@@ -469,6 +473,250 @@ def tesseract_text_with_words(
     text = text_path.read_text(encoding="utf-8", errors="replace") if text_path.exists() else ""
     tsv_text = tsv_path.read_text(encoding="utf-8", errors="replace") if tsv_path.exists() else ""
     return text, parse_tesseract_words(tsv_text)
+
+
+_neural_ocr = None
+_neural_ocr_checked = False
+_neural_ocr_lock = threading.RLock()
+NEURAL_MODEL_FILES = {
+    "Det": "ch_PP-OCRv5_det_mobile.onnx",
+    "Cls": "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+    "Rec": "cyrillic_PP-OCRv5_rec_mobile.onnx",
+}
+
+
+def get_neural_ocr(*, download_models: bool = False) -> Any:
+    """CPU-only, local models. Requests never download models or send scans out."""
+    global _neural_ocr, _neural_ocr_checked
+    with _neural_ocr_lock:
+        if _neural_ocr_checked and not download_models:
+            return _neural_ocr
+        _neural_ocr_checked = True
+        model_dir = Path(os.environ.get("OCR_MODEL_DIR", str(Path(__file__).parent / "models")))
+        if not download_models and not all((model_dir / name).is_file() for name in NEURAL_MODEL_FILES.values()):
+            return None
+        try:
+            from rapidocr import RapidOCR, LangRec, ModelType, OCRVersion
+            params = {
+                "Global.model_root_dir": str(model_dir),
+                "Global.log_level": "error",
+                "EngineConfig.onnxruntime.intra_op_num_threads": 2,
+                "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+                "Det.ocr_version": OCRVersion.PPOCRV5,
+                "Det.model_type": ModelType.MOBILE,
+                "Rec.ocr_version": OCRVersion.PPOCRV5,
+                "Rec.model_type": ModelType.MOBILE,
+                "Rec.lang_type": LangRec.CYRILLIC,
+            }
+            if not download_models:
+                params.update({f"{key}.model_path": str(model_dir / name) for key, name in NEURAL_MODEL_FILES.items()})
+            _neural_ocr = RapidOCR(params=params)
+        except Exception:
+            if download_models:
+                raise
+            _neural_ocr = None
+        return _neural_ocr
+
+
+def normalize_passport_ocr_text(value: str) -> str:
+    # Cyrillic OCR sometimes outputs visually identical Latin glyphs. Do not
+    # transliterate machine-readable zones, whose alphabet is deliberately Latin.
+    if "<" in value or re.search(r"\dRUS\d", value, re.IGNORECASE):
+        return value
+    return value.translate(str.maketrans("ABCEHKMOPTXYaceopxy", "АВСЕНКМОРТХУасеорху"))
+
+
+def neural_text_with_words(image_path: Path, *, normalize_cyrillic: bool = True) -> tuple[str, list[dict[str, Any]]]:
+    engine = get_neural_ocr()
+    if engine is None or cv2 is None:
+        return "", []
+    try:
+        with _neural_ocr_lock:  # RapidOCR mutates its inference options on each call.
+            result = engine(cv2.imread(str(image_path)))
+    except Exception:
+        return "", []  # The independent Tesseract fallback remains available.
+    words = []
+    boxes = result.boxes if result.boxes is not None else []
+    for index, (box, value, confidence) in enumerate(zip(boxes, result.txts or [], result.scores or [])):
+        points = np.asarray(box)
+        left, top = points.min(axis=0)
+        right, bottom = points.max(axis=0)
+        words.append({
+            "text": normalize_passport_ocr_text(str(value)) if normalize_cyrillic else str(value),
+            "left": round(float(left)), "top": round(float(top)),
+            "width": max(1, round(float(right - left))), "height": max(1, round(float(bottom - top))),
+            "confidence": float(confidence) * 100, "lineKey": (index, 0, 0),
+        })
+    return "\n".join(word["text"] for word in words), words
+
+
+def passport_photo_regions(image_path: Path) -> list[tuple[int, int, int, int]]:
+    """Detect separate photographs on a sheet, not predefined passport fields."""
+    if cv2 is None or np is None:
+        return []
+    image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return []
+    height, width = image.shape
+    mask = (image < 235).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    regions = []
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = cv2.contourArea(contour)
+        if min(w, h) >= 180 and area >= width * height * 0.06 and area >= w * h * 0.65:
+            regions.append((x, y, w, h))
+    # Too many components could be a table, not separate document photographs.
+    return sorted(regions, key=lambda box: (box[1], box[0])) if 1 <= len(regions) <= 4 else []
+
+
+def passport_layout_rows(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join neighbouring text boxes by their baseline; preserve numeric-only rows."""
+    rows: list[list[dict[str, Any]]] = []
+    for word in sorted(words, key=lambda item: item["top"] + item["height"] / 2):
+        if word.get("confidence", 0) < 40 or word["height"] > word["width"] * 1.8:
+            continue
+        center = word["top"] + word["height"] / 2
+        row = next((row for row in reversed(rows) if abs(
+            center - sum(item["top"] + item["height"] / 2 for item in row) / len(row)
+        ) <= min(word["height"], min(item["height"] for item in row)) * 0.48), None)
+        if row is None:
+            rows.append([word])
+        else:
+            row.append(word)
+    result = []
+    for row in rows:
+        row.sort(key=lambda item: item["left"])
+        left, top = min(item["left"] for item in row), min(item["top"] for item in row)
+        right = max(item["left"] + item["width"] for item in row)
+        bottom = max(item["top"] + item["height"] for item in row)
+        result.append({"text": " ".join(item["text"] for item in row), "left": left, "top": top,
+                       "width": right - left, "height": bottom - top, "words": row})
+    return result
+
+
+def passport_anchor_text(words: list[dict[str, Any]]) -> str:
+    """Locate values by labels, proximity and field syntax, independent of scale/layout."""
+    rows = passport_layout_rows(words)
+    # Do not leave an unresolved printed date label for the text-only parser to
+    # associate with a remote date (e.g. registration instead of issue date).
+    output = [re.sub(r"(?:дата\s+(?:выдачи|рождения)|паспорт\s+в[ыа][дл]ан)", "", row["text"],
+                     flags=re.IGNORECASE).strip() for row in rows]
+    anchors = {
+        "passportDate": r"дат[аы].{0,5}вы[дл]|дат.{0,3}вид",
+        "birthDate": r"дат[аы].{0,5}рожд",
+        "passportCode": r"код.{0,5}подраздел",
+    }
+    for key, pattern in anchors.items():
+        for label in words:
+            if not re.search(pattern, label["text"], re.IGNORECASE):
+                continue
+            candidates = []
+            for word in words:
+                text = word["text"]
+                if key == "passportCode":
+                    match = re.search(r"(?<!\d)(\d{3})\s*[-–—]\s*(\d{3})(?!\d)", text)
+                    value = "-".join(match.groups()) if match else ""
+                else:
+                    value = parse_recognized_field_date(text)
+                if not value:
+                    continue
+                dx = abs(word["left"] - label["left"])
+                dy = abs(word["top"] - label["top"])
+                line_height = max(12, label["height"], word["height"])
+                # A value is on the same baseline, directly above, or below its
+                # own label; never pick a date from a different stamp/page.
+                if dy <= line_height * 1.8 and dx <= max(label["width"] * 2.5, word["width"] * 2):
+                    candidates.append((dy * 4 + dx, value))
+            if candidates:
+                value = min(candidates)[1]
+                if key in DATE_FIELD_KEYS:
+                    year, month, day = value.split("-")
+                    value = f"{day}.{month}.{year}"
+                output.insert(0, f"{FIELD_LABELS[key]}: {value}")
+                break
+    # Issuing authority can precede its printed label or span several lines.
+    for index, row in enumerate(rows):
+        if not re.search(r"паспорт\s+в[ыа][дл]ан", row["text"], re.IGNORECASE):
+            continue
+        parts = []
+        for candidate in rows[max(0, index - 1):index + 5]:
+            text = re.sub(r"паспорт\s+в[ыа][дл]ан", "", candidate["text"], flags=re.IGNORECASE).strip()
+            if candidate["top"] > row["top"] and (parse_date(text) or re.search(r"дата|код подраздел", text, re.IGNORECASE)):
+                break
+            if is_plausible_passport_issuer(text) or parts:
+                parts.append(text)
+        issuer = normalize_passport_issuer(" ".join(parts))
+        if is_plausible_passport_issuer(issuer):
+            output.insert(0, f"Кем выдан: {issuer}")
+        break
+    return normalize_text("\n".join(output))
+
+
+def passport_candidate_score(text: str) -> float:
+    _, fields = extract_fields(text, "passport.pdf")
+    useful = {field["key"] for field in fields} - {"passportType", "citizenship"}
+    # Count meaningful fields, not the amount of texture misread as letters.
+    return len(useful) * 400 + len(OCR_ORIENTATION_MARKERS.findall(text)) * 80 + min(ocr_text_orientation_score(text), 500) * 0.1
+
+
+def recognize_passport_layout(image_path: Path) -> tuple[str, list[dict[str, Any]], list[int]]:
+    """Detect text in each photograph, try quarter turns and restore page coordinates."""
+    image = cv2.imread(str(image_path)) if cv2 is not None else None
+    if image is None:
+        text, _, words, angle, _ = ocr_image(image_path, document_hint="passport")
+        return passport_anchor_text(words) or text, words, [angle]
+    height, width = image.shape[:2]
+    regions = passport_photo_regions(image_path) or [(0, 0, width, height)]
+    all_text, all_words, rotations = [], [], []
+    for index, (x, y, w, h) in enumerate(regions):
+        part = image[y:y + h, x:x + w]
+        candidates = []
+        for angle in (0, 90, 180, 270):
+            rotated = part if not angle else cv2.rotate(part, {
+                90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+            }[angle])
+            target = image_path.with_name(f"{image_path.stem}-photo-{index}-{angle}.png")
+            cv2.imwrite(str(target), rotated)
+            text, words = neural_text_with_words(target)
+            if not words:
+                text, words = tesseract_text_with_words(target, 11)
+            content_kinds = classify_document_text(text, infer_passport=False)
+            anchored = normalize_text(text) if "education" in content_kinds and "passport" not in content_kinds else passport_anchor_text(words)
+            candidates.append((passport_candidate_score(anchored), angle, anchored or text, words, target))
+        _, angle, text, words, target = max(candidates, key=lambda item: item[0])
+        number_candidates = set()
+        for candidate in candidates:
+            for row in passport_layout_rows(candidate[3]):
+                if re.fullmatch(r"\s*(?:\d{2}\s+\d{2}|\d{4})\s+\d{6}\s*", row["text"]):
+                    digits = only_digits(row["text"])
+                    number_candidates.add(f"{digits[:2]} {digits[2:4]} {digits[4:]}")
+        if len(number_candidates) == 1:
+            text = merge_ocr_text(text, "Серия и номер: " + next(iter(number_candidates)))
+        # MRZ is Latin. Re-read only boxes detected as MRZ, not a fixed bottom band.
+        for row in passport_layout_rows(words):
+            if "<<" not in row["text"] and not re.search(r"\dRUS\d", row["text"], re.IGNORECASE):
+                continue
+            rw, rh = image_dimensions(target)
+            pad = max(4, round(row["height"] * 0.2))
+            mrz = crop_ocr_region(target, f"mrz-{row['top']}", (
+                max(0, row["left"] - pad) / rw, max(0, row["top"] - pad) / rh,
+                min(rw, row["width"] + 2 * pad) / rw, min(rh, row["height"] + 2 * pad) / rh,
+            ), psm=7, languages="eng", whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<")
+            text = merge_ocr_text(mrz, text)
+        all_text.append(text)
+        rotations.append(angle)
+        for word in words:
+            left, top, ww, hh = (word[key] for key in ("left", "top", "width", "height"))
+            if angle == 90:
+                left, top, ww, hh = top, h - left - ww, hh, ww
+            elif angle == 180:
+                left, top = w - left - ww, h - top - hh
+            elif angle == 270:
+                left, top, ww, hh = w - top - hh, left, hh, ww
+            all_words.append({**word, "left": x + left, "top": y + top, "width": ww, "height": hh,
+                              "lineKey": (index, *word["lineKey"])})
+    return normalize_text("\n".join(all_text)), all_words, rotations
 
 
 OCR_ORIENTATION_MARKERS = re.compile(
@@ -535,6 +783,7 @@ def detect_tesseract_rotation(image_path: Path) -> int | None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=35,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -703,7 +952,7 @@ def ocr_image(
     if not education_document and EDUCATION_DOCUMENT_HINT_PATTERN.search(best_text):
         education_document = True
         best_score, best_education_field_count = score_candidate(best_text)
-    if education_document:
+    if education_document or document_hint == "passport":
         # A sideways diploma can still produce plausible Cyrillic text. Check every
         # quarter-turn and choose the one that exposes the richest education data.
         for angle in (0, 90, 270, 180):
@@ -758,16 +1007,14 @@ def render_pages(source_path: Path, mime_type: str, workdir: Path) -> list[Path]
                 str(MAX_PDF_PAGES),
                 "-scale-to",
                 str(PDF_RENDER_MAX_DIMENSION),
-                "-jpeg",
-                "-jpegopt",
-                "quality=92",
+                "-png",
                 str(source_path),
                 str(prefix),
             ],
             timeout=90,
         )
         pages = sorted(
-            workdir.glob("page-*.jpg"),
+            workdir.glob("page-*.png"),
             key=lambda item: int(re.search(r"(\d+)$", item.stem).group(1)),
         )
         if not pages:
@@ -822,81 +1069,6 @@ def crop_ocr_region(
         languages=languages,
         whitelist=whitelist,
         timeout=45,
-    )
-
-
-def ocr_passport_regions(image_path: Path) -> str:
-    issuer = crop_ocr_region(
-        image_path,
-        "passport-issuer",
-        (0.154, 0.073, 0.718, 0.073),
-        psm=7,
-    )
-    issue_date = crop_ocr_region(
-        image_path,
-        "passport-date",
-        (0.20, 0.195, 0.34, 0.07),
-        psm=7,
-        languages="eng",
-        whitelist="0123456789.-/",
-        normalize=True,
-        resize_percent=300,
-    )
-    department_code = crop_ocr_region(
-        image_path,
-        "passport-code",
-        (0.61, 0.195, 0.24, 0.07),
-        psm=6,
-        languages="eng",
-        whitelist="0123456789-",
-        normalize=True,
-        resize_percent=300,
-    )
-    identity = crop_ocr_region(
-        image_path,
-        "passport-identity",
-        (0.23, 0.462, 0.718, 0.385),
-        psm=11,
-        normalize=True,
-    )
-    mrz = crop_ocr_region(
-        image_path,
-        "passport-mrz",
-        (0.08, 0.855, 0.86, 0.11),
-        psm=6,
-        languages="eng",
-        whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
-        resize_percent=200,
-    )
-    return normalize_text(
-        f"Паспорт выдан: {issuer}\n"
-        f"Дата выдачи паспорта: {issue_date}\n"
-        f"Код подразделения: {department_code}\n"
-        f"{identity}\n"
-        f"MRZ: {mrz}"
-    )
-
-
-def ocr_passport_registration_region(image_path: Path) -> str:
-    registration = crop_ocr_region(
-        image_path,
-        "passport-registration",
-        (0.045, 0.02, 0.91, 0.61),
-        psm=6,
-        normalize=True,
-        resize_percent=170,
-    )
-    sparse_registration = crop_ocr_region(
-        image_path,
-        "passport-registration-sparse",
-        (0.045, 0.02, 0.91, 0.61),
-        psm=11,
-        normalize=True,
-        resize_percent=170,
-    )
-    return normalize_text(
-        "Место жительства\n"
-        + merge_ocr_text(registration, sparse_registration)
     )
 
 
@@ -1896,6 +2068,14 @@ def clean_registration_address_line(value: str) -> str:
         flags=re.IGNORECASE,
     )
     source = re.sub(r"[|_=]+", " ", source)
+    source = re.sub(r"(?<=\d)(?=[А-Яа-я])", " ", source)
+    source = re.sub(r"\b(КВ|УЛ|Д)\s*\.\s*(?=\w)", r"\1. ", source, flags=re.IGNORECASE)
+    # Only fixed administrative labels are spell-checked, never place/street names.
+    for label in ("МУНИЦИПАЛЬНЫЙ", "ОКРУГ"):
+        source = re.sub(r"\b[А-ЯЁ]{5,}\b", lambda match: label if (
+            match.group() != label and abs(len(match.group()) - len(label)) <= 1
+            and difflib.SequenceMatcher(None, match.group(), label).ratio() >= 0.8
+        ) else match.group(), source)
     source = re.sub(r"\s+([,.;])", r"\1", source)
     return re.sub(r"\s+", " ", source).strip(" ,;:.-")
 
@@ -1919,10 +2099,13 @@ def normalize_registration_address(lines: list[str]) -> str:
         value = clean_registration_address_line(line)
         if not value or parse_date(value):
             continue
-        if len(re.findall(r"[А-ЯЁа-яё]", value)) < 2:
+        if len(re.findall(r"[А-ЯЁа-яё]", value)) < 2 and not (
+            cleaned and re.fullmatch(r"\d+[А-Яа-я]?(?:\s*[,/-]\s*\d+)?", value)
+        ):
             continue
         cleaned.append(value)
     result = ", ".join(cleaned)
+    result = re.sub(r"\b(Д|ДОМ|КВ|КОРП)\.?\s*,\s*(?=\d)", r"\1. ", result, flags=re.IGNORECASE)
     result = re.sub(r"(?:\s*,\s*){2,}", ", ", result)
     return result.strip(" ,;:.-")
 
@@ -2021,12 +2204,12 @@ def extract_passport(
     for index, line in enumerate(lines):
         folded = line.casefold()
         if (
-            not re.search(r"паспорт\s+вы[дл]ан", folded)
+            not re.search(r"(?:паспорт|кем)\s+вы[дл]ан", folded)
             and not re.search(r"^\s*вы[дл]ан\b", folded)
         ):
             continue
         tail = re.split(
-            r"паспорт\s+вы[дл]ан|вы[дл]ан",
+            r"(?:паспорт|кем)\s+вы[дл]ан|вы[дл]ан",
             line,
             maxsplit=1,
             flags=re.IGNORECASE,
@@ -2366,7 +2549,8 @@ def parse_recognized_field_date(value: str) -> str:
         (int(digits[:4]), int(digits[4:6]), int(digits[6:])),
     ):
         try:
-            return date(year, month, day).isoformat()
+            if 1900 <= year <= 2100:
+                return date(year, month, day).isoformat()
         except ValueError:
             continue
     return ""
@@ -2591,11 +2775,11 @@ def render_field_preview(
     image_path = Path(page_result["imagePath"])
     width, height = image_dimensions(image_path)
     if line:
-        vertical_padding = max(42, round(line["height"] * 3.8))
+        vertical_padding = max(24, round(line["height"] * (0.15 if field.get("key") == "registrationAddress" else 3.8)))
         top = max(0, line["top"] - vertical_padding)
         bottom = min(height, line["top"] + line["height"] + vertical_padding)
-        left = max(0, round(width * 0.025))
-        right = min(width, round(width * 0.975))
+        left = max(0, line["left"] - 24) if field.get("key") == "registrationAddress" else max(0, round(width * 0.025))
+        right = min(width, line["left"] + line["width"] + 24) if field.get("key") == "registrationAddress" else min(width, round(width * 0.975))
         box = (left, top, max(1, right - left), max(1, bottom - top))
     else:
         box = fallback_preview_box(str(field.get("key") or ""), width, height)
@@ -2900,6 +3084,19 @@ def attach_field_previews(fields: list[dict[str, Any]], page_results: list[dict[
             )
         best_line: dict[str, Any] | None = None
         best_score = 0.0
+        if key == "registrationAddress":
+            address = normalize_preview_match_text(str(field.get("value") or "")).replace(" ", "")
+            matches = [word for word in best_page.get("words", []) if (
+                len(normalize_preview_match_text(word["text"]).replace(" ", "")) >= 3
+                and normalize_preview_match_text(word["text"]).replace(" ", "") in address
+            )]
+            if matches:
+                left = min(word["left"] for word in matches)
+                top = min(word["top"] for word in matches)
+                best_line = {"left": left, "top": top,
+                    "width": max(word["left"] + word["width"] for word in matches) - left,
+                    "height": max(word["top"] + word["height"] for word in matches) - top}
+                best_score = 1.0
         if key != "registrationAddress":
             for page_result in candidate_pages:
                 for line in page_result.get("lines") or []:
@@ -2912,9 +3109,7 @@ def attach_field_previews(fields: list[dict[str, Any]], page_results: list[dict[
             field["preview"] = render_field_preview(
                 field,
                 best_page,
-                None if key == "registrationAddress" else (
-                    best_line if best_score >= (0.9 if key == "passportNumber" else 0.45) else None
-                ),
+                best_line if best_score >= (0.9 if key == "passportNumber" else 0.45) else None,
             )
         except (OSError, RuntimeError, subprocess.SubprocessError):
             continue
@@ -3218,12 +3413,15 @@ def recognize_field(payload: dict[str, Any]) -> dict[str, Any]:
                 )
             except (OSError, RuntimeError, subprocess.SubprocessError, TimeoutError) as error:
                 orientation_errors.append(error)
-            if not primary and not secondary:
+            neural, _neural_words = neural_text_with_words(candidate_path, normalize_cyrillic=key in {
+                "name", "passportIssuer", "registrationAddress", "citizenship", "gender",
+            })
+            if not primary and not secondary and not neural:
                 return
-            raw_text = merge_ocr_text(primary, secondary)[:MAX_TEXT_CHARS]
+            raw_text = merge_ocr_text(merge_ocr_text(primary, secondary), neural)[:MAX_TEXT_CHARS]
             seen_texts: set[str] = set()
             normalized_candidates = []
-            for candidate_text in (primary, secondary):
+            for candidate_text in (neural, primary, secondary):
                 normalized_text = normalize_text(candidate_text)
                 if not normalized_text or normalized_text in seen_texts:
                     continue
@@ -3386,6 +3584,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
         def recognize_page(item: tuple[int, Path]) -> dict[str, Any]:
             page_number, page_path = item
             page_started_at = time.perf_counter()
+            region_rotations = []
             text_layer = (
                 pdf_text_pages[page_number - 1]
                 if page_number <= len(pdf_text_pages)
@@ -3398,6 +3597,12 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 extraction_method = "text-layer"
                 page_rotation = 0
                 page_content_cropped = False
+            elif passport_hint and page_path.is_file() and get_neural_ocr() is not None:
+                page_text, words, region_rotations = recognize_passport_layout(page_path)
+                prepared_path = page_path
+                extraction_method = "ocr"
+                page_rotation = 0
+                page_content_cropped = False
             else:
                 page_text, prepared_path, words, page_rotation, page_content_cropped = ocr_image(
                     page_path,
@@ -3406,24 +3611,17 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                     file_name=file_name,
                 )
                 extraction_method = "ocr"
-            page_source = page_text.casefold()
             page_is_passport = "passport" in classify_document(page_text, file_name)
-            registration_hint = (
-                page_number > 1
-                or bool(re.search(r"(?:мест\w*\s+житель|регистрац|пропис)", page_source))
-                or (
-                    len(page_paths) == 1
-                    and bool(re.search(
-                        r"(?:passport|pasport|паспорт).*?2|пропис|propiska|регистрац",
-                        file_name,
-                        re.IGNORECASE,
-                    ))
-                )
-            )
-            if extraction_method == "ocr" and passport_hint and page_is_passport and page_number == 1 and not registration_hint:
-                page_text = merge_ocr_text(page_text, ocr_passport_regions(prepared_path))
-            if extraction_method == "ocr" and passport_hint and page_is_passport and registration_hint:
-                page_text = merge_ocr_text(page_text, ocr_passport_registration_region(prepared_path))
+            if extraction_method == "ocr" and page_is_passport and not region_rotations and page_path.is_file():
+                if cv2 is not None:
+                    layout_text, layout_words, region_rotations = recognize_passport_layout(page_path)
+                    if layout_text:
+                        page_text, words = layout_text, layout_words
+                        prepared_path = page_path
+                        page_rotation = 0
+                        page_content_cropped = False
+                else:
+                    page_text = merge_ocr_text(passport_anchor_text(words), page_text)
             return {
                 "page": page_number,
                 "text": page_text,
@@ -3434,6 +3632,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "method": extraction_method,
                 "rotation": page_rotation,
                 "contentCropped": page_content_cropped,
+                "regionRotations": region_rotations,
             }
 
         page_items = list(enumerate(page_paths, 1))
@@ -3448,6 +3647,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
                 "method": item["method"],
                 "rotation": int(item.get("rotation") or 0),
                 "contentCropped": bool(item.get("contentCropped")),
+                "regionRotations": item.get("regionRotations", []),
             }
             for item in recognized_pages
         ]
@@ -3507,7 +3707,7 @@ def recognize(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AISLocalOCR/1.0"
+    server_version = "AISLocalOCR/1.2"
 
     def log_message(self, format_string: str, *args: Any) -> None:
         # Do not write document names, OCR text or personal data to logs.
@@ -3524,14 +3724,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.send_json(200, {
-                "ok": True,
-                "engine": "tesseract",
-                "languages": ["rus", "eng"],
-                "version": "1.1",
-                "formats": ["jpg", "png", "pdf", "docx"],
-                "features": ["document-recognition", "field-recognition", "page-rendering"],
-            })
+            try:
+                self.send_json(200, {**runtime_health(), "mode": "http"})
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                self.send_json(503, {"ok": False, "error": "OCR runtime unavailable"})
             return
         self.send_json(404, {"error": "Not found"})
 
@@ -3579,12 +3775,12 @@ def runtime_health() -> dict[str, Any]:
         raise RuntimeError("Не установлены языки OCR: " + ", ".join(missing_languages))
     return {
         "ok": True,
-        "engine": "tesseract",
+        "engine": "rapidocr+tesseract" if get_neural_ocr() is not None else "tesseract",
         "languages": sorted(required_languages),
         "mode": "cli",
-        "version": "1.1",
+        "version": "1.2",
         "formats": ["jpg", "png", "pdf", "docx"],
-        "features": ["document-recognition", "field-recognition", "page-rendering"],
+        "features": ["document-recognition", "field-recognition", "page-rendering", "dynamic-passport-layout"],
     }
 
 
