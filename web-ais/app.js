@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.439",
+    version: "1.7.440",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.440",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Кнопка просмотра сохранённого результата распознавания перенесена в крайний правый конец панели документов в карточках слушателя и сотрудника, после кнопки «Распознать из папки»."
+      ]
+    },
     {
       version: "1.7.439",
       releasedAt: "2026-09-13",
@@ -33380,18 +33387,6 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
         <div class="student-document-recognition-actions">
-          <button
-            class="icon-button student-document-recognition-result-button"
-            data-action="show-${actionPrefix}-document-recognition-result"
-            type="button"
-            title="${escapeAttr(savedResult
-              ? `Показать результат распознавания от ${formatDateTimeRu(savedResult.recognizedAt)}`
-              : "Сохранённый результат распознавания отсутствует")}"
-            aria-label="Показать результат распознавания"
-            ${savedResult ? "" : "disabled"}
-          >
-            ${renderOrdersSdoIcon("history")}
-          </button>
           ${renderStudentMailboxDocumentsButton(
             record,
             "student-document-recognition-button",
@@ -33406,6 +33401,18 @@ MAX - https://bizvmax.ru/zifra_plus
           >
             ${renderOrdersSdoIcon("wand")}
             <span>Распознать из папки</span>
+          </button>
+          <button
+            class="icon-button student-document-recognition-result-button"
+            data-action="show-${actionPrefix}-document-recognition-result"
+            type="button"
+            title="${escapeAttr(savedResult
+              ? `Показать результат распознавания от ${formatDateTimeRu(savedResult.recognizedAt)}`
+              : "Сохранённый результат распознавания отсутствует")}"
+            aria-label="Показать результат распознавания"
+            ${savedResult ? "" : "disabled"}
+          >
+            ${renderOrdersSdoIcon("history")}
           </button>
         </div>
       </section>
