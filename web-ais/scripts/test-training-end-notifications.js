@@ -484,7 +484,8 @@ assert.notEqual(
 
 assert.match(appSource, /name="trainingEndNotificationsEnabled"/u);
 assert.match(appSource, /name="trainingEndNotificationDays"/u);
-assert.match(appSource, /Уведомлять за/u);
+assert.match(appSource, /<span>Срок, дней<\/span>/u);
+assert.doesNotMatch(appSource, /<span>Уведомлять за<\/span>/u);
 assert.match(appSource, /name="trainingEndNotificationTime"/u);
 assert.match(appSource, /name="trainingEndNotificationTimeZone"/u);
 assert.match(appSource, /name="trainingEndNotificationFrequency"/u);
@@ -526,7 +527,7 @@ assert.match(
   appSource,
   /ensureDataShape\(withTrainingEndNotificationServerMeta\(payload\.data\)\)/u
 );
-assert.match(appSource, /const confirmedData = withTrainingEndNotificationServerMeta\(payload\.data\);/u);
+assert.match(appSource, /const confirmedData = payload\.data\s*\? ensureDataShape\(withTrainingEndNotificationServerMeta\(payload\.data\)\)/u);
 assert.match(appSource, /applyResponse: false/u);
 assert.match(serverSource, /Некорректный запрос проверки сроков обучения/u);
 assert.match(serverSource, /startTrainingEndNotificationScheduler\(\)/u);

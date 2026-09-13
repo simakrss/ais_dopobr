@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.446",
+    version: "1.7.447",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.447",
+      releasedAt: "2026-09-13",
+      changes: [
+        "В настройках уведомлений подпись «Уведомлять за» переименована в «Срок, дней». Значение срока и порядок отправки уведомлений не изменены."
+      ]
+    },
     {
       version: "1.7.446",
       releasedAt: "2026-09-13",
@@ -25590,7 +25597,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </fieldset>
         <div class="training-end-notification-settings-fields">
           <label class="training-end-notification-field training-end-notification-days">
-            <span>Уведомлять за</span>
+            <span>Срок, дней</span>
             <input
               name="trainingEndNotificationDays"
               type="number"
