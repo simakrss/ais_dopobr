@@ -6108,6 +6108,33 @@ function resolveStoredPhotoPath(value) {
   return null;
 }
 
+async function loadPersonPhotoBytes(source) {
+  let localPath = resolveStoredPhotoPath(source);
+  if (localPath) {
+    const relativeStoredPath = path.relative(PHOTO_ROOT, localPath);
+    if (relativeStoredPath.startsWith("..") || path.isAbsolute(relativeStoredPath)) {
+      throw new Error("Недопустимый путь к фотографии.");
+    }
+  } else {
+    const relativePath = normalizeSystemDocumentsRelativePath(source);
+    if (!relativePath) return null;
+    const localDocuments = serverSettings.openDocumentsLocally !== false
+      ? await getLocalSystemDocumentsAvailability()
+      : { available: false };
+    if (localDocuments.available) {
+      localPath = resolveLocalDocumentsPath(source, "Не удалось определить путь к фотографии.");
+    }
+  }
+  if (localPath) {
+    const stats = await fs.stat(localPath);
+    if (!stats.isFile() || stats.size <= 0 || stats.size > MAX_STUDENT_PHOTO_BYTES) return null;
+  }
+  const bytes = localPath
+    ? await fs.readFile(localPath)
+    : await loadSystemDocumentFromYandexDisk(source);
+  return bytes?.length && bytes.length <= MAX_STUDENT_PHOTO_BYTES ? bytes : null;
+}
+
 async function loadContractPhoto(fieldValues) {
   const source = fieldValues?.["Фото"] || fieldValues?.photo || fieldValues?.photoPath || "";
   if (!source) return null;
@@ -6123,9 +6150,7 @@ async function loadContractPhoto(fieldValues) {
   const ext = imageExtensionFromPath(fullPath || source);
   if (!ext) return null;
   try {
-    const bytes = fullPath
-      ? await fs.readFile(fullPath)
-      : await loadSystemDocumentFromYandexDisk(source);
+    const bytes = await loadPersonPhotoBytes(source);
     if (!bytes?.length) return null;
     return {
       bytes,
@@ -36850,31 +36875,7 @@ async function handleStudentSourcePhoto(req, res, requestUrl) {
       return;
     }
     if (!bytes) {
-      const storedPhotoPath = resolveStoredPhotoPath(sourcePath);
-      if (storedPhotoPath) {
-        const relativeStoredPath = path.relative(PHOTO_ROOT, storedPhotoPath);
-        if (relativeStoredPath.startsWith("..") || path.isAbsolute(relativeStoredPath)) {
-          throw new Error("Недопустимый путь к фотографии.");
-        }
-        const stats = await fs.stat(storedPhotoPath);
-        if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
-          bytes = await fs.readFile(storedPhotoPath);
-        }
-      } else {
-        const relativePath = normalizeSystemDocumentsRelativePath(sourcePath);
-        const localDocuments = serverSettings.openDocumentsLocally !== false
-          ? await getLocalSystemDocumentsAvailability()
-          : { available: false };
-        if (relativePath && localDocuments.available) {
-          const localPath = resolveLocalDocumentsPath(sourcePath, "Не удалось определить путь к фотографии.");
-          const stats = await fs.stat(localPath);
-          if (stats.isFile() && stats.size > 0 && stats.size <= MAX_STUDENT_PHOTO_BYTES) {
-            bytes = await fs.readFile(localPath);
-          }
-        } else {
-          bytes = await loadSystemDocumentFromYandexDisk(sourcePath);
-        }
-      }
+      bytes = await loadPersonPhotoBytes(sourcePath);
       contentType = IMAGE_CONTENT_TYPES[ext];
     }
     if (!bytes) {

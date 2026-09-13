@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.440",
+    version: "1.7.441",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.441",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Фотографии в заявлениях и других документах загружаются из того же источника, что и в карточках слушателей и сотрудников: в локальном режиме — с диска, в облачном — с Яндекс.Диска. Настройки папок сохраняются."
+      ]
+    },
     {
       version: "1.7.440",
       releasedAt: "2026-09-13",
