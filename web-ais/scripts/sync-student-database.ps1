@@ -3031,6 +3031,35 @@ function Update-AisSyncMetadataForRows {
   return $updated
 }
 
+function Set-ProgramTemplateFormulas {
+  param(
+    [object]$Range,
+    [object]$Formulas,
+    [int]$LastColumn
+  )
+  # Excel/PowerShell can bind FormulaR1C1 as a string property after a scalar
+  # access and reject an object[,] assignment. Restore only formula strings,
+  # keeping the original R1C1 references and the copied row's formatting.
+  [void]$Range.ClearContents()
+  $cells = $null
+  try {
+    $cells = $Range.Cells
+    for ($column = 1; $column -le $LastColumn; $column += 1) {
+      $formula = Get-MatrixValue $Formulas 1 $column
+      if ($formula -isnot [string] -or -not $formula.StartsWith("=")) { continue }
+      $cell = $null
+      try {
+        $cell = $cells.Item(1, $column)
+        $cell.FormulaR1C1 = [string]$formula
+      } finally {
+        Release-ComObject $cell
+      }
+    }
+  } finally {
+    Release-ComObject $cells
+  }
+}
+
 function Update-ProgramPromoMessages {
   param(
     [object]$Workbook,
@@ -3278,7 +3307,7 @@ function Update-ProgramPromoMessages {
             $sheet.Cells.Item($targetRow, $dataLastColumn)
           )
           try { [void]$insertedRange.ClearComments() } catch {}
-          $insertedRange.FormulaR1C1 = $programTemplateFormulas
+          Set-ProgramTemplateFormulas $insertedRange $programTemplateFormulas $dataLastColumn
         } finally {
           Release-ComObject $insertedRange
         }

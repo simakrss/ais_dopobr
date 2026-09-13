@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.442",
+    version: "1.7.443",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.443",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Исправлена ошибка преобразования массива в строку при добавлении программ в XLSB: исходные формулы переносятся в новые строки по ячейкам, с сохранением форматирования и выбранных фиксированных значений Web-базы."
+      ]
+    },
     {
       version: "1.7.442",
       releasedAt: "2026-09-13",
