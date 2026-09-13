@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.434",
+    version: "1.7.435",
     releasedAt: "2026-09-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.435",
+      releasedAt: "2026-09-13",
+      changes: [
+        "Перед дублированием карточки слушателя, программы с учебным планом или сотрудника для нового договора показывается фирменное окно подтверждения. Отмена не создаёт копию и не сохраняет текущую карточку."
+      ]
+    },
     {
       version: "1.7.434",
       releasedAt: "2026-09-13",
@@ -40751,6 +40758,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const duplicateConfirmation = document.querySelector("[data-record-duplicate-confirmation]");
+    if (duplicateConfirmation) {
+      duplicateConfirmation.cancelRecordDuplicateConfirmation?.();
+      return true;
+    }
     const studentExpulsionEducationDocumentDialog = document.querySelector(
       "[data-student-expulsion-education-document-dialog]"
     );
@@ -43137,6 +43149,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "students" || !state.modal?.id) return;
     let sourceId = formElement.dataset.id || state.modal.id;
+    const sourceModal = state.modal;
+    const sourceName = (state.data.collections.students || []).find((record) => record.id === sourceId)?.name || "слушателя";
+    if (!await confirmRecordDuplication({
+      title: "Дублировать карточку слушателя?",
+      message: `Создать копию карточки «${sourceName}» для нового зачисления? Персональные данные перенесутся, а программа, оплата, приказы и результаты обучения — нет. Новая карточка попадёт в базу только после сохранения.`
+    })) return;
+    if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
       const decision = await chooseUnsavedChangesAction({
@@ -43236,6 +43255,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "programs" || !state.modal?.id) return;
     let sourceId = formElement.dataset.id || state.modal.id;
+    const sourceModal = state.modal;
+    const sourceName = (state.data.collections.programs || []).find((record) => record.id === sourceId)?.name || "программы";
+    if (!await confirmRecordDuplication({
+      title: "Дублировать образовательную программу?",
+      message: `Создать копию программы «${sourceName}» вместе с учебным планом? Код лендинга сохранится. Новая программа попадёт в базу только после сохранения.`
+    })) return;
+    if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
       const decision = await chooseUnsavedChangesAction({
@@ -43345,6 +43371,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const formElement = document.getElementById("recordForm");
     if (!formElement || formElement.dataset.config !== "contracts" || !state.modal?.id) return;
     let sourceId = state.modal.id;
+    const sourceModal = state.modal;
+    const sourceName = (state.data.collections.contracts || []).find((record) => record.id === sourceId)?.name || "сотрудника";
+    if (!await confirmRecordDuplication({
+      title: "Создать новый договор сотрудника?",
+      message: `Дублировать карточку «${sourceName}» для нового договора? Персональные данные и сообщение о доступе к порталу перенесутся, номер договора определится автоматически. Новая карточка попадёт в базу только после сохранения.`
+    })) return;
+    if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
       const decision = await chooseUnsavedChangesAction({
@@ -45092,6 +45125,68 @@ MAX - https://bizvmax.ru/zifra_plus
   function hasUnsavedFormChanges(form) {
     if (!form) return false;
     return form.dataset.initialSnapshot !== captureFormSnapshot(form);
+  }
+
+  function confirmRecordDuplication(options = {}) {
+    const existing = document.querySelector("[data-record-duplicate-confirmation]");
+    if (existing) {
+      existing.querySelector("[data-action='cancel-record-duplication']")?.focus({ preventScroll: true });
+      return Promise.resolve(false);
+    }
+    const previousFocus = document.activeElement;
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop unsaved-changes-dialog-backdrop";
+    backdrop.dataset.recordDuplicateConfirmation = "";
+    backdrop.innerHTML = `
+      <section class="modal unsaved-changes-dialog" role="alertdialog" aria-modal="true" aria-labelledby="recordDuplicateTitle" aria-describedby="recordDuplicateMessage">
+        <header class="modal-head">
+          <div><p class="eyebrow">Подтверждение действия</p><h2 id="recordDuplicateTitle">${escapeHtml(options.title || "Дублировать карточку?")}</h2></div>
+          <button class="icon-button" data-action="close-record-duplication" type="button" title="Отмена" aria-label="Отмена">×</button>
+        </header>
+        <p id="recordDuplicateMessage" class="unsaved-changes-dialog-message">${escapeHtml(options.message || "Создать копию текущей карточки?")}</p>
+        <footer class="modal-actions unsaved-changes-dialog-actions">
+          <button class="ghost-button" data-action="cancel-record-duplication" type="button">Отмена</button>
+          <button class="primary-button" data-action="confirm-record-duplication" type="button">Дублировать</button>
+        </footer>
+      </section>
+    `;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (confirmed) => {
+        if (settled) return;
+        settled = true;
+        backdrop.remove();
+        if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+        resolve(confirmed);
+      };
+      backdrop.cancelRecordDuplicateConfirmation = () => finish(false);
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) { finish(false); return; }
+        const button = event.target.closest?.("[data-action]");
+        if (!button || !backdrop.contains(button)) return;
+        if (["cancel-record-duplication", "close-record-duplication"].includes(button.dataset.action)) finish(false);
+        if (button.dataset.action === "confirm-record-duplication") finish(true);
+      });
+      backdrop.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          finish(false);
+        } else if (event.key === "Tab") {
+          const controls = Array.from(backdrop.querySelectorAll("button:not([disabled])"));
+          const first = controls[0], last = controls.at(-1);
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first?.focus();
+          }
+        }
+      });
+      document.body.appendChild(backdrop);
+      queueMicrotask(() => {
+        if (!settled) backdrop.querySelector("[data-action='cancel-record-duplication']")?.focus({ preventScroll: true });
+      });
+    });
   }
 
   function chooseUnsavedChangesAction(options = {}) {
