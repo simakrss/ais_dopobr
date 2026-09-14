@@ -82,7 +82,7 @@ if (process.argv.includes("--serve")) {
   const source=app.slice(app.indexOf("  function renderProgramSiteLink("),app.indexOf("  function renderProgramModal("));
   // Optional real public landing for visual inspection; no write calls leave the fixture.
   const livePreview=process.env.AIS_QA_LANDING_PREVIEW === "1";
-  const uiProgram={...program, type:process.env.AIS_QA_PROGRAM_TYPE || program.type, sitePrototype:{programId:'source-program',landingCode:'3878',name:'Прототип курса'}, ...(process.env.AIS_QA_SITE_MISSING === "1" ? {landingCode:'new-program'} : {})};
+  const uiProgram={...program, type:process.env.AIS_QA_PROGRAM_TYPE || program.type, sitePrototype:{programId:'source-program',landingCode:'3878',name:'Прототип курса'}, ...(process.env.AIS_QA_SITE_MISSING === "1" ? {landingCode:'new-program'} : {}), ...(process.env.AIS_QA_AUTO_CODE === "1" ? {landingCode:''} : {})};
   const uiLanding={...landing,...(livePreview?{url:"https://edu-plus.ru/courses-pk/pk-access/",title:"Microsoft Access + SQL",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"}:{})};
   // Long shop titles reproduce the intrinsic grid-width overlap with the preview.
   const uiProducts=products.map((item,i)=>({...item,title:`Курс ${i ? 'повышения квалификации' : 'дополнительного образования'} «Базовый курс по системному администрированию информационных систем и баз данных» — 72 ч`}));
@@ -102,19 +102,21 @@ if (process.argv.includes("--serve")) {
       const getMoneyInputStepAttribute=()=>'', renderStudentStatusOptions=(values,current)=>values.map(value=>'<option>'+escapeHtml(value)+'</option>').join('');
       const renderProgramHoursField=(label,value,required)=>label+'<input name="hours" type="number" value="'+value+'"></label>';
       const persist=()=>document.getElementById('saved').textContent='Результат сохранён в тестовой базе',flushSharedApplicationState=async()=>true,render=()=>{};
-      const saveRecordFormBeforeContinuation=async(form)=>{Object.assign(state.data.collections.programs[0],Object.fromEntries(new FormData(form)));document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
+      const logStep=step=>{const el=document.getElementById('saved');el.dataset.steps=JSON.stringify([...JSON.parse(el.dataset.steps||'[]'),step]);};
+      const saveRecordFormBeforeContinuation=async(form)=>{const values=Object.fromEntries(new FormData(form));logStep('save:'+values.landingCode);if(${process.env.AIS_QA_FAIL_CODE_SAVE === '1'} && values.landingCode==='${pg.landingCodeFromName(uiProgram.name)}') return '';Object.assign(state.data.collections.programs[0],values);document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
       let syncWrites=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
         const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
-        if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'courses-pk',url:landing.url},{id:42,title:'Другой прототип',postType:'courses-pk',url:landing.url}]};
+        if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url},{id:42,title:'Другой прототип',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url}]};
         else if(url.endsWith('/resolve')) {
           if(body.landingCode==='fail-lookup') return {ok:false,json:async()=>({error:'Тест: сайт временно недоступен'})};
           const draft=state.data.collections.programs[0].sitePublication;
-          const exists=body.landingCode!=='new-program' || !!draft;
+          const exists=body.landingCode==='3878' || !!draft;
           result={ok:true,exists,landing:exists?(draft?.landing || landing):null,products:exists?products:[],product:null};
         }
         else if(url.endsWith('/sync')) {syncWrites++;result={ok:true,landing,product:products.find(item=>item.id===body.productId),syncedAt:new Date().toISOString()};document.getElementById('saved').dataset.writes=syncWrites;}
-        else if(url.endsWith('/prepare')||url.endsWith('/publish')) result={ok:true,stage:'prepared',type:'КПК',templateId:body.templateId,hash:'qa',landing,product:products[0]};
+        else if(url.endsWith('/landing-code')) {logStep('lookup-code');result={ok:true,landingCode:state.data.collections.programs[0].landingCode || '${pg.landingCodeFromName(uiProgram.name)}'};}
+        else if(url.endsWith('/prepare')||url.endsWith('/publish')) {logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:'prepared',type:'${uiProgram.type}',templateId:body.templateId,hash:'qa',landing,product:products[0]};}
         else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name},hash:body.productId?'qa-plan':''};
         return {ok:true,json:async()=>result};};
       ${renderFieldSource}

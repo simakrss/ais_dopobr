@@ -99,7 +99,7 @@ function get_post_mime_type($id) { return $GLOBALS['test_posts'][$id]['mime'] ??
 function get_attached_file($id) { return $GLOBALS['test_posts'][$id]['file'] ?? ''; }
 function get_field($name, $id, $format = true) { return $GLOBALS['test_meta'][$id][$name] ?? ''; }
 function update_post_meta($id, $key, $value) { $GLOBALS['test_meta'][$id][$key] = $value; }
-function get_page_by_path($slug, $output, $type) { return $GLOBALS['test_collision']; }
+function get_page_by_path($slug, $output, $type) { return $GLOBALS['test_code_collisions'][$slug] ?? $GLOBALS['test_collision']; }
 function get_permalink($id) { return home_url('/other_course/test/'); }
 function admin_url($path) { return home_url('/wp-admin/' . $path); }
 function add_query_arg($params, $url) { return $url . '?' . http_build_query($params); }
@@ -122,6 +122,33 @@ define('OBJECT', 'OBJECT');
 require __DIR__ . '/../services/wordpress/ais-program-generator.php';
 function check($condition, $message) { if (!$condition) throw new RuntimeException('FAIL: ' . $message); }
 function rejects($callback, $message) { try { $callback(); } catch (RuntimeException $error) { return; } throw new RuntimeException('FAIL: ' . $message); }
+$code_request = array('key'=>str_repeat('9',64), 'postType'=>'courses-pk', 'slug'=>'osnovy-gramotnosti');
+$before_code = serialize(array($test_posts, $test_meta, $test_updates));
+check(ais_pg_landing_code($code_request)['slug'] === $code_request['slug'], 'Free code retained');
+check(ais_pg_landing_code(array_replace($code_request, array('slug'=>'manual_code-_')))['slug'] === 'manual_code-_', 'Valid manual code retained exactly');
+$test_code_collisions = array($code_request['slug'] => (object) array('ID'=>100));
+$free_code = ais_pg_landing_code($code_request)['slug'];
+check($free_code === 'osnovy-gramotnosti-99999999', 'Collision gets a stable program suffix');
+check(ais_pg_landing_code($code_request)['slug'] === $free_code, 'Repeated suggestion stays stable');
+$test_code_collisions[$free_code] = (object) array('ID'=>101);
+check(ais_pg_landing_code($code_request)['slug'] === $free_code . '-2', 'Repeated collisions are resolved');
+$long_code_request = array_replace($code_request, array('slug'=>str_repeat('a',80)));
+$test_code_collisions[$long_code_request['slug']] = (object) array('ID'=>102);
+check(strlen(ais_pg_landing_code($long_code_request)['slug']) === 80, 'Suffix fits the 80-character limit');
+check(serialize(array($test_posts, $test_meta, $test_updates)) === $before_code, 'Suggestion does not write any site content');
+$test_posts[999] = array('key'=>$code_request['key'], 'type'=>'courses-pk', 'status'=>'draft', 'post_name'=>'saved-draft');
+check(ais_pg_landing_code($code_request)['slug'] === 'saved-draft', 'Own draft address recovered after interrupted preparation');
+$test_posts[999]['status'] = 'publish';
+check(ais_pg_landing_code($code_request)['slug'] === 'saved-draft', 'Published address never renamed');
+rejects(function () use ($code_request) { ais_pg_landing_code(array_replace($code_request, array('postType'=>'courses-pp'))); }, 'Cannot change the existing landing type');
+$test_posts[999]['status'] = 'trash';
+rejects(function () use ($code_request) { ais_pg_landing_code($code_request); }, 'Trashed draft not silently replaced');
+unset($test_posts[999]);
+foreach (array(array('key'=>'bad'), array('slug'=>'../bad'), array('postType'=>'product')) as $invalid) rejects(function () use ($code_request, $invalid) { ais_pg_landing_code(array_replace($code_request, $invalid)); }, 'Invalid suggestion refused');
+$test_role = 'shop';
+rejects(function () use ($code_request) { ais_pg_landing_code($code_request); }, 'Suggestion available only on education site');
+$test_role = 'edu';
+$test_code_collisions = array();
 check(ais_pg_signature(str_repeat('a', 64), 'POST', '/wp-json/ais-program-sites/v1/publish', '1789380000', str_repeat('1', 32), '{}') === '6c60bfb88e6bee88888142416b262f30d1af1b313442898cc14b26f40e40ea0d', 'Node/PHP signature compatibility');
 $request = new class {
     public $headers = array();

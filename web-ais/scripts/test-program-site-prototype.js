@@ -28,7 +28,8 @@ async function main() {
   assert.equal((await pg.inspectSite({}, () => assert.fail("Empty address requires no site lookup"))).exists, false);
   await assert.rejects(pg.inspectSite(program, async () => {throw new Error("Network failed");}), /Network failed/);
   await assert.rejects(pg.inspectSite(program, async () => ({})), /не подтвердил/);
-  await assert.rejects(pg.inspectSite({landingCode: "../bad"}, call), /код/);
+  assert.equal((await pg.inspectSite({landingCode: "../bad"}, () => assert.fail("Invalid new code is generated automatically"))).exists, false);
+  assert.equal((await pg.inspectSite({landingCode: "Имя", sitePublication: {landing: {id: 42}}}, call)).exists, true, "Invalid code must not hide an existing publication");
   const unavailableShop = await pg.inspectSite(program, async (site, endpoint) => {
     if (site === "shop") throw new Error("Shop unavailable");
     return landing;
@@ -93,6 +94,6 @@ async function main() {
   assert.match(context.renderProgramGeneratorFields({type: "КПК"}), /data-site-webinar-only hidden/);
   const css = fs.readFileSync(path.join(__dirname, "../styles.css"), "utf8");
   assert.match(css, /\.program-site-jazz-link-row\s*\{[^}]*flex-wrap: wrap/);
-  console.log("PASS: required/source prototype, saved selection, exact presence, offline/invalid fail-closed, shop independence, mutually exclusive actions, draft continuation");
+  console.log("PASS: required/source prototype, saved selection, exact presence, offline fail-closed, invalid new code generation, shop independence, mutually exclusive actions, draft continuation");
 }
 main().catch(error => {console.error(error); process.exitCode = 1;});

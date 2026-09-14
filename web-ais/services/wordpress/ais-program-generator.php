@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.3.2
+ * Version: 1.3.3
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -83,6 +83,30 @@ function ais_pg_slug($slug, $type, $own_id = 0) {
     if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Недопустимый код лендинга.');
     $collision = get_page_by_path($slug, OBJECT, $type === 'product' ? 'product' : array('other-course', 'courses-pk', 'courses-pp', 'page', 'post'));
     if ($collision && (int) $collision->ID !== (int) $own_id) throw new RuntimeException('Этот адрес уже занят. Существующая страница не изменена; задайте другой код лендинга для новой страницы.');
+}
+// Read-only suggestion: no reservation, post or metadata writes. prepare-landing
+// rechecks the address to reject a collision that occurs after this lookup.
+function ais_pg_landing_code($data) {
+    if (ais_pg_role() !== 'edu') throw new RuntimeException('Операция доступна только на сайте программ.');
+    if (!is_string($data['key'] ?? null) || !preg_match('/^[a-f0-9]{64}$/D', $data['key'])) throw new RuntimeException('Недопустимый ключ программы.');
+    if (!in_array($data['postType'] ?? '', array('other-course', 'courses-pk', 'courses-pp'), true)) throw new RuntimeException('Недопустимый вид программы.');
+    $slug = $data['slug'] ?? '';
+    if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Недопустимый код лендинга.');
+    $own_id = ais_pg_find($data['key']);
+    if ($own_id) {
+        $post = get_post($own_id);
+        if (!$post || $post->post_type !== $data['postType']) throw new RuntimeException('Вид программы отличается от уже созданного лендинга.');
+        $slug = $post->post_name;
+        ais_pg_slug($slug, $data['postType'], $own_id);
+        return array('slug' => $slug);
+    }
+    for ($attempt = 0; $attempt < 100; $attempt++) {
+        $suffix = $attempt ? '-' . substr($data['key'], 0, 8) . ($attempt > 1 ? '-' . $attempt : '') : '';
+        $candidate = $attempt ? rtrim(substr($slug, 0, 80 - strlen($suffix)), '-_') . $suffix : $slug;
+        $collision = get_page_by_path($candidate, OBJECT, array('other-course', 'courses-pk', 'courses-pp', 'page', 'post'));
+        if (!$collision) return array('slug' => $candidate);
+    }
+    throw new RuntimeException('Не удалось подобрать свободный адрес лендинга. Повторите подготовку позже.');
 }
 /** Export repeater/group values by field NAME; import them by ACF field KEY. */
 function ais_pg_acf_value($field, $value, $writing = false) {
@@ -498,10 +522,11 @@ function ais_pg_dispatch($request) {
             if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             $data = $request->get_json_params() ?: array();
             if ($action === 'resolve-site') return ais_pg_resolve_site($data);
+            if ($action === 'landing-code') return ais_pg_landing_code($data);
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.3.2', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.3.3', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -519,7 +544,7 @@ function ais_pg_dispatch($request) {
 }
 add_action('rest_api_init', function () {
     foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)', 'sync-product/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
-    foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'check-sync', 'sync-existing') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
 // This filter runs ONLY after WooCommerce has checked download/order permissions.
 add_filter('woocommerce_file_download_method', function ($method, $id, $file) {

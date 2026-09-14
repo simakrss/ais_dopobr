@@ -40003,7 +40003,7 @@ async function route(req, res) {
     }
     try {
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
-      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
       if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
         || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
@@ -40028,6 +40028,10 @@ async function route(req, res) {
       const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
       if (!savedProgram && (action !== "resolve" || body.programId)) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
       const program = programSiteGenerator.withTrainingPlan(savedProgram || {}, shared.document.data);
+      if (action === "landing-code") {
+        sendJson(res, 200, await programSiteGenerator.suggestLandingCode(program, call));
+        return;
+      }
       if (["resolve", "preview-sync", "sync"].includes(action)) {
         let result;
         if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash);

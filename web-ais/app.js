@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.459",
+    version: "1.7.460",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.460",
+      releasedAt: "2026-09-14",
+      changes: [
+        "При создании программы на сайте код лендинга подбирается автоматически из названия с проверкой свободного адреса. Код сохраняется в карточке до подготовки черновиков и повторно используется при продолжении."
+      ]
+    },
     {
       version: "1.7.459",
       releasedAt: "2026-09-14",
@@ -32706,6 +32713,21 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
   }
 
+  async function ensureProgramSiteLandingCode(card, programId) {
+    const input = card.elements.landingCode;
+    if (!input) throw new Error("Поле кода лендинга недоступно. Обновите карточку программы.");
+    const previous = input.value;
+    const result = await programSiteRequest("landing-code", {programId});
+    if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(result?.landingCode || "")) throw new Error("Не удалось подобрать код лендинга. Повторите подготовку.");
+    if (!card.isConnected || input.value !== previous) throw new Error("Параметры карточки изменились во время подбора кода. Повторите подготовку.");
+    input.value = result.landingCode;
+    input.dispatchEvent(new Event("input", {bubbles: true}));
+    // Persist before any site write. Failed saves must never leave orphan drafts
+    // whose address changes on the next preparation attempt.
+    if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Код лендинга не сохранён в общей базе. Черновики не создавались; повторите подготовку.");
+    return result.landingCode;
+  }
+
   function getDefaultProgramSiteTemplateId(program, templates) {
     const selected = Number(program.siteTemplateId || program.sitePublication?.templateId || 0);
     if (selected && templates.some(item => Number(item.id) === selected)) return String(selected);
@@ -32758,7 +32780,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
         <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
         <div data-site-prototype-link></div>
-        <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Новый код лендинга должен быть свободен. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка изменённых параметров обновляет только его собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
+        <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Код лендинга формируется автоматически из названия программы с проверкой свободного адреса и сохраняется в карточке. Ранее указанный свободный код сохраняется. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка использует тот же адрес и обновляет только собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
         <p role="status" aria-live="polite" data-site-status></p>
         <section data-site-result hidden></section>
@@ -32892,7 +32914,11 @@ MAX - https://bizvmax.ru/zifra_plus
     prepareButton.addEventListener("click", async () => {
       if (busy || !select.value) return;
       busy = true;
-      try { await saveParameters(); }
+      status.textContent = "Подбор и сохранение свободного кода лендинга…";
+      try {
+        await saveParameters();
+        await ensureProgramSiteLandingCode(card, programId);
+      }
       catch (error) { status.textContent = error.message; setBusy(false); return; }
       setBusy(true);
       status.textContent = "Создание образцов документов, загрузка всех страниц и подготовка черновиков с отзывами прототипа. Дождитесь результата…";
