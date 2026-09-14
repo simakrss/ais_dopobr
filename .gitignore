@@ -1,5 +1,6 @@
 web-ais/storage/photos/*
 web-ais/storage/server-settings.json
+web-ais/storage/program-site-keys.json
 web-ais/storage/database-demo-mode.flag
 web-ais/storage/database-demo-mode.secret
 web-ais/storage/jobs/*

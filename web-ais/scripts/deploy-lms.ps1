@@ -5,7 +5,9 @@ param(
   [switch]$All,
   [switch]$ListDeployable,
   [switch]$ValidateProfile,
-  [switch]$TunnelRuntime
+  [switch]$TunnelRuntime,
+  # Explicit, separately approved installation only; never part of -All.
+  [switch]$ProgramSites
 )
 
 Set-StrictMode -Version Latest
@@ -24,6 +26,7 @@ $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
   "document-workflow.js",
+  "program-site-generator.js",
   "local-document-save-dialog.js",
   "audit-lib.php",
   "auth-lib.php",
@@ -70,6 +73,7 @@ function Test-DeployablePath([string]$PathValue) {
     "favicon.ico",
     "field-html-links.js",
     "document-workflow.js",
+    "program-site-generator.js",
     "local-document-save-dialog.js",
     "gateway.php",
     "index.html",
@@ -126,10 +130,15 @@ if ($ListDeployable) {
 }
 
 if ($ValidateProfile) {
-  if ($TunnelRuntime -or $All -or $RelativePath.Count) {
+  if ($TunnelRuntime -or $ProgramSites -or $All -or $RelativePath.Count) {
     throw "-ValidateProfile cannot be combined with deployment parameters."
   }
   $pathsToDeploy = @()
+} elseif ($ProgramSites) {
+  if ($TunnelRuntime -or $All -or $RelativePath.Count) { throw "-ProgramSites нельзя объединять с другими режимами публикации." }
+  $moduleTracked = @(& (Get-GitPath) -C $repositoryRoot ls-files -- web-ais/services/wordpress/ais-program-generator.php)
+  if (-not $moduleTracked.Count) { throw "Сначала добавьте служебный модуль в проверенный коммит." }
+  $pathsToDeploy = @("services/wordpress/ais-program-generator.php")
 } elseif ($TunnelRuntime) {
   if ($All -or $RelativePath.Count) {
     throw "-TunnelRuntime нельзя объединять с -All или -RelativePath."
@@ -497,7 +506,65 @@ function Publish-FileTarget(
   }
 }
 
-$results = foreach ($relativeFile in $pathsToDeploy) {
+function Read-ProgramSitePrivateFile([string]$RemotePath) {
+  if ((Get-FtpFileSize $RemotePath) -lt 0) { return $null }
+  $response = (New-FtpRequest $RemotePath ([Net.WebRequestMethods+Ftp]::DownloadFile)).GetResponse()
+  try {
+    $reader = New-Object IO.StreamReader($response.GetResponseStream(), [Text.Encoding]::UTF8)
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+  } finally { Close-FtpResponse $response }
+}
+
+function Install-ProgramSiteModules {
+  $keyJsonRemote = "/edu-plus.ru/lms-runtime/data/program-site-keys.json"
+  $keyJsonLocal = Join-Path $appRoot "storage/program-site-keys.json"
+  $remoteJson = Read-ProgramSitePrivateFile $keyJsonRemote
+  $localJson = if (Test-Path -LiteralPath $keyJsonLocal) { [IO.File]::ReadAllText($keyJsonLocal) } else { "" }
+  $keys = if ($remoteJson) { $remoteJson | ConvertFrom-Json } elseif ($localJson) { $localJson | ConvertFrom-Json } else { $null }
+  if ($null -eq $keys) {
+    $values = @{}
+    $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+      foreach ($role in @("edu", "shop")) {
+        $buffer = New-Object byte[] 32
+        $random.GetBytes($buffer)
+        $values[$role] = [BitConverter]::ToString($buffer).Replace("-", "").ToLowerInvariant()
+      }
+    } finally { $random.Dispose() }
+    $keys = [pscustomobject]$values
+  }
+  foreach ($role in @("edu", "shop")) {
+    if (-not $keys.PSObject.Properties[$role] -or [string]$keys.$role -cnotmatch "^[a-f0-9]{64}$") { throw "Некорректные ключи модулей. Существующие ключи не изменены." }
+  }
+  if ($remoteJson -and $localJson) {
+    $localKeys = $localJson | ConvertFrom-Json
+    if ($localKeys.edu -cne $keys.edu -or $localKeys.shop -cne $keys.shop) { throw "Локальные ключи отличаются от серверных. Автоматическая перезапись запрещена." }
+  }
+  $targets = @(
+    @{ Role = "edu"; Site = "edu-plus.ru" },
+    @{ Role = "shop"; Site = "zifra-plus.ru" }
+  )
+  # Check ALL existing site keys before writing any of them.
+  foreach ($target in $targets) {
+    $existing = Read-ProgramSitePrivateFile "/$($target.Site)/ais-program-site.key"
+    if ($existing -and $existing.Trim() -cne [string]$keys.($target.Role)) { throw "Ключ сайта $($target.Site) отличается. Установка остановлена без ротации ключей." }
+  }
+  $keyStageDir = Join-Path $appRoot ".runtime/program-sites"
+  [IO.Directory]::CreateDirectory($keyStageDir) | Out-Null
+  [IO.Directory]::CreateDirectory((Split-Path -Parent $keyJsonLocal)) | Out-Null
+  [IO.File]::WriteAllText($keyJsonLocal, ($keys | ConvertTo-Json -Compress), $utf8)
+  Publish-FileTarget "storage/program-site-keys.json" $keyJsonRemote "private generator settings"
+  foreach ($target in $targets) {
+    $role = $target.Role
+    [IO.File]::WriteAllText((Join-Path $keyStageDir "$role.key"), [string]$keys.$role, $utf8)
+    Publish-FileTarget ".runtime/program-sites/$role.key" "/$($target.Site)/ais-program-site.key" "private site key"
+    Publish-FileTarget "services/wordpress/ais-program-generator.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-program-generator.php" "WordPress module $($target.Site)"
+  }
+}
+
+$results = if ($ProgramSites) {
+  Install-ProgramSiteModules
+} else { foreach ($relativeFile in $pathsToDeploy) {
   if ($relativeFile -eq ".runtime/tunnel-runtime.json") {
     Publish-FileTarget $relativeFile "$remoteRoot/storage/tunnel-runtime.json" "protected runtime"
     continue
@@ -512,6 +579,6 @@ $results = foreach ($relativeFile in $pathsToDeploy) {
   if ($mirrorToRuntime) {
     Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime"
   }
-}
+} }
 
 $results | Format-Table -AutoSize

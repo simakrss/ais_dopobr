@@ -59,6 +59,7 @@ async function promoteCodexTrainingEndDateAssets() {
 
 const SERVER_CODE_ROOT = __dirname;
 const documentWorkflow = require("./document-workflow.js");
+const programSiteGenerator = require("./program-site-generator.js");
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const {
   sanitizeDemoSharedState,
@@ -39987,6 +39988,47 @@ async function route(req, res) {
     && requestUrl.pathname === "/api/settings/system-documents"
   ) {
     await handleSystemDocumentSettings(req, res, authUser);
+    return;
+  }
+  if (requestUrl.pathname.startsWith("/api/program-sites/")) {
+    if (authUser?.role !== "admin") {
+      sendError(res, 403, "Создание программ на сайте доступно только администратору.");
+      return;
+    }
+    try {
+      const action = requestUrl.pathname.slice("/api/program-sites/".length);
+      const reading = req.method === "GET" && ["health", "templates"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish"].includes(action);
+      if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
+      if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
+        || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
+        sendError(res, 403, "Запрос должен исходить из интерфейса АИС.");
+        return;
+      }
+      const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+      const call = programSiteGenerator.createClient(keys);
+      if (reading) {
+        sendJson(res, 200, action === "templates" ? await call("edu", "/templates") : {
+          ok: true, sites: await Promise.all([call("edu", "/health"), call("shop", "/health")])
+        });
+        return;
+      }
+      const body = await readJsonBody(req, 64 * 1024);
+      // Use the saved authoritative program, never a client-supplied price or link.
+      const shared = await readSharedApplicationStateDocument({ allowCache: false });
+      if (shared.offline || shared.pendingCount || shared.syncPending) {
+        sendError(res, 409, "Дождитесь завершения сохранения общей базы и повторите действие.");
+        return;
+      }
+      const program = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
+      if (!program) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      const result = action === "prepare"
+        ? await programSiteGenerator.prepare(program, body.templateId, call)
+        : await programSiteGenerator.publish(program, body.templateId, body.hash, call);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendError(res, Number(error.statusCode) || 400, error.message);
+    }
     return;
   }
   if (

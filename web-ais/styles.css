@@ -30986,3 +30986,35 @@ button.icon-button.form-cancel-button {
   .document-workflow-actions { flex: 1 1 100%; }
   .document-workflow-actions button { flex: 1 1 180px; }
 }
+/* Program website wizard: native modal keeps the unsaved underlying card inert. */
+dialog.program-site-dialog {
+  width: min(820px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line, #d7e1df);
+  color: var(--text);
+  font-size: 13px;
+}
+dialog.program-site-dialog:not([open]) { display: none; }
+dialog.program-site-dialog[open] { display: block; }
+dialog.program-site-dialog::backdrop { background: #122a3280; }
+.program-site-body { display: grid; gap: 12px; padding: 16px; overflow-wrap: anywhere; }
+.program-site-body > p, .program-site-body [data-site-result] > p, .program-site-body h3 { margin: 0; }
+.program-site-body label { display: grid; gap: 5px; min-width: 0; }
+.program-site-body input:not([type="checkbox"]), .program-site-body select, .program-site-body textarea {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+  background: var(--panel); color: var(--text); font: inherit;
+}
+.program-site-body [data-site-result]:not([hidden]) { display: grid; gap: 12px; border-top: 1px solid #d7e1df; padding-top: 12px; }
+.program-site-body .program-site-review { display: flex; align-items: flex-start; gap: 8px; }
+.program-site-body [data-site-publish] { justify-self: start; }
+.program-site-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.program-site-actions a { text-decoration: none; }
+.program-site-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.program-site-fields textarea { font-family: Consolas, monospace; min-height: 80px; }
+@media (max-width: 600px) {
+  .program-site-fields { grid-template-columns: minmax(0, 1fr); }
+  .program-site-body { padding: 12px; }
+}
