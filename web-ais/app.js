@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.465",
+    version: "1.7.466",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.466",
+      releasedAt: "2026-09-15",
+      changes: [
+        "В реестре программ запоминаются поиск, статус, виды программ и фильтры по значениям таблицы. Они восстанавливаются при возвращении в раздел и после обновления страницы отдельно для каждого пользователя браузера."
+      ]
+    },
     {
       version: "1.7.465",
       releasedAt: "2026-09-15",
@@ -3944,6 +3951,8 @@
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
+  const PROGRAM_REGISTRY_FILTERS_KEY = "ais-dopobr-program-registry-filters-v1";
+  const programRegistryFilterPreferences = new Map();
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
     "ООО Цифровизация Плюс/АИС Допобразование/АИС Допобразование.xlsb";
   const STUDENT_DATABASE_OPERATION_HISTORY_LIMIT = 100;
@@ -13094,6 +13103,67 @@ MAX - https://bizvmax.ru/zifra_plus
     return navItems.some((item) => item.id === saved) && canAccessView(saved) ? saved : "dashboard";
   }
 
+  function getProgramRegistryFiltersStorageKey() {
+    if (isDatabaseDemoMode()) return "";
+    const user = getCurrentAuthUser();
+    const userId = String(user.id || user.login || "").trim();
+    return userId ? `${PROGRAM_REGISTRY_FILTERS_KEY}:${encodeURIComponent(userId)}` : "";
+  }
+
+  function normalizeProgramRegistryFilters(value = {}) {
+    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    const text = (item, limit) => typeof item === "string" ? item.slice(0, limit) : "";
+    const types = Array.isArray(source.types) ? source.types : [];
+    const tableFilters = source.tableFilters && typeof source.tableFilters === "object" && !Array.isArray(source.tableFilters)
+      ? source.tableFilters : {};
+    const allowedColumns = new Set([...configs.programs.table, ...configs.programs.fields.map((item) => item.key)]);
+    return {
+      search: text(source.search, 2000),
+      status: text(source.status, 200).trim() || "Все",
+      types: [...new Set(types.slice(0, 100).map((item) => text(item, 100).trim()).filter(Boolean))],
+      tableFilters: Object.fromEntries(Object.entries(tableFilters).filter(([key, filter]) => (
+        allowedColumns.has(key) && !["__proto__", "constructor", "prototype"].includes(key)
+        && filter && typeof filter.value === "string" && filter.value
+      )).map(([key, filter]) => [key, {value: text(filter.value, 4000), label: text(filter.label, 4000)}]))
+    };
+  }
+
+  function loadProgramRegistryFilters() {
+    const key = getProgramRegistryFiltersStorageKey();
+    if (!key) return normalizeProgramRegistryFilters();
+    if (programRegistryFilterPreferences.has(key)) return normalizeProgramRegistryFilters(programRegistryFilterPreferences.get(key));
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(key) || "null"); } catch { /* Corrupt or unavailable storage must not block the registry. */ }
+    const filters = normalizeProgramRegistryFilters(saved);
+    programRegistryFilterPreferences.set(key, filters);
+    return normalizeProgramRegistryFilters(filters);
+  }
+
+  function saveProgramRegistryFilters() {
+    if (state.view !== "programs") return;
+    const key = getProgramRegistryFiltersStorageKey();
+    if (!key) return;
+    const filters = normalizeProgramRegistryFilters({
+      search: state.search, status: state.statusFilter, types: state.programRegistryTypeFilter,
+      tableFilters: state.tableValueFilters?.programs
+    });
+    // Personal browser preference only: never put filters into the shared database.
+    programRegistryFilterPreferences.set(key, filters);
+    try {
+      const serialized = JSON.stringify(filters);
+      if (localStorage.getItem(key) !== serialized) localStorage.setItem(key, serialized);
+    } catch { /* Keep the in-memory preference if storage is disabled or full. */ }
+  }
+
+  function restoreProgramRegistryFilters() {
+    if (state.view !== "programs" || !getProgramRegistryFiltersStorageKey()) return;
+    const filters = loadProgramRegistryFilters();
+    state.search = filters.search;
+    state.statusFilter = filters.status === "Все" || getFilterOptions(configs.programs).includes(filters.status) ? filters.status : "Все";
+    state.programRegistryTypeFilter = filters.types;
+    state.tableValueFilters = { ...(state.tableValueFilters || {}), programs: filters.tableFilters };
+  }
+
   function getDefaultStatusFilter(viewId) {
     return viewId === "students" ? "Учится" : "Все";
   }
@@ -13486,6 +13556,7 @@ MAX - https://bizvmax.ru/zifra_plus
         programs: [...(state.studentListFilters?.programs || [])]
       },
       programRegistryTypeFilter: [...(state.programRegistryTypeFilter || [])],
+      programTableValueFilters: normalizeProgramRegistryFilters({tableFilters: state.tableValueFilters?.programs}).tableFilters,
       contractSectionFilter: [...(state.contractSectionFilter || [])],
       issuedDocumentFilters: { ...(state.issuedDocumentFilters || {}) },
       issuedDocumentSort: { ...(state.issuedDocumentSort || {}) },
@@ -13548,6 +13619,7 @@ MAX - https://bizvmax.ru/zifra_plus
       studentProgramTypeFilter: [],
       studentListFilters: { programs: [] },
       programRegistryTypeFilter: [],
+      programTableValueFilters: {},
       contractSectionFilter: [],
       issuedDocumentFilters: {},
       issuedDocumentSort: {},
@@ -13596,6 +13668,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function synchronizeAisBrowserHistory() {
+    saveProgramRegistryFilters();
     if (!aisHistoryNavigationBound || aisHistoryNavigationRestoring) return;
     const snapshot = captureAisNavigationSnapshot();
     const currentSnapshot = window.history.state?.aisNavigation;
@@ -13669,6 +13742,9 @@ MAX - https://bizvmax.ru/zifra_plus
       programs: [...(snapshot.studentListFilters?.programs || [])]
     };
     state.programRegistryTypeFilter = [...(snapshot.programRegistryTypeFilter || [])];
+    if (nextView === "programs" && Object.hasOwn(snapshot, "programTableValueFilters")) {
+      state.tableValueFilters = { ...(state.tableValueFilters || {}), programs: normalizeProgramRegistryFilters({tableFilters: snapshot.programTableValueFilters}).tableFilters };
+    }
     state.contractSectionFilter = [...(snapshot.contractSectionFilter || [])];
     state.issuedDocumentFilters = {
       ...(state.issuedDocumentFilters || {}),
@@ -13795,6 +13871,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const cursorStart = input.selectionStart;
     const cursorEnd = input.selectionEnd;
     state.search = value;
+    // Save before the debounced render, including a quick departure or page reload.
+    saveProgramRegistryFilters();
     state.tablePages[view] = 1;
     if (mainRegistrySearchTimer) {
       window.clearTimeout(mainRegistrySearchTimer);
@@ -42120,6 +42198,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
+        restoreProgramRegistryFilters();
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
@@ -42151,6 +42230,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : getDefaultStatusFilter(state.view);
         state.studentProgramTypeFilter = [];
         state.programRegistryTypeFilter = [];
+        restoreProgramRegistryFilters();
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
@@ -72270,6 +72350,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (sharedStatePendingPatch) sharedStatePendingCount = Math.max(1, sharedStatePendingCount);
       console.warn("Общая база недоступна, используется резервная копия браузера", error);
     }
+    restoreProgramRegistryFilters();
     bindStudentStatusHistoryNavigation();
     window.addEventListener("resize", repositionOpenFieldLookupPanels, { passive: true });
     window.addEventListener("resize", repositionOpenComboPanels, { passive: true });
