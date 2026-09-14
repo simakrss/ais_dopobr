@@ -31012,6 +31012,11 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-body .program-site-review { display: flex; align-items: flex-start; gap: 8px; }
 .program-site-body [data-site-publish] { justify-self: start; }
 .program-site-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.program-site-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding: 10px 12px; border: 1px solid #c8dedb; border-radius: 8px; background: #f2faf8; font-size: 13px; }
+.program-site-progress[hidden], .program-site-progress progress[hidden] { display: none; }
+.program-site-progress progress { grid-column: 1 / -1; width: 100%; height: 8px; accent-color: var(--teal); }
+.program-site-progress time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.program-site-progress[data-state="failed"] { background: #fff8ed; border-color: #e4c899; }
 .program-site-actions a { text-decoration: none; }
 .program-site-actions > [hidden] { display: none !important; }
 .program-site-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }

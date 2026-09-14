@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.460",
-    releasedAt: "2026-09-14"
+    version: "1.7.461",
+    releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.461",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Генератор показывает текущий этап, подготовку страниц образцов и время выполнения. При ошибке сохраняется этап остановки.",
+        "Файл подключения к вебинару сохраняется в поддерживаемом WooCommerce формате TXT в защищённой папке; переход к SberJazz по-прежнему доступен после проверки заказа."
+      ]
+    },
     {
       version: "1.7.460",
       releasedAt: "2026-09-14",
@@ -32713,6 +32721,52 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
   }
 
+  function createProgramSiteProgress(dialog) {
+    const box = dialog.querySelector("[data-site-progress]");
+    const label = box.querySelector("[data-site-progress-label]");
+    const elapsed = box.querySelector("[data-site-progress-time]");
+    const bar = box.querySelector("progress");
+    let timer, polling, epoch = 0, startedAt = 0, lastLabel = "";
+    const unwatch = () => { epoch++; clearInterval(polling); polling = null; };
+    const phase = text => { lastLabel = String(text).slice(0, 200); label.textContent = lastLabel; };
+    const tick = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      elapsed.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+    };
+    return {
+      start(text) {
+        unwatch(); clearInterval(timer); startedAt = Date.now();
+        box.hidden = false; bar.hidden = false; box.dataset.state = "running";
+        phase(text); tick(); timer = setInterval(tick, 1000);
+        box.scrollIntoView({block: "nearest"});
+      },
+      phase,
+      local(text) { unwatch(); phase(text); },
+      watch(requestId) {
+        unwatch(); const current = epoch; let inFlight = false;
+        const poll = async () => {
+          if (inFlight || current !== epoch || !box.isConnected) return;
+          inFlight = true;
+          try {
+            const response = await fetch(photoApiUrl(`/api/program-sites/progress?requestId=${encodeURIComponent(requestId)}`), {
+              credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(6000)
+            });
+            const data = response.ok ? await response.json() : null;
+            if (current === epoch && typeof data?.label === "string") phase(data.label);
+          } catch { /* Progress transport must never repeat or abort the actual operation. */ }
+          finally { inFlight = false; }
+        };
+        polling = setInterval(poll, 1200); void poll();
+      },
+      stop(failed = false) {
+        unwatch(); clearInterval(timer); tick(); bar.hidden = true;
+        box.dataset.state = failed ? "failed" : "completed";
+        label.textContent = failed ? `Остановлено: ${lastLabel}` : "Выполнено";
+      },
+      dispose() { unwatch(); clearInterval(timer); }
+    };
+  }
+
   async function ensureProgramSiteLandingCode(card, programId) {
     const input = card.elements.landingCode;
     if (!input) throw new Error("Поле кода лендинга недоступно. Обновите карточку программы.");
@@ -32782,6 +32836,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div data-site-prototype-link></div>
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Код лендинга формируется автоматически из названия программы с проверкой свободного адреса и сохраняется в карточке. Ранее указанный свободный код сохраняется. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка использует тот же адрес и обновляет только собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
+        <div class="program-site-progress" data-site-progress hidden><progress aria-label="Выполнение генерации"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time title="Время выполнения" aria-label="Время выполнения" data-site-progress-time>0:00</time></div>
         <p role="status" aria-live="polite" data-site-status></p>
         <section data-site-result hidden></section>
       </div>`;
@@ -32796,6 +32851,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     dialog.showModal();
     const status = dialog.querySelector("[data-site-status]");
+    const progress = createProgramSiteProgress(dialog);
     const select = dialog.querySelector("[data-site-template]");
     const templateInput = generatorFields?.querySelector('[name="siteTemplateId"]');
     const resultArea = dialog.querySelector("[data-site-result]");
@@ -32818,7 +32874,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ...(body ? {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {})
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "Не удалось выполнить запрос генератора.");
+      if (!response.ok) throw Object.assign(new Error(payload.error || "Не удалось выполнить запрос генератора."), {stage: payload.stage});
       return payload;
     };
     const saveParameters = async () => {
@@ -32863,18 +32919,25 @@ MAX - https://bizvmax.ru/zifra_plus
       publishButton?.addEventListener("click", async () => {
         if (busy || !review.checked || !result.certificateHash || !samplesReady() || Number(select.value) !== Number(result.templateId)) return;
         busy = true;
+        progress.start("Сохранение параметров перед публикацией");
         try { await saveParameters(); }
-        catch (error) { status.textContent = error.message; setBusy(false); return; }
+        catch (error) { status.textContent = error.message; progress.stop(true); setBusy(false); return; }
         setBusy(true);
         status.textContent = "Публикация страницы и товара, включение переходов…";
         try {
           if (!await ensureRecordLockForSave(card)) throw new Error("Сначала восстановите блокировку карточки.");
-          const published = await request("publish", {programId, templateId: result.templateId, hash: result.hash, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
+          const requestId = crypto.randomUUID();
+          progress.phase("Проверка и публикация программы"); progress.watch(requestId);
+          const published = await request("publish", {programId, requestId, templateId: result.templateId, hash: result.hash, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
           result = {...result, ...published};
           drawResult();
+          progress.local("Сохранение результата публикации в общей базе");
           await storeResult(result);
+          progress.stop();
           status.textContent = "Страница и товар опубликованы. Переход из магазина на лендинг включён." + (type === "ПРО" ? " Подключение к вебинару выдаётся после проверки заказа." : "");
         } catch (error) {
+          if (error.stage) progress.phase(error.stage);
+          progress.stop(true);
           status.textContent = `${error.message} Если связь прервалась, повторите действие с теми же параметрами: уже созданные объекты не будут дублироваться.`;
         } finally { setBusy(false); }
       });
@@ -32914,21 +32977,27 @@ MAX - https://bizvmax.ru/zifra_plus
     prepareButton.addEventListener("click", async () => {
       if (busy || !select.value) return;
       busy = true;
+      progress.start("Сохранение параметров программы");
       status.textContent = "Подбор и сохранение свободного кода лендинга…";
       try {
         await saveParameters();
+        progress.phase("Подбор и сохранение свободного кода лендинга");
         await ensureProgramSiteLandingCode(card, programId);
       }
-      catch (error) { status.textContent = error.message; setBusy(false); return; }
+      catch (error) { status.textContent = error.message; progress.stop(true); setBusy(false); return; }
       setBusy(true);
       status.textContent = "Создание образцов документов, загрузка всех страниц и подготовка черновиков с отзывами прототипа. Дождитесь результата…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Сначала восстановите блокировку карточки.");
-        result = await request("prepare", {programId, templateId: Number(select.value), preferLocalTemplate: getEffectiveLocalDocumentsMode()});
+        const requestId = crypto.randomUUID();
+        progress.phase("Проверка параметров и шаблонов"); progress.watch(requestId);
+        result = await request("prepare", {programId, requestId, templateId: Number(select.value), preferLocalTemplate: getEffectiveLocalDocumentsMode()});
         drawResult();
+        progress.local("Сохранение результата подготовки в общей базе");
         await storeResult(result);
+        progress.stop();
         status.textContent = result.stage === "published" ? "Эта программа уже опубликована; копии не создавались." : "Черновики сохранены. Проверьте их по ссылкам ниже перед публикацией.";
-      } catch (error) { status.textContent = `${error.message} При частичном выполнении черновики сохраняются: повторите подготовку с теми же параметрами.`; }
+      } catch (error) { if (error.stage) progress.phase(error.stage); progress.stop(true); status.textContent = `${error.message} При частичном выполнении черновики сохраняются: повторите подготовку с теми же параметрами.`; }
       finally {
         setBusy(false);
         const publishButton = resultArea.querySelector("[data-site-publish]");
@@ -32937,6 +33006,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     const close = () => {
       if (busy) return;
+      progress.dispose();
       if (generatorFields && generatorHome?.isConnected) {
         generatorFields.hidden = true;
         generatorHome.appendChild(generatorFields);

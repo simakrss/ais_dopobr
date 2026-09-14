@@ -104,7 +104,7 @@ if (process.argv.includes("--serve")) {
       const persist=()=>document.getElementById('saved').textContent='Результат сохранён в тестовой базе',flushSharedApplicationState=async()=>true,render=()=>{};
       const logStep=step=>{const el=document.getElementById('saved');el.dataset.steps=JSON.stringify([...JSON.parse(el.dataset.steps||'[]'),step]);};
       const saveRecordFormBeforeContinuation=async(form)=>{const values=Object.fromEntries(new FormData(form));logStep('save:'+values.landingCode);if(${process.env.AIS_QA_FAIL_CODE_SAVE === '1'} && values.landingCode==='${pg.landingCodeFromName(uiProgram.name)}') return '';Object.assign(state.data.collections.programs[0],values);document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
-      let syncWrites=0;
+      let syncWrites=0, qaPhase='Проверка параметров', qaAttempts=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
         const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
         if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url},{id:42,title:'Другой прототип',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url}]};
@@ -116,7 +116,13 @@ if (process.argv.includes("--serve")) {
         }
         else if(url.endsWith('/sync')) {syncWrites++;result={ok:true,landing,product:products.find(item=>item.id===body.productId),syncedAt:new Date().toISOString()};document.getElementById('saved').dataset.writes=syncWrites;}
         else if(url.endsWith('/landing-code')) {logStep('lookup-code');result={ok:true,landingCode:state.data.collections.programs[0].landingCode || '${pg.landingCodeFromName(uiProgram.name)}'};}
-        else if(url.endsWith('/prepare')||url.endsWith('/publish')) {logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:'prepared',type:'${uiProgram.type}',templateId:body.templateId,hash:'qa',landing,product:products[0]};}
+        else if(url.includes('/progress?')) result={status:'running',label:qaPhase};
+        else if(url.endsWith('/prepare')||url.endsWith('/publish')) {
+          qaAttempts++; qaPhase='Подготовка изображения образца: страница 1 из 3';
+          if(${process.env.AIS_QA_SITE_DELAY === '1'}) {await new Promise(resolve=>setTimeout(resolve,5000));qaPhase='Создание черновика товара на zifra-plus.ru';await new Promise(resolve=>setTimeout(resolve,7000));}
+          if(${process.env.AIS_QA_SITE_FAILURE === '1'} && qaAttempts===1) return {ok:false,json:async()=>({error:'Тестовый отказ WooCommerce',stage:qaPhase})};
+          logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:url.endsWith('/publish')?'published':'prepared',type:'${uiProgram.type}',templateId:body.templateId,hash:'qa',landing,product:products[0],certificateHash:'qa',certificates:[{id:1,language:'ru'},{id:2,language:'page-2'},{id:3,language:'page-3'}]};
+        }
         else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name},hash:body.productId?'qa-plan':''};
         return {ok:true,json:async()=>result};};
       ${renderFieldSource}

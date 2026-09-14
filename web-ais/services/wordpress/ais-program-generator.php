@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.3.3
+ * Version: 1.3.4
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -285,11 +285,24 @@ function ais_pg_connection_file($key, $name, $url) {
     // A connection link must never be stored in a predictable public uploads file.
     $dir = dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files/' . $key;
     if (!wp_mkdir_p($dir)) throw new RuntimeException('Не удалось создать защищённую папку подключения.');
-    $file = $dir . '/connection.html';
-    $html = '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>' . esc_html($name) . '</title><h1>' . esc_html($name) . '</h1><p><a href="' . esc_attr($url) . '">Подключиться к вебинару SberJazz</a></p></html>';
-    if (file_put_contents($file, $html, LOCK_EX) !== strlen($html)) throw new RuntimeException('Не удалось сохранить HTML-файл подключения.');
+    // HTML is not an allowed WooCommerce download type on standard WordPress.
+    // The private TXT file satisfies its file checks; the authorized download
+    // hook below still redirects the purchaser to the full Jazz connection URL.
+    $file = $dir . '/connection.txt';
+    $content = $name . "\r\n\r\nПодключиться к вебинару SberJazz:\r\n" . $url . "\r\n";
+    if (file_put_contents($file, $content, LOCK_EX) !== strlen($content)) throw new RuntimeException('Не удалось сохранить файл подключения.');
     @chmod($file, 0600);
     return $file;
+}
+function ais_pg_download_formats() {
+    $formats = array();
+    if (!class_exists('WC_Product_Download')) return $formats;
+    foreach (array('html', 'txt') as $extension) {
+        $download = new WC_Product_Download();
+        $download->set_file(dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files/format-check/connection.' . $extension);
+        $formats[$extension] = $download->is_allowed_filetype();
+    }
+    return $formats;
 }
 function ais_pg_prepare_product($data) {
     if (!class_exists('WC_Product_Simple') || !class_exists('WC_Product_Download')) throw new RuntimeException('WooCommerce недоступен.');
@@ -326,6 +339,13 @@ function ais_pg_prepare_product($data) {
         $download->set_id(substr($data['key'], 0, 32));
         $download->set_name('Подключение к вебинару — ' . $name);
         $download->set_file($file);
+        if (method_exists($download, 'check_is_valid')) {
+            try { $download->check_is_valid(false); }
+            catch (Throwable $error) {
+                ais_pg_log_failure($error, 'validate-webinar-download');
+                throw new RuntimeException('WooCommerce отклонил файл подключения. Проверьте доступ к защищённой папке и разрешение файлов TXT в настройках магазина.');
+            }
+        }
         $downloads[] = $download;
     }
     $product->set_downloads($downloads);
@@ -515,6 +535,16 @@ function ais_pg_sync_existing($data, $check_only = false) {
         return ais_pg_result($id);
     } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
 }
+function ais_pg_log_failure($error, $action) {
+    // No request body, link/password, absolute path or vendor message in logs.
+    $reference = substr(hash('sha256', uniqid('', true)), 0, 12);
+    $record = array('reference' => $reference, 'action' => $action, 'exception' => get_class($error),
+        'file' => basename($error->getFile()), 'line' => $error->getLine(),
+        'frames' => array_map(function ($frame) { return ($frame['class'] ?? '') . ($frame['type'] ?? '') . ($frame['function'] ?? ''); }, array_slice($error->getTrace(), 0, 8)));
+    if (function_exists('wc_get_logger')) wc_get_logger()->error(json_encode($record), array('source' => 'ais-program-generator'));
+    else error_log('AIS program generator: ' . json_encode($record));
+    return $reference;
+}
 function ais_pg_dispatch($request) {
     try {
         $action = basename($request->get_route());
@@ -526,7 +556,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.3.3', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.3.4', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -539,7 +569,8 @@ function ais_pg_dispatch($request) {
         return array('id' => $post->ID, 'title' => $post->post_title, 'postType' => $post->post_type, 'modified' => $post->post_modified_gmt, 'fields' => $fields);
     } catch (Throwable $error) {
         // Only deliberate validation errors are public; no paths, SQL or vendor traces.
-        return ais_pg_error($error instanceof RuntimeException ? $error->getMessage() : 'Не удалось выполнить операцию. Проверьте журнал WordPress и повторите подготовку.', 409);
+        $reference = ais_pg_log_failure($error, $action ?? 'unknown');
+        return ais_pg_error($error instanceof RuntimeException ? $error->getMessage() : 'Не удалось выполнить операцию. Код диагностики: ' . $reference . '. Подробности в журнале WooCommerce «ais-program-generator».', 409);
     }
 }
 add_action('rest_api_init', function () {

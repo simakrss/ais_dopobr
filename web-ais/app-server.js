@@ -60,6 +60,7 @@ async function promoteCodexTrainingEndDateAssets() {
 const SERVER_CODE_ROOT = __dirname;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
+const programSiteProgress = require("./program-site-progress.js").createProgressStore();
 const programSiteCertificates = require("./program-site-certificates.js");
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const {
@@ -40001,7 +40002,12 @@ async function route(req, res) {
       sendError(res, 403, "Изменение программ на сайте доступно только администратору.");
       return;
     }
+    let progressJob;
     try {
+      if (req.method === "GET" && action === "progress") {
+        sendJson(res, 200, programSiteProgress.read(authUser.id, requestUrl.searchParams.get("requestId")));
+        return;
+      }
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
       const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
@@ -40019,14 +40025,16 @@ async function route(req, res) {
         return;
       }
       const body = await readJsonBody(req, 64 * 1024);
+      if (["prepare", "publish"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
       // Use the saved authoritative program, never a client-supplied price or link.
       const shared = await readSharedApplicationStateDocument({ allowCache: false });
       if (shared.offline || shared.pendingCount || shared.syncPending) {
+        progressJob?.finish("failed");
         sendError(res, 409, "Дождитесь завершения сохранения общей базы и повторите действие.");
         return;
       }
       const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
-      if (!savedProgram && (action !== "resolve" || body.programId)) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      if (!savedProgram && (action !== "resolve" || body.programId)) { progressJob?.finish("failed"); sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
       const program = programSiteGenerator.withTrainingPlan(savedProgram || {}, shared.document.data);
       if (action === "landing-code") {
         sendJson(res, 200, await programSiteGenerator.suggestLandingCode(program, call));
@@ -40056,6 +40064,8 @@ async function route(req, res) {
       }
       programSiteGenerator.validateTemplateId(body.templateId);
       programSiteGenerator.normalizeProgram(program);
+      const reportProgress = label => progressJob?.report(label);
+      reportProgress("Загрузка шаблона документа об образовании");
       const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
         loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
         applyFormulas: applyCustomDocumentPropertyFormulas, createQr: createDocumentQrCodeImage,
@@ -40064,11 +40074,13 @@ async function route(req, res) {
         render: (bytes, page) => renderOcrDocumentPageBytes(bytes, "certificate-sample.pdf", "application/pdf", page)
       });
       const result = action === "prepare"
-        ? await programSiteGenerator.prepare(program, body.templateId, call, certificate)
-        : await programSiteGenerator.publish(program, body.templateId, body.hash, call, certificate);
+        ? await programSiteGenerator.prepare(program, body.templateId, call, certificate, reportProgress)
+        : await programSiteGenerator.publish(program, body.templateId, body.hash, call, certificate, reportProgress);
+      progressJob?.finish("completed");
       sendJson(res, 200, result);
     } catch (error) {
-      sendError(res, Number(error.statusCode) || 400, error.message);
+      progressJob?.finish("failed");
+      sendJson(res, Number(error.statusCode) || 400, {error: error.message, ...(progressJob ? {stage: progressJob.label()} : {})});
     }
     return;
   }

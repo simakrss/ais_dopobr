@@ -9,6 +9,8 @@ file_put_contents($test_dir . '/wordpress/wp-admin/includes/image.php', '<?php /
 define('ABSPATH', $test_dir . '/wordpress/');
 file_put_contents($test_dir . '/ais-program-site.key', str_repeat('a',64));
 register_shutdown_function(function () use ($test_dir) {
+    foreach (glob($test_dir . '/ais-webinar-files/*/connection.txt') as $file) { unlink($file); rmdir(dirname($file)); }
+    if (is_dir($test_dir . '/ais-webinar-files')) rmdir($test_dir . '/ais-webinar-files');
     foreach (glob($test_dir . '/certificate-sample-*.jpg') as $file) unlink($file);
     unlink($test_dir . '/wordpress/wp-admin/includes/image.php');
     rmdir($test_dir . '/wordpress/wp-admin/includes');
@@ -64,7 +66,23 @@ function wp_kses_post($value) { return $value; }
 if (!function_exists('mb_strlen')) { function mb_strlen($value) { return preg_match_all('/./us', $value); } }
 function get_post_thumbnail_id($id) { return 0; }
 function get_object_taxonomies($type, $output) { return array(); }
-class WC_Product_Download { function __construct() { throw new RuntimeException('Course must not create a Jazz download'); } }
+function wp_mkdir_p($path) { return is_dir($path) || mkdir($path, 0700, true); }
+class WC_Product_Download {
+    public $file; public $id; public $name;
+    function set_file($file) { $this->file = $file; }
+    function set_id($id) { $this->id = $id; }
+    function set_name($name) { $this->name = $name; }
+    function is_allowed_filetype() { return pathinfo($this->file, PATHINFO_EXTENSION) === 'txt'; }
+    function check_is_valid($auto_add = true) {
+        if ($auto_add || !$this->is_allowed_filetype() || !is_file($this->file) || ($GLOBALS['test_approved_dir'] ?? '') !== dirname($this->file) . '/') throw new Exception('Download rejected: secret URL/path must not leak');
+    }
+}
+class TestApprovedDirectories {
+    function add_approved_directory($dir, $enabled) { check($enabled, 'Only private directory enabled'); $GLOBALS['test_approved_dir'] = $dir; }
+}
+class_alias('TestApprovedDirectories', 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register');
+function wc_get_container() { return new class { function get($class) { return new $class(); } }; }
+function wc_get_logger() { return new class { function error($message, $context) { $GLOBALS['test_log'][] = array($message, $context); } }; }
 class WC_Product_Simple {
     public $values=array(); public $meta=array();
     function is_type($type) { return $type==='simple'; }
@@ -261,6 +279,23 @@ foreach (array('ДОП','КПК','ППП') as $course_type) {
     check(get_post_meta($product['id'],'_ais_landing_url')===ais_pg_landing_url($course_type,$landing_data['slug']),'Correct course redirect URL');
     check(!is_dir($test_dir . '/ais-webinar-files'),'No connection file created');
 }
+// Webinar branch must use a private, allowed TXT file and remain idempotent.
+$test_role = 'shop';
+$webinar_data = array('key'=>str_repeat('7',64), 'hash'=>str_repeat('8',64), 'type'=>'ПРО', 'slug'=>'new-webinar-txt',
+    'productName'=>'Онлайн-семинар', 'price'=>500, 'joinUrl'=>'https://jazz.sber.ru/meeting?psw=private-test#join');
+check(ais_pg_download_formats() === array('html'=>false, 'txt'=>true), 'Reproduce standard WooCommerce HTML rejection');
+$webinar_result = ais_pg_mutate('prepare-product', $webinar_data);
+$connection = get_post_meta($webinar_result['id'], '_ais_webinar_file');
+check($connection === $test_dir . '/ais-webinar-files/' . $webinar_data['key'] . '/connection.txt', 'Connection remains outside public WordPress');
+check(strpos(file_get_contents($connection), $webinar_data['joinUrl']) !== false, 'Complete private meeting URL retained');
+check($test_product->values['downloadable'] === true && count($test_product->values['downloads']) === 1, 'Webinar has one authorized download');
+check(ais_pg_mutate('prepare-product', $webinar_data)['id'] === $webinar_result['id'], 'Retry does not duplicate the product');
+$download_hook = $test_filters['woocommerce_file_download_method'][0];
+check($download_hook('force', $webinar_result['id'], $connection) === 'ais_webinar', 'Authorized WooCommerce handler keeps redirecting to Jazz');
+check($download_hook('force', $webinar_result['id'], '/another-file.txt') === 'force', 'No download authorization bypass for other files');
+ais_pg_log_failure(new Exception('private-test password full/path'), 'test-error');
+check(strpos(json_encode($test_log), 'private-test') === false, 'Diagnostic log excludes secret error messages');
+echo "PASS: private TXT webinar download, strict MIME/path validation, complete Jazz URL, own-product retry, authorization hooks, redacted diagnostics\n";
 // Optional real JPEG fixture exercises upload/retry without a WordPress DB or network.
 if (isset($argv[1]) && is_file($argv[1])) {
     $test_role = 'edu';

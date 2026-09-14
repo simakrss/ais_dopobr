@@ -221,19 +221,24 @@ function payloadHash(model, templateId, certificateHash) {
   return crypto.createHash("sha256").update(JSON.stringify({model, templateId: Number(templateId), certificateHash})).digest("hex");
 }
 
-async function prepare(program, templateId, call, certificate) {
+async function prepare(program, templateId, call, certificate, report = () => {}) {
   validateTemplateId(templateId);
+  report("Загрузка и проверка лендинга-прототипа");
   const {model, template} = await loadPrototypeModel(program, templateId, call);
   // Validate the prototype before creating anything in either website.
   if (!certificate?.hash || typeof certificate.generate !== "function") fail("Автосоздание сертификатов не подключено. Обновите систему.", 503);
   buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: PROGRAM_TYPES[model.type].bilingual ? "en" : "page-2", id: 2}]);
   const hash = payloadHash(model, templateId, certificate.hash);
-  const images = await certificate.generate();
+  report("Формирование образцов документов об образовании");
+  const images = await certificate.generate(report);
+  report("Загрузка образцов документов на edu-plus.ru");
   const assets = await call("edu", "/certificate-assets", {key: model.key, hash, type: model.type, certificateHash: certificate.hash, images});
   if (!Array.isArray(assets.images) || assets.images.length !== images.length || images.some((image, index) => assets.images[index]?.language !== image.language)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
   buildLandingFields(template, model, 1, assets.images);
+  report("Создание черновика товара на zifra-plus.ru");
   const product = await call("shop", "/prepare-product", {...model, hash});
   const fields = buildLandingFields(template, model, product.id, assets.images);
+  report("Создание лендинга с отзывами и образцами документов");
   const landing = await call("edu", "/prepare-landing", {
     key: model.key, hash, templateId: Number(templateId), templateModified: template.modified,
     title: model.name, type: model.type, slug: model.slug, fields, productId: product.id, certificateHash: certificate.hash,
@@ -247,16 +252,21 @@ async function prepare(program, templateId, call, certificate) {
   };
 }
 
-async function publish(program, templateId, expectedHash, call, certificate) {
+async function publish(program, templateId, expectedHash, call, certificate, report = () => {}) {
   validateTemplateId(templateId);
+  report("Проверка параметров перед публикацией");
   const {model} = await loadPrototypeModel(program, templateId, call);
   if (!certificate?.hash) fail("Подготовьте черновики с автоматически созданными образцами сертификатов заново.", 409);
   const hash = payloadHash(model, templateId, certificate.hash);
   if (hash !== expectedHash) fail("Параметры программы или прототип изменились после подготовки. Подготовьте и проверьте черновики заново.", 409);
   // Check sample ownership/files before either the product or landing becomes public.
+  report("Проверка всех образцов документов");
   await call("edu", "/validate-publication", {key: model.key, hash});
+  report("Публикация товара на zifra-plus.ru");
   const product = await call("shop", "/publish", {key: model.key, hash});
+  report("Публикация лендинга на edu-plus.ru");
   const landing = await call("edu", "/publish", {key: model.key, hash});
+  report("Включение перехода из магазина на лендинг");
   const redirectedProduct = await call("shop", "/enable-redirect", {key: model.key, hash});
   if (product.status !== "publish" || landing.status !== "publish" || redirectedProduct.redirectEnabled !== true) fail("Сайты не подтвердили публикацию и включение перехода. Повторите публикацию с теми же параметрами.", 502);
   return {ok: true, stage: "published", product: {...product, ...redirectedProduct}, landing, hash, templateId: Number(templateId)};

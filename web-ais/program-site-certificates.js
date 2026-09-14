@@ -109,7 +109,8 @@ async function prepare(program, data, preferLocalTemplate, services) {
   const bytes = await services.loadTemplate({...template, preferLocalTemplate});
   const hash = crypto.createHash("sha256").update(bytes).update(JSON.stringify({version: VERSION, source,
     fields: template.fields, custom: template.useCustomDocumentProperties})).digest("hex");
-  return {hash, async generate() {
+  return {hash, async generate(report = () => {}) {
+    report("Подстановка формул в образцы документов");
     let values = evaluateFields(template, source, services.evaluate);
     if ([true, 1, "1", "true"].includes(template.useCustomDocumentProperties)) {
       values = services.applyFormulas(bytes, values, source);
@@ -121,12 +122,14 @@ async function prepare(program, data, preferLocalTemplate, services) {
     const qr = services.createQr(values["QRкод"]);
     values["QRкод"] = "";
     const docx = services.fill(bytes, values, {"QRкод": qr, "Фото": null}, null, null, {preserveTemplateFonts: true});
+    report("Преобразование образцов документов в PDF");
     let converted = await services.convert(docx);
     if (!spec.bilingual && services.removeBlankPages) converted = await services.removeBlankPages(converted);
     const pdf = await markSamplePdf(converted, services.pdf, type);
     const pageCount = (await services.pdf.PDFDocument.load(pdf)).getPageCount();
     const images = [];
     for (let index = 0; index < pageCount; index++) {
+      report(`Подготовка изображения образца: страница ${index + 1} из ${pageCount}`);
       const language = index === 0 ? "ru" : spec.bilingual ? "en" : `page-${index + 1}`;
       const rendered = await services.render(pdf, index + 1);
       if (rendered.pageCount !== pageCount || rendered.preview?.mimeType !== "image/jpeg" || !rendered.preview.base64) {
