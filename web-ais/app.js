@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.456",
+    version: "1.7.457",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.457",
+      releasedAt: "2026-09-14",
+      changes: [
+        "На вкладке «Сайт» длинные названия товаров и пояснения больше не накладываются на миниатюру лендинга: ссылки сокращаются в пределах своей колонки, текст переносится."
+      ]
+    },
     {
       version: "1.7.456",
       releasedAt: "2026-09-14",

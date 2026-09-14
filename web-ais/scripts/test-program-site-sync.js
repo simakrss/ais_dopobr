@@ -67,6 +67,9 @@ async function main() {
   assert.doesNotMatch(panelSource,/class="primary-button"/);
   assert.match(css,/\.program-site-preview-viewport iframe[^}]+pointer-events: none/s);
   assert.match(css,/\.program-site-panel\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.match(css,/\.program-site-controls\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(css,/\.program-site-controls > \*\s*\{[^}]*min-width: 0;[^}]*max-width: 100%;/);
+  assert.match(css,/\.program-site-controls > p\s*\{[^}]*overflow-wrap: anywhere;/);
   assert.match(css,/\.program-site-preview\s*\{[^}]*flex: 0 1 640px;[^}]*max-width: 640px;/);
   assert.match(css,/\.program-site-preview-viewport iframe\s*\{[^}]*width: 200%; height: 200%;[^}]*transform: scale\(\.5\)/);
   console.log("PASS: legacy ID/slug, all 4 types, ambiguous offers, remembered product, authoritative values, stale preview, both-site preflight, partial failure, compact UI contracts");
@@ -80,6 +83,8 @@ if (process.argv.includes("--serve")) {
   // Optional real public landing for visual inspection; no write calls leave the fixture.
   const livePreview=process.env.AIS_QA_LANDING_PREVIEW === "1";
   const uiLanding={...landing,...(livePreview?{url:"https://edu-plus.ru/courses-pk/pk-access/",title:"Microsoft Access + SQL",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"}:{})};
+  // Long shop titles reproduce the intrinsic grid-width overlap with the preview.
+  const uiProducts=products.map((item,i)=>({...item,title:`Курс ${i ? 'повышения квалификации' : 'дополнительного образования'} «Базовый курс по системному администрированию информационных систем и баз данных» — 72 ч`}));
   const fieldsSource=app.slice(app.indexOf('        field("name", "Наименование программы"'),app.indexOf('        field("qualification", "Квалификация"'));
   const renderFieldSource=app.slice(app.indexOf("  function renderField("),app.indexOf("  function renderStudentModal("));
   const server=require("node:http").createServer(async(req,res)=>{
@@ -99,7 +104,7 @@ if (process.argv.includes("--serve")) {
       const saveRecordFormBeforeContinuation=async(form)=>{Object.assign(state.data.collections.programs[0],Object.fromEntries(new FormData(form)));document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
       let syncWrites=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
-        const products=${JSON.stringify(products)},landing=${JSON.stringify(uiLanding)};
+        const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
         if(url.endsWith('/templates')) result={templates:[{id:42,title:'Прототип курса',postType:'courses-pk',url:landing.url}]};
         else if(url.endsWith('/sync')) {syncWrites++;result={ok:true,landing,product:products.find(item=>item.id===body.productId),syncedAt:new Date().toISOString()};document.getElementById('saved').dataset.writes=syncWrites;}
         else if(url.endsWith('/prepare')||url.endsWith('/publish')) result={ok:true,stage:'prepared',type:'КПК',templateId:42,hash:'qa',landing,product:products[0]};

@@ -31016,10 +31016,11 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .program-site-fields .program-field-wide { grid-column: 1 / -1; }
 .program-site-panel { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
-.program-site-controls { display: grid; flex: 1 1 240px; gap: 12px; min-width: 0; }
-.program-site-controls > p { margin: 0; }
+.program-site-controls { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 240px; gap: 12px; min-width: 0; max-width: 100%; }
+.program-site-controls > * { min-width: 0; max-width: 100%; }
+.program-site-controls > p { margin: 0; overflow-wrap: anywhere; }
 .program-site-panel .program-site-actions > .compact-button {
-  min-height: 34px; max-width: 100%; padding: 7px 11px; border: 1px solid var(--teal); border-radius: 8px;
+  min-height: 34px; min-width: 0; max-width: 100%; box-sizing: border-box; padding: 7px 11px; border: 1px solid var(--teal); border-radius: 8px;
   background: var(--panel); color: var(--teal); font: inherit; font-size: 12px; font-weight: 600; line-height: 18px;
 }
 .program-site-panel .program-site-actions > .compact-button:hover:not(:disabled) { background: var(--teal); color: #fff; }
