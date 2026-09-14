@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор программ ПРО
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -103,7 +103,7 @@ function ais_pg_acf_value($field, $value, $writing = false) {
 }
 function ais_pg_template($id) {
     $post = get_post($id);
-    if (!$post || $post->post_type !== 'other-course' || $post->post_status !== 'publish') throw new RuntimeException('Выберите опубликованную программу ПРО / онлайн-семинар.');
+    if (!$post || !in_array($post->post_type, array('other-course', 'courses-pk', 'courses-pp'), true) || $post->post_status !== 'publish') throw new RuntimeException('Выберите опубликованную образовательную программу.');
     if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
     return $post;
 }
@@ -302,23 +302,23 @@ function ais_pg_dispatch($request) {
             if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 3000000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             return ais_pg_mutate($action, $request->get_json_params() ?: array());
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.1.0', 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.1.1', 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
-        if ($action === 'templates') {
-            $posts = get_posts(array('post_type' => 'other-course', 'post_status' => 'publish', 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC'));
-            return array('templates' => array_map(function ($post) { return array('id' => $post->ID, 'title' => $post->post_title, 'url' => get_permalink($post->ID)); }, $posts));
+        if (in_array($action, array('templates', 'catalog'), true)) {
+            $posts = get_posts(array('post_type' => $action === 'catalog' ? array('other-course', 'courses-pk', 'courses-pp') : 'other-course', 'post_status' => 'publish', 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC'));
+            return array('templates' => array_map(function ($post) { return array('id' => $post->ID, 'title' => $post->post_title, 'postType' => $post->post_type, 'url' => get_permalink($post->ID)); }, $posts));
         }
         $post = ais_pg_template((int) $request['id']);
         $fields = array();
         foreach (get_field_objects($post->ID, false) ?: array() as $field) $fields[$field['name']] = ais_pg_acf_value($field, $field['value']);
-        return array('id' => $post->ID, 'title' => $post->post_title, 'modified' => $post->post_modified_gmt, 'fields' => $fields);
+        return array('id' => $post->ID, 'title' => $post->post_title, 'postType' => $post->post_type, 'modified' => $post->post_modified_gmt, 'fields' => $fields);
     } catch (Throwable $error) {
         // Only deliberate validation errors are public; no paths, SQL or vendor traces.
         return ais_pg_error($error instanceof RuntimeException ? $error->getMessage() : 'Не удалось выполнить операцию. Проверьте журнал WordPress и повторите подготовку.', 409);
     }
 }
 add_action('rest_api_init', function () {
-    foreach (array('health', 'templates', 'template/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
     foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
 // This filter runs ONLY after WooCommerce has checked download/order permissions.
