@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -96,8 +96,13 @@ function ais_pg_landing_code($data) {
     if ($own_id) {
         $post = get_post($own_id);
         if (!$post || $post->post_type !== $data['postType']) throw new RuntimeException('Вид программы отличается от уже созданного лендинга.');
-        $slug = $post->post_name;
+        if (($data['exact'] ?? false) === true && $post->post_status === 'publish' && $slug !== $post->post_name) throw new RuntimeException('Адрес опубликованного лендинга отличается от поля «На промо сайте». Автоматическое переименование опубликованной страницы запрещено.');
+        if (($data['exact'] ?? false) !== true) $slug = $post->post_name;
         ais_pg_slug($slug, $data['postType'], $own_id);
+        return array('slug' => $slug);
+    }
+    if (($data['exact'] ?? false) === true) {
+        ais_pg_slug($slug, $data['postType']);
         return array('slug' => $slug);
     }
     for ($attempt = 0; $attempt < 100; $attempt++) {
@@ -232,6 +237,60 @@ function ais_pg_validate_certificate_asset($data, $id, $language) {
             throw new RuntimeException('Для лендинга не загружены актуальные образцы сертификатов. Повторите подготовку.');
         }
 }
+// Keep this transform in parity with updateWebinarSchedule (shared regression fixtures).
+// Mask markup at equal byte offsets; replace text tokens, never HTML attributes or links.
+function ais_pg_webinar_schedule($value, $data, $name = '') {
+    if (($data['type'] ?? '') !== 'ПРО' || empty($data['date']) || empty($data['time'])
+        || $name === 'blok_opisaniya_kursa' || preg_match('/otzyv|review/i', $name)) return $value;
+    if (!preg_match('/^(20\d{2})-(\d{2})-(\d{2})$/D', $data['date'], $date)
+        || !checkdate((int) $date[2], (int) $date[3], (int) $date[1])
+        || !preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/D', $data['time'], $time)) throw new RuntimeException('Проверьте дату и время вебинара.');
+    if (is_array($value)) {
+        foreach ($value as $key => $item) $value[$key] = ais_pg_webinar_schedule($item, $data, is_string($key) ? $key : $name);
+        return $value;
+    }
+    if (!is_string($value)) return $value;
+    $months = explode(' ', 'января февраля марта апреля мая июня июля августа сентября октября ноября декабря');
+    $shadow = preg_replace_callback('~<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?</\1\s*>|<[^>]*>|&(?:nbsp|\#160|\#x0*a0|\#32|\#x20);~i', function ($m) { return str_repeat(' ', strlen($m[0])); }, $value);
+    $pattern = '~(?<![\p{L}\d])(?:(?<isoYear>20\d{2})\s*-\s*(?<isoMonth>0?[1-9]|1[0-2])\s*-\s*(?<isoDay>0?[1-9]|[12]\d|3[01])|(?<day>0?[1-9]|[12]\d|3[01])\s*(?:[./-]|\s+)\s*(?<month>' . implode('|', $months) . '|0?[1-9]|1[0-2])\s*(?:[./-]|\s+)\s*(?<year>20\d{2}))(?!\d)~iu';
+    $time_pattern = '~^\s*(?:года|год|г\.)?\s*(?:[,—–-]\s*)?(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)~iu';
+    $edits = array();
+    $add = function ($match, $token, $replacement, $offset = 0) use (&$edits) {
+        if (isset($match[$token]) && $match[$token][1] >= 0 && $match[$token][0] !== '') $edits[] = array($offset + $match[$token][1], strlen($match[$token][0]), $replacement);
+    };
+    preg_match_all($pattern, $shadow, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE | PREG_UNMATCHED_AS_NULL);
+    foreach ($matches as $match) {
+        $old_month = $match['isoMonth'][0] ?: $match['month'][0];
+        if (!ctype_digit((string) $old_month)) foreach ($months as $index => $label) if (preg_match('~^' . $label . '$~iu', $old_month)) { $old_month = $index + 1; break; }
+        if (!checkdate((int) $old_month, (int) ($match['isoDay'][0] ?: $match['day'][0]), (int) ($match['isoYear'][0] ?: $match['year'][0]))) continue;
+        $end = $match[0][1] + strlen($match[0][0]);
+        $has_time = preg_match($time_pattern, substr($shadow, $end), $time_match, PREG_OFFSET_CAPTURE);
+        $context = substr($shadow, 0, $match[0][1]);
+        if (!in_array($name, array('opisanie_dokumenta','opisanie_o_programme','descriptionHtml','post_content','post_excerpt'), true)
+            && !$has_time && !preg_match('~(?:расписани|трансляци|начало|состоится|дата\s+(?:вебинара|семинара|проведения))[\s\S]{0,160}$~iu', $context)) continue;
+        $add($match, 'isoYear', $date[1]); $add($match, 'isoMonth', $date[2]); $add($match, 'isoDay', $date[3]);
+        $add($match, 'year', $date[1]); $add($match, 'day', strlen($match['day'][0] ?? '') === 2 ? $date[3] : (string) (int) $date[3]);
+        $old_label = $match['month'][0] ?? '';
+        $label = ctype_digit($old_label) ? (strlen($old_label) === 2 ? $date[2] : (string) (int) $date[2]) : $months[(int) $date[2] - 1];
+        if (preg_match('/^[А-ЯЁ]+$/u', $old_label)) {
+            $label = explode(' ', 'ЯНВАРЯ ФЕВРАЛЯ МАРТА АПРЕЛЯ МАЯ ИЮНЯ ИЮЛЯ АВГУСТА СЕНТЯБРЯ ОКТЯБРЯ НОЯБРЯ ДЕКАБРЯ')[(int) $date[2] - 1];
+        } elseif (preg_match('/^[А-ЯЁ]/u', $old_label)) {
+            $label = explode(' ', 'Января Февраля Марта Апреля Мая Июня Июля Августа Сентября Октября Ноября Декабря')[(int) $date[2] - 1];
+        }
+        $add($match, 'month', $label);
+        if ($has_time) { $add($time_match, 'hour', $time[1], $end); $add($time_match, 'minute', $time[2], $end); }
+    }
+    preg_match_all('~(?:время\s*(?:начала|трансляции|вебинара)?|начало\s*(?:трансляции|вебинара)?)\s*[:—–-]?\s*(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)~iu', $shadow, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+    foreach ($matches as $match) { $add($match, 'hour', $time[1]); $add($match, 'minute', $time[2]); }
+    usort($edits, function ($a, $b) { return $b[0] <=> $a[0]; });
+    $boundary = strlen($value);
+    foreach ($edits as $edit) {
+        if ($edit[0] + $edit[1] > $boundary) continue;
+        $value = substr_replace($value, $edit[2], $edit[0], $edit[1]);
+        $boundary = $edit[0];
+    }
+    return $value;
+}
 function ais_pg_prepare_landing($data) {
     $type = ais_pg_program_type($data);
     $post_type = ais_pg_post_type($type);
@@ -252,7 +311,7 @@ function ais_pg_prepare_landing($data) {
         if (!in_array($slot, $field_names, true)) throw new RuntimeException('В прототипе отсутствуют блоки образцов сертификатов.');
     }
     $post_data = array('post_title' => $title, 'post_name' => $data['slug'], 'post_type' => $post_type, 'post_status' => 'draft',
-        'post_content' => $template->post_content, 'post_excerpt' => $template->post_excerpt,
+        'post_content' => ais_pg_webinar_schedule($template->post_content, $data, 'post_content'), 'post_excerpt' => ais_pg_webinar_schedule($template->post_excerpt, $data, 'post_excerpt'),
         'meta_input' => array('_ais_generator_key' => $data['key'], '_ais_generator_template' => $template->ID));
     if ($id) $post_data['ID'] = $id;
     $id = wp_insert_post(wp_slash($post_data), true);
@@ -261,7 +320,7 @@ function ais_pg_prepare_landing($data) {
         // Copy description, author and reviews from the authoritative prototype.
         if (in_array($field['name'], array('blok_opisaniya_kursa', 'opisanie_dokumenta', 'opisanie_o_programme', 'tekst_etap_obucheniya_1'), true)
             || preg_match('/otzyv|review/i', $field['name'])) {
-            $data['fields'][$field['name']] = ais_pg_acf_value($field, $field['value']);
+            $data['fields'][$field['name']] = ais_pg_webinar_schedule(ais_pg_acf_value($field, $field['value']), $data, $field['name']);
         }
         if (array_key_exists($field['name'], $data['fields'])) update_field($field['key'], ais_pg_acf_value($field, $data['fields'][$field['name']], true), $id);
     }
@@ -654,7 +713,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.4.0', 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.5.0', 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

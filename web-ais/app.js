@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.463",
+    version: "1.7.464",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.464",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Генератор берёт код лендинга и товара из поля «На промо сайте» и заменяет дату и время вебинара в описаниях прототипа, сохраняя HTML-оформление и отзывы."
+      ]
+    },
     {
       version: "1.7.463",
       releasedAt: "2026-09-15",
@@ -32842,9 +32849,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const input = card.elements.landingCode;
     if (!input) throw new Error("Поле кода лендинга недоступно. Обновите карточку программы.");
     const previous = input.value;
+    const previousPromoSite = card.elements.promoSite?.value;
     const result = await programSiteRequest("landing-code", {programId});
     if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(result?.landingCode || "")) throw new Error("Не удалось подобрать код лендинга. Повторите подготовку.");
-    if (!card.isConnected || input.value !== previous) throw new Error("Параметры карточки изменились во время подбора кода. Повторите подготовку.");
+    if (!card.isConnected || input.value !== previous || card.elements.promoSite?.value !== previousPromoSite) throw new Error("Параметры карточки изменились во время подбора кода. Повторите подготовку.");
     input.value = result.landingCode;
     input.dispatchEvent(new Event("input", {bubbles: true}));
     // Persist before any site write. Failed saves must never leave orphan drafts

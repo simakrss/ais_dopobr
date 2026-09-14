@@ -9,6 +9,17 @@ const app = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
 const program = {id: "qa-auto-code", type: "КПК", name: "Основы цифровой грамотности", hours: 72, price: 0};
 async function main() {
   assert.equal(pg.landingCodeFromName(program.name), "osnovy-tsifrovoy-gramotnosti");
+  for (const source of ["https://edu-plus.ru/web_nazv", "https://edu-plus.ru/other_course/web_nazv/?utm_source=ais#details", "http://www.edu-plus.ru/web_nazv/", "edu-plus.ru/web_nazv", "/web_nazv/", "web_nazv"]) {
+    assert.equal(pg.landingCodeFromPromoSite(source), "web_nazv");
+    assert.equal(pg.normalizeProgram({...program, landingCode: "old-code", promoSite: source}).slug, "web_nazv");
+    assert.equal((await pg.suggestLandingCode({...program, landingCode: "old-code", promoSite: source}, async (_site, _endpoint, data) => {
+      assert.equal(data.exact, true); assert.equal(data.slug, "web_nazv"); return {slug: data.slug};
+    })).landingCode, "web_nazv");
+  }
+  for (const source of ["https://evil.test/web_nazv", "evil.test/web_nazv", "https://edu-plus.ru/?p=4203", "https://edu-plus.ru/", "https://user:secret@edu-plus.ru/web_nazv", "//evil.test/web_nazv", "https://edu-plus.ru/a%2Fb%20c", "https://edu-plus.ru/a https://edu-plus.ru/b", "Неправильный адрес"]) {
+    assert.throws(() => pg.landingCodeFromPromoSite(source), /На промо сайте/);
+  }
+  await assert.rejects(pg.suggestLandingCode({...program, promoSite: "https://edu-plus.ru/web_nazv"}, async () => ({slug: "old-draft-slug"})), /не подтвердил адрес/);
   assert.equal(pg.landingCodeFromName("Ёж, Йога и Щётка!"), "yozh-yoga-i-schyotka");
   for (const name of ["А", "", "✨!!!", "Программа ".repeat(40), "Café / SQL & C++", "__slug__", "Щ".repeat(100)]) {
     const slug = pg.landingCodeFromName(name);

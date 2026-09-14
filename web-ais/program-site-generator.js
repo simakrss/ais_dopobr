@@ -60,14 +60,33 @@ function landingCodeFromName(name) {
   return slug.length >= 2 ? slug : `programma${slug ? '-' + slug : ''}`;
 }
 
+function landingCodeFromPromoSite(value) {
+  const source = text(value, 2000);
+  if (!source) return "";
+  let slug = source.replace(/^\/+|\/+$/g, "");
+  if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) {
+    try {
+      if (!/^(?:https?:\/\/|\/(?!\/)|(?:www\.)?edu-plus\.ru\/)/i.test(source)) throw new Error();
+      const url = new URL(source.startsWith("/") ? source : /^(?:www\.)?edu-plus\.ru\//i.test(source) ? `https://${source}` : source, SITES.edu);
+      if (!/^https?:$/.test(url.protocol) || !/^(?:www\.)?edu-plus\.ru$/i.test(url.hostname) || url.username || url.password || url.port
+        || url.searchParams.has("p") || url.searchParams.has("page_id")) throw new Error();
+      slug = decodeURIComponent(url.pathname).split("/").filter(Boolean).at(-1) || "";
+    } catch { slug = ""; }
+  }
+  if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) fail("В поле «На промо сайте» укажите постоянную ссылку edu-plus.ru или код страницы (например, web_nazv).");
+  return slug;
+}
+
 // Read-only allocation. The caller must save the result in the shared program
 // before prepare writes any certificate, product or landing (including retries).
 async function suggestLandingCode(program, call) {
+  const promoCode = landingCodeFromPromoSite(program.promoSite);
   const current = String(program.landingCode || '').trim().replace(/^\/+|\/+$/g, '');
-  const candidate = /^[a-z0-9][a-z0-9_-]{1,79}$/.test(current) ? current : landingCodeFromName(program.name);
+  const candidate = promoCode || (/^[a-z0-9][a-z0-9_-]{1,79}$/.test(current) ? current : landingCodeFromName(program.name));
   const model = normalizeProgram({...program, landingCode: candidate});
-  const result = await call('edu', '/landing-code', {key: model.key, slug: model.slug, postType: model.postType});
+  const result = await call('edu', '/landing-code', {key: model.key, slug: model.slug, postType: model.postType, exact: Boolean(promoCode)});
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(result?.slug || '')) fail('Сайт не подтвердил свободный код лендинга. Повторите подготовку.', 502);
+  if (promoCode && result.slug !== promoCode) fail('Сайт не подтвердил адрес из поля «На промо сайте». Обновите служебный модуль и повторите подготовку.', 409);
   return {ok: true, landingCode: result.slug};
 }
 
@@ -81,7 +100,7 @@ function normalizeProgram(program = {}) {
   const productName = text(program.siteProductName || name, 500);
   if (!name || !productName) fail("Заполните название программы.");
   if (Array.from(productName).length > 128) fail("Название товара превышает 128 символов. Укажите более короткое название в параметрах генератора «Создать на сайте».");
-  const slug = text(program.landingCode, 100).replace(/^\/+|\/+$/g, "");
+  const slug = landingCodeFromPromoSite(program.promoSite) || text(program.landingCode, 100).replace(/^\/+|\/+$/g, "");
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) fail("Код лендинга: от 2 до 80 символов — строчные латинские буквы, цифры, дефис и подчёркивание.");
   const date = webinar ? text(program.webinarDate, 10) : "";
   const parsedDate = new Date(`${date}T12:00:00Z`);
@@ -151,6 +170,56 @@ function validateTemplateId(value) {
   return Number(value);
 }
 
+// Match visible text, but edit only the date/time tokens at their original offsets.
+// Tags, attributes, entities, links and the prototype's formatting stay untouched.
+function updateWebinarSchedule(value, model, name = "") {
+  if (model.type !== "ПРО" || name === "blok_opisaniya_kursa" || /otzyv|review/i.test(name)) return structuredClone(value);
+  if (Array.isArray(value)) return value.map(item => updateWebinarSchedule(item, model, name));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, updateWebinarSchedule(item, model, key)]));
+  if (typeof value !== "string") return value;
+  const months = "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split(" ");
+  const [year, month, day] = model.date.split("-");
+  const [hour, minute] = model.time.split(":");
+  const shadow = value.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>]*>|&(?:nbsp|#160|#x0*a0|#32|#x20);/gi, match => " ".repeat(match.length));
+  const pattern = new RegExp(`(?<![\\p{L}\\d])(?:(?<isoYear>20\\d{2})\\s*-\\s*(?<isoMonth>0?[1-9]|1[0-2])\\s*-\\s*(?<isoDay>0?[1-9]|[12]\\d|3[01])|(?<day>0?[1-9]|[12]\\d|3[01])\\s*(?:[./-]|\\s+)\\s*(?<month>${months.join("|")}|0?[1-9]|1[0-2])\\s*(?:[./-]|\\s+)\\s*(?<year>20\\d{2}))(?!\\d)`, "gidu");
+  const timePattern = /^\s*(?:года|год|г\.)?\s*(?:[,—–-]\s*)?(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)/idu;
+  const edits = [];
+  const add = (match, token, replacement, offset = 0) => {
+    const range = match.indices.groups[token];
+    if (range) edits.push({start: offset + range[0], end: offset + range[1], replacement});
+  };
+  for (const match of shadow.matchAll(pattern)) {
+    const g = match.groups, end = match.index + match[0].length;
+    const oldMonth = g.isoMonth || (/^\d+$/.test(g.month) ? g.month : months.indexOf(g.month.toLowerCase()) + 1);
+    const oldDate = `${g.isoYear || g.year}-${String(oldMonth).padStart(2, "0")}-${(g.isoDay || g.day).padStart(2, "0")}`;
+    const parsed = new Date(`${oldDate}T12:00:00Z`);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== oldDate) continue;
+    const timeMatch = shadow.slice(end).match(timePattern);
+    const context = shadow.slice(Math.max(0, match.index - 160), match.index);
+    if (!["opisanie_dokumenta", "opisanie_o_programme", "descriptionHtml", "post_content", "post_excerpt"].includes(name)
+      && !timeMatch && !/расписани|трансляци|начало|состоится|дата\s+(?:вебинара|семинара|проведения)/iu.test(context)) continue;
+    add(match, "isoYear", year); add(match, "isoMonth", month); add(match, "isoDay", day);
+    add(match, "year", year); add(match, "day", g.day?.length === 2 ? day : String(Number(day)));
+    let monthLabel = months[Number(month) - 1];
+    if (g.month && !/^\d+$/.test(g.month)) {
+      if (g.month === g.month.toUpperCase()) monthLabel = monthLabel.toUpperCase();
+      else if (g.month[0] === g.month[0].toUpperCase()) monthLabel = monthLabel[0].toUpperCase() + monthLabel.slice(1);
+    } else monthLabel = g.month?.length === 2 ? month : String(Number(month));
+    add(match, "month", monthLabel);
+    if (timeMatch) { add(timeMatch, "hour", hour, end); add(timeMatch, "minute", minute, end); }
+  }
+  // A separate time line is common when the date and time are in different blocks.
+  const separateTime = /(?:время\s*(?:начала|трансляции|вебинара)?|начало\s*(?:трансляции|вебинара)?)\s*[:—–-]?\s*(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)/gidu;
+  for (const match of shadow.matchAll(separateTime)) { add(match, "hour", hour); add(match, "minute", minute); }
+  let updated = value, boundary = value.length;
+  for (const edit of edits.sort((a, b) => b.start - a.start)) {
+    if (edit.end > boundary) continue;
+    updated = updated.slice(0, edit.start) + edit.replacement + updated.slice(edit.end);
+    boundary = edit.start;
+  }
+  return updated;
+}
+
 async function loadPrototypeModel(program, templateId, call) {
   const model = normalizeProgram(program);
   const template = await call("edu", `/template/${validateTemplateId(templateId)}`);
@@ -160,9 +229,11 @@ async function loadPrototypeModel(program, templateId, call) {
   // it must not invalidate already prepared drafts on either website.
   const prototypeForHash = {...template};
   delete prototypeForHash.imageUrl;
+  // Re-prepare older webinar drafts even when only post_content/excerpt had dates.
+  if (model.type === "ПРО") prototypeForHash.scheduleRevision = 1;
   const description = model.type === "ПРО" ? fields.opisanie_dokumenta : fields.opisanie_o_programme || fields.opisanie_dokumenta;
-  return {template, model: {...model, descriptionHtml: typeof description === "string" ? description : "",
-    speakerHtml: typeof fields.tekst_etap_obucheniya_1 === "string" ? fields.tekst_etap_obucheniya_1 : "",
+  return {template, model: {...model, descriptionHtml: updateWebinarSchedule(typeof description === "string" ? description : "", model, "descriptionHtml"),
+    speakerHtml: updateWebinarSchedule(typeof fields.tekst_etap_obucheniya_1 === "string" ? fields.tekst_etap_obucheniya_1 : "", model, "tekst_etap_obucheniya_1"),
     prototypeHash: crypto.createHash("sha256").update(JSON.stringify(prototypeForHash)).digest("hex")}};
 }
 
@@ -183,8 +254,9 @@ function buildLandingFields(template, model, productId, certificates) {
   const walk = (value, name = "") => {
     // This ACF repeater holds the actual reviews, including authors' quotations and photos.
     // Never substitute program names or checkout links inside someone else's testimony.
-    if (["blok_opisaniya_kursa", "opisanie_dokumenta", "opisanie_o_programme", "tekst_etap_obucheniya_1"].includes(name)
+    if (["blok_opisaniya_kursa"].includes(name)
       || /otzyv|review/i.test(name)) return structuredClone(value);
+    if (["opisanie_dokumenta", "opisanie_o_programme", "tekst_etap_obucheniya_1"].includes(name)) return updateWebinarSchedule(value, model, name);
     if (name === "ssylka_na_registraciyu") { registrationLinks++; return checkoutUrl; }
     if (Object.hasOwn(replacements, name)) return replacements[name];
     if (Array.isArray(value)) return value.map(item => walk(item));
@@ -192,7 +264,7 @@ function buildLandingFields(template, model, productId, certificates) {
     if (typeof value !== "string") return value;
     let updated = template.title ? value.split(template.title).join(model.name) : value;
     updated = updated.replace(/https?:\/\/zifra-plus\.ru\/checkout\/?\?(?:[^\s"'<>]*?&(?:amp;)?)?add-to-cart=\d+/g, () => { registrationLinks++; return checkoutUrl; });
-    return updated;
+    return updateWebinarSchedule(updated, model, name);
   };
   const fields = walk(template.fields || {});
   if (!registrationLinks) fail("В прототипе не найден блок регистрации интернет-магазина. Выберите другой прототип.");
@@ -245,7 +317,7 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   report("Создание лендинга с отзывами и образцами документов");
   const landing = await call("edu", "/prepare-landing", {
     key: model.key, hash, templateId: Number(templateId), templateModified: template.modified,
-    title: model.name, type: model.type, slug: model.slug, fields, productId: product.id, certificateHash: certificate.hash,
+    title: model.name, type: model.type, slug: model.slug, date: model.date, time: model.time, fields, productId: product.id, certificateHash: certificate.hash,
     certificatePages: assets.images.map(image => ({id: image.id, language: image.language}))
   });
   return {
@@ -374,4 +446,4 @@ async function synchronize(program, call, productId, expectedHash) {
   return {ok: true, landing, product, syncedAt: new Date().toISOString()};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, suggestLandingCode, normalizeProgram, validateTemplateId, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
