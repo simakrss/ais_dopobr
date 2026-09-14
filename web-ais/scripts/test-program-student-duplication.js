@@ -397,8 +397,12 @@ assert.match(appSource, /function copyProgramWithTrainingPlan\([\s\S]*?getProgra
 assert.match(appSource, /function copyStudentForNewEnrollment\([\s\S]*?buildStudentDuplicateDraft\(source\)/u);
 assert.match(appSource, /function renderProgramTrainingPlanSection\(record, rowsOverride = null\)/u);
 assert.match(appSource, /Array\.isArray\(state\.modal\?\.duplicateTrainingPlanRows\)/u);
-assert.match(appSource, /const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "1\.7\.447"/u);
-assert.match(authSource, /20260913-notification-period-label-v1/u);
-assert.match(indexSource, /20260913-notification-period-label-v1/u);
+const releaseVersion = appSource.match(/const APPLICATION_RELEASE = Object\.freeze\(\{\s*version: "(\d+\.\d+\.\d+)"/u)?.[1];
+assert.ok(releaseVersion, "Версия приложения должна быть задана.");
+assert.equal(appSource.match(/const APPLICATION_RELEASE_HISTORY = Object\.freeze\(\[\s*\{\s*version: "([^"]+)"/u)?.[1], releaseVersion);
+const authBuild = authSource.match(/const AUTH_BUILD = "([^"]+)"/u)?.[1];
+assert.ok(authBuild, "Версия кеша должна быть задана.");
+assert.equal(indexSource.match(/const build = "([^"]+)"/u)?.[1], authBuild);
+assert.ok(indexSource.includes(`styles.css?v=${authBuild}`), "HTML, стили и загрузчик должны использовать одну версию кеша.");
 
 console.log("Program and student duplication checks: OK");

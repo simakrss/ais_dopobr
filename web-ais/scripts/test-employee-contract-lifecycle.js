@@ -404,6 +404,7 @@ assert.equal(clientExpirationContext.clientExpired.status, "Истек");
 
 const duplicateContext = {
   CONTRACT_SECTIONS: [ACTIVE_SECTION, PARTNER_SECTION, EXPIRED_SECTION],
+  getMoscowCalendarDateKey: () => TODAY,
   getStudentCommunicationAddressee: record => String(record.name || ""),
   applyStudentCommunicationTemplate: (_template, fields) => fields.СообщениеДоступаКарточки,
   formatStudentCommunicationDate: value => value || "",
@@ -534,7 +535,7 @@ const copiedFields = [
   "educationType", "educationLevel", "educationSeries", "educationNumber",
   "educationIssueDate", "educationIssuer", "educationSpecialty", "educationQualification",
   "address", "snils", "inn", "login", "password", "sourceStudentId", "sourceStudentUid",
-  "city", "partnerDirections", "additionalInfo", "portalCredentials"
+  "city", "partnerDirections", "additionalInfo", "portalCredentials", "subject", "paymentTerms"
 ];
 copiedFields.forEach((key) => {
   assert.deepEqual(duplicatePlain[key], sourceContractSnapshot[key], `Поле ${key} должно переноситься в новый договор.`);
@@ -542,9 +543,35 @@ copiedFields.forEach((key) => {
 assert.equal(duplicatePlain.section, ACTIVE_SECTION);
 assert.equal(duplicatePlain.status, "Действует");
 assert.equal(duplicatePlain.contractNo, "40", "Номер определяется по всему столбцу, включая истёкшие договоры, а не только по исходному договору.");
+assert.equal(duplicatePlain.contractDate, TODAY);
+assert.equal(duplicatePlain.startDate, TODAY);
+assert.equal(duplicatePlain.endDate, "2027-08-31");
+
+for (const [date, endDate] of [
+  ["2026-01-01", "2026-08-31"],
+  ["2026-08-31", "2026-08-31"],
+  ["2026-09-01", "2027-08-31"],
+  ["2026-12-31", "2027-08-31"],
+  ["2027-01-01", "2027-08-31"],
+  ["2028-02-29", "2028-08-31"],
+  [getMoscowCalendarDateKey("2026-08-31T20:59:59.999Z"), "2026-08-31"],
+  [getMoscowCalendarDateKey("2026-08-31T21:00:00.000Z"), "2027-08-31"]
+]) {
+  const draft = duplicateContext.buildEmployeeContractDuplicateDraft(sourceContract, numberingRows, date);
+  assert.equal(draft.contractDate, date);
+  assert.equal(draft.startDate, date);
+  assert.equal(draft.endDate, endDate, `Неверная граница учебного года для ${date}.`);
+}
+const formattedTerms = {subject: "  Предмет\nВторая строка", paymentTerms: "<p>Оплата по акту</p>\n"};
+const termsDraft = duplicateContext.buildEmployeeContractDuplicateDraft(formattedTerms);
+assert.equal(termsDraft.subject, formattedTerms.subject, "Предмет переносится без изменения текста.");
+assert.equal(termsDraft.paymentTerms, formattedTerms.paymentTerms, "Условия оплаты переносятся без изменения форматирования.");
+const emptyTermsDraft = duplicateContext.buildEmployeeContractDuplicateDraft();
+assert.equal(emptyTermsDraft.subject, "");
+assert.equal(emptyTermsDraft.paymentTerms, "");
 
 for (const key of [
-  "id", "contractDate", "type", "startDate", "endDate", "subject", "paymentTerms", "note",
+  "id", "type", "note",
   "message1", "message9"
 ]) {
   assert.equal(String(duplicatePlain[key] ?? ""), "", `Поле ${key} старого договора должно очищаться.`);

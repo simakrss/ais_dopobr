@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.449",
+    version: "1.7.450",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.450",
+      releasedAt: "2026-09-14",
+      changes: [
+        "При дублировании сотрудника сохраняются предмет договора и условия оплаты. Дата договора и начало срока устанавливаются на текущую дату по Москве, окончание срока — на 31 августа текущего учебного года. Номер по-прежнему определяется автоматически; прошлые суммы и события не переносятся."
+      ]
+    },
     {
       version: "1.7.449",
       releasedAt: "2026-09-14",
@@ -9084,7 +9091,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return getNextEmployeeContractNumber(contracts);
   }
 
-  function buildEmployeeContractDuplicateDraft(source = {}, contracts = []) {
+  function buildEmployeeContractDuplicateDraft(source = {}, contracts = [], today = getMoscowCalendarDateKey()) {
+    // The academic year runs from September 1 through August 31 (Moscow date).
+    const academicEndYear = Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) >= 9 ? 1 : 0);
     const fields = [
       "name", "position", "degree", "academicTitle",
       "phone", "whatsapp", "email", "telegram", "preferredMessenger",
@@ -9109,12 +9118,12 @@ MAX - https://bizvmax.ru/zifra_plus
       section: CONTRACT_SECTIONS[0],
       status: "Действует",
       contractNo: getNextEmployeeContractNumber([...contracts, source]),
-      contractDate: "",
+      contractDate: today,
       type: "",
-      startDate: "",
-      endDate: "",
-      subject: "",
-      paymentTerms: "",
+      startDate: today,
+      endDate: `${academicEndYear}-08-31`,
+      subject: source.subject ?? "",
+      paymentTerms: source.paymentTerms ?? "",
       accountingRecorded: "",
       amount: 0,
       paid: 0,
@@ -43506,7 +43515,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceName = (state.data.collections.contracts || []).find((record) => record.id === sourceId)?.name || "сотрудника";
     if (!await confirmRecordDuplication({
       title: "Создать новый договор сотрудника?",
-      message: `Дублировать карточку «${sourceName}» для нового договора? Персональные данные и сообщение о доступе к порталу перенесутся, номер договора определится автоматически. Новая карточка попадёт в базу только после сохранения.`
+      message: `Дублировать карточку «${sourceName}» для нового договора? Персональные данные, предмет договора, условия оплаты и сообщение о доступе к порталу перенесутся, номер договора определится автоматически. Срок нового договора — с сегодняшнего дня по 31 августа текущего учебного года. Новая карточка попадёт в базу только после сохранения.`
     })) return;
     if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
