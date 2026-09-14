@@ -57,7 +57,7 @@ function normalizeProgram(program = {}) {
   if (!descriptionHtml || !speakerHtml) fail("Заполните описание вебинара и сведения о спикере на вкладке «Сайт и вебинар».");
   return {
     key: crypto.createHash("sha256").update(`ais-program:${id}`).digest("hex"),
-    id, name, productName, slug, date, time, price, oldPrice, hours,
+    id, name, nameEnglish: text(program.nameEnglish || program["Название программы на английском"], 1000), productName, slug, date, time, price, oldPrice, hours,
     joinUrl: normalizeJoinUrl(program.webinarJoinUrl), descriptionHtml, speakerHtml,
     landingUrl: `${SITES.edu}/other_course/${slug}/`,
     dateLabel: `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)`
@@ -106,7 +106,7 @@ function createClient(keys, fetchImpl = fetch) {
   };
 }
 
-function buildLandingFields(template, model, productId) {
+function buildLandingFields(template, model, productId, certificates) {
   if (!Number.isSafeInteger(Number(productId)) || Number(productId) < 1) fail("Магазин не вернул корректный ID товара.");
   const checkoutUrl = `${SITES.shop}/checkout/?add-to-cart=${Number(productId)}`;
   let registrationLinks = 0;
@@ -131,39 +131,57 @@ function buildLandingFields(template, model, productId) {
   };
   const fields = walk(template.fields || {});
   if (!registrationLinks) fail("В прототипе не найден блок регистрации интернет-магазина. Выберите другой прототип.");
+  if (certificates) {
+    const slots = {izobrazhenie_vydavaemogo_dokumenta: "ru", prevyu_vydavaemogo_dokumenta_1: "ru",
+      izobrazhenie_vydavaemogo_dokumenta_2: "en", prevyu_vydavaemogo_dokumenta_2: "en"};
+    for (const [slot, language] of Object.entries(slots)) {
+      if (!Object.hasOwn(fields, slot)) fail("В прототипе не найдены оба блока образцов сертификатов. Выберите другой прототип.");
+      const id = Number(certificates.find(image => image.language === language)?.id);
+      if (!Number.isSafeInteger(id) || id < 1) fail("Сайт не подтвердил загрузку образцов сертификатов.");
+      fields[slot] = id;
+    }
+  }
   return fields;
 }
 
-function payloadHash(model, templateId) {
-  return crypto.createHash("sha256").update(JSON.stringify({model, templateId: Number(templateId)})).digest("hex");
+function payloadHash(model, templateId, certificateHash) {
+  return crypto.createHash("sha256").update(JSON.stringify({model, templateId: Number(templateId), certificateHash})).digest("hex");
 }
 
-async function prepare(program, templateId, call) {
+async function prepare(program, templateId, call, certificate) {
   const model = normalizeProgram(program);
   if (!Number.isSafeInteger(Number(templateId)) || Number(templateId) < 1) fail("Выберите прототип лендинга.");
   const template = await call("edu", `/template/${Number(templateId)}`);
   // Validate the prototype before creating anything in either website.
-  buildLandingFields(template, model, 1);
-  const hash = payloadHash(model, templateId);
+  if (!certificate?.hash || typeof certificate.generate !== "function") fail("Автосоздание сертификатов не подключено. Обновите систему.", 503);
+  buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: "en", id: 2}]);
+  const hash = payloadHash(model, templateId, certificate.hash);
+  const images = await certificate.generate();
+  const assets = await call("edu", "/certificate-assets", {key: model.key, hash, certificateHash: certificate.hash, images});
+  if (!Array.isArray(assets.images) || assets.images.length !== 2) fail("Сайт не подтвердил загрузку двух образцов сертификатов.", 502);
+  buildLandingFields(template, model, 1, assets.images);
   const product = await call("shop", "/prepare-product", {...model, hash});
-  const fields = buildLandingFields(template, model, product.id);
+  const fields = buildLandingFields(template, model, product.id, assets.images);
   const landing = await call("edu", "/prepare-landing", {
     key: model.key, hash, templateId: Number(templateId), templateModified: template.modified,
-    title: model.name, slug: model.slug, fields, productId: product.id
+    title: model.name, slug: model.slug, fields, productId: product.id, certificateHash: certificate.hash
   });
   return {
     ok: true, stage: product.status === "publish" && landing.status === "publish" && product.redirectEnabled === true ? "published" : "prepared",
-    product, landing, templateId: Number(templateId), hash,
+    product, landing, templateId: Number(templateId), hash, certificates: assets.images, certificateHash: certificate.hash,
     promoMessage: `${model.name}\n${model.dateLabel}\nПродолжительность: ${model.hours} ч. Стоимость: ${model.price} ₽.\nРегистрация: ${model.landingUrl}`,
-    checklist: ["Проверьте все блоки лендинга, изображения и отзывы из прототипа.", "Подготовьте и проверьте образцы сертификатов на русском и английском языках.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг со спикером, затем запускайте рекламу и обновляйте приказ о наборе."]
+    checklist: ["Проверьте все блоки лендинга, изображения и отзывы из прототипа.", "Проверьте автоматически созданные образцы сертификатов на русском и английском языках.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг со спикером, затем запускайте рекламу и обновляйте приказ о наборе."]
   };
 }
 
-async function publish(program, templateId, expectedHash, call) {
+async function publish(program, templateId, expectedHash, call, certificate) {
   const model = normalizeProgram(program);
   if (!Number.isSafeInteger(Number(templateId)) || Number(templateId) < 1) fail("Выберите прототип лендинга.");
-  const hash = payloadHash(model, templateId);
+  if (!certificate?.hash) fail("Подготовьте черновики с автоматически созданными образцами сертификатов заново.", 409);
+  const hash = payloadHash(model, templateId, certificate.hash);
   if (hash !== expectedHash) fail("Параметры программы изменились после подготовки. Подготовьте и проверьте черновики заново.", 409);
+  // Check sample ownership/files before either the product or landing becomes public.
+  await call("edu", "/validate-publication", {key: model.key, hash});
   const product = await call("shop", "/publish", {key: model.key, hash});
   const landing = await call("edu", "/publish", {key: model.key, hash});
   const redirectedProduct = await call("shop", "/enable-redirect", {key: model.key, hash});

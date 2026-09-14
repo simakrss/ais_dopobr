@@ -60,6 +60,7 @@ async function promoteCodexTrainingEndDateAssets() {
 const SERVER_CODE_ROOT = __dirname;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
+const programSiteCertificates = require("./program-site-certificates.js");
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
 const {
   sanitizeDemoSharedState,
@@ -5496,7 +5497,7 @@ function applyWorkflowDocumentContent(xml, fieldValues, fieldPositionMap, workfl
   return result;
 }
 
-function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null, workflow = null) {
+function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyUpdateNames = null, workflow = null, options = {}) {
   const replacements = Object.entries(fieldValues || {})
     .filter(([name]) => String(name || "").trim())
     .map(([name, value]) => {
@@ -5508,7 +5509,7 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
       };
     });
   const entries = readDocxZipEntries(templateBytes);
-  normalizeUnavailableDocumentFonts(entries);
+  if (!options.preserveTemplateFonts) normalizeUnavailableDocumentFonts(entries);
   const indexedFieldPositionMap = normalizeExpulsionOrderFieldPositionMap(
     getIndexedWordFieldPositionMap(entries),
     fieldValues
@@ -14160,9 +14161,13 @@ async function recognizeOcrDocument(document) {
 
 async function renderOcrDocumentPage(document, page) {
   const bytes = await loadOcrDocumentBytes(document);
+  return renderOcrDocumentPageBytes(bytes, document.fileName, document.contentType, page);
+}
+
+async function renderOcrDocumentPageBytes(bytes, fileName, mimeType, page) {
   const requestPayload = {
-    fileName: document.fileName,
-    mimeType: document.contentType,
+    fileName,
+    mimeType,
     page: Math.max(1, Math.min(20, Number(page) || 1)),
     base64: bytes.toString("base64")
   };
@@ -40022,9 +40027,16 @@ async function route(req, res) {
       }
       const program = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
       if (!program) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      programSiteGenerator.normalizeProgram(program);
+      const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
+        loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
+        applyFormulas: applyCustomDocumentPropertyFormulas, createQr: createDocumentQrCodeImage,
+        fill: fillDocxMarkers, convert: convertDocxBytesToPdf, pdf: PDF_LIB,
+        render: (bytes, page) => renderOcrDocumentPageBytes(bytes, "certificate-sample.pdf", "application/pdf", page)
+      });
       const result = action === "prepare"
-        ? await programSiteGenerator.prepare(program, body.templateId, call)
-        : await programSiteGenerator.publish(program, body.templateId, body.hash, call);
+        ? await programSiteGenerator.prepare(program, body.templateId, call, certificate)
+        : await programSiteGenerator.publish(program, body.templateId, body.hash, call, certificate);
       sendJson(res, 200, result);
     } catch (error) {
       sendError(res, Number(error.statusCode) || 400, error.message);
@@ -40525,6 +40537,7 @@ module.exports = {
   getOcrFieldSourceSuitability,
   aggregateOcrFieldCandidates,
   renderOcrDocumentTextPreview,
+  renderOcrDocumentPageBytes,
   fillDocxMarkers,
   getWebDavBrowserIconKind,
   getWebDavBrowserPreviewKind,

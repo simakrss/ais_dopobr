@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.451",
+    version: "1.7.452",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.452",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Мастер «Создать на сайте» автоматически формирует русскую и английскую страницы образца сертификата по настройкам конструктора и данным программы, загружает изображения на edu-plus.ru и подставляет их в лендинг. Образцы доступны для проверки перед публикацией; выдача документов и реестр слушателей не изменяются.",
+        "При изменении названий, даты или шаблона сертификата требуется повторная подготовка. Ошибки формирования и отсутствие английского названия блокируют публикацию старых образцов."
+      ]
+    },
     {
       version: "1.7.451",
       releasedAt: "2026-09-14",
@@ -32442,7 +32450,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <header class="modal-head"><div><p class="eyebrow">Генератор ПРО</p><h2>Создать на сайте</h2></div><button class="icon-button" type="button" data-site-close aria-label="Закрыть">×</button></header>
       <div class="program-site-body">
         <p><strong>${escapeHtml(program.name)}</strong></p>
-        <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. Данные и ссылка SberJazz берутся из сохранённой карточки.</p>
+        <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. Данные и ссылка SberJazz берутся из сохранённой карточки. Образцы сертификатов RU/EN создаются автоматически по шаблону «Сертификат ПРО» из конструктора документов.</p>
         <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующего онлайн-семинара"></label>
         <label><span>Прототип с edu-plus.ru</span><select data-site-template aria-label="Прототип лендинга" disabled><option value="">Загрузка…</option></select></label>
         <div data-site-prototype-link></div>
@@ -32466,12 +32474,12 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!value) {
         prepareButton.disabled = !select.value;
         const publishButton = resultArea.querySelector("[data-site-publish]");
-        if (publishButton) publishButton.disabled = !resultArea.querySelector("[data-site-reviewed]")?.checked;
+        if (publishButton) publishButton.disabled = !result?.certificateHash || result?.certificates?.length !== 2 || !resultArea.querySelector("[data-site-reviewed]")?.checked;
       }
     };
     const request = async (action, body) => {
       const response = await fetch(photoApiUrl(`/api/program-sites/${action}`), {
-        method: body ? "POST" : "GET", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(150000),
+        method: body ? "POST" : "GET", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(300000),
         ...(body ? {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {})
       });
       const payload = await response.json().catch(() => ({}));
@@ -32492,22 +32500,23 @@ MAX - https://bizvmax.ru/zifra_plus
         <h3>${result.stage === "published" ? "Программа опубликована" : "Черновики подготовлены"}</h3>
         <p>ID товара: ${escapeHtml(result.product?.id || "—")}; ID лендинга: ${escapeHtml(result.landing?.id || "—")}</p>
         <div class="program-site-actions">${renderProgramSiteLink(result.landing?.previewUrl, "Просмотреть лендинг")}${renderProgramSiteLink(result.landing?.editUrl, "Редактировать лендинг")}${renderProgramSiteLink(result.product?.editUrl, "Редактировать товар")}</div>
+        ${result.certificates?.length === 2 ? `<p class="muted">Образцы созданы для этой программы, без выдачи документов слушателям.</p><div class="program-site-actions">${result.certificates.map(image => renderProgramSiteLink(image.url, image.language === "ru" ? "Образец сертификата — русский" : "Certificate sample — English")).join("")}</div>` : `<p class="muted">Повторите подготовку, чтобы автоматически создать актуальные образцы сертификатов.</p>`}
         ${result.stage === "published" ? `<div class="program-site-actions">${renderProgramSiteLink(result.landing?.url, "Открыть сайт")}${renderProgramSiteLink(result.product?.url, "Проверить переход из магазина")}</div>` : `
-          <p class="muted">Проверьте содержание всех блоков, отзывы, фотографии спикера и образцы сертификатов на обоих языках. Они копируются из прототипа и могут относиться к другой программе.</p>
+          <p class="muted">Проверьте новые образцы сертификатов на обоих языках. Отзывы, фотографии спикера и остальные неизменённые блоки копируются из прототипа и могут относиться к другой программе.</p>
           <label class="program-site-review"><input type="checkbox" data-site-reviewed>Я проверил лендинг и товар, включая цены, дату, изображения и сертификаты</label>
           <button class="primary-button" type="button" data-site-publish disabled>Опубликовать страницу и товар</button>`}
         ${result.promoMessage ? `<label><span>Промосообщение</span><textarea readonly rows="5">${escapeHtml(result.promoMessage)}</textarea></label>` : ""}
         <p class="muted">После публикации: проверьте оформление заказа и выдачу подключения, согласуйте материалы со спикером, обновите приказ о наборе. Рассылка, оплата тестового заказа и изменение главной страницы автоматически не выполняются.</p>`;
       const review = resultArea.querySelector("[data-site-reviewed]");
       const publishButton = resultArea.querySelector("[data-site-publish]");
-      review?.addEventListener("change", () => { publishButton.disabled = busy || !review.checked; });
+      review?.addEventListener("change", () => { publishButton.disabled = busy || !review.checked || !result.certificateHash || result.certificates?.length !== 2; });
       publishButton?.addEventListener("click", async () => {
-        if (busy || !review.checked || Number(select.value) !== Number(result.templateId)) return;
+        if (busy || !review.checked || !result.certificateHash || result.certificates?.length !== 2 || Number(select.value) !== Number(result.templateId)) return;
         setBusy(true);
         status.textContent = "Публикация страницы и товара, включение переходов…";
         try {
           if (!await ensureRecordLockForSave(card)) throw new Error("Сначала восстановите блокировку карточки.");
-          const published = await request("publish", {programId, templateId: result.templateId, hash: result.hash});
+          const published = await request("publish", {programId, templateId: result.templateId, hash: result.hash, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
           result = {...result, ...published};
           drawResult();
           await storeResult(result);
@@ -32550,10 +32559,10 @@ MAX - https://bizvmax.ru/zifra_plus
     prepareButton.addEventListener("click", async () => {
       if (busy || !select.value) return;
       setBusy(true);
-      status.textContent = "Подготовка товара и лендинга. Дождитесь результата…";
+      status.textContent = "Создание образцов сертификатов RU/EN, загрузка изображений и подготовка черновиков. Дождитесь результата…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Сначала восстановите блокировку карточки.");
-        result = await request("prepare", {programId, templateId: Number(select.value)});
+        result = await request("prepare", {programId, templateId: Number(select.value), preferLocalTemplate: getEffectiveLocalDocumentsMode()});
         drawResult();
         await storeResult(result);
         status.textContent = result.stage === "published" ? "Эта программа уже опубликована; копии не создавались." : "Черновики сохранены. Проверьте их по ссылкам ниже перед публикацией.";
@@ -32561,7 +32570,7 @@ MAX - https://bizvmax.ru/zifra_plus
       finally {
         setBusy(false);
         const publishButton = resultArea.querySelector("[data-site-publish]");
-        if (publishButton) publishButton.disabled = !resultArea.querySelector("[data-site-reviewed]")?.checked;
+        if (publishButton) publishButton.disabled = !result?.certificateHash || result?.certificates?.length !== 2 || !resultArea.querySelector("[data-site-reviewed]")?.checked;
       }
     });
     const close = () => {

@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const pg = require("../program-site-generator.js");
-const fixture = {id: "test-pro-webinar", type: "ПРО", name: "Тестовый онлайн-семинар", hours: 2, price: 390, oldPrice: 1000,
+const fixture = {id: "test-pro-webinar", type: "ПРО", name: "Тестовый онлайн-семинар", nameEnglish: "Test webinar", hours: 2, price: 390, oldPrice: 1000,
   landingCode: "test_webinar", webinarDate: "2026-09-30", webinarTime: "09:30", webinarJoinUrl: "https://jazz.sber.ru/test?psw=example#join",
   siteDescription: "<p>Программа семинара</p>", siteSpeaker: "<p>Тестовый спикер</p>"};
 const template = {id: 42, title: "Прототип", modified: "2026-09-14 09:00:00", fields: {
@@ -13,6 +13,13 @@ const template = {id: 42, title: "Прототип", modified: "2026-09-14 09:00
   blok_ceny: [{stoimost_kursa: "200", staraya_cena: "300", skidka: "33", ssylka_na_registraciyu: "https://zifra-plus.ru/checkout/?add-to-cart=12"}],
   photo: 72, text: '<a href="https://zifra-plus.ru/checkout/?add-to-cart=12">Прототип</a>', opaque: {unrelated: "Сохранить"}
 }};
+Object.assign(template.fields, {izobrazhenie_vydavaemogo_dokumenta: 11, prevyu_vydavaemogo_dokumenta_1: 11,
+  izobrazhenie_vydavaemogo_dokumenta_2: 12, prevyu_vydavaemogo_dokumenta_2: 12});
+const certificate = {hash: "d".repeat(64), generate: async () => [{language: "ru", base64: "test"}, {language: "en", base64: "test"}]};
+const images = [{id: 81, language: "ru", url: "https://edu-plus.ru/wp-content/uploads/sample-ru.jpg"},
+  {id: 82, language: "en", url: "https://edu-plus.ru/wp-content/uploads/sample-en.jpg"}];
+const prepare = (program, id, call) => pg.prepare(program, id, call, certificate);
+const publish = (program, id, hash, call) => pg.publish(program, id, hash, call, certificate);
 async function main() {
   const model = pg.normalizeProgram(fixture);
   assert.equal(model.joinUrl, fixture.webinarJoinUrl);
@@ -42,33 +49,43 @@ async function main() {
   const fake = async (site, endpoint, payload) => {
     calls.push({site, endpoint, payload});
     if (endpoint.startsWith("/template/")) return template;
+    if (endpoint === "/certificate-assets") return {images};
     return {id: site === "edu" ? 101 : 99, status: ["/publish", "/enable-redirect"].includes(endpoint) ? "publish" : "draft", redirectEnabled: endpoint === "/enable-redirect"};
   };
-  const draft = await pg.prepare(fixture, 42, fake);
+  const draft = await prepare(fixture, 42, fake);
   assert.equal(draft.stage, "prepared");
-  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "shop/prepare-product", "edu/prepare-landing"]);
-  assert.equal(calls[2].payload.fields.blok_ceny[0].ssylka_na_registraciyu, "https://zifra-plus.ru/checkout/?add-to-cart=99");
+  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "edu/certificate-assets", "shop/prepare-product", "edu/prepare-landing"]);
+  assert.equal(calls[3].payload.fields.blok_ceny[0].ssylka_na_registraciyu, "https://zifra-plus.ru/checkout/?add-to-cart=99");
+  assert.equal(calls[3].payload.fields.izobrazhenie_vydavaemogo_dokumenta, 81);
+  assert.equal(calls[3].payload.fields.prevyu_vydavaemogo_dokumenta_2, 82);
+  assert.deepEqual(draft.certificates, images);
   calls.length = 0;
-  await assert.rejects(pg.publish({...fixture, price: 400}, 42, draft.hash, fake), /изменились/);
+  await assert.rejects(publish({...fixture, price: 400}, 42, draft.hash, fake), /изменились/);
+  await assert.rejects(publish({...fixture, nameEnglish: "Changed"}, 42, draft.hash, fake), /изменились/);
+  await assert.rejects(pg.publish(fixture, 42, draft.hash, fake, {...certificate, hash: "e".repeat(64)}), /изменились/);
   assert.equal(calls.length, 0, "Stale publication must not mutate either website");
-  await pg.publish(fixture, 42, draft.hash, fake);
-  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["shop/publish", "edu/publish", "shop/enable-redirect"]);
+  await publish(fixture, 42, draft.hash, fake);
+  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/validate-publication", "shop/publish", "edu/publish", "shop/enable-redirect"]);
   calls.length = 0;
-  await assert.rejects(pg.prepare(fixture, 42, async (site, endpoint, body) => {
+  await assert.rejects(prepare(fixture, 42, async (site, endpoint, body) => {
     calls.push({site, endpoint, body});
     if (endpoint.startsWith("/template")) return template;
     throw new Error("network interrupted");
   }), /network interrupted/);
   assert.equal(calls.length, 2, "Do not create landing when product creation failed");
   calls.length = 0;
-  await assert.rejects(pg.prepare(fixture, 42, async () => ({fields: {}})), /регистрации/);
-  const first = await pg.prepare(fixture, 42, fake);
-  const second = await pg.prepare(fixture, 42, fake);
+  await assert.rejects(prepare(fixture, 42, async () => ({fields: {}})), /регистрации/);
+  const first = await prepare(fixture, 42, fake);
+  const second = await prepare(fixture, 42, fake);
   assert.equal(first.hash, second.hash, "Retries use identical content hash");
-  assert.equal(calls[1].payload.key, calls[4].payload.key, "Retries identify the same program");
-  const partial = await pg.prepare(fixture, 42, async (site, endpoint) => endpoint.startsWith("/template/") ? template : {id: site === "edu" ? 101 : 99, status: "publish", redirectEnabled: false});
+  assert.equal(calls[1].payload.key, calls[5].payload.key, "Retries identify the same program");
+  const partial = await prepare(fixture, 42, async (site, endpoint) => endpoint.startsWith("/template/") ? template : endpoint === "/certificate-assets" ? {images} : {id: site === "edu" ? 101 : 99, status: "publish", redirectEnabled: false});
   assert.equal(partial.stage, "prepared", "Failed redirect step must remain resumable, never reported as completed");
-  await assert.rejects(pg.publish(fixture, 42, first.hash, async () => ({id: 99, status: "publish", redirectEnabled: false})), /не подтвердили/);
+  await assert.rejects(publish(fixture, 42, first.hash, async () => ({id: 99, status: "publish", redirectEnabled: false})), /не подтвердили/);
+  calls.length = 0;
+  await assert.rejects(pg.prepare(fixture, 42, fake, {...certificate, generate: async () => {throw new Error("render failed");}}), /render failed/);
+  assert.equal(calls.length, 1, "Rendering failure must not mutate either site");
+  await assert.rejects(pg.prepare(fixture, 42, fake), /не подключено/);
   const secret = "a".repeat(64);
   const client = pg.createClient({edu: secret, shop: secret}, async (url, options) => {
     assert.equal(new URL(url).origin, pg.SITES.edu);
@@ -94,7 +111,7 @@ async function main() {
   assert.match(context.renderProgramSiteLink("https://edu-plus.ru/other_course/test/", "open"), /noopener noreferrer/);
   assert.match(app, /data-action="create-program-on-site"/);
   assert.match(app, /field\("webinarJoinUrl", "Ссылка подключения SberJazz"/);
-  assert.match(app, /if \(publishButton\) publishButton.disabled = !resultArea.querySelector/);
+  assert.match(app, /if \(publishButton\) publishButton.disabled = !result\?\.certificateHash/);
   const server = fs.readFileSync(path.join(__dirname, "..", "app-server.js"), "utf8");
   const routeStart = server.indexOf('if (requestUrl.pathname.startsWith("/api/program-sites/"))');
   const route = server.slice(routeStart, server.indexOf('\n  if (', routeStart + 5));
@@ -122,9 +139,10 @@ if (process.argv.includes("--serve")) {
       const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const escapeAttr=escapeHtml,isAdminUser=()=>true,isDatabaseDemoMode=()=>false,isSettingsDraftSessionActive=()=>false;
       const saveRecordFormBeforeContinuation=async()=>state.modal.id, ensureRecordLockForSave=async()=>true;
+      const getEffectiveLocalDocumentsMode=()=>true;
       const persist=()=>document.getElementById('saved').textContent='Результат сохранён в тестовой карточке';
       const flushSharedApplicationState=async()=>true, photoApiUrl=value=>value, render=()=>{};
-      const fetch=async(url,opts)=>({ok:true,json:async()=>url.endsWith('/templates')?{templates:[{id:42,title:'Готовим статью с помощью нейросетей — тестовый прототип',url:'https://edu-plus.ru/other_course/test/'},{id:43,title:'Создание контента для СДО — тестовый прототип',url:'https://edu-plus.ru/other_course/test2/'}]}:{ok:true,stage:url.endsWith('/publish')?'published':'prepared',templateId:JSON.parse(opts.body).templateId,hash:'fixture',product:{id:99,editUrl:'https://zifra-plus.ru/wp-admin/post.php?post=99&action=edit',url:'https://zifra-plus.ru/product/test/'},landing:{id:101,previewUrl:'https://edu-plus.ru/?p=101&preview=true',editUrl:'https://edu-plus.ru/wp-admin/post.php?post=101&action=edit',url:'https://edu-plus.ru/other_course/test/'},promoMessage:'Тестовый семинар\\n30.09.2026 в 09:30 (МСК)\\nРегистрация: https://edu-plus.ru/other_course/test/'}});
+const fetch=async(url,opts)=>({ok:true,json:async()=>url.endsWith('/templates')?{templates:[{id:42,title:'Готовим статью с помощью нейросетей — тестовый прототип',url:'https://edu-plus.ru/other_course/test/'},{id:43,title:'Создание контента для СДО — тестовый прототип',url:'https://edu-plus.ru/other_course/test2/'}]}:{ok:true,certificates:${JSON.stringify(images)},certificateHash:'fixture-cert',stage:url.endsWith('/publish')?'published':'prepared',templateId:JSON.parse(opts.body).templateId,hash:'fixture',product:{id:99,editUrl:'https://zifra-plus.ru/wp-admin/post.php?post=99&action=edit',url:'https://zifra-plus.ru/product/test/'},landing:{id:101,previewUrl:'https://edu-plus.ru/?p=101&preview=true',editUrl:'https://edu-plus.ru/wp-admin/post.php?post=101&action=edit',url:'https://edu-plus.ru/other_course/test/'},promoMessage:'Тестовый семинар\\n30.09.2026 в 09:30 (МСК)\\nРегистрация: https://edu-plus.ru/other_course/test/'}});
       ${source}
       document.getElementById('open').addEventListener('click',openProgramSiteGenerator);
     </script></body></html>`);

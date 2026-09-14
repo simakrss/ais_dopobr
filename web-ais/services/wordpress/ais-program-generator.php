@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор программ ПРО
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -107,6 +107,72 @@ function ais_pg_template($id) {
     if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
     return $post;
 }
+function ais_pg_certificate_slots() {
+    return array('izobrazhenie_vydavaemogo_dokumenta' => 'ru', 'prevyu_vydavaemogo_dokumenta_1' => 'ru',
+        'izobrazhenie_vydavaemogo_dokumenta_2' => 'en', 'prevyu_vydavaemogo_dokumenta_2' => 'en');
+}
+function ais_pg_certificate_key($key, $hash, $language) {
+    if (!preg_match('/^[a-f0-9]{64}$/D', $hash) || !in_array($language, array('ru', 'en'), true)) throw new RuntimeException('Не указана версия образцов сертификатов.');
+    return hash('sha256', $key . ':' . $hash . ':' . $language);
+}
+function ais_pg_certificate_assets($data) {
+    $own_id = ais_pg_find($data['key']);
+    if ($own_id && get_post_status($own_id) === 'publish' && get_post_meta($own_id, '_ais_generator_hash', true) !== $data['hash']) {
+        throw new RuntimeException('Программа уже опубликована с другими параметрами. Автоматическая перезапись запрещена.');
+    }
+    $images = $data['images'] ?? null;
+    if (!is_array($images) || count($images) !== 2) throw new RuntimeException('Нужны два образца сертификата — русский и английский.');
+    $validated = array();
+    foreach ($images as $image) {
+        $language = $image['language'] ?? '';
+        $asset_key = ais_pg_certificate_key($data['key'], $data['certificateHash'] ?? '', $language);
+        if (isset($validated[$language])) throw new RuntimeException('Языки образцов сертификатов повторяются.');
+        $encoded = $image['base64'] ?? '';
+        if (!is_string($encoded) || strlen($encoded) > 1400000) throw new RuntimeException('Образец сертификата превышает допустимый размер.');
+        $bytes = base64_decode($encoded, true);
+        $info = $bytes ? @getimagesizefromstring($bytes) : false;
+        if (!$info || $info[2] !== IMAGETYPE_JPEG || strlen($bytes) > 1024 * 1024
+            || min($info[0], $info[1]) < 600 || max($info[0], $info[1]) > 2200) {
+            throw new RuntimeException('Образцы должны быть изображениями JPEG размером 600–2200 пикселей, до 1 МБ.');
+        }
+        $validated[$language] = array('bytes' => $bytes, 'key' => $asset_key);
+    }
+    require_once ABSPATH . 'wp-admin/includes/image.php';
+    $result = array();
+    foreach ($validated as $language => $image) {
+        $ids = get_posts(array('post_type' => 'attachment', 'post_status' => 'inherit', 'posts_per_page' => 2,
+            'fields' => 'ids', 'meta_key' => '_ais_certificate_key', 'meta_value' => $image['key']));
+        if (count($ids) > 1) throw new RuntimeException('Найдено несколько одинаковых образцов. Проверьте медиатеку.');
+        $id = $ids ? (int) $ids[0] : 0;
+        if ($id && !is_file(get_attached_file($id))) throw new RuntimeException('Файл образца удалён из медиатеки. Восстановите его перед повторной подготовкой.');
+        if (!$id) {
+            $uploaded = wp_upload_bits('certificate-sample-' . $image['key'] . '-' . $language . '.jpg', null, $image['bytes']);
+            if (!empty($uploaded['error'])) throw new RuntimeException('Не удалось загрузить образец сертификата в медиатеку.');
+            $id = wp_insert_attachment(array('post_title' => 'Образец сертификата ПРО / SAMPLE — ' . strtoupper($language),
+                'post_mime_type' => 'image/jpeg', 'post_status' => 'inherit',
+                'meta_input' => array('_ais_certificate_key' => $image['key'])), $uploaded['file'], 0, true);
+            if (is_wp_error($id)) {
+                wp_delete_file($uploaded['file']);
+                throw new RuntimeException('Не удалось зарегистрировать образец сертификата в медиатеке.');
+            }
+            update_post_meta($id, '_wp_attachment_image_alt', 'Образец сертификата — ' . ($language === 'ru' ? 'русский' : 'English'));
+        }
+        // Recover interrupted thumbnail generation without uploading another attachment.
+        if (!wp_get_attachment_metadata($id)) wp_update_attachment_metadata($id, wp_generate_attachment_metadata($id, get_attached_file($id)));
+        $result[] = array('id' => $id, 'language' => $language, 'url' => wp_get_attachment_url($id));
+    }
+    return array('ok' => true, 'images' => $result);
+}
+function ais_pg_validate_certificates($data) {
+    foreach (ais_pg_certificate_slots() as $slot => $language) {
+        $id = (int) ($data['fields'][$slot] ?? 0);
+        $expected = ais_pg_certificate_key($data['key'], $data['certificateHash'] ?? '', $language);
+        if (!$id || get_post_type($id) !== 'attachment' || get_post_mime_type($id) !== 'image/jpeg'
+            || get_post_meta($id, '_ais_certificate_key', true) !== $expected || !is_file(get_attached_file($id))) {
+            throw new RuntimeException('Для лендинга не загружены актуальные образцы сертификатов. Повторите подготовку.');
+        }
+    }
+}
 function ais_pg_prepare_landing($data) {
     $template = ais_pg_template((int) ($data['templateId'] ?? 0));
     if ($template->post_modified_gmt !== ($data['templateModified'] ?? '')) throw new RuntimeException('Прототип изменился. Повторите подготовку.');
@@ -118,6 +184,11 @@ function ais_pg_prepare_landing($data) {
     if (!$title || !is_array($data['fields'] ?? null)) throw new RuntimeException('Не заполнены название или поля лендинга.');
     $definition = get_field_objects($template->ID, false) ?: array();
     if (!$definition) throw new RuntimeException('Прототип не содержит полей ACF.');
+    ais_pg_validate_certificates($data);
+    $field_names = array_column($definition, 'name');
+    foreach (ais_pg_certificate_slots() as $slot => $_language) {
+        if (!in_array($slot, $field_names, true)) throw new RuntimeException('В прототипе отсутствуют блоки образцов сертификатов.');
+    }
     $post_data = array('post_title' => $title, 'post_name' => $data['slug'], 'post_type' => 'other-course', 'post_status' => 'draft',
         'post_content' => $template->post_content, 'post_excerpt' => $template->post_excerpt,
         'meta_input' => array('_ais_generator_key' => $data['key'], '_ais_generator_template' => $template->ID));
@@ -134,6 +205,10 @@ function ais_pg_prepare_landing($data) {
         if ($taxonomy->public) wp_set_object_terms($id, wp_get_object_terms($template->ID, $taxonomy->name, array('fields' => 'ids')), $taxonomy->name);
     }
     update_post_meta($id, '_ais_generator_product', (int) ($data['productId'] ?? 0));
+    foreach (ais_pg_certificate_slots() as $slot => $_language) {
+        if ((int) get_field($slot, $id, false) !== (int) $data['fields'][$slot]) throw new RuntimeException('WordPress не подтвердил подстановку образцов. Повторите подготовку.');
+    }
+    update_post_meta($id, '_ais_certificate_hash', $data['certificateHash']);
     update_post_meta($id, '_ais_generator_hash', $data['hash']);
     return ais_pg_result($id);
 }
@@ -194,10 +269,17 @@ function ais_pg_mutate($action, $data) {
     $lock = 'ais_pg_' . substr(hash('sha256', $wpdb->prefix . $data['key']), 0, 48);
     if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock)) !== '1') return ais_pg_error('Эта программа уже обрабатывается. Повторите через несколько секунд.', 409);
     try {
+        if ($action === 'certificate-assets' && ais_pg_role() === 'edu') return ais_pg_certificate_assets($data);
         if ($action === 'prepare-product' && ais_pg_role() === 'shop') return ais_pg_prepare_product($data);
         if ($action === 'prepare-landing' && ais_pg_role() === 'edu') return ais_pg_prepare_landing($data);
         $id = ais_pg_find($data['key']);
         if (!$id || get_post_meta($id, '_ais_generator_hash', true) !== $data['hash']) throw new RuntimeException('Сначала подготовьте и проверьте черновики с текущими параметрами.');
+        if (in_array($action, array('publish', 'validate-publication'), true) && ais_pg_role() === 'edu') {
+            $fields = array();
+            foreach (ais_pg_certificate_slots() as $slot => $_language) $fields[$slot] = get_field($slot, $id, false);
+            ais_pg_validate_certificates(array('key' => $data['key'], 'certificateHash' => get_post_meta($id, '_ais_certificate_hash', true), 'fields' => $fields));
+            if ($action === 'validate-publication') return array('ok' => true);
+        }
         if ($action === 'publish') {
             ais_pg_slug(get_post_field('post_name', $id), get_post_type($id), $id);
             $result = wp_update_post(array('ID' => $id, 'post_status' => 'publish'), true);
@@ -217,10 +299,10 @@ function ais_pg_dispatch($request) {
     try {
         $action = basename($request->get_route());
         if ($request->get_method() === 'POST') {
-            if (strlen($request->get_body()) > 2000000) return ais_pg_error('Слишком большой запрос.', 413);
+            if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 3000000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             return ais_pg_mutate($action, $request->get_json_params() ?: array());
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.0.0', 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.1.0', 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if ($action === 'templates') {
             $posts = get_posts(array('post_type' => 'other-course', 'post_status' => 'publish', 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC'));
@@ -237,7 +319,7 @@ function ais_pg_dispatch($request) {
 }
 add_action('rest_api_init', function () {
     foreach (array('health', 'templates', 'template/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
-    foreach (array('prepare-product', 'prepare-landing', 'publish', 'enable-redirect') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
 // This filter runs ONLY after WooCommerce has checked download/order permissions.
 add_filter('woocommerce_file_download_method', function ($method, $id, $file) {
