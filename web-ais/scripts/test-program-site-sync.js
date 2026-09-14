@@ -66,6 +66,9 @@ async function main() {
   assert.equal((app.match(/data-action="create-program-on-site"/g)||[]).length,1,"Create button appears only in Site panel");
   assert.doesNotMatch(panelSource,/class="primary-button"/);
   assert.match(css,/\.program-site-preview-viewport iframe[^}]+pointer-events: none/s);
+  assert.match(css,/\.program-site-panel\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.match(css,/\.program-site-preview\s*\{[^}]*flex: 0 1 640px;[^}]*max-width: 640px;/);
+  assert.match(css,/\.program-site-preview-viewport iframe\s*\{[^}]*width: 200%; height: 200%;[^}]*transform: scale\(\.5\)/);
   console.log("PASS: legacy ID/slug, all 4 types, ambiguous offers, remembered product, authoritative values, stale preview, both-site preflight, partial failure, compact UI contracts");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
