@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.3.1
+ * Version: 1.3.2
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -234,8 +234,9 @@ function ais_pg_prepare_landing($data) {
     $id = wp_insert_post(wp_slash($post_data), true);
     if (is_wp_error($id)) throw new RuntimeException('Не удалось сохранить черновик лендинга.');
     foreach ($definition as $field) {
-        // Copy reviews authoritatively from the prototype, not a modified browser payload.
-        if ($field['name'] === 'blok_opisaniya_kursa' || preg_match('/otzyv|review/i', $field['name'])) {
+        // Copy description, author and reviews from the authoritative prototype.
+        if (in_array($field['name'], array('blok_opisaniya_kursa', 'opisanie_dokumenta', 'opisanie_o_programme', 'tekst_etap_obucheniya_1'), true)
+            || preg_match('/otzyv|review/i', $field['name'])) {
             $data['fields'][$field['name']] = ais_pg_acf_value($field, $field['value']);
         }
         if (array_key_exists($field['name'], $data['fields'])) update_field($field['key'], ais_pg_acf_value($field, $data['fields'][$field['name']], true), $id);
@@ -393,8 +394,14 @@ function ais_pg_resolve_site($data) {
         if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Не указан код лендинга.');
         $ids = get_posts(array('post_type' => array('other-course', 'courses-pk', 'courses-pp'), 'post_status' => array('draft', 'publish'),
             'name' => $slug, 'posts_per_page' => 2, 'fields' => 'ids'));
+        if (!$ids && ($data['allowMissing'] ?? false) === true) return array('found' => false);
         if (count($ids) !== 1) throw new RuntimeException('Лендинг по коду не найден однозначно. Укажите его числовой ID в карточке программы.');
         $id = (int) $ids[0];
+    }
+    if (($data['allowMissing'] ?? false) === true) {
+        $post = get_post($id);
+        if (!$post || !in_array($post->post_type, array('other-course', 'courses-pk', 'courses-pp'), true)
+            || !in_array($post->post_status, array('draft', 'publish'), true)) return array('found' => false);
     }
     return ais_pg_sync_landing($id);
 }
@@ -494,7 +501,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.3.1', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.3.2', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

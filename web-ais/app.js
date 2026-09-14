@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.457",
+    version: "1.7.458",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.458",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Прототип лендинга обязателен и по умолчанию выбирается из дублируемой программы. Описание и автор копируются из прототипа; выбранный прототип сохраняется в карточке.",
+        "Создание доступно только при отсутствии лендинга, синхронизация — при его наличии. Непроверенное состояние блокирует обе операции; незавершённую публикацию можно продолжить отдельной кнопкой."
+      ]
+    },
     {
       version: "1.7.457",
       releasedAt: "2026-09-14",
@@ -9115,6 +9123,13 @@ MAX - https://bizvmax.ru/zifra_plus
     }));
     normalized.authorSource = formatProgramAuthorPaymentSource(normalized.authorPayments);
     normalized.author = normalized.authorSource;
+    normalized.sitePrototype = {
+      programId: String(source.id || ""), name: String(source.name || ""),
+      landingCode: String(source.landingCode || ""),
+      landingId: Number(source.siteSync?.landing?.id || source.sitePublication?.landing?.id || 0),
+      url: String(source.siteSync?.landing?.url || source.sitePublication?.landing?.url || source.promoSite || source.landingUrl || "")
+    };
+    normalized.siteTemplateId = "";
     return normalized;
   }
 
@@ -32501,7 +32516,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramLandingPreview(value, {title = "Лендинг программы", previewImageUrl = ""} = {}) {
     const url = getProgramLandingPreviewUrl(value);
-    if (!url) return '<div class="program-site-preview-empty"><span>Миниатюра лендинга</span><small>Укажите код лендинга в карточке программы.</small></div>';
+    if (!url) return '<div class="program-site-preview-empty"><span>Миниатюра лендинга</span><small>Миниатюра появится после создания и проверки лендинга.</small></div>';
     const image = getProgramLandingPreviewImage(previewImageUrl);
     return `<a class="program-site-preview-link" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" title="Открыть лендинг в новой вкладке" aria-label="Открыть лендинг по миниатюре">
       <span class="program-site-preview-bar" aria-hidden="true"><i></i><i></i><i></i><span>edu-plus.ru</span></span>
@@ -32536,8 +32551,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return `<div class="program-site-panel">
       <div class="program-site-controls">
         <div class="program-site-actions">
-          ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" ${isDatabaseDemoMode() ? "disabled" : ""}>Создать на сайте</button>` : ""}
-          <button type="button" class="ghost-button compact-button" data-action="sync-program-with-sites" ${!isAdminUser() || isDatabaseDemoMode() ? "disabled" : ""}>Синхронизировать с сайтом</button>
+          ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" disabled>Создать на сайте</button>
+          <button class="ghost-button compact-button" data-action="resume-program-site" type="button" hidden disabled>Продолжить публикацию</button>` : ""}
+          <button type="button" class="ghost-button compact-button" data-action="sync-program-with-sites" disabled>Синхронизировать с сайтом</button>
         </div>
         <div class="program-site-actions" data-program-site-links>${renderProgramSiteLink(landingUrl, "Лендинг — edu-plus.ru")}${renderProgramSiteLink(publication.product?.editUrl, "Карточка товара — zifra-plus.ru")}</div>
         <p class="muted" data-program-site-link-status>Ссылки определяются по сохранённому коду лендинга и его кнопкам регистрации.</p>
@@ -32547,27 +32563,64 @@ MAX - https://bizvmax.ru/zifra_plus
     </div>`;
   }
 
+  function updateProgramSiteActions(form, result = null) {
+    const allowed = isAdminUser() && !isDatabaseDemoMode();
+    const publication = state.data.collections.programs.find(item => String(item.id) === String(form.dataset.id))?.sitePublication;
+    const resume = result?.exists === true && publication?.stage === "prepared"
+      && Number(publication.landing?.id) === Number(result.landing?.id);
+    const create = form.querySelector('[data-action="create-program-on-site"]');
+    const sync = form.querySelector('[data-action="sync-program-with-sites"]');
+    const continuation = form.querySelector('[data-action="resume-program-site"]');
+    if (create) { create.disabled = !allowed || result?.exists !== false; create.title = result?.exists ? "Лендинг уже существует. Используйте синхронизацию." : result ? "Создать программу по выбранному прототипу" : "Сначала нужно проверить наличие лендинга."; }
+    if (sync) { sync.disabled = !allowed || result?.exists !== true; sync.title = result?.exists ? "Обновить существующий лендинг и товар" : "Синхронизация доступна после создания лендинга."; }
+    if (continuation) { continuation.hidden = !resume; continuation.disabled = !allowed || !resume; }
+  }
+
+  function bindProgramSiteAddressChanges(form) {
+    if (!form) return;
+    for (const key of ["landingCode", "promoSite"]) {
+      const control = form.elements[key];
+      control?.addEventListener("input", () => {
+        const links = form.querySelector("[data-program-site-links]");
+        if (links) links.dataset.requestId = String(Number(links.dataset.requestId || 0) + 1);
+        updateProgramSiteActions(form);
+      });
+      control?.addEventListener("change", () => { void refreshProgramSiteLinks(); });
+    }
+  }
+
   async function refreshProgramSiteLinks() {
     const form = document.querySelector("#recordForm[data-config='programs']");
     const links = form?.querySelector("[data-program-site-links]");
     const status = form?.querySelector("[data-program-site-link-status]");
     const programId = form?.dataset.id;
-    if (!links || !status || links.dataset.loading === "true") return;
+    if (!links || !status) return null;
+    const requestId = String(Number(links.dataset.requestId || 0) + 1);
+    links.dataset.requestId = requestId;
+    updateProgramSiteActions(form);
     const preview = form.querySelector("[data-program-landing-preview]");
     updateProgramLandingPreview(form, preview?.dataset.previewUrl || preview?.dataset.previewSource);
-    if (!programId) { status.textContent = "Сохраните программу, чтобы найти её страницы на сайтах."; return; }
     links.dataset.loading = "true";
     status.textContent = "Проверка ссылок на лендинг и товары…";
     try {
-      const result = await programSiteRequest("resolve", {programId});
-      if (!links.isConnected) return;
+      const result = await programSiteRequest("resolve", {programId, landingCode: String(form.elements.landingCode?.value || ""), promoSite: String(form.elements.promoSite?.value || "")});
+      if (!links.isConnected || links.dataset.requestId !== requestId) return null;
+      if (typeof result.exists !== "boolean") throw new Error("Сервер не подтвердил наличие лендинга. Обновите систему и повторите проверку.");
+      updateProgramSiteActions(form, result);
+      if (!result.exists) {
+        links.innerHTML = "";
+        updateProgramLandingPreview(form, "", {title: "Лендинг программы", previewImageUrl: ""});
+        status.textContent = "Лендинг не найден. Можно создать его по обязательному прототипу; синхронизация пока недоступна.";
+        return result;
+      }
       updateProgramLandingPreview(form, result.landing.url, result.landing);
       links.innerHTML = renderProgramSiteLink(result.landing.url, "Лендинг — edu-plus.ru")
         + (result.product ? renderProgramSiteLink(result.product.editUrl, "Карточка товара — zifra-plus.ru")
           : result.products.map(product => renderProgramSiteLink(product.editUrl, `Товар №${product.id}: ${product.title}`)).join(""));
-      status.textContent = result.product ? "Карточка товара открывается в административной панели магазина (нужен вход)." : "У лендинга несколько товаров. При синхронизации выберите нужный вариант.";
-    } catch (error) { if (status.isConnected) status.textContent = error.message; }
-    finally { links.dataset.loading = "false"; }
+      status.textContent = result.warning || (result.product ? "Карточка товара открывается в административной панели магазина (нужен вход)." : "У лендинга несколько товаров. При синхронизации выберите нужный вариант.");
+      return result;
+    } catch (error) { if (status.isConnected && links.dataset.requestId === requestId) { updateProgramSiteActions(form); status.textContent = error.message; } return null; }
+    finally { if (links.dataset.requestId === requestId) links.dataset.loading = "false"; }
   }
 
   async function openProgramSiteSync() {
@@ -32606,7 +32659,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
           <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd>
           <dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Срок / форма</dt><dd>${escapeHtml(plan.model.duration || "без изменения")} / ${escapeHtml(plan.model.studyForm || "без изменения")}</dd></dl>
-          <p class="muted">${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название и общие сведения изменятся у всей страницы, цена — только у выбранного товара и его блока. " : ""}Заполненные описание и сведения об авторе также обновятся. Адреса страниц, отзывы, изображения, образцы документов, подключения и состояние публикации не изменятся.</p>`;
+          <p class="muted">${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название и общие сведения изменятся у всей страницы, цена — только у выбранного товара и его блока. " : ""}Описание программы и сведения об авторе сохраняются. Адреса страниц, отзывы, изображения, образцы документов, подключения и состояние публикации не изменятся.</p>`;
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
         status.textContent = plan.hash ? "Проверьте выбранный товар и подтвердите обновление." : "Выберите товар, соответствующий этой программе.";
       } catch (error) { status.textContent = error.message; }
@@ -32639,8 +32692,27 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramGeneratorFields(record) {
     return `<div class="program-site-generator-fields" data-site-generator-fields hidden>
+      <input type="hidden" name="siteTemplateId" value="${escapeAttr(record?.siteTemplateId || "")}">
       <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">ПРО: создайте встречу SberJazz и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${configs.programs.fields.filter(item => ["webinarDate", "webinarTime", "webinarJoinUrl"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>
-      <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
+      <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
+  }
+
+  function getDefaultProgramSiteTemplateId(program, templates) {
+    const selected = Number(program.siteTemplateId || program.sitePublication?.templateId || 0);
+    if (selected && templates.some(item => Number(item.id) === selected)) return String(selected);
+    const source = program.sitePrototype || program;
+    const code = String(source.landingCode || "").replace(/^\/+|\/+$/g, "");
+    const id = /^[1-9]\d*$/.test(code) ? Number(code) : Number(source.landingId || 0);
+    const matches = templates.filter(item => {
+      if (id) return Number(item.id) === id;
+      try {
+        const url = new URL(item.url);
+        if (code) return url.pathname.split("/").filter(Boolean).at(-1) === code;
+        if (source.url) return url.href === new URL(source.url).href;
+      } catch { return false; }
+      return !!source.name && String(item.title).trim() === String(source.name).trim();
+    });
+    return matches.length === 1 ? String(matches[0].id) : "";
   }
 
   async function openProgramSiteGenerator() {
@@ -32658,6 +32730,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const programId = await saveRecordFormBeforeContinuation(card, { flush: true });
     if (!programId) return;
     const program = state.data.collections.programs.find(item => item.id === programId);
+    const presence = await refreshProgramSiteLinks();
+    if (!presence) return;
+    const continuing = presence.exists && program.sitePublication?.stage === "prepared"
+      && Number(program.sitePublication.landing?.id) === Number(presence.landing?.id);
+    if (presence.exists && !continuing) return;
     const dialog = document.createElement("dialog");
     dialog.className = "modal program-site-dialog";
     dialog.dataset.programSiteDialog = "";
@@ -32667,9 +32744,10 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="program-site-body">
         <p><strong>${escapeHtml(program.name)}</strong></p>
         <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. ${type === "ПРО" ? "Ссылку SberJazz укажите в параметрах ниже." : "SberJazz не требуется."} ${bilingual ? "Образцы сертификатов RU/EN" : type === "КПК" ? "Образцы удостоверения и всех страниц приложения" : "Образцы диплома и всех страниц приложения"} создаются автоматически по соответствующему шаблону конструктора документов. Отзывы и фотографии из прототипа сохраняются.</p>
-        <details data-site-parameters><summary>Параметры генерации и описание программы</summary><div data-site-parameters-host></div><button class="ghost-button" type="button" data-site-save-parameters>Сохранить параметры</button></details>
+        <p class="muted">Описание программы и сведения об авторе копируются из выбранного прототипа.</p>
+        <details data-site-parameters><summary>Параметры генерации</summary><div data-site-parameters-host></div><button class="ghost-button" type="button" data-site-save-parameters>Сохранить параметры</button></details>
         <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
-        <label><span>Прототип с edu-plus.ru</span><select data-site-template aria-label="Прототип лендинга" disabled><option value="">Загрузка…</option></select></label>
+        <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
         <div data-site-prototype-link></div>
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Новый код лендинга должен быть свободен. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка изменённых параметров обновляет только его собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
@@ -32688,6 +32766,7 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.showModal();
     const status = dialog.querySelector("[data-site-status]");
     const select = dialog.querySelector("[data-site-template]");
+    const templateInput = generatorFields?.querySelector('[name="siteTemplateId"]');
     const resultArea = dialog.querySelector("[data-site-result]");
     const prepareButton = dialog.querySelector("[data-site-prepare]");
     let templates = [];
@@ -32712,6 +32791,8 @@ MAX - https://bizvmax.ru/zifra_plus
       return payload;
     };
     const saveParameters = async () => {
+      if (!select.value || !select.reportValidity()) throw new Error("Выберите прототип лендинга: это обязательное поле.");
+      if (templateInput) templateInput.value = select.value;
       // Form-associated controls remain part of the program card while in this dialog.
       if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Не удалось сохранить параметры программы. Проверьте поля и связь с общей базой.");
     };
@@ -32769,11 +32850,12 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const updatePrototypeLink = () => {
       const template = templates.find(item => String(item.id) === select.value);
+      if (templateInput) templateInput.value = select.value;
       dialog.querySelector("[data-site-prototype-link]").innerHTML = renderProgramSiteLink(template?.url, "Открыть прототип");
       prepareButton.disabled = busy || !template;
     };
     const filterTemplates = () => {
-      const selected = select.value || String(result?.templateId || "");
+      const selected = select.value || String(result?.templateId || "") || getDefaultProgramSiteTemplateId(program, templates);
       const query = dialog.querySelector("[data-site-search]").value.trim().toLocaleLowerCase("ru-RU");
       select.innerHTML = '<option value="">Выберите прототип</option>' + templates.filter(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query) || String(item.id) === selected)
         .map(item => `<option value="${escapeAttr(item.id)}" ${String(item.id) === selected ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("");
@@ -32787,13 +32869,14 @@ MAX - https://bizvmax.ru/zifra_plus
         const payload = await request("templates");
         templates = Array.isArray(payload.templates) ? payload.templates.filter(item => type === "ДОП" || (item.postType || "other-course") === postType) : [];
         filterTemplates();
-        status.textContent = templates.length ? "Выберите прототип. Сайты пока не изменены." : "Опубликованные прототипы для этого вида программы не найдены.";
+        status.textContent = select.value ? "Прототип выбран. Описание и автор будут скопированы из него; сайты пока не изменены." : templates.length ? "Выберите обязательный прототип. Сайты пока не изменены." : "Опубликованные прототипы для этого вида программы не найдены.";
       } catch (error) { status.textContent = error.message; }
       finally { setBusy(false); }
     };
     select.addEventListener("change", () => {
       if (result && Number(select.value) !== Number(result.templateId)) { result = null; drawResult(); }
       updatePrototypeLink();
+      status.textContent = select.value ? "Описание и автор будут скопированы из выбранного прототипа." : "Выберите прототип лендинга: это обязательное поле.";
     });
     dialog.querySelector("[data-site-search]").addEventListener("input", filterTemplates);
     dialog.querySelector("[data-site-reload]").addEventListener("click", load);
@@ -42145,8 +42228,11 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", copyProgramWithTrainingPlan);
     document.querySelector("[data-action='create-program-on-site']")
       ?.addEventListener("click", openProgramSiteGenerator);
+    document.querySelector("[data-action='resume-program-site']")
+      ?.addEventListener("click", openProgramSiteGenerator);
     document.querySelector("[data-action='sync-program-with-sites']")
       ?.addEventListener("click", openProgramSiteSync);
+    bindProgramSiteAddressChanges(document.querySelector("#recordForm[data-config='programs']"));
     if (document.querySelector('[data-program-tab-panel="site"]:not([hidden])')) void refreshProgramSiteLinks();
     document.querySelector("#recordForm[data-config='programs'] [name='type']")?.addEventListener("change", event => {
       const webinarFields = document.querySelector("[data-site-webinar-only]");
@@ -48687,6 +48773,9 @@ MAX - https://bizvmax.ru/zifra_plus
       ]);
     }
     if (isProgramCard) {
+      const sourcePrototype = currentRecord.sitePrototype || state.modal?.draft?.sitePrototype;
+      if (sourcePrototype) values.sitePrototype = copyDuplicateFieldValue(sourcePrototype);
+      if (formData.has("siteTemplateId")) values.siteTemplateId = String(formData.get("siteTemplateId") || "");
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
         if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
       });

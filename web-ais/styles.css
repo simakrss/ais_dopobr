@@ -31013,6 +31013,7 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-body [data-site-publish] { justify-self: start; }
 .program-site-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .program-site-actions a { text-decoration: none; }
+.program-site-actions > [hidden] { display: none !important; }
 .program-site-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .program-site-fields .program-field-wide { grid-column: 1 / -1; }
 .program-site-panel { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

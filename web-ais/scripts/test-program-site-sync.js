@@ -63,7 +63,7 @@ async function main() {
   assert.match(cover,/<img src="https:\/\/edu-plus.ru\/wp-content\/uploads\/db_logo.jpg"/);assert.doesNotMatch(cover,/<script>/);
   const panelSource=app.slice(app.indexOf("  function renderProgramSitePanel("),app.indexOf("  async function refreshProgramSiteLinks("));
   assert.match(panelSource,/data-action="create-program-on-site"/);
-  assert.equal((app.match(/data-action="create-program-on-site"/g)||[]).length,1,"Create button appears only in Site panel");
+  assert.equal((app.match(/<button[^>]+data-action="create-program-on-site"/g)||[]).length,1,"Create button appears only in Site panel");
   assert.doesNotMatch(panelSource,/class="primary-button"/);
   assert.match(css,/\.program-site-preview-viewport iframe[^}]+pointer-events: none/s);
   assert.match(css,/\.program-site-panel\s*\{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
@@ -82,6 +82,7 @@ if (process.argv.includes("--serve")) {
   const source=app.slice(app.indexOf("  function renderProgramSiteLink("),app.indexOf("  function renderProgramModal("));
   // Optional real public landing for visual inspection; no write calls leave the fixture.
   const livePreview=process.env.AIS_QA_LANDING_PREVIEW === "1";
+  const uiProgram={...program, sitePrototype:{programId:'source-program',landingCode:'3878',name:'Прототип курса'}, ...(process.env.AIS_QA_SITE_MISSING === "1" ? {landingCode:'new-program'} : {})};
   const uiLanding={...landing,...(livePreview?{url:"https://edu-plus.ru/courses-pk/pk-access/",title:"Microsoft Access + SQL",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"}:{})};
   // Long shop titles reproduce the intrinsic grid-width overlap with the preview.
   const uiProducts=products.map((item,i)=>({...item,title:`Курс ${i ? 'повышения квалификации' : 'дополнительного образования'} «Базовый курс по системному администрированию информационных систем и баз данных» — 72 ч`}));
@@ -92,7 +93,7 @@ if (process.argv.includes("--serve")) {
     if(req.url !== "/") {res.writeHead(404);return res.end();}
     res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
     res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Карточка программы — проверка</title><link rel="stylesheet" href="/styles.css"><body><main style="max-width:1000px;margin:20px auto;padding:16px;background:white"><h2>Карточка программы</h2><form id="recordForm" data-config="programs" data-id="qa-program"><div class="form-grid program-form-grid" id="main"></div><hr><h3>Сайт</h3><div id="site"></div></form><p id="saved" role="status"></p></main><script>
-      const state={data:{dictionaries:{programTypes:['ПРО','ДОП','КПК','ППП'],programStatuses:['Действует'],studyForms:['Заочная']},collections:{programs:[${JSON.stringify(program)}]}},modal:{config:'programs',id:'qa-program'},programCardTab:'site'};
+      const state={data:{dictionaries:{programTypes:['ПРО','ДОП','КПК','ППП'],programStatuses:['Действует'],studyForms:['Заочная']},collections:{programs:[${JSON.stringify(uiProgram)}]}},modal:{config:'programs',id:'qa-program'},programCardTab:'site'};
       const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const escapeAttr=escapeHtml, unique=values=>[...new Set(values)], isAdminUser=()=>true,isDatabaseDemoMode=()=>false,isSettingsDraftSessionActive=()=>false,ensureRecordLockForSave=async()=>true;
       const field=(key,label,type='text',required=false,dict=null,options={})=>({key,label,type,required,dict,options});
@@ -105,9 +106,15 @@ if (process.argv.includes("--serve")) {
       let syncWrites=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
         const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
-        if(url.endsWith('/templates')) result={templates:[{id:42,title:'Прототип курса',postType:'courses-pk',url:landing.url}]};
+        if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'courses-pk',url:landing.url},{id:42,title:'Другой прототип',postType:'courses-pk',url:landing.url}]};
+        else if(url.endsWith('/resolve')) {
+          if(body.landingCode==='fail-lookup') return {ok:false,json:async()=>({error:'Тест: сайт временно недоступен'})};
+          const draft=state.data.collections.programs[0].sitePublication;
+          const exists=body.landingCode!=='new-program' || !!draft;
+          result={ok:true,exists,landing:exists?(draft?.landing || landing):null,products:exists?products:[],product:null};
+        }
         else if(url.endsWith('/sync')) {syncWrites++;result={ok:true,landing,product:products.find(item=>item.id===body.productId),syncedAt:new Date().toISOString()};document.getElementById('saved').dataset.writes=syncWrites;}
-        else if(url.endsWith('/prepare')||url.endsWith('/publish')) result={ok:true,stage:'prepared',type:'КПК',templateId:42,hash:'qa',landing,product:products[0]};
+        else if(url.endsWith('/prepare')||url.endsWith('/publish')) result={ok:true,stage:'prepared',type:'КПК',templateId:body.templateId,hash:'qa',landing,product:products[0]};
         else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name},hash:body.productId?'qa-plan':''};
         return {ok:true,json:async()=>result};};
       ${renderFieldSource}
@@ -118,6 +125,8 @@ if (process.argv.includes("--serve")) {
       document.getElementById('recordForm').insertAdjacentHTML('beforeend',renderProgramGeneratorFields(record));
       document.querySelector('[data-action="sync-program-with-sites"]').addEventListener('click',openProgramSiteSync);
       document.querySelector('[data-action="create-program-on-site"]').addEventListener('click',openProgramSiteGenerator);
+      document.querySelector('[data-action="resume-program-site"]').addEventListener('click',openProgramSiteGenerator);
+      bindProgramSiteAddressChanges(document.getElementById('recordForm'));
       refreshProgramSiteLinks();
     </script></body></html>`);
   });

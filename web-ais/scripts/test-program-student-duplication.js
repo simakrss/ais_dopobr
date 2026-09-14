@@ -191,6 +191,10 @@ const programDraft = context.buildProgramDuplicateDraftForTest(sourceProgram, ex
 
 assert.equal(programDraft.name, "Копия 3 — Охрана труда (72 ч)");
 assert.equal(programDraft.nameEnglish, sourceProgram.nameEnglish);
+assert.equal(programDraft.sitePrototype.programId, sourceProgram.id);
+assert.equal(programDraft.sitePrototype.landingCode, sourceProgram.landingCode);
+assert.equal(programDraft.sitePrototype.name, sourceProgram.name);
+assert.equal(programDraft.siteTemplateId, "", "A duplicate must not inherit the source's own prototype selection");
 assert.equal(programDraft.shortName, "Копия 3 — Охрана труда");
 assert.match(programDraft.name, /\(72 ч\)$/u, "Суффикс с часами должен остаться в конце названия.");
 assert.equal(programDraft.status, sourceProgram.status);

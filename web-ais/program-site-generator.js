@@ -74,13 +74,10 @@ function normalizeProgram(program = {}) {
   if (!Number.isFinite(price) || price < 0 || price > 10000000) fail("Укажите корректную стоимость программы.");
   if (!Number.isFinite(oldPrice) || oldPrice < 0 || oldPrice > 10000000) fail("Проверьте старую цену.");
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Укажите положительное количество часов.");
-  const descriptionHtml = text(program.siteDescription);
-  const speakerHtml = text(program.siteSpeaker);
-  if (!descriptionHtml || (webinar && !speakerHtml)) fail("Заполните описание программы и, для ПРО, сведения о спикере в параметрах генератора «Создать на сайте».");
   return {
     key: crypto.createHash("sha256").update(`ais-program:${id}`).digest("hex"),
     id, type, postType: spec.postType, name, nameEnglish: text(program.nameEnglish || program["Название программы на английском"], 1000), productName, slug, date, time, price, oldPrice, hours,
-    joinUrl: webinar ? normalizeJoinUrl(program.webinarJoinUrl) : "", descriptionHtml, speakerHtml,
+    joinUrl: webinar ? normalizeJoinUrl(program.webinarJoinUrl) : "",
     duration: text(program.duration, 200), studyForm: text(program.studyForm || "Дистанционная", 300), trainingPlan: program.siteTrainingPlan || [],
     landingUrl: `${SITES.edu}/${spec.base}/${slug}/`,
     dateLabel: webinar ? `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)` : text(program.siteStartLabel || "Ежедневно", 200)
@@ -129,6 +126,22 @@ function createClient(keys, fetchImpl = fetch) {
   };
 }
 
+function validateTemplateId(value) {
+  if (!Number.isSafeInteger(Number(value)) || Number(value) < 1) fail("Выберите прототип лендинга: это обязательное поле.");
+  return Number(value);
+}
+
+async function loadPrototypeModel(program, templateId, call) {
+  const model = normalizeProgram(program);
+  const template = await call("edu", `/template/${validateTemplateId(templateId)}`);
+  if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
+  const fields = template.fields || {};
+  const description = model.type === "ПРО" ? fields.opisanie_dokumenta : fields.opisanie_o_programme || fields.opisanie_dokumenta;
+  return {template, model: {...model, descriptionHtml: typeof description === "string" ? description : "",
+    speakerHtml: typeof fields.tekst_etap_obucheniya_1 === "string" ? fields.tekst_etap_obucheniya_1 : "",
+    prototypeHash: crypto.createHash("sha256").update(JSON.stringify(template)).digest("hex")}};
+}
+
 function buildLandingFields(template, model, productId, certificates) {
   if (!Number.isSafeInteger(Number(productId)) || Number(productId) < 1) fail("Магазин не вернул корректный ID товара.");
   const checkoutUrl = `${SITES.shop}/checkout/?add-to-cart=${Number(productId)}`;
@@ -141,15 +154,13 @@ function buildLandingFields(template, model, productId, certificates) {
     skidka: model.oldPrice > model.price ? String(Math.round(100 * (1 - model.price / model.oldPrice))) : "0",
     data_starta: model.dateLabel, forma_obucheniya: model.studyForm,
     srok: model.type === "ПРО" ? "Однократное участие" : model.duration,
-    ssylka_smotret_vse_kursy: "/" + PROGRAM_TYPES[model.type].base,
-    opisanie_dokumenta: model.descriptionHtml,
-    ...(model.type !== "ПРО" ? {opisanie_o_programme: model.descriptionHtml} : {}),
-    ...(model.speakerHtml ? {tekst_etap_obucheniya_1: model.speakerHtml} : {})
+    ssylka_smotret_vse_kursy: "/" + PROGRAM_TYPES[model.type].base
   };
   const walk = (value, name = "") => {
     // This ACF repeater holds the actual reviews, including authors' quotations and photos.
     // Never substitute program names or checkout links inside someone else's testimony.
-    if (name === "blok_opisaniya_kursa" || /otzyv|review/i.test(name)) return structuredClone(value);
+    if (["blok_opisaniya_kursa", "opisanie_dokumenta", "opisanie_o_programme", "tekst_etap_obucheniya_1"].includes(name)
+      || /otzyv|review/i.test(name)) return structuredClone(value);
     if (name === "ssylka_na_registraciyu") { registrationLinks++; return checkoutUrl; }
     if (Object.hasOwn(replacements, name)) return replacements[name];
     if (Array.isArray(value)) return value.map(item => walk(item));
@@ -191,10 +202,8 @@ function payloadHash(model, templateId, certificateHash) {
 }
 
 async function prepare(program, templateId, call, certificate) {
-  const model = normalizeProgram(program);
-  if (!Number.isSafeInteger(Number(templateId)) || Number(templateId) < 1) fail("Выберите прототип лендинга.");
-  const template = await call("edu", `/template/${Number(templateId)}`);
-  if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
+  validateTemplateId(templateId);
+  const {model, template} = await loadPrototypeModel(program, templateId, call);
   // Validate the prototype before creating anything in either website.
   if (!certificate?.hash || typeof certificate.generate !== "function") fail("Автосоздание сертификатов не подключено. Обновите систему.", 503);
   buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: PROGRAM_TYPES[model.type].bilingual ? "en" : "page-2", id: 2}]);
@@ -219,11 +228,11 @@ async function prepare(program, templateId, call, certificate) {
 }
 
 async function publish(program, templateId, expectedHash, call, certificate) {
-  const model = normalizeProgram(program);
-  if (!Number.isSafeInteger(Number(templateId)) || Number(templateId) < 1) fail("Выберите прототип лендинга.");
+  validateTemplateId(templateId);
+  const {model} = await loadPrototypeModel(program, templateId, call);
   if (!certificate?.hash) fail("Подготовьте черновики с автоматически созданными образцами сертификатов заново.", 409);
   const hash = payloadHash(model, templateId, certificate.hash);
-  if (hash !== expectedHash) fail("Параметры программы изменились после подготовки. Подготовьте и проверьте черновики заново.", 409);
+  if (hash !== expectedHash) fail("Параметры программы или прототип изменились после подготовки. Подготовьте и проверьте черновики заново.", 409);
   // Check sample ownership/files before either the product or landing becomes public.
   await call("edu", "/validate-publication", {key: model.key, hash});
   const product = await call("shop", "/publish", {key: model.key, hash});
@@ -261,13 +270,11 @@ function normalizeSyncProgram(program) {
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Проверьте количество часов.");
   return {id, type, name, productName: text(program.siteProductName || name, 500), price, oldPrice, hours,
     duration: text(program.duration, 200), studyForm: text(program.studyForm, 300),
-    descriptionHtml: text(program.siteDescription), speakerHtml: text(program.siteSpeaker),
+    descriptionHtml: "", speakerHtml: "",
     startLabel: text(program.siteStartLabel, 200)};
 }
 
-async function resolveSite(program, call, requestedProductId = 0) {
-  const target = syncTarget(program);
-  const landing = await call("edu", "/resolve-site", target);
+async function resolveSiteProducts(program, call, landing, target, requestedProductId = 0) {
   const offers = Array.isArray(landing.offers) ? landing.offers : [];
   const ids = [...new Set(offers.map(offer => Number(offer.productId)).filter(id => Number.isSafeInteger(id) && id > 0))];
   if (!ids.length || ids.length > 30) fail("На лендинге не найдены однозначные ссылки регистрации в интернет-магазине.");
@@ -280,6 +287,26 @@ async function resolveSite(program, call, requestedProductId = 0) {
   const selected = explicit || (ids.includes(remembered) ? remembered : ids.length === 1 ? ids[0] : matchIds.length === 1 ? matchIds[0] : 0);
   const product = products.find(item => Number(item.id) === selected) || null;
   return {ok: true, target, landing, products, product};
+}
+
+async function resolveSite(program, call, requestedProductId = 0) {
+  const target = syncTarget(program);
+  return resolveSiteProducts(program, call, await call("edu", "/resolve-site", target), target, requestedProductId);
+}
+
+async function inspectSite(program, call) {
+  const absent = {ok: true, exists: false, landing: null, products: [], product: null};
+  if (![program.landingCode, program.promoSite, program.landingUrl, program.sitePublication?.landing?.id].some(value => String(value || "").trim())) return absent;
+  const target = syncTarget(program);
+  const landing = await call("edu", "/resolve-site", {...target, allowMissing: true});
+  if (landing.found === false) return absent;
+  if (!Number.isSafeInteger(Number(landing.id)) || Number(landing.id) < 1) fail("Сайт не подтвердил наличие лендинга. Повторите проверку.", 502);
+  let resolved;
+  try { resolved = await resolveSiteProducts(program, call, landing, target); }
+  catch (error) { resolved = {products: [], product: null, warning: error.message}; }
+  return {ok: true, exists: true, landing: {id: landing.id, status: landing.status, url: landing.url, editUrl: landing.editUrl,
+    title: landing.title, previewImageUrl: landing.previewImageUrl || ""}, products: resolved.products.map(({id, title, url, editUrl}) => ({id, title, url, editUrl})),
+    product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl}, warning: resolved.warning || ""};
 }
 
 async function previewSync(program, call, productId = 0) {
@@ -309,4 +336,4 @@ async function synchronize(program, call, productId, expectedHash) {
   return {ok: true, landing, product, syncedAt: new Date().toISOString()};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, normalizeProgram, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, normalizeProgram, validateTemplateId, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};

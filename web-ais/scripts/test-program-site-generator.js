@@ -29,7 +29,7 @@ async function main() {
   for (const bad of [{type: "UNKNOWN"}, {type: ""}, {id: ""}, {name: ""}, {name: "а".repeat(129)}, {webinarDate: "2026-02-30"},
     {webinarTime: "24:00"}, {price: -1}, {price: "не число"}, {hours: 0}, {landingCode: "../other"}, {landingCode: "имя"},
     {webinarJoinUrl: "javascript:alert(1)"}, {webinarJoinUrl: "https://user:password@jazz.sber.ru/"}, {webinarJoinUrl: "http://jazz.sber.ru"},
-    {webinarJoinUrl: "https://127.0.0.1/"}, {siteSpeaker: ""}, {siteDescription: ""}]) {
+    {webinarJoinUrl: "https://127.0.0.1/"}]) {
     assert.throws(() => pg.normalizeProgram({...fixture, ...bad}), JSON.stringify(bad));
   }
   assert.equal(pg.normalizeProgram({...fixture, name: "а".repeat(200), siteProductName: "Короткое название"}).productName, "Короткое название");
@@ -39,6 +39,9 @@ async function main() {
   assert.equal(fields.blok_ceny[0].skidka, "61");
   assert.equal(fields.blok_ceny[0].ssylka_na_registraciyu, "https://zifra-plus.ru/checkout/?add-to-cart=99");
   assert.equal(fields.photo, 72);
+  assert.equal(fields.opisanie_dokumenta, template.fields.opisanie_dokumenta, "Description comes from prototype, not legacy AIS values");
+  assert.equal(fields.tekst_etap_obucheniya_1, template.fields.tekst_etap_obucheniya_1, "Author comes from prototype");
+  assert.doesNotThrow(() => pg.normalizeProgram({...fixture, siteSpeaker: "", siteDescription: ""}));
   assert.deepEqual(fields.opaque, template.fields.opaque);
   assert.ok(!JSON.stringify(fields).includes("add-to-cart=12"));
   assert.ok(!JSON.stringify(fields).includes("psw="), "Meeting link must not enter public landing");
@@ -85,13 +88,20 @@ async function main() {
   assert.equal(calls[3].payload.fields.izobrazhenie_vydavaemogo_dokumenta, 81);
   assert.equal(calls[3].payload.fields.prevyu_vydavaemogo_dokumenta_2, 82);
   assert.deepEqual(draft.certificates, images);
+  assert.equal(calls.find(item => item.endpoint === "/prepare-product").payload.descriptionHtml, template.fields.opisanie_dokumenta);
+  await assert.rejects(prepare(fixture, 0, fake), /обязательное/);
   calls.length = 0;
   await assert.rejects(publish({...fixture, price: 400}, 42, draft.hash, fake), /изменились/);
   await assert.rejects(publish({...fixture, nameEnglish: "Changed"}, 42, draft.hash, fake), /изменились/);
   await assert.rejects(pg.publish(fixture, 42, draft.hash, fake, {...certificate, hash: "e".repeat(64)}), /изменились/);
-  assert.equal(calls.length, 0, "Stale publication must not mutate either website");
+  assert.ok(calls.every(item => item.endpoint.startsWith("/template/")), "Stale publication permits only read-only prototype checks");
+  calls.length = 0;
   await publish(fixture, 42, draft.hash, fake);
-  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/validate-publication", "shop/publish", "edu/publish", "shop/enable-redirect"]);
+  assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "edu/validate-publication", "shop/publish", "edu/publish", "shop/enable-redirect"]);
+  await assert.rejects(publish(fixture, 42, draft.hash, async (site, endpoint) => {
+    assert.ok(endpoint.startsWith("/template/"), "Changed prototype must block all writes");
+    return {...template, fields: {...template.fields, opisanie_dokumenta: "Changed on website"}};
+  }), /изменились/);
   calls.length = 0;
   await assert.rejects(prepare(fixture, 42, async (site, endpoint, body) => {
     calls.push({site, endpoint, body});
@@ -107,7 +117,7 @@ async function main() {
   assert.equal(calls[1].payload.key, calls[5].payload.key, "Retries identify the same program");
   const partial = await prepare(fixture, 42, async (site, endpoint) => endpoint.startsWith("/template/") ? template : endpoint === "/certificate-assets" ? {images} : {id: site === "edu" ? 101 : 99, status: "publish", redirectEnabled: false});
   assert.equal(partial.stage, "prepared", "Failed redirect step must remain resumable, never reported as completed");
-  await assert.rejects(publish(fixture, 42, first.hash, async () => ({id: 99, status: "publish", redirectEnabled: false})), /не подтвердили/);
+  await assert.rejects(publish(fixture, 42, first.hash, async (site, endpoint) => endpoint.startsWith("/template/") ? template : {id: 99, status: "publish", redirectEnabled: false}), /не подтвердили/);
   calls.length = 0;
   await assert.rejects(pg.prepare(fixture, 42, fake, {...certificate, generate: async () => {throw new Error("render failed");}}), /render failed/);
   assert.equal(calls.length, 1, "Rendering failure must not mutate either site");

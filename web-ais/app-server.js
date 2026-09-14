@@ -40026,22 +40026,31 @@ async function route(req, res) {
         return;
       }
       const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
-      if (!savedProgram) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
-      const program = programSiteGenerator.withTrainingPlan(savedProgram, shared.document.data);
+      if (!savedProgram && (action !== "resolve" || body.programId)) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      const program = programSiteGenerator.withTrainingPlan(savedProgram || {}, shared.document.data);
       if (["resolve", "preview-sync", "sync"].includes(action)) {
         let result;
         if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash);
         else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId);
         else {
-          const resolved = await programSiteGenerator.resolveSite(program, call);
-          result = {ok: true, landing: {id: resolved.landing.id, url: resolved.landing.url, editUrl: resolved.landing.editUrl,
-              title: resolved.landing.title, previewImageUrl: resolved.landing.previewImageUrl || ""},
-            product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl},
-            products: resolved.products.map(item => ({id: item.id, title: item.title, url: item.url, editUrl: item.editUrl}))};
+          // Unsaved addresses are accepted only for this read-only lookup. All site
+          // mutations still use the authoritative saved program above.
+          const lookup = {...program};
+          for (const key of ["landingCode", "promoSite"]) {
+            if (!Object.hasOwn(body, key)) continue;
+            if (typeof body[key] !== "string" || body[key].length > 2000) throw new Error("Проверьте адрес лендинга.");
+            if (body[key].trim() !== String(program[key] || "").trim()) {
+              delete lookup.sitePublication;
+              delete lookup.landingUrl;
+            }
+            lookup[key] = body[key];
+          }
+          result = await programSiteGenerator.inspectSite(lookup, call);
         }
         sendJson(res, 200, result);
         return;
       }
+      programSiteGenerator.validateTemplateId(body.templateId);
       programSiteGenerator.normalizeProgram(program);
       const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
         loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
