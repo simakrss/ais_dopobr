@@ -31060,7 +31060,31 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-sync-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
 .program-site-sync-summary dd { margin: 0; }
 .program-site-fields textarea { font-family: Consolas, monospace; min-height: 80px; }
+/* Compact only the creation wizard; the sync dialog and landing preview keep their layout. */
+.program-site-generator-dialog .modal-head { padding: 8px 12px; }
+.program-site-generator-dialog .modal-head .eyebrow { margin: 0 0 3px; }
+.program-site-generator-dialog .program-site-body { gap: 8px; padding: 10px 12px; line-height: 1.35; }
+.program-site-generator-dialog .program-site-fields { padding: 0; gap: 7px 10px; }
+.program-site-generator-dialog .program-site-fields [data-field-key="siteStartLabel"] { grid-column: auto; }
+.program-site-generator-dialog .program-site-generator-fields { gap: 7px; }
+.program-site-generator-dialog [data-site-webinar-only] > p { margin: 0 0 5px; }
+.program-site-generator-dialog [data-site-parameters-host] { margin: 6px 0; }
+.program-site-generator-dialog details > p { margin: 6px 0 0; }
+.program-site-generator-dialog .program-site-body label { gap: 3px; }
+.program-site-generator-dialog .program-site-prototype-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 7px 10px; min-width: 0; }
+.program-site-generator-dialog .program-site-body input:not([type="checkbox"]),
+.program-site-generator-dialog .program-site-body select { min-height: 32px; padding: 5px 8px; }
+.program-site-generator-dialog .program-site-body .primary-button,
+.program-site-generator-dialog .program-site-body .ghost-button { min-height: 32px; max-width: 100%; padding: 5px 10px; }
+.program-site-generator-dialog .program-site-actions,
+.program-site-generator-dialog .program-site-jazz-link-row { gap: 6px; }
+.program-site-generator-dialog [data-site-prototype-link]:empty,
+.program-site-generator-dialog [data-site-status]:empty { display: none; }
+.program-site-generator-dialog [data-site-result]:not([hidden]) { gap: 8px; padding-top: 8px; }
+.program-site-generator-dialog [data-site-result] ul { margin: 0; padding-left: 20px; }
+.program-site-generator-dialog .program-site-progress { gap: 6px 10px; padding: 8px; }
 @media (max-width: 600px) {
+  .program-site-generator-dialog .program-site-prototype-fields { grid-template-columns: minmax(0, 1fr); }
   .program-site-fields { grid-template-columns: minmax(0, 1fr); }
   .program-site-body { padding: 12px; }
 }

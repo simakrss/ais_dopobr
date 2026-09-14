@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.466",
+    version: "1.7.467",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.467",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Форма «Создать на сайте» стала компактнее: уменьшены отступы между полями и блоками, поиск и выбор прототипа расположены рядом на широком экране."
+      ]
+    },
     {
       version: "1.7.466",
       releasedAt: "2026-09-15",
@@ -32985,7 +32992,7 @@ MAX - https://bizvmax.ru/zifra_plus
       && Number(program.sitePublication.landing?.id) === Number(presence.landing?.id);
     if (presence.exists && !continuing) return;
     const dialog = document.createElement("dialog");
-    dialog.className = "modal program-site-dialog";
+    dialog.className = "modal program-site-dialog program-site-generator-dialog";
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Создать программу на сайте");
     dialog.innerHTML = `
@@ -32995,8 +33002,10 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. ${type === "ПРО" ? "Ссылку SberJazz укажите в параметрах ниже." : "SberJazz не требуется."} ${bilingual ? "Образцы сертификатов RU/EN" : type === "КПК" ? "Образцы удостоверения и всех страниц приложения" : "Образцы диплома и всех страниц приложения"} создаются автоматически по соответствующему шаблону конструктора документов. Отзывы и фотографии из прототипа сохраняются.</p>
         <p class="muted">Описание программы и сведения об авторе копируются из выбранного прототипа.</p>
         <details data-site-parameters><summary>Параметры генерации</summary><div data-site-parameters-host></div><button class="ghost-button" type="button" data-site-save-parameters>Сохранить параметры</button></details>
-        <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
-        <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
+        <div class="program-site-prototype-fields">
+          <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
+          <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
+        </div>
         <div data-site-prototype-link></div>
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Код лендинга формируется автоматически из названия программы с проверкой свободного адреса и сохраняется в карточке. Ранее указанный свободный код сохраняется. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка использует тот же адрес и обновляет только собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
