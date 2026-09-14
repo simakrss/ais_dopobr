@@ -67,6 +67,38 @@ async function main() {
     assert.deepEqual(entries.find(entry => entry.name === name).content, original.content, name + " preserved");
   }
   assert.ok(!fs.readFileSync(path.resolve(__dirname, "../program-site-certificates.js"), "utf8").includes("collections.students"));
+  for (const type of ["ДОП", "КПК", "ППП"]) {
+    const spec = require("../program-site-generator").PROGRAM_TYPES[type];
+    const course = {...program, type, webinarDate:"", siteSampleDate:"2026-09-14", nameEnglish:spec.bilingual ? "Test course" : "", qualification:"Преподаватель",activityScope:"образования"};
+    const courseBytes=fs.readFileSync(path.resolve(__dirname,"../storage/document-templates",spec.template));
+    const courseData={collections:{trainingPlans:[{programId:course.id,discipline:"Основы",totalHours:1},{programId:course.id,discipline:"Практика",totalHours:1}]}};
+    const courseSettings=samples.templateSettings({},type);
+    assert.equal(courseSettings.id,spec.templateId);
+    let courseDocx;
+    const coursePdf=await PDF.PDFDocument.create();
+    const count=spec.bilingual ? 2 : 3;
+    for(let i=0;i<count;i++) coursePdf.addPage();
+    const courseServices={...services,loadTemplate:async()=>courseBytes,
+      fill:(...args)=>{assert.equal(args[1]["Стажировка"],"");assert.equal(args[1]["Дата приказа Отчисл Док Обр"],"14.09.2026");assert.match(args[1]["УчебныйПлан"],/Основы\t1\tЗачтено/);courseDocx=server.fillDocxMarkers(...args);return courseDocx;},
+      convert:async()=>Buffer.from(await coursePdf.save()),
+      render:async(bytes,page)=>({pageCount:count,preview:{mimeType:"image/jpeg",base64:"mock"}})};
+    const c=await samples.prepare(course,courseData,true,courseServices);
+    const pageImages=await c.generate();
+    assert.deepEqual(pageImages.map(p=>p.language),spec.bilingual ? ["ru","en"] : ["ru","page-2","page-3"]);
+    assert.ok(pageImages.every(p=>p.label));
+    const xml=server.readDocxZipEntries(courseDocx).find(e=>e.name==="word/document.xml").content.toString();
+    assert.match(xml,/ОБРАЗЕЦ/);assert.ok(!xml.includes("#УчебныйПлан#"));
+    const originalEntries=server.readDocxZipEntries(courseBytes);
+    const editedEntries=server.readDocxZipEntries(courseDocx);
+    for(const name of ["word/styles.xml","word/fontTable.xml","word/settings.xml"]){
+      assert.deepEqual(editedEntries.find(e=>e.name===name).content,originalEntries.find(e=>e.name===name).content,name+" preserved "+type);
+    }
+    const changedPlan={collections:{trainingPlans:[{programId:course.id,discipline:"Изменённый план",totalHours:2}]}};
+    assert.notEqual(c.hash,(await samples.prepare(course,changedPlan,true,courseServices)).hash,"Plan changes invalidate samples");
+    await assert.rejects(samples.prepare({...course,siteSampleDate:"2026-02-30"},courseData,true,courseServices),/дату/);
+    if(!spec.bilingual) await assert.rejects(samples.prepare(course,{},true,courseServices),/учебный план/);
+    assert.deepEqual(fs.readFileSync(path.resolve(__dirname,"../storage/document-templates",spec.template)),courseBytes);
+  }
   console.log("PASS: RU/EN sample context, constructor template/formulas, date separators, no real student/counter, immutable source, QR, content freshness, two-page guard, watermark, both rendered images");
 }
 main().catch(error => {console.error(error); process.exitCode = 1;});

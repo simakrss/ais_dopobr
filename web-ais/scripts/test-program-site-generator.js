@@ -26,7 +26,7 @@ async function main() {
   assert.equal(model.dateLabel, "30.09.2026 в 09:30 (МСК)");
   assert.equal(model.landingUrl, "https://edu-plus.ru/other_course/test_webinar/");
   assert.equal(pg.normalizeProgram({...fixture, price: 0}).price, 0);
-  for (const bad of [{type: "КПК"}, {id: ""}, {name: ""}, {name: "а".repeat(129)}, {webinarDate: "2026-02-30"},
+  for (const bad of [{type: "UNKNOWN"}, {type: ""}, {id: ""}, {name: ""}, {name: "а".repeat(129)}, {webinarDate: "2026-02-30"},
     {webinarTime: "24:00"}, {price: -1}, {price: "не число"}, {hours: 0}, {landingCode: "../other"}, {landingCode: "имя"},
     {webinarJoinUrl: "javascript:alert(1)"}, {webinarJoinUrl: "https://user:password@jazz.sber.ru/"}, {webinarJoinUrl: "http://jazz.sber.ru"},
     {webinarJoinUrl: "https://127.0.0.1/"}, {siteSpeaker: ""}, {siteDescription: ""}]) {
@@ -43,6 +43,32 @@ async function main() {
   assert.ok(!JSON.stringify(fields).includes("add-to-cart=12"));
   assert.ok(!JSON.stringify(fields).includes("psw="), "Meeting link must not enter public landing");
   assert.equal(template.fields.stoimost_kursa, "200", "Source template is immutable");
+  const reviewed = {...template, fields: {...template.fields, blok_opisaniya_kursa: [{soderzhimoe_bloka: 'Отзыв: Прототип <img src="/photo.jpg"> https://zifra-plus.ru/checkout/?add-to-cart=12'}]}};
+  assert.deepEqual(pg.buildLandingFields(reviewed, model, 99).blok_opisaniya_kursa, reviewed.fields.blok_opisaniya_kursa, "Reviews with original program name, photos and links are copied verbatim");
+  for (const type of ["ДОП", "КПК", "ППП"]) {
+    const course = {...fixture, type, webinarDate: "", webinarTime: "", webinarJoinUrl: "", siteSpeaker: "", duration: "2 месяца", studyForm: "Заочная"};
+    const normalized = pg.normalizeProgram(course);
+    assert.equal(normalized.joinUrl, ""); assert.equal(normalized.dateLabel, "Ежедневно");
+    assert.match(normalized.landingUrl, new RegExp(pg.PROGRAM_TYPES[type].base));
+    const plan = pg.withTrainingPlan(course, {collections:{trainingPlans:[{programId: course.id, discipline:"Модуль", totalHours:2},{programId:"another", programName:course.name, discipline:"Чужой план"}]}});
+    assert.equal(plan.siteTrainingPlan.length, 1);
+    const courseTemplate = {...reviewed, postType: normalized.postType, fields: {...reviewed.fields, slajder:[], programmy_obucheniya:[{moduli_programmy:[{nazvanie_modulya:"Старый"}]}], blok_ceny:[...template.fields.blok_ceny,...template.fields.blok_ceny]}};
+    const languages = type === "ДОП" ? ["ru","en"] : ["ru","page-2","page-3"];
+    const generatedImages = languages.map((language,i)=>({language, id:i+81, base64:"mock", label:"Образец " + i}));
+    const courseFields = pg.buildLandingFields(courseTemplate, pg.normalizeProgram(plan), 99, generatedImages);
+    assert.equal(courseFields.blok_ceny.length,1); assert.equal(courseFields.slajder.length,languages.length);
+    assert.equal(courseFields.programmy_obucheniya[0].moduli_programmy[0].nazvanie_modulya,"Модуль");
+    assert.deepEqual(courseFields.blok_opisaniya_kursa, reviewed.fields.blok_opisaniya_kursa);
+    const result = await pg.prepare(plan,42,async (site,endpoint,body)=>{
+      if (endpoint.startsWith("/template/")) return courseTemplate;
+      if (endpoint === "/certificate-assets") { assert.equal(body.type,type);return {images:generatedImages}; }
+      if (endpoint === "/prepare-product") {assert.equal(body.joinUrl,"");assert.equal(body.type,type);}
+      if (endpoint === "/prepare-landing") {assert.equal(body.type,type);assert.equal(body.certificatePages.length,languages.length);}
+      return {id:99,status:"draft"};
+    },{hash:"a".repeat(64),generate:async()=>generatedImages});
+    assert.equal(result.type,type);assert.equal(result.certificates.length,languages.length);
+    if (type !== "ДОП") await assert.rejects(pg.prepare(plan,42,async()=>({...courseTemplate,postType:"other-course"}),certificate),/соответствующего/);
+  }
   assert.throws(() => pg.buildLandingFields({fields: {}}, model, 2), /регистрации/);
   assert.throws(() => pg.buildLandingFields(template, model, 0), /ID/);
   const calls = [];
@@ -130,19 +156,22 @@ if (process.argv.includes("--serve")) {
   const start = app.indexOf("  function renderProgramSiteLink(");
   const end = app.indexOf("  function renderProgramModal(", start);
   const source = app.slice(start, end);
+  const uiType = process.env.AIS_QA_PROGRAM_TYPE || "ПРО";
+  const uiFixture = {...fixture, type: uiType};
+  const uiImages = ["ПРО", "ДОП"].includes(uiType) ? images : ["ru", "page-2", "page-3"].map((language,i)=>({id:i+81,language,label:i ? "Приложение — страница " + i : "Основной документ",url:"https://edu-plus.ru/wp-content/uploads/sample-"+i+".jpg"}));
   const server = require("node:http").createServer((req, res) => {
     if (req.url === "/styles.css") { res.writeHead(200, {"Content-Type":"text/css"}); return res.end(fs.readFileSync(path.join(__dirname, "..", "styles.css"))); }
     if (req.url !== "/") { res.writeHead(404); return res.end(); }
     res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"});
-    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Проверка генератора ПРО</title><link rel="stylesheet" href="/styles.css"><body><form id="recordForm" data-config="programs"><input name="type" value="ПРО"><button type="button" id="open">Создать на сайте</button></form><p id="saved" role="status"></p><script>
-      const state={data:{collections:{programs:[${JSON.stringify(fixture)}]}},modal:{config:'programs',id:'test-pro-webinar'}};
+    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Проверка генератора ${uiType}</title><link rel="stylesheet" href="/styles.css"><body><form id="recordForm" data-config="programs"><input name="type" value="${uiType}"><button type="button" id="open">Создать на сайте</button></form><p id="saved" role="status"></p><script>
+      const state={data:{collections:{programs:[${JSON.stringify(uiFixture)}]}},modal:{config:'programs',id:'test-pro-webinar'}};
       const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const escapeAttr=escapeHtml,isAdminUser=()=>true,isDatabaseDemoMode=()=>false,isSettingsDraftSessionActive=()=>false;
       const saveRecordFormBeforeContinuation=async()=>state.modal.id, ensureRecordLockForSave=async()=>true;
       const getEffectiveLocalDocumentsMode=()=>true;
       const persist=()=>document.getElementById('saved').textContent='Результат сохранён в тестовой карточке';
       const flushSharedApplicationState=async()=>true, photoApiUrl=value=>value, render=()=>{};
-const fetch=async(url,opts)=>({ok:true,json:async()=>url.endsWith('/templates')?{templates:[{id:42,title:'Готовим статью с помощью нейросетей — тестовый прототип',url:'https://edu-plus.ru/other_course/test/'},{id:43,title:'Создание контента для СДО — тестовый прототип',url:'https://edu-plus.ru/other_course/test2/'}]}:{ok:true,certificates:${JSON.stringify(images)},certificateHash:'fixture-cert',stage:url.endsWith('/publish')?'published':'prepared',templateId:JSON.parse(opts.body).templateId,hash:'fixture',product:{id:99,editUrl:'https://zifra-plus.ru/wp-admin/post.php?post=99&action=edit',url:'https://zifra-plus.ru/product/test/'},landing:{id:101,previewUrl:'https://edu-plus.ru/?p=101&preview=true',editUrl:'https://edu-plus.ru/wp-admin/post.php?post=101&action=edit',url:'https://edu-plus.ru/other_course/test/'},promoMessage:'Тестовый семинар\\n30.09.2026 в 09:30 (МСК)\\nРегистрация: https://edu-plus.ru/other_course/test/'}});
+const fetch=async(url,opts)=>({ok:true,json:async()=>url.endsWith('/templates')?{templates:[{id:42,title:'Готовим статью с помощью нейросетей — тестовый прототип',postType:'other-course',url:'https://edu-plus.ru/other_course/test/'},{id:43,title:'Повышение квалификации — тестовый прототип',postType:'courses-pk',url:'https://edu-plus.ru/courses-pk/test2/'},{id:44,title:'Переподготовка — тестовый прототип',postType:'courses-pp',url:'https://edu-plus.ru/courses-pp/test3/'}]}:{ok:true,type:${JSON.stringify(uiType)},certificates:${JSON.stringify(uiImages)},certificateHash:'fixture-cert',stage:url.endsWith('/publish')?'published':'prepared',templateId:JSON.parse(opts.body).templateId,hash:'fixture',product:{id:99,editUrl:'https://zifra-plus.ru/wp-admin/post.php?post=99&action=edit',url:'https://zifra-plus.ru/product/test/'},landing:{id:101,previewUrl:'https://edu-plus.ru/?p=101&preview=true',editUrl:'https://edu-plus.ru/wp-admin/post.php?post=101&action=edit',url:'https://edu-plus.ru/other_course/test/'},promoMessage:'Тестовая программа'}});
       ${source}
       document.getElementById('open').addEventListener('click',openProgramSiteGenerator);
     </script></body></html>`);

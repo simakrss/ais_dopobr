@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: АИС — генератор программ ПРО
+ * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.1.1
+ * Version: 1.2.0
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -53,8 +53,20 @@ function ais_pg_identity($data) {
         throw new RuntimeException('Не указан идентификатор программы или версия данных.');
     }
 }
+function ais_pg_program_type($data) {
+    $type = $data['type'] ?? 'ПРО';
+    if (!in_array($type, array('ПРО', 'ДОП', 'КПК', 'ППП'), true)) throw new RuntimeException('Недопустимый вид образовательной программы.');
+    return $type;
+}
+function ais_pg_post_type($type) {
+    return $type === 'КПК' ? 'courses-pk' : ($type === 'ППП' ? 'courses-pp' : 'other-course');
+}
+function ais_pg_landing_url($type, $slug) {
+    $post_type = ais_pg_post_type($type);
+    return 'https://edu-plus.ru/' . ($post_type === 'other-course' ? 'other_course' : $post_type) . '/' . $slug . '/';
+}
 function ais_pg_find($key) {
-    $ids = get_posts(array('post_type' => ais_pg_role() === 'shop' ? 'product' : 'other-course',
+    $ids = get_posts(array('post_type' => ais_pg_role() === 'shop' ? 'product' : array('other-course', 'courses-pk', 'courses-pp'),
         'post_status' => array('draft', 'publish', 'pending', 'private', 'trash', 'future'), 'posts_per_page' => 2,
         'fields' => 'ids', 'meta_key' => '_ais_generator_key', 'meta_value' => $key));
     if (count($ids) > 1) throw new RuntimeException('Найдены несколько документов программы. Требуется проверка администратором.');
@@ -107,21 +119,31 @@ function ais_pg_template($id) {
     if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
     return $post;
 }
-function ais_pg_certificate_slots() {
+function ais_pg_certificate_slots($type = 'ПРО') {
+    $second = in_array($type, array('КПК', 'ППП'), true) ? 'page-2' : 'en';
     return array('izobrazhenie_vydavaemogo_dokumenta' => 'ru', 'prevyu_vydavaemogo_dokumenta_1' => 'ru',
-        'izobrazhenie_vydavaemogo_dokumenta_2' => 'en', 'prevyu_vydavaemogo_dokumenta_2' => 'en');
+        'izobrazhenie_vydavaemogo_dokumenta_2' => $second, 'prevyu_vydavaemogo_dokumenta_2' => $second);
 }
 function ais_pg_certificate_key($key, $hash, $language) {
-    if (!preg_match('/^[a-f0-9]{64}$/D', $hash) || !in_array($language, array('ru', 'en'), true)) throw new RuntimeException('Не указана версия образцов сертификатов.');
+    if (!preg_match('/^[a-f0-9]{64}$/D', $hash) || !preg_match('/^(?:ru|en|page-[2-8])$/D', $language)) throw new RuntimeException('Не указана версия образцов документов.');
     return hash('sha256', $key . ':' . $hash . ':' . $language);
+}
+function ais_pg_certificate_pages($images, $type) {
+    $bilingual = in_array($type, array('ПРО', 'ДОП'), true);
+    if (!is_array($images) || ($bilingual ? count($images) !== 2 : count($images) < 3 || count($images) > 8)) throw new RuntimeException('Не переданы все страницы образца документа.');
+    foreach (array_values($images) as $index => $image) {
+        $expected = $index === 0 ? 'ru' : ($bilingual ? 'en' : 'page-' . ($index + 1));
+        if (($image['language'] ?? '') !== $expected) throw new RuntimeException('Нарушен порядок страниц образца документа.');
+    }
+    return $images;
 }
 function ais_pg_certificate_assets($data) {
     $own_id = ais_pg_find($data['key']);
     if ($own_id && get_post_status($own_id) === 'publish' && get_post_meta($own_id, '_ais_generator_hash', true) !== $data['hash']) {
         throw new RuntimeException('Программа уже опубликована с другими параметрами. Автоматическая перезапись запрещена.');
     }
-    $images = $data['images'] ?? null;
-    if (!is_array($images) || count($images) !== 2) throw new RuntimeException('Нужны два образца сертификата — русский и английский.');
+    $type = ais_pg_program_type($data);
+    $images = ais_pg_certificate_pages($data['images'] ?? null, $type);
     $validated = array();
     foreach ($images as $image) {
         $language = $image['language'] ?? '';
@@ -148,14 +170,14 @@ function ais_pg_certificate_assets($data) {
         if (!$id) {
             $uploaded = wp_upload_bits('certificate-sample-' . $image['key'] . '-' . $language . '.jpg', null, $image['bytes']);
             if (!empty($uploaded['error'])) throw new RuntimeException('Не удалось загрузить образец сертификата в медиатеку.');
-            $id = wp_insert_attachment(array('post_title' => 'Образец сертификата ПРО / SAMPLE — ' . strtoupper($language),
+            $id = wp_insert_attachment(array('post_title' => 'Образец документа ' . $type . ' / SAMPLE — ' . strtoupper($language),
                 'post_mime_type' => 'image/jpeg', 'post_status' => 'inherit',
                 'meta_input' => array('_ais_certificate_key' => $image['key'])), $uploaded['file'], 0, true);
             if (is_wp_error($id)) {
                 wp_delete_file($uploaded['file']);
                 throw new RuntimeException('Не удалось зарегистрировать образец сертификата в медиатеке.');
             }
-            update_post_meta($id, '_wp_attachment_image_alt', 'Образец сертификата — ' . ($language === 'ru' ? 'русский' : 'English'));
+            update_post_meta($id, '_wp_attachment_image_alt', 'Образец документа ' . $type . ' — ' . ($language === 'ru' ? 'основной документ' : ($language === 'en' ? 'English' : 'приложение ' . substr($language, 5))));
         }
         // Recover interrupted thumbnail generation without uploading another attachment.
         if (!wp_get_attachment_metadata($id)) wp_update_attachment_metadata($id, wp_generate_attachment_metadata($id, get_attached_file($id)));
@@ -164,20 +186,36 @@ function ais_pg_certificate_assets($data) {
     return array('ok' => true, 'images' => $result);
 }
 function ais_pg_validate_certificates($data) {
-    foreach (ais_pg_certificate_slots() as $slot => $language) {
+    $type = ais_pg_program_type($data);
+    $pages = $data['certificatePages'] ?? null;
+    if ($pages !== null || in_array($type, array('КПК', 'ППП'), true)) {
+        $pages = ais_pg_certificate_pages($pages, $type);
+        foreach ($pages as $page) ais_pg_validate_certificate_asset($data, (int) ($page['id'] ?? 0), $page['language']);
+        if (!in_array($type, array('ПРО', 'ДОП'), true)) {
+            $slider = array_map(function ($row) { return (int) ($row['izobrazhenie_slajda'] ?? 0); }, $data['fields']['slajder'] ?? array());
+            if ($slider !== array_map(function ($row) { return (int) $row['id']; }, $pages)) throw new RuntimeException('Не все страницы приложения размещены в галерее лендинга.');
+        }
+    }
+    foreach (ais_pg_certificate_slots($type) as $slot => $language) {
         $id = (int) ($data['fields'][$slot] ?? 0);
+        ais_pg_validate_certificate_asset($data, $id, $language);
+    }
+}
+function ais_pg_validate_certificate_asset($data, $id, $language) {
         $expected = ais_pg_certificate_key($data['key'], $data['certificateHash'] ?? '', $language);
         if (!$id || get_post_type($id) !== 'attachment' || get_post_mime_type($id) !== 'image/jpeg'
             || get_post_meta($id, '_ais_certificate_key', true) !== $expected || !is_file(get_attached_file($id))) {
             throw new RuntimeException('Для лендинга не загружены актуальные образцы сертификатов. Повторите подготовку.');
         }
-    }
 }
 function ais_pg_prepare_landing($data) {
+    $type = ais_pg_program_type($data);
+    $post_type = ais_pg_post_type($type);
     $template = ais_pg_template((int) ($data['templateId'] ?? 0));
+    if ($type !== 'ДОП' && $template->post_type !== $post_type) throw new RuntimeException('Выберите прототип соответствующего вида программы.');
     if ($template->post_modified_gmt !== ($data['templateModified'] ?? '')) throw new RuntimeException('Прототип изменился. Повторите подготовку.');
     $id = ais_pg_find($data['key']);
-    ais_pg_slug($data['slug'] ?? '', 'other-course', $id);
+    ais_pg_slug($data['slug'] ?? '', $post_type, $id);
     if ($id && get_post_meta($id, '_ais_generator_hash', true) === $data['hash']) return ais_pg_result($id);
     if ($id && get_post_status($id) === 'publish') throw new RuntimeException('Программа уже опубликована с другими параметрами. Отредактируйте её в WordPress; автоматическая перезапись запрещена.');
     $title = sanitize_text_field($data['title'] ?? '');
@@ -186,29 +224,35 @@ function ais_pg_prepare_landing($data) {
     if (!$definition) throw new RuntimeException('Прототип не содержит полей ACF.');
     ais_pg_validate_certificates($data);
     $field_names = array_column($definition, 'name');
-    foreach (ais_pg_certificate_slots() as $slot => $_language) {
+    foreach (ais_pg_certificate_slots($type) as $slot => $_language) {
         if (!in_array($slot, $field_names, true)) throw new RuntimeException('В прототипе отсутствуют блоки образцов сертификатов.');
     }
-    $post_data = array('post_title' => $title, 'post_name' => $data['slug'], 'post_type' => 'other-course', 'post_status' => 'draft',
+    $post_data = array('post_title' => $title, 'post_name' => $data['slug'], 'post_type' => $post_type, 'post_status' => 'draft',
         'post_content' => $template->post_content, 'post_excerpt' => $template->post_excerpt,
         'meta_input' => array('_ais_generator_key' => $data['key'], '_ais_generator_template' => $template->ID));
     if ($id) $post_data['ID'] = $id;
     $id = wp_insert_post(wp_slash($post_data), true);
     if (is_wp_error($id)) throw new RuntimeException('Не удалось сохранить черновик лендинга.');
     foreach ($definition as $field) {
+        // Copy reviews authoritatively from the prototype, not a modified browser payload.
+        if ($field['name'] === 'blok_opisaniya_kursa' || preg_match('/otzyv|review/i', $field['name'])) {
+            $data['fields'][$field['name']] = ais_pg_acf_value($field, $field['value']);
+        }
         if (array_key_exists($field['name'], $data['fields'])) update_field($field['key'], ais_pg_acf_value($field, $data['fields'][$field['name']], true), $id);
     }
     $thumbnail = get_post_thumbnail_id($template->ID);
     if ($thumbnail) set_post_thumbnail($id, $thumbnail);
     // Only public taxonomies; never copy edit locks, secrets, author/session metadata.
-    foreach (get_object_taxonomies('other-course', 'objects') as $taxonomy) {
+    foreach (get_object_taxonomies($post_type, 'objects') as $taxonomy) {
         if ($taxonomy->public) wp_set_object_terms($id, wp_get_object_terms($template->ID, $taxonomy->name, array('fields' => 'ids')), $taxonomy->name);
     }
     update_post_meta($id, '_ais_generator_product', (int) ($data['productId'] ?? 0));
-    foreach (ais_pg_certificate_slots() as $slot => $_language) {
+    foreach (ais_pg_certificate_slots($type) as $slot => $_language) {
         if ((int) get_field($slot, $id, false) !== (int) $data['fields'][$slot]) throw new RuntimeException('WordPress не подтвердил подстановку образцов. Повторите подготовку.');
     }
     update_post_meta($id, '_ais_certificate_hash', $data['certificateHash']);
+    update_post_meta($id, '_ais_program_type', $type);
+    update_post_meta($id, '_ais_certificate_pages', $data['certificatePages'] ?? array());
     update_post_meta($id, '_ais_generator_hash', $data['hash']);
     return ais_pg_result($id);
 }
@@ -230,18 +274,20 @@ function ais_pg_prepare_product($data) {
     if ($id && get_post_status($id) === 'publish') throw new RuntimeException('Товар уже опубликован с другими параметрами. Автоматическая перезапись запрещена.');
     $name = sanitize_text_field($data['productName'] ?? '');
     if (!$name || mb_strlen($name) > 128 || !isset($data['price']) || !is_numeric($data['price']) || $data['price'] < 0 || $data['price'] > 10000000) throw new RuntimeException('Проверьте название товара (до 128 символов) и цену.');
-    $url = ais_pg_join_url($data['joinUrl'] ?? '');
-    $file = ais_pg_connection_file($data['key'], $name, $url);
+    $type = ais_pg_program_type($data);
+    $webinar = $type === 'ПРО';
+    $url = $webinar ? ais_pg_join_url($data['joinUrl'] ?? '') : '';
+    $file = $webinar ? ais_pg_connection_file($data['key'], $name, $url) : '';
     // Approve only this generator's private directory, without weakening global checks.
     $registry_class = 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register';
-    if (class_exists($registry_class)) wc_get_container()->get($registry_class)->add_approved_directory(dirname($file) . '/', true);
+    if ($webinar && class_exists($registry_class)) wc_get_container()->get($registry_class)->add_approved_directory(dirname($file) . '/', true);
     $product = $id ? wc_get_product($id) : new WC_Product_Simple();
     if (!$product || !$product->is_type('simple')) throw new RuntimeException('Неверный тип ранее созданного товара.');
     $product->set_name($name);
     $product->set_slug($data['slug']);
     $product->set_status('draft');
     $product->set_virtual(true);
-    $product->set_downloadable(true);
+    $product->set_downloadable($webinar);
     $product->set_catalog_visibility('hidden');
     $price = (string) $data['price'];
     $old = (float) ($data['oldPrice'] ?? 0);
@@ -249,15 +295,20 @@ function ais_pg_prepare_product($data) {
     $product->set_sale_price($old > (float) $price ? $price : '');
     $product->set_price($price);
     $product->set_description(wp_kses_post($data['descriptionHtml'] ?? ''));
-    $download = new WC_Product_Download();
-    $download->set_id(substr($data['key'], 0, 32));
-    $download->set_name('Подключение к вебинару — ' . $name);
-    $download->set_file($file);
-    $product->set_downloads(array($download));
+    $downloads = array();
+    if ($webinar) {
+        $download = new WC_Product_Download();
+        $download->set_id(substr($data['key'], 0, 32));
+        $download->set_name('Подключение к вебинару — ' . $name);
+        $download->set_file($file);
+        $downloads[] = $download;
+    }
+    $product->set_downloads($downloads);
     $product->update_meta_data('_ais_generator_key', $data['key']);
     $product->update_meta_data('_ais_webinar_join_url', $url);
     $product->update_meta_data('_ais_webinar_file', $file);
-    $product->update_meta_data('_ais_landing_url', 'https://edu-plus.ru/other_course/' . $data['slug'] . '/');
+    $product->update_meta_data('_ais_program_type', $type);
+    $product->update_meta_data('_ais_landing_url', ais_pg_landing_url($type, $data['slug']));
     $product->update_meta_data('_ais_generator_hash', $data['hash']);
     $id = $product->save();
     if (!$id) throw new RuntimeException('Не удалось сохранить товар.');
@@ -275,9 +326,18 @@ function ais_pg_mutate($action, $data) {
         $id = ais_pg_find($data['key']);
         if (!$id || get_post_meta($id, '_ais_generator_hash', true) !== $data['hash']) throw new RuntimeException('Сначала подготовьте и проверьте черновики с текущими параметрами.');
         if (in_array($action, array('publish', 'validate-publication'), true) && ais_pg_role() === 'edu') {
+            $type = get_post_meta($id, '_ais_program_type', true) ?: 'ПРО';
             $fields = array();
-            foreach (ais_pg_certificate_slots() as $slot => $_language) $fields[$slot] = get_field($slot, $id, false);
-            ais_pg_validate_certificates(array('key' => $data['key'], 'certificateHash' => get_post_meta($id, '_ais_certificate_hash', true), 'fields' => $fields));
+            foreach (ais_pg_certificate_slots($type) as $slot => $_language) $fields[$slot] = get_field($slot, $id, false);
+            $fields['slajder'] = get_field('slajder', $id, false);
+            if (function_exists('get_field_object')) {
+                $slider_field = get_field_object('slajder', $id, false);
+                if ($slider_field) $fields['slajder'] = ais_pg_acf_value($slider_field, $slider_field['value']);
+            }
+            $validation = array('key' => $data['key'], 'type' => $type, 'certificateHash' => get_post_meta($id, '_ais_certificate_hash', true), 'fields' => $fields);
+            $pages = get_post_meta($id, '_ais_certificate_pages', true);
+            if ($pages) $validation['certificatePages'] = $pages;
+            ais_pg_validate_certificates($validation);
             if ($action === 'validate-publication') return array('ok' => true);
         }
         if ($action === 'publish') {
@@ -299,10 +359,10 @@ function ais_pg_dispatch($request) {
     try {
         $action = basename($request->get_route());
         if ($request->get_method() === 'POST') {
-            if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 3000000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
+            if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             return ais_pg_mutate($action, $request->get_json_params() ?: array());
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.1.1', 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.2.0', 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
             $posts = get_posts(array('post_type' => $action === 'catalog' ? array('other-course', 'courses-pk', 'courses-pp') : 'other-course', 'post_status' => 'publish', 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC'));
@@ -342,7 +402,7 @@ add_action('template_redirect', function () {
     $id = get_queried_object_id();
     if (get_post_status($id) !== 'publish' || get_post_meta($id, '_ais_landing_redirect', true) !== '1') return;
     $url = get_post_meta($id, '_ais_landing_url', true);
-    if (!preg_match('~^https://edu-plus\.ru/other_course/[a-z0-9][a-z0-9_-]{1,79}/$~D', $url)) return;
+    if (!preg_match('~^https://edu-plus\.ru/(?:other_course|courses-pk|courses-pp)/[a-z0-9][a-z0-9_-]{1,79}/$~D', $url)) return;
     foreach (array('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term') as $param) {
         if (isset($_GET[$param]) && is_string($_GET[$param])) $url = add_query_arg($param, sanitize_text_field(wp_unslash($_GET[$param])), $url);
     }

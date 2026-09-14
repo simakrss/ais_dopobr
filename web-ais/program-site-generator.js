@@ -7,6 +7,26 @@ const path = require("node:path");
 const SITES = Object.freeze({edu: "https://edu-plus.ru", shop: "https://zifra-plus.ru"});
 const API_PATH = "/wp-json/ais-program-sites/v1";
 const KEY_FILE = "program-site-keys.json";
+const PROGRAM_TYPES = Object.freeze({
+  "ПРО": {postType: "other-course", base: "other_course", label: "Онлайн семинар", template: "Сертификат ПРО.docx", templateId: "education-document-certificate-dop-pro", bilingual: true},
+  "ДОП": {postType: "other-course", base: "other_course", label: "Дополнительная общеобразовательная программа", template: "Сертификат ДОП.docx", templateId: "education-document-certificate-dop", bilingual: true},
+  "КПК": {postType: "courses-pk", base: "courses-pk", label: "Курс повышения квалификации", template: "Удостоверение о повышении квалификации_v1.docx", templateId: "education-document-certificate-kpk", bilingual: false},
+  "ППП": {postType: "courses-pp", base: "courses-pp", label: "Курс профессиональной переподготовки", template: "Диплом о переподготовке_v1.docx", templateId: "education-document-diploma-ppp", bilingual: false}
+});
+function programType(program) {
+  const type = text(program?.type).toUpperCase();
+  if (!Object.hasOwn(PROGRAM_TYPES, type)) fail("Генератор поддерживает ПРО, ДОП, КПК и ППП.");
+  return type;
+}
+function withTrainingPlan(program, data) {
+  const rows = Array.isArray(data?.collections?.trainingPlans) ? data.collections.trainingPlans : [];
+  const linked = rows.filter(row => String(row.programId || "") === String(program.id));
+  const named = rows.filter(row => !row.programId && text(row.programName) === text(program.name));
+  return {...program, siteTrainingPlan: (linked.length ? linked : named).map(row => ({
+    discipline: text(row.discipline || row.code), content: text(row.content), totalHours: text(row.totalHours),
+    theoryHours: text(row.theoryHours), practiceHours: text(row.practiceHours), attestation: text(row.attestation)
+  }))};
+}
 
 function fail(message, statusCode = 400) {
   const error = new Error(message);
@@ -32,35 +52,38 @@ function normalizeJoinUrl(value) {
 }
 
 function normalizeProgram(program = {}) {
-  if (text(program.type).toUpperCase() !== "ПРО") fail("Создание на сайте пока доступно только для программ ПРО (онлайн-семинаров).");
+  const type = programType(program);
+  const spec = PROGRAM_TYPES[type];
+  const webinar = type === "ПРО";
   const id = text(program.id, 200);
   if (!id) fail("Сначала сохраните образовательную программу.");
   const name = text(program.name, 500);
   const productName = text(program.siteProductName || name, 500);
   if (!name || !productName) fail("Заполните название программы.");
-  if (Array.from(productName).length > 128) fail("Название товара превышает 128 символов. Укажите более короткое название на вкладке «Сайт и вебинар».");
+  if (Array.from(productName).length > 128) fail("Название товара превышает 128 символов. Укажите более короткое название на вкладке «Сайт».");
   const slug = text(program.landingCode, 100).replace(/^\/+|\/+$/g, "");
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) fail("Код лендинга: от 2 до 80 символов — строчные латинские буквы, цифры, дефис и подчёркивание.");
-  const date = text(program.webinarDate, 10);
+  const date = webinar ? text(program.webinarDate, 10) : "";
   const parsedDate = new Date(`${date}T12:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) fail("Укажите корректную дату вебинара.");
-  const time = text(program.webinarTime, 5);
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) fail("Укажите время вебинара в формате ЧЧ:ММ (Москва).");
+  if (webinar && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date)) fail("Укажите корректную дату вебинара.");
+  const time = webinar ? text(program.webinarTime, 5) : "";
+  if (webinar && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) fail("Укажите время вебинара в формате ЧЧ:ММ (Москва).");
   const price = Number(program.price);
   const oldPrice = Number(program.oldPrice || 0);
   const hours = Number(program.hours);
-  if (!Number.isFinite(price) || price < 0 || price > 10000000) fail("Укажите корректную стоимость вебинара.");
+  if (!Number.isFinite(price) || price < 0 || price > 10000000) fail("Укажите корректную стоимость программы.");
   if (!Number.isFinite(oldPrice) || oldPrice < 0 || oldPrice > 10000000) fail("Проверьте старую цену.");
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Укажите положительное количество часов.");
   const descriptionHtml = text(program.siteDescription);
   const speakerHtml = text(program.siteSpeaker);
-  if (!descriptionHtml || !speakerHtml) fail("Заполните описание вебинара и сведения о спикере на вкладке «Сайт и вебинар».");
+  if (!descriptionHtml || (webinar && !speakerHtml)) fail("Заполните описание программы и, для ПРО, сведения о спикере на вкладке «Сайт».");
   return {
     key: crypto.createHash("sha256").update(`ais-program:${id}`).digest("hex"),
-    id, name, nameEnglish: text(program.nameEnglish || program["Название программы на английском"], 1000), productName, slug, date, time, price, oldPrice, hours,
-    joinUrl: normalizeJoinUrl(program.webinarJoinUrl), descriptionHtml, speakerHtml,
-    landingUrl: `${SITES.edu}/other_course/${slug}/`,
-    dateLabel: `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)`
+    id, type, postType: spec.postType, name, nameEnglish: text(program.nameEnglish || program["Название программы на английском"], 1000), productName, slug, date, time, price, oldPrice, hours,
+    joinUrl: webinar ? normalizeJoinUrl(program.webinarJoinUrl) : "", descriptionHtml, speakerHtml,
+    duration: text(program.duration, 200), studyForm: text(program.studyForm || "Дистанционная", 300), trainingPlan: program.siteTrainingPlan || [],
+    landingUrl: `${SITES.edu}/${spec.base}/${slug}/`,
+    dateLabel: webinar ? `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)` : text(program.siteStartLabel || "Ежедневно", 200)
   };
 }
 
@@ -112,14 +135,21 @@ function buildLandingFields(template, model, productId, certificates) {
   let registrationLinks = 0;
   const replacements = {
     podacha_zayavki_nazvanie_kursa: model.name,
-    naimenovanie_kursa: "Онлайн семинар", zagolovok_dokument: "Онлайн семинар",
+    naimenovanie_kursa: PROGRAM_TYPES[model.type].label, zagolovok_dokument: model.type === "ПРО" ? "Онлайн семинар" : "Описание курса",
     stoimost_kursa: String(model.price), kolichestvo_chasov: String(model.hours),
     staraya_cena: model.oldPrice > model.price ? String(model.oldPrice) : "",
     skidka: model.oldPrice > model.price ? String(Math.round(100 * (1 - model.price / model.oldPrice))) : "0",
-    data_starta: model.dateLabel, forma_obucheniya: "Дистанционная",
-    opisanie_dokumenta: model.descriptionHtml, tekst_etap_obucheniya_1: model.speakerHtml
+    data_starta: model.dateLabel, forma_obucheniya: model.studyForm,
+    srok: model.type === "ПРО" ? "Однократное участие" : model.duration,
+    ssylka_smotret_vse_kursy: "/" + PROGRAM_TYPES[model.type].base,
+    opisanie_dokumenta: model.descriptionHtml,
+    ...(model.type !== "ПРО" ? {opisanie_o_programme: model.descriptionHtml} : {}),
+    ...(model.speakerHtml ? {tekst_etap_obucheniya_1: model.speakerHtml} : {})
   };
   const walk = (value, name = "") => {
+    // This ACF repeater holds the actual reviews, including authors' quotations and photos.
+    // Never substitute program names or checkout links inside someone else's testimony.
+    if (name === "blok_opisaniya_kursa" || /otzyv|review/i.test(name)) return structuredClone(value);
     if (name === "ssylka_na_registraciyu") { registrationLinks++; return checkoutUrl; }
     if (Object.hasOwn(replacements, name)) return replacements[name];
     if (Array.isArray(value)) return value.map(item => walk(item));
@@ -132,14 +162,26 @@ function buildLandingFields(template, model, productId, certificates) {
   const fields = walk(template.fields || {});
   if (!registrationLinks) fail("В прототипе не найден блок регистрации интернет-магазина. Выберите другой прототип.");
   if (certificates) {
+    if (!PROGRAM_TYPES[model.type].bilingual && !Object.hasOwn(fields, "slajder")) fail("В прототипе отсутствует галерея для всех страниц приложения.");
+    const second = PROGRAM_TYPES[model.type].bilingual ? "en" : "page-2";
     const slots = {izobrazhenie_vydavaemogo_dokumenta: "ru", prevyu_vydavaemogo_dokumenta_1: "ru",
-      izobrazhenie_vydavaemogo_dokumenta_2: "en", prevyu_vydavaemogo_dokumenta_2: "en"};
+      izobrazhenie_vydavaemogo_dokumenta_2: second, prevyu_vydavaemogo_dokumenta_2: second};
     for (const [slot, language] of Object.entries(slots)) {
-      if (!Object.hasOwn(fields, slot)) fail("В прототипе не найдены оба блока образцов сертификатов. Выберите другой прототип.");
+      if (!Object.hasOwn(fields, slot)) fail("В прототипе не найдены оба блока образцов документов. Выберите другой прототип.");
       const id = Number(certificates.find(image => image.language === language)?.id);
       if (!Number.isSafeInteger(id) || id < 1) fail("Сайт не подтвердил загрузку образцов сертификатов.");
       fields[slot] = id;
     }
+    if (Object.hasOwn(fields, "slajder")) fields.slajder = certificates.map(image => ({izobrazhenie_slajda: Number(image.id)}));
+  }
+  // One saved AIS program creates one offer; do not leave prototype variants/prices behind.
+  if (Array.isArray(fields.blok_ceny)) fields.blok_ceny = fields.blok_ceny.slice(0, 1);
+  if (model.trainingPlan.length && Object.hasOwn(fields, "programmy_obucheniya")) {
+    const base = fields.programmy_obucheniya?.[0] || {};
+    fields.programmy_obucheniya = [{...base, zagolovok_programmy_obucheniya: `Программа обучения — ${model.hours} ч.`,
+      ssylka_na_programmu_kursa: "", nazvanie_knopki_skachat: "",
+      moduli_programmy: model.trainingPlan.map(row => ({nazvanie_modulya: row.discipline, opisanie_modulya: row.content,
+        chasy_vsego: row.totalHours, chasy_1: row.theoryHours, chasy_2: row.practiceHours, kontrol: row.attestation}))}];
   }
   return fields;
 }
@@ -152,25 +194,27 @@ async function prepare(program, templateId, call, certificate) {
   const model = normalizeProgram(program);
   if (!Number.isSafeInteger(Number(templateId)) || Number(templateId) < 1) fail("Выберите прототип лендинга.");
   const template = await call("edu", `/template/${Number(templateId)}`);
+  if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
   // Validate the prototype before creating anything in either website.
   if (!certificate?.hash || typeof certificate.generate !== "function") fail("Автосоздание сертификатов не подключено. Обновите систему.", 503);
-  buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: "en", id: 2}]);
+  buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: PROGRAM_TYPES[model.type].bilingual ? "en" : "page-2", id: 2}]);
   const hash = payloadHash(model, templateId, certificate.hash);
   const images = await certificate.generate();
-  const assets = await call("edu", "/certificate-assets", {key: model.key, hash, certificateHash: certificate.hash, images});
-  if (!Array.isArray(assets.images) || assets.images.length !== 2) fail("Сайт не подтвердил загрузку двух образцов сертификатов.", 502);
+  const assets = await call("edu", "/certificate-assets", {key: model.key, hash, type: model.type, certificateHash: certificate.hash, images});
+  if (!Array.isArray(assets.images) || assets.images.length !== images.length || images.some((image, index) => assets.images[index]?.language !== image.language)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
   buildLandingFields(template, model, 1, assets.images);
   const product = await call("shop", "/prepare-product", {...model, hash});
   const fields = buildLandingFields(template, model, product.id, assets.images);
   const landing = await call("edu", "/prepare-landing", {
     key: model.key, hash, templateId: Number(templateId), templateModified: template.modified,
-    title: model.name, slug: model.slug, fields, productId: product.id, certificateHash: certificate.hash
+    title: model.name, type: model.type, slug: model.slug, fields, productId: product.id, certificateHash: certificate.hash,
+    certificatePages: assets.images.map(image => ({id: image.id, language: image.language}))
   });
   return {
     ok: true, stage: product.status === "publish" && landing.status === "publish" && product.redirectEnabled === true ? "published" : "prepared",
-    product, landing, templateId: Number(templateId), hash, certificates: assets.images, certificateHash: certificate.hash,
+    product, landing, type: model.type, templateId: Number(templateId), hash, certificates: assets.images.map((image, index) => ({...image, ...(images[index].label ? {label: images[index].label} : {})})), certificateHash: certificate.hash,
     promoMessage: `${model.name}\n${model.dateLabel}\nПродолжительность: ${model.hours} ч. Стоимость: ${model.price} ₽.\nРегистрация: ${model.landingUrl}`,
-    checklist: ["Проверьте все блоки лендинга, изображения и отзывы из прототипа.", "Проверьте автоматически созданные образцы сертификатов на русском и английском языках.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг со спикером, затем запускайте рекламу и обновляйте приказ о наборе."]
+    checklist: ["Проверьте все блоки лендинга, изображения и сохранённые отзывы из прототипа.", "Проверьте все страницы автоматически созданных образцов документов.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг, затем запускайте рекламу и обновляйте приказ о наборе."]
   };
 }
 
@@ -189,4 +233,4 @@ async function publish(program, templateId, expectedHash, call, certificate) {
   return {ok: true, stage: "published", product: {...product, ...redirectedProduct}, landing, hash, templateId: Number(templateId)};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, normalizeJoinUrl, normalizeProgram, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, normalizeProgram, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish};

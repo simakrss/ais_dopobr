@@ -1,38 +1,53 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const {PROGRAM_TYPES, programType, withTrainingPlan} = require("./program-site-generator");
 const TEMPLATE_ID = "education-document-certificate-dop-pro";
-const VERSION = 1;
+const VERSION = 2;
 const MARKERS = ["Дата выдачи", "ИО", "Номер бланка", "Прогр обуч факт", "Прогр обуч факт_ENG",
   "РегНомер", "РегНомер_ENG", "Срок обучения_ENG", "ФИО", "ФИО_ENG", "Email", "QRкод"];
 
-function templateSettings(data) {
+function templateSettings(data, type = "ПРО") {
+  const spec = PROGRAM_TYPES[type];
   const saved = data?.dictionaries?.documentTemplates;
   const rows = Array.isArray(saved) ? saved : [];
-  const template = rows.find(item => item.id === TEMPLATE_ID)
-    || rows.find(item => item.documentKind === "education" && item.programTypes?.includes("ПРО"));
+  const template = rows.find(item => item.id === spec.templateId)
+    || rows.find(item => item.documentKind === "education" && item.programTypes?.includes(type));
   if (template) return template;
-  return {id: TEMPLATE_ID, templateUrl: "Документы/Сертификат ПРО.docx",
-    templatePath: "storage/document-templates/Сертификат ПРО.docx", useCustomDocumentProperties: "1",
+  return {id: spec.templateId, templateUrl: `Документы/${spec.template}`,
+    templatePath: `storage/document-templates/${spec.template}`, useCustomDocumentProperties: "1",
     sampleUseTemplateDefaults: true,
     fields: MARKERS.map(name => ({name, formula: `=[${name}]`}))};
 }
 
 function sampleSource(program) {
+  const type = programType(program);
+  const spec = PROGRAM_TYPES[type];
   const english = String(program.nameEnglish || program["Название программы на английском"] || "").trim();
-  if (!english) throw new Error("Заполните «Название программы на английском» в карточке программы для создания английского образца сертификата.");
-  const date = String(program.webinarDate || "");
+  if (spec.bilingual && !english) throw new Error("Заполните «Название программы на английском» в карточке программы для создания английского образца сертификата.");
+  const date = String(type === "ПРО" ? program.webinarDate || "" : program.siteSampleDate || new Intl.DateTimeFormat("en-CA", {timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date()));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date) throw new Error("Укажите корректную дату для образцов документов.");
   const displayedDate = `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
+  const plan = program.siteTrainingPlan || [];
+  if (!spec.bilingual && !plan.length) throw new Error("Заполните учебный план программы для формирования приложения к образцу документа.");
   return {
     "ФИО": "ОБРАЗЕЦ", "ФИО_ENG": "SAMPLE", "ФИО_eng": "SAMPLE", "ИО": "ОБРАЗЕЦ",
     "РегНомер": "ОБРАЗЕЦ", "РегНомер_ENG": "SAMPLE", "Номер бланка": "SAMPLE", "Id": "0", "uid": "0",
     "Email": "", "Фото": "", "Стажировка": "", "ФИО_несклон": "+",
     "Прогр обуч факт": String(program.name || "").trim(), "Прогр обуч факт_ENG": english,
     "Название программы на английском": english, "Наименование программы": String(program.name || "").trim(),
-    "Вид  программы ДПО": "ПРО", "Вид программы ДПО": "ПРО", "Количество часов": String(program.hours), "Часы": String(program.hours),
+    "Вид  программы ДПО": type, "Вид программы ДПО": type, "Количество часов": String(program.hours), "Часы": String(program.hours),
+    "Квалификация": String(program.qualification || ""), "СфераДеятельности": String(program.activityScope || program.qualification || ""),
+    "УчебныйПлан": plan.map(row => [row.discipline, row.totalHours, "Зачтено"].join("\t")).join("\n"),
+    "ДокументОбОбразовании": "ОБРАЗЕЦ", "Документ об образовании": "ОБРАЗЕЦ",
+    "Обр_Вид образования": "Диплом", "Обр_Серия": "ОБРАЗЕЦ", "Обр_Номер": "ОБРАЗЕЦ",
+    "Обр_Дата выдачи": displayedDate, "Обр_Кем выдан": "Учебная организация (образец)",
+    "Номер протокола": "ОБРАЗЕЦ", "Оценка ИА": "Зачтено",
+    "Дата начала": displayedDate, "Дата окончания": displayedDate, "Дата приказа": displayedDate, "Дата отчисления": displayedDate,
+    "Дата приказа Отчисл Док Обр": displayedDate,
     "Дата выдачи": displayedDate, "Дата выдачи документа": displayedDate, "Дата начала обучения": displayedDate,
     "Дата окончания обучения": displayedDate, "Срок обучения_ENG": "",
-    "QRкод": `https://edu-plus.ru/other_course/${String(program.landingCode || "").trim().replace(/^\/+|\/+$/g, "")}/`
+    "QRкод": `https://edu-plus.ru/${spec.base}/${String(program.landingCode || "").trim().replace(/^\/+|\/+$/g, "")}/`
   };
 }
 
@@ -60,12 +75,15 @@ function evaluateFields(template, source, evaluate, seed = {}) {
     return values[name];
   };
   definitions.forEach((_, name) => resolve(name));
-  return Object.fromEntries(MARKERS.concat([...definitions.keys()]).map(name => [name, values[name] ?? ""]));
+  return Object.fromEntries([...new Set([...Object.keys(source), ...MARKERS, ...definitions.keys()])].map(name => [name, values[name] ?? ""]));
 }
 
-async function markSamplePdf(bytes, PDF) {
+async function markSamplePdf(bytes, PDF, type = "ПРО") {
   const document = await PDF.PDFDocument.load(bytes);
-  if (document.getPageCount() !== 2) throw new Error("Шаблон «Сертификат ПРО» должен формировать две страницы: русскую и английскую. Проверьте шаблон и длину названий в конструкторе документов.");
+  const count = document.getPageCount();
+  if (PROGRAM_TYPES[type].bilingual ? count !== 2 : count < 3 || count > 8) throw new Error(PROGRAM_TYPES[type].bilingual
+    ? "Сертификат должен формировать две страницы: русскую и английскую. Проверьте шаблон и длину названий в конструкторе документов."
+    : "Документ с приложением должен формировать от 3 до 8 страниц. Проверьте шаблон, название программы и учебный план.");
   const font = await document.embedFont(PDF.StandardFonts.HelveticaBold);
   for (const page of document.getPages()) {
     const {width, height} = page.getSize();
@@ -77,14 +95,17 @@ async function markSamplePdf(bytes, PDF) {
     page.drawText("SAMPLE", {font, size, x: (width - rotatedWidth) / 2 + size * Math.sin(angle), y: (height - rotatedHeight) / 2,
       rotate: PDF.degrees(35), color: PDF.rgb(0.55, 0.55, 0.55), opacity: 0.24});
   }
-  document.setTitle("Certificate samples / Образцы сертификатов");
+  document.setTitle("Education document samples / Образцы документов");
   document.setAuthor(""); document.setSubject(""); document.setKeywords([]);
   return Buffer.from(await document.save());
 }
 
 async function prepare(program, data, preferLocalTemplate, services) {
+  program = withTrainingPlan(program, data);
+  const type = programType(program);
+  const spec = PROGRAM_TYPES[type];
   const source = sampleSource(program);
-  const template = templateSettings(data);
+  const template = templateSettings(data, type);
   const bytes = await services.loadTemplate({...template, preferLocalTemplate});
   const hash = crypto.createHash("sha256").update(bytes).update(JSON.stringify({version: VERSION, source,
     fields: template.fields, custom: template.useCustomDocumentProperties})).digest("hex");
@@ -100,14 +121,19 @@ async function prepare(program, data, preferLocalTemplate, services) {
     const qr = services.createQr(values["QRкод"]);
     values["QRкод"] = "";
     const docx = services.fill(bytes, values, {"QRкод": qr, "Фото": null}, null, null, {preserveTemplateFonts: true});
-    const pdf = await markSamplePdf(await services.convert(docx), services.pdf);
+    let converted = await services.convert(docx);
+    if (!spec.bilingual && services.removeBlankPages) converted = await services.removeBlankPages(converted);
+    const pdf = await markSamplePdf(converted, services.pdf, type);
+    const pageCount = (await services.pdf.PDFDocument.load(pdf)).getPageCount();
     const images = [];
-    for (const [index, language] of ["ru", "en"].entries()) {
+    for (let index = 0; index < pageCount; index++) {
+      const language = index === 0 ? "ru" : spec.bilingual ? "en" : `page-${index + 1}`;
       const rendered = await services.render(pdf, index + 1);
-      if (rendered.pageCount !== 2 || rendered.preview?.mimeType !== "image/jpeg" || !rendered.preview.base64) {
-        throw new Error("Не удалось получить обе страницы образца сертификата. Проверьте сервис обработки документов.");
+      if (rendered.pageCount !== pageCount || rendered.preview?.mimeType !== "image/jpeg" || !rendered.preview.base64) {
+        throw new Error("Не удалось получить все страницы образца документа. Проверьте сервис обработки документов.");
       }
-      images.push({language, base64: rendered.preview.base64});
+      images.push({language, label: spec.bilingual ? (index ? "Сертификат — English" : "Сертификат — русский")
+        : index ? `Приложение — страница ${index}` : type === "КПК" ? "Удостоверение" : "Диплом", base64: rendered.preview.base64});
     }
     return images;
   }};

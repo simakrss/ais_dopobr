@@ -40013,7 +40013,7 @@ async function route(req, res) {
       const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
       const call = programSiteGenerator.createClient(keys);
       if (reading) {
-        sendJson(res, 200, action === "templates" ? await call("edu", "/templates") : {
+        sendJson(res, 200, action === "templates" ? await call("edu", "/catalog") : {
           ok: true, sites: await Promise.all([call("edu", "/health"), call("shop", "/health")])
         });
         return;
@@ -40025,13 +40025,15 @@ async function route(req, res) {
         sendError(res, 409, "Дождитесь завершения сохранения общей базы и повторите действие.");
         return;
       }
-      const program = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
-      if (!program) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
+      if (!savedProgram) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
+      const program = programSiteGenerator.withTrainingPlan(savedProgram, shared.document.data);
       programSiteGenerator.normalizeProgram(program);
       const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
         loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
         applyFormulas: applyCustomDocumentPropertyFormulas, createQr: createDocumentQrCodeImage,
         fill: fillDocxMarkers, convert: convertDocxBytesToPdf, pdf: PDF_LIB,
+        removeBlankPages: removeBlankInteriorPdfPages,
         render: (bytes, page) => renderOcrDocumentPageBytes(bytes, "certificate-sample.pdf", "application/pdf", page)
       });
       const result = action === "prepare"

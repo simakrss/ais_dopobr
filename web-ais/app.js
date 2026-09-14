@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.452",
+    version: "1.7.453",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.453",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Генератор сайтов поддерживает ДОП, КПК и ППП без SberJazz: выбор лендинга-прототипа, товар и переход в соответствующий раздел сайта. Учебный план подставляется из карточки программы.",
+        "Образцы сертификатов, удостоверений и дипломов создаются по конструктору документов; все страницы приложений загружаются в галерею и доступны для проверки. Отзывы с фотографиями копируются из прототипа без изменения цитат."
+      ]
+    },
     {
       version: "1.7.452",
       releasedAt: "2026-09-14",
@@ -5870,8 +5878,10 @@ MAX - https://bizvmax.ru/zifra_plus
         field("webinarTime", "Время (Москва)", "time", false, null, { programTab: "site" }),
         field("webinarJoinUrl", "Ссылка подключения SberJazz", "text", false, null, { programTab: "site", wide: true }),
         field("siteProductName", "Название товара (до 128 символов; если отличается от названия программы)", "text", false, null, { programTab: "site", wide: true }),
-        field("siteDescription", "Описание вебинара (HTML)", "textarea", false, null, { programTab: "site", wide: true, rows: 5 }),
-        field("siteSpeaker", "Спикер (HTML)", "textarea", false, null, { programTab: "site", wide: true, rows: 4 }),
+        field("siteStartLabel", "Начало обучения на сайте (по умолчанию — ежедневно)", "text", false, null, { programTab: "site", wide: true }),
+        field("siteSampleDate", "Дата в образцах (по умолчанию — текущая)", "date", false, null, { programTab: "site" }),
+        field("siteDescription", "Описание программы (HTML)", "textarea", false, null, { programTab: "site", wide: true, rows: 5 }),
+        field("siteSpeaker", "Автор / спикер (HTML; необязательно для ДОП, КПК, ППП)", "textarea", false, null, { programTab: "site", wide: true, rows: 4 }),
         field("qualification", "Квалификация", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("activityScope", "Сфера деятельности", "textarea", false, null, { programTab: "characteristics", list: true }),
         field("fgos", "ФГОС", "textarea", false, null, { programTab: "characteristics", list: true }),
@@ -32435,10 +32445,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isSettingsDraftSessionActive()) { alert("Сначала сохраните или отмените черновик настроек."); return; }
     const card = document.querySelector("#recordForm[data-config='programs']");
     if (!card) return;
-    if (String(card.elements.type?.value || "").trim().toUpperCase() !== "ПРО") {
-      alert("Первый вариант генератора предназначен для ПРО — онлайн-семинаров.");
+    const type = String(card.elements.type?.value || "").trim().toUpperCase();
+    if (!["ПРО", "ДОП", "КПК", "ППП"].includes(type)) {
+      alert("Выберите вид программы: ПРО, ДОП, КПК или ППП.");
       return;
     }
+    const bilingual = ["ПРО", "ДОП"].includes(type);
+    const postType = type === "КПК" ? "courses-pk" : type === "ППП" ? "courses-pp" : "other-course";
     const programId = await saveRecordFormBeforeContinuation(card, { flush: true });
     if (!programId) return;
     const program = state.data.collections.programs.find(item => item.id === programId);
@@ -32447,11 +32460,11 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Создать программу на сайте");
     dialog.innerHTML = `
-      <header class="modal-head"><div><p class="eyebrow">Генератор ПРО</p><h2>Создать на сайте</h2></div><button class="icon-button" type="button" data-site-close aria-label="Закрыть">×</button></header>
+      <header class="modal-head"><div><p class="eyebrow">Генератор ${escapeHtml(type)}</p><h2>Создать на сайте</h2></div><button class="icon-button" type="button" data-site-close aria-label="Закрыть">×</button></header>
       <div class="program-site-body">
         <p><strong>${escapeHtml(program.name)}</strong></p>
-        <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. Данные и ссылка SberJazz берутся из сохранённой карточки. Образцы сертификатов RU/EN создаются автоматически по шаблону «Сертификат ПРО» из конструктора документов.</p>
-        <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующего онлайн-семинара"></label>
+        <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. ${type === "ПРО" ? "Ссылка SberJazz берётся из карточки." : "SberJazz не требуется."} ${bilingual ? "Образцы сертификатов RU/EN" : type === "КПК" ? "Образцы удостоверения и всех страниц приложения" : "Образцы диплома и всех страниц приложения"} создаются автоматически по соответствующему шаблону конструктора документов. Отзывы и фотографии из прототипа сохраняются.</p>
+        <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
         <label><span>Прототип с edu-plus.ru</span><select data-site-template aria-label="Прототип лендинга" disabled><option value="">Загрузка…</option></select></label>
         <div data-site-prototype-link></div>
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Новый код лендинга должен быть свободен. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка изменённых параметров обновляет только его собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
@@ -32474,7 +32487,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!value) {
         prepareButton.disabled = !select.value;
         const publishButton = resultArea.querySelector("[data-site-publish]");
-        if (publishButton) publishButton.disabled = !result?.certificateHash || result?.certificates?.length !== 2 || !resultArea.querySelector("[data-site-reviewed]")?.checked;
+        if (publishButton) publishButton.disabled = !result?.certificateHash || !samplesReady() || !resultArea.querySelector("[data-site-reviewed]")?.checked;
       }
     };
     const request = async (action, body) => {
@@ -32493,6 +32506,8 @@ MAX - https://bizvmax.ru/zifra_plus
       persist();
       if (!await flushSharedApplicationState()) throw new Error("Операция на сайтах завершена, но сведения о ней ещё не сохранены в общей базе. Не меняйте параметры; повторный запуск восстановит результат.");
     };
+    const samplesReady = () => (result?.type || "ПРО") === type && Array.isArray(result?.certificates)
+      && (bilingual ? result.certificates.length === 2 : result.certificates.length >= 3 && result.certificates.length <= 8);
     const drawResult = () => {
       resultArea.hidden = !result;
       if (!result) { resultArea.innerHTML = ""; return; }
@@ -32500,18 +32515,18 @@ MAX - https://bizvmax.ru/zifra_plus
         <h3>${result.stage === "published" ? "Программа опубликована" : "Черновики подготовлены"}</h3>
         <p>ID товара: ${escapeHtml(result.product?.id || "—")}; ID лендинга: ${escapeHtml(result.landing?.id || "—")}</p>
         <div class="program-site-actions">${renderProgramSiteLink(result.landing?.previewUrl, "Просмотреть лендинг")}${renderProgramSiteLink(result.landing?.editUrl, "Редактировать лендинг")}${renderProgramSiteLink(result.product?.editUrl, "Редактировать товар")}</div>
-        ${result.certificates?.length === 2 ? `<p class="muted">Образцы созданы для этой программы, без выдачи документов слушателям.</p><div class="program-site-actions">${result.certificates.map(image => renderProgramSiteLink(image.url, image.language === "ru" ? "Образец сертификата — русский" : "Certificate sample — English")).join("")}</div>` : `<p class="muted">Повторите подготовку, чтобы автоматически создать актуальные образцы сертификатов.</p>`}
+        ${samplesReady() ? `<p class="muted">Образцы созданы для этой программы, без выдачи документов слушателям.</p><div class="program-site-actions">${result.certificates.map(image => renderProgramSiteLink(image.url, image.label || (image.language === "ru" ? "Образец — русский" : image.language === "en" ? "Образец — English" : "Приложение " + image.language))).join("")}</div>` : `<p class="muted">Повторите подготовку, чтобы автоматически создать актуальные образцы документов.</p>`}
         ${result.stage === "published" ? `<div class="program-site-actions">${renderProgramSiteLink(result.landing?.url, "Открыть сайт")}${renderProgramSiteLink(result.product?.url, "Проверить переход из магазина")}</div>` : `
-          <p class="muted">Проверьте новые образцы сертификатов на обоих языках. Отзывы, фотографии спикера и остальные неизменённые блоки копируются из прототипа и могут относиться к другой программе.</p>
+          <p class="muted">Проверьте все страницы образцов документов. Отзывы, фотографии автора и остальные неизменённые блоки копируются из прототипа и могут относиться к другой программе.</p>
           <label class="program-site-review"><input type="checkbox" data-site-reviewed>Я проверил лендинг и товар, включая цены, дату, изображения и сертификаты</label>
           <button class="primary-button" type="button" data-site-publish disabled>Опубликовать страницу и товар</button>`}
         ${result.promoMessage ? `<label><span>Промосообщение</span><textarea readonly rows="5">${escapeHtml(result.promoMessage)}</textarea></label>` : ""}
-        <p class="muted">После публикации: проверьте оформление заказа и выдачу подключения, согласуйте материалы со спикером, обновите приказ о наборе. Рассылка, оплата тестового заказа и изменение главной страницы автоматически не выполняются.</p>`;
+        <p class="muted">После публикации: проверьте оформление заказа${type === "ПРО" ? " и выдачу подключения" : ""}, согласуйте материалы, обновите приказ о наборе. Рассылка, оплата тестового заказа и изменение главной страницы автоматически не выполняются.</p>`;
       const review = resultArea.querySelector("[data-site-reviewed]");
       const publishButton = resultArea.querySelector("[data-site-publish]");
-      review?.addEventListener("change", () => { publishButton.disabled = busy || !review.checked || !result.certificateHash || result.certificates?.length !== 2; });
+      review?.addEventListener("change", () => { publishButton.disabled = busy || !review.checked || !result.certificateHash || !samplesReady(); });
       publishButton?.addEventListener("click", async () => {
-        if (busy || !review.checked || !result.certificateHash || result.certificates?.length !== 2 || Number(select.value) !== Number(result.templateId)) return;
+        if (busy || !review.checked || !result.certificateHash || !samplesReady() || Number(select.value) !== Number(result.templateId)) return;
         setBusy(true);
         status.textContent = "Публикация страницы и товара, включение переходов…";
         try {
@@ -32520,7 +32535,7 @@ MAX - https://bizvmax.ru/zifra_plus
           result = {...result, ...published};
           drawResult();
           await storeResult(result);
-          status.textContent = "Страница и товар опубликованы. Переход из магазина на лендинг включён; подключение к вебинару выдаётся после проверки заказа.";
+          status.textContent = "Страница и товар опубликованы. Переход из магазина на лендинг включён." + (type === "ПРО" ? " Подключение к вебинару выдаётся после проверки заказа." : "");
         } catch (error) {
           status.textContent = `${error.message} Если связь прервалась, повторите действие с теми же параметрами: уже созданные объекты не будут дублироваться.`;
         } finally { setBusy(false); }
@@ -32544,9 +32559,9 @@ MAX - https://bizvmax.ru/zifra_plus
       status.textContent = "Загрузка прототипов с edu-plus.ru…";
       try {
         const payload = await request("templates");
-        templates = Array.isArray(payload.templates) ? payload.templates : [];
+        templates = Array.isArray(payload.templates) ? payload.templates.filter(item => type === "ДОП" || (item.postType || "other-course") === postType) : [];
         filterTemplates();
-        status.textContent = templates.length ? "Выберите прототип. Сайты пока не изменены." : "Опубликованные прототипы ПРО не найдены.";
+        status.textContent = templates.length ? "Выберите прототип. Сайты пока не изменены." : "Опубликованные прототипы для этого вида программы не найдены.";
       } catch (error) { status.textContent = error.message; }
       finally { setBusy(false); }
     };
@@ -32559,7 +32574,7 @@ MAX - https://bizvmax.ru/zifra_plus
     prepareButton.addEventListener("click", async () => {
       if (busy || !select.value) return;
       setBusy(true);
-      status.textContent = "Создание образцов сертификатов RU/EN, загрузка изображений и подготовка черновиков. Дождитесь результата…";
+      status.textContent = "Создание образцов документов, загрузка всех страниц и подготовка черновиков с отзывами прототипа. Дождитесь результата…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Сначала восстановите блокировку карточки.");
         result = await request("prepare", {programId, templateId: Number(select.value), preferLocalTemplate: getEffectiveLocalDocumentsMode()});
@@ -32570,7 +32585,7 @@ MAX - https://bizvmax.ru/zifra_plus
       finally {
         setBusy(false);
         const publishButton = resultArea.querySelector("[data-site-publish]");
-        if (publishButton) publishButton.disabled = !result?.certificateHash || result?.certificates?.length !== 2 || !resultArea.querySelector("[data-site-reviewed]")?.checked;
+        if (publishButton) publishButton.disabled = !result?.certificateHash || !samplesReady() || !resultArea.querySelector("[data-site-reviewed]")?.checked;
       }
     });
     const close = () => {
@@ -32593,7 +32608,7 @@ MAX - https://bizvmax.ru/zifra_plus
       { id: "main", label: "Основное" },
       { id: "trainingPlan", label: "Учебный план" },
       { id: "characteristics", label: "Характеристики" },
-      { id: "site", label: "Сайт и вебинар" },
+      { id: "site", label: "Сайт" },
       {
         id: "promo",
         label: "Промосообщение",
@@ -32695,8 +32710,9 @@ MAX - https://bizvmax.ru/zifra_plus
                 ${renderProgramCharacteristicsSection(record || {})}
               </div>
               <div class="program-tab-panel ${activeTab.id === "site" ? "is-active" : ""}" data-program-tab-panel="site" role="tabpanel" ${activeTab.id === "site" ? "" : "hidden"}>
-                <p class="muted">Для программ ПРО (онлайн-семинаров). Встречу SberJazz создайте самостоятельно и вставьте полную ссылку подключения. Название, код лендинга, часы и цена берутся из вкладки «Основное».</p>
-                <div class="form-grid program-site-fields">${config.fields.filter(item => item.options?.programTab === "site").map(item => renderField(item, record || {})).join("")}</div>
+                <p class="muted">Название, код лендинга, часы, срок и цена берутся из вкладки «Основное». Для ДОП, КПК и ППП SberJazz не нужен. В приложениях используется учебный план программы; даты в образцах демонстрационные и не задают сроки обучения слушателей.</p>
+                <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">Только ПРО: создайте встречу SberJazz самостоятельно и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${config.fields.filter(item => ["webinarDate", "webinarTime", "webinarJoinUrl"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>
+                <div class="form-grid program-site-fields">${config.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div>
                 ${record?.sitePublication ? `<p class="muted">${record.sitePublication.stage === "published" ? "Опубликовано" : "Подготовлены черновики"}. ID товара: ${escapeHtml(record.sitePublication.product?.id || "—")}. ID лендинга: ${escapeHtml(record.sitePublication.landing?.id || "—")}. Откройте «Создать на сайте» для просмотра и продолжения.</p>` : ""}
               </div>
               <div class="program-tab-panel ${activeTab.id === "promo" ? "is-active" : ""}" data-program-tab-panel="promo" role="tabpanel" ${activeTab.id === "promo" ? "" : "hidden"}>
@@ -41892,6 +41908,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", copyProgramWithTrainingPlan);
     document.querySelector("[data-action='create-program-on-site']")
       ?.addEventListener("click", openProgramSiteGenerator);
+    document.querySelector("#recordForm[data-config='programs'] [name='type']")?.addEventListener("change", event => {
+      const webinarFields = document.querySelector("[data-site-webinar-only]");
+      if (webinarFields) webinarFields.hidden = String(event.target.value || "").toUpperCase() !== "ПРО";
+    });
     document.querySelector("[data-action='copy-employee-new-contract']")
       ?.addEventListener("click", copyEmployeeForNewContract);
     const contractForm = document.querySelector("#recordForm[data-config='contracts']");
