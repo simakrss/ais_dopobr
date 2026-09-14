@@ -156,10 +156,14 @@ async function loadPrototypeModel(program, templateId, call) {
   const template = await call("edu", `/template/${validateTemplateId(templateId)}`);
   if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
   const fields = template.fields || {};
+  // Image delivery is independent of the reviewed document/price payload, so adding
+  // it must not invalidate already prepared drafts on either website.
+  const prototypeForHash = {...template};
+  delete prototypeForHash.imageUrl;
   const description = model.type === "ПРО" ? fields.opisanie_dokumenta : fields.opisanie_o_programme || fields.opisanie_dokumenta;
   return {template, model: {...model, descriptionHtml: typeof description === "string" ? description : "",
     speakerHtml: typeof fields.tekst_etap_obucheniya_1 === "string" ? fields.tekst_etap_obucheniya_1 : "",
-    prototypeHash: crypto.createHash("sha256").update(JSON.stringify(template)).digest("hex")}};
+    prototypeHash: crypto.createHash("sha256").update(JSON.stringify(prototypeForHash)).digest("hex")}};
 }
 
 function buildLandingFields(template, model, productId, certificates) {
@@ -236,7 +240,7 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   if (!Array.isArray(assets.images) || assets.images.length !== images.length || images.some((image, index) => assets.images[index]?.language !== image.language)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
   buildLandingFields(template, model, 1, assets.images);
   report("Создание черновика товара на zifra-plus.ru");
-  const product = await call("shop", "/prepare-product", {...model, hash});
+  const product = await call("shop", "/prepare-product", {...model, hash, imageUrl: template.imageUrl || ""});
   const fields = buildLandingFields(template, model, product.id, assets.images);
   report("Создание лендинга с отзывами и образцами документов");
   const landing = await call("edu", "/prepare-landing", {

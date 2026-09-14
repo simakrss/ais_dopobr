@@ -12,6 +12,7 @@ register_shutdown_function(function () use ($test_dir) {
     foreach (glob($test_dir . '/ais-webinar-files/*/connection.txt') as $file) { unlink($file); rmdir(dirname($file)); }
     if (is_dir($test_dir . '/ais-webinar-files')) rmdir($test_dir . '/ais-webinar-files');
     foreach (glob($test_dir . '/certificate-sample-*.jpg') as $file) unlink($file);
+    foreach (glob($test_dir . '/landing-*') as $file) unlink($file);
     unlink($test_dir . '/wordpress/wp-admin/includes/image.php');
     rmdir($test_dir . '/wordpress/wp-admin/includes');
     rmdir($test_dir . '/wordpress/wp-admin');
@@ -41,7 +42,7 @@ function get_posts($args) {
     $ids = array();
     foreach ($GLOBALS['test_posts'] as $id=>$post) {
         if (!in_array($post['type'], (array) $args['post_type'], true)) continue;
-        $value = $args['meta_key'] === '_ais_certificate_key' ? get_post_meta($id, '_ais_certificate_key') : ($post['key'] ?? '');
+        $value = $args['meta_key'] === '_ais_generator_key' ? ($post['key'] ?? '') : get_post_meta($id, $args['meta_key']);
         if ($value === $args['meta_value']) $ids[] = $id;
     }
     return $ids;
@@ -64,7 +65,27 @@ function wp_slash($data) { return $data; }
 function sanitize_text_field($value) { return strip_tags($value); }
 function wp_kses_post($value) { return $value; }
 if (!function_exists('mb_strlen')) { function mb_strlen($value) { return preg_match_all('/./us', $value); } }
-function get_post_thumbnail_id($id) { return 0; }
+function get_post_thumbnail_id($id) { return (int) get_post_meta($id, '_thumbnail_id'); }
+function set_post_thumbnail($id, $image) { update_post_meta($id, '_thumbnail_id', $image); }
+function wp_get_attachment_image_url($id, $size) { return $id ? wp_get_attachment_url($id) : false; }
+function wp_safe_remote_get($url, $args) {
+    check($args['redirection'] === 0 && $args['limit_response_size'] === 5242881, 'Bounded media transfer, no redirects');
+    $GLOBALS['test_image_fetches'] = ($GLOBALS['test_image_fetches'] ?? 0) + 1;
+    return array('code' => $GLOBALS['test_image_code'] ?? 200, 'body' => $GLOBALS['test_image_body'] ?? base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN0cAAAAASUVORK5CYII='));
+}
+function wp_remote_retrieve_response_code($response) { return $response['code']; }
+function wp_remote_retrieve_body($response) { return $response['body']; }
+class WF301_functions {
+    static $rules = array();
+    static function get_redirects($active = false) { return array_map(function ($rule) { return (object) $rule; }, array_values(self::$rules)); }
+    static function save_redirect_rule($rule) {
+        $id = $rule['redirect_id'] ?? count(self::$rules) + 1;
+        unset($rule['redirect_id']);
+        self::$rules[$id] = array_merge(self::$rules[$id] ?? array(), $rule, array('id'=>$id));
+        return $id;
+    }
+    static function get_redirect($id) { return self::$rules[$id] ?? array(); }
+}
 function get_object_taxonomies($type, $output) { return array(); }
 function wp_mkdir_p($path) { return is_dir($path) || mkdir($path, 0700, true); }
 class WC_Product_Download {
@@ -90,7 +111,7 @@ class WC_Product_Simple {
     function update_meta_data($key,$value) { $this->meta[$key]=$value; }
     function save() {
         $id=max(array_keys($GLOBALS['test_posts']))+1;
-        $GLOBALS['test_posts'][$id]=array('type'=>'product','status'=>$this->values['status'],'key'=>$this->meta['_ais_generator_key']);
+        $GLOBALS['test_posts'][$id]=array('type'=>'product','status'=>$this->values['status'],'key'=>$this->meta['_ais_generator_key'],'post_name'=>$this->values['slug']);
         $GLOBALS['test_meta'][$id]=$this->meta;
         $GLOBALS['test_product']=$this;
         return $id;
@@ -233,6 +254,8 @@ $test_role = 'shop';
 $test_posts[123]['type'] = 'product';
 $test_meta[123]['_ais_generator_key'] = $identity['key'];
 $test_meta[123]['_ais_webinar_file'] = '/private/connection.html';
+$test_meta[123]['_ais_webinar_join_url'] = 'https://salutejazz.ru/calls/fixture?psw=example';
+$test_meta[123]['_ais_landing_url'] = 'https://edu-plus.ru/other_course/test/';
 check(ais_pg_mutate('enable-redirect', $identity)['id'] === 123, 'Own published product redirect enabled');
 $method = $test_filters['woocommerce_file_download_method'][0];
 check($method('force', 123, '/private/connection.html') === 'ais_webinar', 'Only approved own download uses Jazz redirect');
@@ -274,10 +297,11 @@ foreach (array('ДОП','КПК','ППП') as $course_type) {
     check(ais_pg_mutate('publish',$landing_data)['status']==='publish','Course landing published after checks');
     $test_role='shop';
     $product=ais_pg_mutate('prepare-product',array('key'=>$key,'hash'=>$hash,'type'=>$course_type,'slug'=>$landing_data['slug'],'productName'=>'Курс','price'=>100,'joinUrl'=>'not-a-url'));
-    check($test_product->values['downloadable']===false && $test_product->values['downloads']===array(),'No Jazz download for course');
+    check($test_product->values['downloadable']===true && count($test_product->values['downloads'])===1,'Every course has an education info download');
+    check(ais_pg_download_target($product['id'])==='https://zifra-plus.ru/edu_info','Non-webinar download goes to education info');
     check(get_post_meta($product['id'],'_ais_webinar_file')==='' && get_post_meta($product['id'],'_ais_webinar_join_url')==='','No Jazz metadata for course');
     check(get_post_meta($product['id'],'_ais_landing_url')===ais_pg_landing_url($course_type,$landing_data['slug']),'Correct course redirect URL');
-    check(!is_dir($test_dir . '/ais-webinar-files'),'No connection file created');
+    check(strpos(file_get_contents(get_post_meta($product['id'],'_ais_download_file')), 'https://zifra-plus.ru/edu_info') !== false,'Private info file created without Jazz URL');
 }
 // Webinar branch must use a private, allowed TXT file and remain idempotent.
 $test_role = 'shop';
@@ -317,4 +341,59 @@ if (isset($argv[1]) && is_file($argv[1])) {
     check(count(glob($test_dir . '/certificate-sample-*.jpg'))===5,'No duplicate appendix files');
     echo "PASS: real JPEG upload, attachment metadata, idempotent retry, no duplicate files\n";
 }
+// Product presentation: all rules are visible in the existing manager, idempotent,
+// disabled for drafts, and narrowly match exactly this product (not ID prefixes).
+$test_role = 'shop';
+$product_id = $webinar_result['id'];
+$draft_rules = ais_pg_product_redirect_rules($product_id, false);
+function matches_pro_rule($rule, $path) {
+    // Mirror WF301_functions::format_from_url + wild_compare (installed PRO 6.28).
+    $pattern = '/' . ltrim(stripslashes($rule['url_from']), '/');
+    $expr = str_replace('.*', '*', $pattern);
+    $expr = str_replace(array('*', '/'), array('.*', '\\/'), $expr);
+    $expr = str_replace('\\/^', '^', $expr);
+    return preg_match('/' . $expr . '$/', rtrim($path, '/')) === 1;
+}
+foreach ($draft_rules as $rule) {
+    check($rule['status'] === 'disabled', 'Draft redirect is not public');
+    check($rule['query_parameters'] === 'exactdrop' && $rule['case_insensitive'] === 'disabled', 'Never forward order credentials or lowercase Jazz password');
+}
+foreach (array('/?post_type=product&p='.$product_id, '/?p='.$product_id.'&post_type=product', '/?utm_source=test&p='.$product_id.'&post_type=product&x=1') as $path) check(matches_pro_rule($draft_rules[0], $path), 'Product query order supported: '.$path);
+foreach (array('/?post_type=product&p='.$product_id.'0', '/?p='.$product_id.'&post_type=page', '/?post_type=product&p='.$product_id.'&preview=true', '/?add-to-cart=7&post_type=product&p='.$product_id, '/?post_type=product&p='.$product_id.'&download_file=7') as $path) check(!matches_pro_rule($draft_rules[0], $path), 'No neighboring product, preview, checkout or download redirect: '.$path);
+check(matches_pro_rule($draft_rules[1], '/product/new-webinar-txt/'), 'Pretty product link supported');
+check(matches_pro_rule($draft_rules[1], '/product/new-webinar-txt/?utm_source=test'), 'Pretty link with campaign supported');
+check(!matches_pro_rule($draft_rules[1], '/product/new-webinar-txt-copy/'), 'Do not redirect another slug');
+check(!matches_pro_rule($draft_rules[1], '/product/new-webinar-txt/?add-to-cart='.$product_id), 'Do not intercept add-to-cart');
+check(matches_pro_rule($draft_rules[2], '/?download_file='.$product_id.'&order=private&email=test'), 'Download parameters supported');
+check(matches_pro_rule($draft_rules[2], '/?order=private&download_file='.$product_id), 'Download ID can occur after other parameters');
+check(!matches_pro_rule($draft_rules[2], '/?download_file='.$product_id.'0'), 'Download ID is not a prefix wildcard');
+check($draft_rules[2]['url_to'] === $webinar_data['joinUrl'] && $draft_rules[2]['type'] === 302, 'Complete Jazz URL, temporary redirect');
+$rule_count = count(WF301_functions::$rules);
+$image_data = $webinar_data + array('imageUrl'=>'https://edu-plus.ru/wp-content/uploads/fixture.png');
+$configured = ais_pg_mutate('configure-product', $image_data);
+check($configured['imageId'] > 0 && get_post_thumbnail_id($product_id) === $configured['imageId'], 'Landing image attached to existing draft');
+check(get_post_status($product_id) === 'draft', 'Repair must not publish a draft');
+$repeated = ais_pg_mutate('configure-product', $image_data);
+check($configured['imageId'] === $repeated['imageId'] && $test_image_fetches === 1, 'Image copy retry reuses media');
+check(count(WF301_functions::$rules) === $rule_count, 'No duplicate manager rules on retry');
+foreach (array('https://evil.example/image.png', 'https://edu-plus.ru.evil.example/wp-content/uploads/a.png', 'https://edu-plus.ru/wp-content/uploads/a.svg', 'https://user:pass@edu-plus.ru/wp-content/uploads/a.jpg') as $url) rejects(function () use ($url) { ais_pg_product_image($url); }, 'Only trusted raster media');
+$test_image_body = '<?php not an image';
+rejects(function () { ais_pg_product_image('https://edu-plus.ru/wp-content/uploads/invalid.jpg'); }, 'Image body checked before media upload');
+unset($test_image_body);
+$test_image_code = 302;
+rejects(function () { ais_pg_product_image('https://edu-plus.ru/wp-content/uploads/redirect.jpg'); }, 'Remote redirects rejected');
+unset($test_image_code);
+$test_posts[$product_id]['status'] = 'publish';
+ais_pg_mutate('enable-redirect', $webinar_data);
+foreach (get_post_meta($product_id, '_ais_redirect_rule_ids') as $rule_id) check(WF301_functions::$rules[$rule_id]['status'] === 'enabled', 'Rules activated after publication');
+$cart = $test_filters['woocommerce_cart_item_permalink'][0];
+check($cart('/product/original/', array('product_id'=>$product_id)) === get_post_meta($product_id, '_ais_landing_url'), 'Cart title and thumbnail link directly to landing');
+check($cart('/product/unrelated/', array('product_id'=>99999)) === '/product/unrelated/', 'Other cart products untouched');
+$first_rule = $draft_rules[0];
+$first_rule['tags'] = 'Manually created';
+WF301_functions::save_redirect_rule($first_rule);
+$before_conflict = serialize(WF301_functions::$rules);
+rejects(function () use ($webinar_data) { ais_pg_mutate('configure-product', $webinar_data); }, 'Conflicting manual rules not overwritten');
+check(serialize(WF301_functions::$rules) === $before_conflict, 'All rule conflicts checked before writes');
+echo "PASS: product image copy and retries, PRO manager rules, ID boundaries, query privacy, cart links, draft lifecycle and manual-rule protection\n";
 echo "PASS: WordPress signature, URL validation, nested ACF schema, locks, managed identity, stale versions, slug collision and authorized download hooks\n";

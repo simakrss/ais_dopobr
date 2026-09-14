@@ -7,7 +7,7 @@ const pg = require("../program-site-generator.js");
 const fixture = {id: "test-pro-webinar", type: "ПРО", name: "Тестовый онлайн-семинар", nameEnglish: "Test webinar", hours: 2, price: 390, oldPrice: 1000,
   landingCode: "test_webinar", webinarDate: "2026-09-30", webinarTime: "09:30", webinarJoinUrl: "https://jazz.sber.ru/test?psw=example#join",
   siteDescription: "<p>Программа семинара</p>", siteSpeaker: "<p>Тестовый спикер</p>"};
-const template = {id: 42, title: "Прототип", modified: "2026-09-14 09:00:00", fields: {
+const template = {id: 42, title: "Прототип", imageUrl: "https://edu-plus.ru/wp-content/uploads/landing.jpg", modified: "2026-09-14 09:00:00", fields: {
   podacha_zayavki_nazvanie_kursa: "Прототип", data_starta: "Старая дата", opisanie_dokumenta: "Старое описание",
   tekst_etap_obucheniya_1: "Старый спикер", stoimost_kursa: "200", kolichestvo_chasov: "1",
   blok_ceny: [{stoimost_kursa: "200", staraya_cena: "300", skidka: "33", ssylka_na_registraciyu: "https://zifra-plus.ru/checkout/?add-to-cart=12"}],
@@ -89,6 +89,7 @@ async function main() {
   assert.equal(calls[3].payload.fields.prevyu_vydavaemogo_dokumenta_2, 82);
   assert.deepEqual(draft.certificates, images);
   assert.equal(calls.find(item => item.endpoint === "/prepare-product").payload.descriptionHtml, template.fields.opisanie_dokumenta);
+  assert.equal(calls.find(item => item.endpoint === "/prepare-product").payload.imageUrl, template.imageUrl, "Product receives the same image as the landing");
   await assert.rejects(prepare(fixture, 0, fake), /обязательное/);
   calls.length = 0;
   await assert.rejects(publish({...fixture, price: 400}, 42, draft.hash, fake), /изменились/);
