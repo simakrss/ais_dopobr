@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.447",
-    releasedAt: "2026-09-13"
+    version: "1.7.448",
+    releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.448",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Уплотнён раздел «Документооборот»: документы выбираются на верхней панели, поля и действия сгруппированы, сокращены отступы и высота строк программ. Подробное пояснение раскрывается по нажатию; на узких экранах элементы переносятся без наложений."
+      ]
+    },
     {
       version: "1.7.447",
       releasedAt: "2026-09-13",
@@ -23474,13 +23481,15 @@ MAX - https://bizvmax.ru/zifra_plus
             <h3>${escapeHtml(selected.title)}</h3>
             <p class="muted">${escapeHtml(definition.description)}</p>
             <form data-workflow-generate data-document-id="${escapeAttr(selected.id)}">
+              <div class="document-workflow-toolbar">
               <div class="document-workflow-fields">
-                <label>Дата документа<input name="date" type="date" required value="${escapeAttr(draft.date)}"></label>
-                ${isOrder ? `<label>Номер приказа<input name="orderNo" required maxlength="80" value="${escapeAttr(draft.orderNo)}" placeholder="Без знака №" autocomplete="off"></label>` : ""}
-                <label>Формат<select name="format"><option value="pdf" ${(draft.format || selected.generationFormat) === "pdf" ? "selected" : ""}>PDF</option><option value="docx" ${(draft.format || selected.generationFormat) === "docx" ? "selected" : ""}>Word (.docx)</option></select></label>
+                <label class="document-workflow-date">Дата документа<input name="date" type="date" required value="${escapeAttr(draft.date)}"></label>
+                ${isOrder ? `<label class="document-workflow-number">Номер приказа<input name="orderNo" required maxlength="80" value="${escapeAttr(draft.orderNo)}" placeholder="Без знака №" autocomplete="off"></label>` : ""}
+                <label class="document-workflow-format">Формат<select name="format"><option value="pdf" ${(draft.format || selected.generationFormat) === "pdf" ? "selected" : ""}>PDF</option><option value="docx" ${(draft.format || selected.generationFormat) === "docx" ? "selected" : ""}>Word (.docx)</option></select></label>
               </div>
-              <p class="document-workflow-hint">Источник — текущий реестр программ АИС, включая составы комиссий. Для получения изменений из XLSB сначала выполните синхронизацию. Перед сохранением откроется предпросмотр. Отправка по почте не выполняется.</p>
               <div class="document-workflow-actions"><button class="primary-button" type="submit" ${error || !programs.length ? "disabled" : ""}>Сформировать документ</button><button class="ghost-button" type="button" data-workflow-edit="${escapeAttr(selected.id)}">Открыть в конструкторе</button></div>
+              </div>
+              <details class="document-workflow-hint"><summary>Источник данных и порядок сохранения</summary><p>Источник — текущий реестр программ АИС, включая составы комиссий. Для получения изменений из XLSB сначала выполните синхронизацию. Перед сохранением откроется предпросмотр. Отправка по почте не выполняется.</p></details>
             </form>
             <div class="document-workflow-programs">
               <strong>Программы в документе: ${programs.length}</strong>
