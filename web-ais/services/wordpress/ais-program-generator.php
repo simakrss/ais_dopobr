@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.3.0
+ * Version: 1.3.1
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -373,7 +373,8 @@ function ais_pg_sync_landing($id) {
         $offers[] = array('index' => $index, 'productId' => (int) $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '');
     }
     $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_modified_gmt, $post->post_status, $post->post_content, $fields)));
-    return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'fields' => $fields, 'offers' => $offers, 'version' => $version));
+    $image = function_exists('wp_get_attachment_image_url') ? wp_get_attachment_image_url(get_post_thumbnail_id($id), 'medium_large') : '';
+    return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'previewImageUrl' => $image ?: '', 'fields' => $fields, 'offers' => $offers, 'version' => $version));
 }
 function ais_pg_sync_product($id) {
     if (!function_exists('wc_get_product')) throw new RuntimeException('WooCommerce недоступен.');
@@ -493,7 +494,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.3.0', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.3.1', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

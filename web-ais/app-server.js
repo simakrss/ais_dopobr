@@ -40034,7 +40034,8 @@ async function route(req, res) {
         else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId);
         else {
           const resolved = await programSiteGenerator.resolveSite(program, call);
-          result = {ok: true, landing: {id: resolved.landing.id, url: resolved.landing.url, editUrl: resolved.landing.editUrl},
+          result = {ok: true, landing: {id: resolved.landing.id, url: resolved.landing.url, editUrl: resolved.landing.editUrl,
+              title: resolved.landing.title, previewImageUrl: resolved.landing.previewImageUrl || ""},
             product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl},
             products: resolved.products.map(item => ({id: item.id, title: item.title, url: item.url, editUrl: item.editUrl}))};
         }

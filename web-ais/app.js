@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.454",
+    version: "1.7.455",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.455",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Кнопка «Создать на сайте» перенесена на вкладку «Сайт». Кнопки и ссылки оформлены единообразно; добавлена кликабельная миниатюра лендинга с безопасным неинтерактивным просмотром."
+      ]
+    },
     {
       version: "1.7.454",
       releasedAt: "2026-09-14",
@@ -32458,14 +32465,71 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
+  function getProgramLandingPreviewUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      if (url.origin !== "https://edu-plus.ru" || url.username || url.password) return "";
+      if (url.pathname === "/" && /^[1-9]\d*$/.test(url.searchParams.get("p") || "")) return `${url.origin}/?p=${url.searchParams.get("p")}`;
+      if (!/^\/(?:(?:other_course|courses-pk|courses-pp)\/)?[a-z0-9][a-z0-9_-]{1,79}\/?$/.test(url.pathname)
+        || /^\/(?:wp-|lms(?:\/|$))/i.test(url.pathname)) return "";
+      // Preview only public page addresses, never admin actions, query commands or credentials.
+      return url.origin + url.pathname;
+    } catch { return ""; }
+  }
+
+  function getProgramLandingPreviewImage(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return url.origin === "https://edu-plus.ru" && !url.username && !url.password
+        && /^\/wp-content\/uploads\/.*\.(?:jpe?g|png|webp|avif|gif)$/i.test(url.pathname) ? url.origin + url.pathname : "";
+    } catch { return ""; }
+  }
+
+  function renderProgramLandingPreview(value, {title = "Лендинг программы", previewImageUrl = ""} = {}) {
+    const url = getProgramLandingPreviewUrl(value);
+    if (!url) return '<div class="program-site-preview-empty"><span>Миниатюра лендинга</span><small>Укажите код лендинга в карточке программы.</small></div>';
+    const image = getProgramLandingPreviewImage(previewImageUrl);
+    return `<a class="program-site-preview-link" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" title="Открыть лендинг в новой вкладке" aria-label="Открыть лендинг по миниатюре">
+      <span class="program-site-preview-bar" aria-hidden="true"><i></i><i></i><i></i><span>edu-plus.ru</span></span>
+      <span class="program-site-preview-viewport"><span class="program-site-preview-cover">${image ? `<img src="${escapeAttr(image)}" alt="" referrerpolicy="no-referrer">` : '<span class="program-site-preview-monogram" aria-hidden="true">edu+</span>'}<span>${escapeHtml(title)}</span></span><iframe src="${escapeAttr(url)}" title="Миниатюра лендинга" loading="eager" sandbox="allow-same-origin" referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true"></iframe></span>
+      <span class="program-site-preview-caption">Открыть лендинг ↗</span></a>`;
+  }
+
+  function updateProgramLandingPreview(form, value, details = {}) {
+    const preview = form?.querySelector("[data-program-landing-preview]");
+    if (!preview) return;
+    const url = getProgramLandingPreviewUrl(value);
+    const image = Object.hasOwn(details, "previewImageUrl") ? getProgramLandingPreviewImage(details.previewImageUrl) : preview.dataset.previewImage || "";
+    const title = String(details.title || preview.dataset.previewTitle || "Лендинг программы");
+    if (preview.dataset.previewUrl === url && preview.dataset.previewImage === image && preview.dataset.previewTitle === title) return;
+    preview.dataset.previewUrl = url;
+    preview.dataset.previewImage = image;
+    preview.dataset.previewTitle = title;
+    preview.innerHTML = renderProgramLandingPreview(url, {title, previewImageUrl: image});
+    const frame = preview.querySelector("iframe");
+    frame?.addEventListener("load", () => {
+      // Some embedded browsers keep the frame at about:blank. Keep the real cover
+      // visible then; scripts, forms and popups remain prohibited by the sandbox.
+      try { if (frame.contentDocument?.URL === "about:blank") return; } catch { /* Public cross-origin page loaded. */ }
+      frame.parentElement?.classList.add("is-loaded");
+    });
+    preview.querySelector("img")?.addEventListener("error", event => { event.target.hidden = true; });
+  }
+
   function renderProgramSitePanel(record) {
     const publication = record?.siteSync || record?.sitePublication || {};
     const landingUrl = record?.landingCode ? getProgramLandingPageUrl(record.landingCode, record.type) : publication.landing?.url || getProgramPromoUrl(record);
     return `<div class="program-site-panel">
-      <div class="program-site-actions" data-program-site-links>${renderProgramSiteLink(landingUrl, "Перейти к лендингу — edu-plus.ru")}${renderProgramSiteLink(publication.product?.editUrl, "Карточка товара — zifra-plus.ru")}</div>
-      <p class="muted" data-program-site-link-status>Ссылки определяются по сохранённому коду лендинга и его кнопкам регистрации.</p>
-      <button type="button" class="primary-button" data-action="sync-program-with-sites" ${!isAdminUser() || isDatabaseDemoMode() ? "disabled" : ""}>Синхронизировать с сайтом</button>
-      <p class="muted">Обновление названия, стоимости, часов и заполненных сведений программы на лендинге и в интернет-магазине. Другие ценовые варианты, отзывы и изображения сохраняются.</p>
+      <div class="program-site-controls">
+        <div class="program-site-actions">
+          ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" ${isDatabaseDemoMode() ? "disabled" : ""}>Создать на сайте</button>` : ""}
+          <button type="button" class="ghost-button compact-button" data-action="sync-program-with-sites" ${!isAdminUser() || isDatabaseDemoMode() ? "disabled" : ""}>Синхронизировать с сайтом</button>
+        </div>
+        <div class="program-site-actions" data-program-site-links>${renderProgramSiteLink(landingUrl, "Лендинг — edu-plus.ru")}${renderProgramSiteLink(publication.product?.editUrl, "Карточка товара — zifra-plus.ru")}</div>
+        <p class="muted" data-program-site-link-status>Ссылки определяются по сохранённому коду лендинга и его кнопкам регистрации.</p>
+        <p class="muted">Синхронизация обновляет название, стоимость, часы и заполненные сведения. Другие ценовые варианты, отзывы и изображения сохраняются.</p>
+      </div>
+      <div class="program-site-preview" data-program-landing-preview data-preview-source="${escapeAttr(getProgramLandingPreviewUrl(landingUrl))}">${renderProgramLandingPreview("")}</div>
     </div>`;
   }
 
@@ -32475,13 +32539,16 @@ MAX - https://bizvmax.ru/zifra_plus
     const status = form?.querySelector("[data-program-site-link-status]");
     const programId = form?.dataset.id;
     if (!links || !status || links.dataset.loading === "true") return;
+    const preview = form.querySelector("[data-program-landing-preview]");
+    updateProgramLandingPreview(form, preview?.dataset.previewUrl || preview?.dataset.previewSource);
     if (!programId) { status.textContent = "Сохраните программу, чтобы найти её страницы на сайтах."; return; }
     links.dataset.loading = "true";
     status.textContent = "Проверка ссылок на лендинг и товары…";
     try {
       const result = await programSiteRequest("resolve", {programId});
       if (!links.isConnected) return;
-      links.innerHTML = renderProgramSiteLink(result.landing.url, "Перейти к лендингу — edu-plus.ru")
+      updateProgramLandingPreview(form, result.landing.url, result.landing);
+      links.innerHTML = renderProgramSiteLink(result.landing.url, "Лендинг — edu-plus.ru")
         + (result.product ? renderProgramSiteLink(result.product.editUrl, "Карточка товара — zifra-plus.ru")
           : result.products.map(product => renderProgramSiteLink(product.editUrl, `Товар №${product.id}: ${product.title}`)).join(""));
       status.textContent = result.product ? "Карточка товара открывается в административной панели магазина (нужен вход)." : "У лендинга несколько товаров. При синхронизации выберите нужный вариант.";
@@ -32808,7 +32875,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     <span>Дублировать</span>
                   </button>
                 ` : ""}
-                ${isAdminUser() ? '<button class="ghost-button compact-button" data-action="create-program-on-site" type="button">Создать на сайте</button>' : ""}
                 <button class="primary-button" type="submit">Сохранить</button>
                 <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
                   <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>

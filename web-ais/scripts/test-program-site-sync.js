@@ -2,6 +2,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const pg = require("../program-site-generator");
 const program = {id:"qa-program",type:"КПК",name:"Учебная программа (72 ч)",nameEnglish:"Educational programme",hours:72,price:6000,oldPrice:8000,landingCode:"3878",duration:"2 недели",studyForm:"Заочная"};
 const landing = {id:3878,title:"Название на сайте",version:"landing-v1",url:"https://edu-plus.ru/courses-pk/pk-test/",editUrl:"https://edu-plus.ru/wp-admin/post.php?post=3878&action=edit",
@@ -44,6 +45,27 @@ async function main() {
   assert.match(app,/control\.setAttribute\("form", "recordForm"\)/);
   assert.match(app,/generatorHome.appendChild\(generatorFields\)/);
   assert.match(app,/data-action="sync-program-with-sites"/);
+  const uiContext={URL,escapeAttr:value=>String(value).replaceAll('"','&quot;'),escapeHtml:value=>String(value).replaceAll('<','&lt;')};
+  vm.createContext(uiContext);
+  vm.runInContext(app.slice(app.indexOf("  function getProgramLandingPreviewUrl("),app.indexOf("  function updateProgramLandingPreview(")),uiContext);
+  assert.equal(uiContext.getProgramLandingPreviewUrl("https://edu-plus.ru/?p=3878&action=delete"),"https://edu-plus.ru/?p=3878");
+  assert.equal(uiContext.getProgramLandingPreviewUrl("https://edu-plus.ru/courses-pk/pk-access/?action=delete#test"),"https://edu-plus.ru/courses-pk/pk-access/");
+  for(const bad of ["javascript:alert(1)","http://edu-plus.ru/courses-pk/x/","https://evil.example/page/","https://edu-plus.ru/wp-admin/","https://edu-plus.ru/wp-login.php","https://edu-plus.ru/lms/","https://user:password@edu-plus.ru/?p=3878"]) assert.equal(uiContext.getProgramLandingPreviewUrl(bad),"");
+  const thumbnail=uiContext.renderProgramLandingPreview("https://edu-plus.ru/?p=3878");
+  assert.match(thumbnail,/sandbox="allow-same-origin"/);assert.match(thumbnail,/referrerpolicy="no-referrer"/);
+  assert.match(thumbnail,/tabindex="-1" aria-hidden="true"/);
+  assert.match(thumbnail,/target="_blank" rel="noopener noreferrer"/);
+  assert.doesNotMatch(uiContext.renderProgramLandingPreview(""),/<iframe/);
+  assert.equal(uiContext.getProgramLandingPreviewImage("https://edu-plus.ru/wp-content/uploads/db_logo.jpg"),"https://edu-plus.ru/wp-content/uploads/db_logo.jpg");
+  assert.equal(uiContext.getProgramLandingPreviewImage("https://evil.example/logo.jpg"),"");
+  assert.equal(uiContext.getProgramLandingPreviewImage("https://edu-plus.ru/wp-content/uploads/danger.svg"),"");
+  const cover=uiContext.renderProgramLandingPreview("https://edu-plus.ru/?p=3878",{title:"<script>",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"});
+  assert.match(cover,/<img src="https:\/\/edu-plus.ru\/wp-content\/uploads\/db_logo.jpg"/);assert.doesNotMatch(cover,/<script>/);
+  const panelSource=app.slice(app.indexOf("  function renderProgramSitePanel("),app.indexOf("  async function refreshProgramSiteLinks("));
+  assert.match(panelSource,/data-action="create-program-on-site"/);
+  assert.equal((app.match(/data-action="create-program-on-site"/g)||[]).length,1,"Create button appears only in Site panel");
+  assert.doesNotMatch(panelSource,/class="primary-button"/);
+  assert.match(css,/\.program-site-preview-viewport iframe[^}]+pointer-events: none/s);
   console.log("PASS: legacy ID/slug, all 4 types, ambiguous offers, remembered product, authoritative values, stale preview, both-site preflight, partial failure, compact UI contracts");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
@@ -52,13 +74,16 @@ main().catch(error=>{console.error(error);process.exitCode=1;});
 if (process.argv.includes("--serve")) {
   const app=fs.readFileSync(path.join(__dirname,"../app.js"),"utf8");
   const source=app.slice(app.indexOf("  function renderProgramSiteLink("),app.indexOf("  function renderProgramModal("));
+  // Optional real public landing for visual inspection; no write calls leave the fixture.
+  const livePreview=process.env.AIS_QA_LANDING_PREVIEW === "1";
+  const uiLanding={...landing,...(livePreview?{url:"https://edu-plus.ru/courses-pk/pk-access/",title:"Microsoft Access + SQL",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"}:{})};
   const fieldsSource=app.slice(app.indexOf('        field("name", "Наименование программы"'),app.indexOf('        field("qualification", "Квалификация"'));
   const renderFieldSource=app.slice(app.indexOf("  function renderField("),app.indexOf("  function renderStudentModal("));
   const server=require("node:http").createServer(async(req,res)=>{
     if(req.url === "/styles.css") {res.writeHead(200,{"Content-Type":"text/css"});return res.end(fs.readFileSync(path.join(__dirname,"../styles.css")));}
     if(req.url !== "/") {res.writeHead(404);return res.end();}
     res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
-    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Карточка программы — проверка</title><link rel="stylesheet" href="/styles.css"><body><main style="max-width:1000px;margin:20px auto;padding:16px;background:white"><h2>Карточка программы</h2><form id="recordForm" data-config="programs" data-id="qa-program"><div class="form-grid program-form-grid" id="main"></div><hr><div id="site"></div><button type="button" id="generator">Создать на сайте</button></form><p id="saved" role="status"></p></main><script>
+    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Карточка программы — проверка</title><link rel="stylesheet" href="/styles.css"><body><main style="max-width:1000px;margin:20px auto;padding:16px;background:white"><h2>Карточка программы</h2><form id="recordForm" data-config="programs" data-id="qa-program"><div class="form-grid program-form-grid" id="main"></div><hr><h3>Сайт</h3><div id="site"></div></form><p id="saved" role="status"></p></main><script>
       const state={data:{dictionaries:{programTypes:['ПРО','ДОП','КПК','ППП'],programStatuses:['Действует'],studyForms:['Заочная']},collections:{programs:[${JSON.stringify(program)}]}},modal:{config:'programs',id:'qa-program'},programCardTab:'site'};
       const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const escapeAttr=escapeHtml, unique=values=>[...new Set(values)], isAdminUser=()=>true,isDatabaseDemoMode=()=>false,isSettingsDraftSessionActive=()=>false,ensureRecordLockForSave=async()=>true;
@@ -71,7 +96,7 @@ if (process.argv.includes("--serve")) {
       const saveRecordFormBeforeContinuation=async(form)=>{Object.assign(state.data.collections.programs[0],Object.fromEntries(new FormData(form)));document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
       let syncWrites=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
-        const products=${JSON.stringify(products)},landing=${JSON.stringify(landing)};
+        const products=${JSON.stringify(products)},landing=${JSON.stringify(uiLanding)};
         if(url.endsWith('/templates')) result={templates:[{id:42,title:'Прототип курса',postType:'courses-pk',url:landing.url}]};
         else if(url.endsWith('/sync')) {syncWrites++;result={ok:true,landing,product:products.find(item=>item.id===body.productId),syncedAt:new Date().toISOString()};document.getElementById('saved').dataset.writes=syncWrites;}
         else if(url.endsWith('/prepare')||url.endsWith('/publish')) result={ok:true,stage:'prepared',type:'КПК',templateId:42,hash:'qa',landing,product:products[0]};
@@ -84,7 +109,7 @@ if (process.argv.includes("--serve")) {
       document.getElementById('site').innerHTML=renderProgramSitePanel(record);
       document.getElementById('recordForm').insertAdjacentHTML('beforeend',renderProgramGeneratorFields(record));
       document.querySelector('[data-action="sync-program-with-sites"]').addEventListener('click',openProgramSiteSync);
-      document.getElementById('generator').addEventListener('click',openProgramSiteGenerator);
+      document.querySelector('[data-action="create-program-on-site"]').addEventListener('click',openProgramSiteGenerator);
       refreshProgramSiteLinks();
     </script></body></html>`);
   });

@@ -15,6 +15,8 @@ function get_post($id) { return isset($GLOBALS['posts'][$id]) ? (object) $GLOBAL
 function get_post_status($id) { return $GLOBALS['posts'][$id]['post_status'] ?? ''; }
 function get_post_type($id) { return $GLOBALS['posts'][$id]['post_type'] ?? ''; }
 function get_post_meta($id,$key,$single=true) { return ''; }
+function get_post_thumbnail_id($id) {return $id===42?90:0;}
+function wp_get_attachment_image_url($id,$size) {return $id===90?'https://edu-plus.ru/wp-content/uploads/cover.jpg':false;}
 function get_permalink($id) { return home_url('/item/' . $id . '/'); }
 function admin_url($path) { return home_url('/wp-admin/' . $path); }
 function add_query_arg($params,$url) { return $url . '?' . http_build_query($params); }
@@ -58,6 +60,7 @@ $fields[42]=array('blok_ceny'=>array($base,array_merge($base,array('ssylka_na_re
 $products[12]=new SyncProduct(12);$products[13]=new SyncProduct(13);
 $model=array('type'=>'КПК','name'=>'New landing','productName'=>'New product','price'=>0,'oldPrice'=>0,'hours'=>80,'duration'=>'3 недели','studyForm'=>'Заочная','descriptionHtml'=>'','speakerHtml'=>'');
 $snapshot=ais_pg_resolve_site(array('landingId'=>42));
+check($snapshot['previewImageUrl']==='https://edu-plus.ru/wp-content/uploads/cover.jpg','Real featured landing image supplied for preview fallback');
 check(count($snapshot['offers'])===2,'All offers resolved, including encoded query');
 check(ais_pg_resolve_site(array('slug'=>'pk-test'))['id']===42,'Exact slug lookup');
 rejects(function(){ais_pg_resolve_site(array('slug'=>'../evil'));},'код');
