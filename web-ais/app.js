@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.464",
+    version: "1.7.465",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.465",
+      releasedAt: "2026-09-15",
+      changes: [
+        "После успешной отправки договора слушателю автоматически отмечается отправка пакета документов для подписи и устанавливается допстатус «На зачисление (документы отправлены)», в том числе при групповой отправке."
+      ]
+    },
     {
       version: "1.7.464",
       releasedAt: "2026-09-15",
@@ -37496,6 +37503,46 @@ MAX - https://bizvmax.ru/zifra_plus
     return markStudentEventsCompleted(record, eventKey, "", { ensureVisible: true });
   }
 
+  function markStudentContractEmailSent(record, result = {}) {
+    if (!record || result?.emailed !== true || result.emailRecipientMode !== "student") return 0;
+    const recordId = String(record.id || "").trim();
+    const stored = (state.data.collections.students || []).find((item) => recordId && String(item.id || "") === recordId);
+    const currentCard = state.modal?.config === "students" && String(state.modal.id || "").trim() === recordId;
+    // A deleted record or a different open card must never receive this completion.
+    if (!stored && (!currentCard || recordId)) return 0;
+    const additionalStatus = "На зачисление (документы отправлены)";
+    const statusChanged = Boolean(stored && stored.additionalStatus !== additionalStatus);
+    if (statusChanged) {
+      const before = String(stored.additionalStatus || "");
+      stored.additionalStatus = additionalStatus;
+      addAudit("Изменён дополнительный статус после отправки договора", configs.students.title, stored.name || stored.id, {
+        entityType: "students", entityId: stored.id, entityLabel: stored.name || stored.id,
+        source: "automatic-contract-email",
+        changes: [{ field: "additionalStatus", label: "Доп. статус", before, after: additionalStatus }]
+      });
+    }
+    if (currentCard) {
+      state.modal.draft = { ...(state.modal.draft || {}), additionalStatus };
+      if (!recordId) state.modal.hasDraftChanges = true;
+      const form = document.querySelector("#recordForm[data-config='students']");
+      const control = form?.elements.additionalStatus;
+      if (form && String(form.dataset.id || "") === recordId && control) {
+        if (control.tagName === "SELECT" && ![...control.options].some((option) => option.value === additionalStatus)) {
+          const option = document.createElement("option");
+          option.value = additionalStatus;
+          option.textContent = additionalStatus;
+          control.appendChild(option);
+        }
+        control.value = additionalStatus;
+        control.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+    // Persist the status and completion together; preserve all unrelated draft fields.
+    const eventChanged = markStudentEventsCompleted(record, "contractDocsSent", "", { ensureVisible: true });
+    if (statusChanged && !eventChanged) persist();
+    return eventChanged || (statusChanged ? 1 : 0);
+  }
+
   function isExplicitUncheckedEventState(stateValue) {
     return ["unchecked", "none", "false", "0"].includes(String(stateValue || "").trim().toLowerCase());
   }
@@ -69846,6 +69893,9 @@ MAX - https://bizvmax.ru/zifra_plus
           skipConfirmation: true,
           quiet: options.quietEmail === true
         });
+        if (documentTemplate.documentKind === "contract" && (!options.entityType || options.entityType === "students")) {
+          markStudentContractEmailSent(record, { emailed: emailSent, emailRecipientMode: emailRequest.recipientMode });
+        }
       }
       if (options.workflow && !responseDetails.conversionFallback) {
         showDocumentWorkflowSaveSuccess(

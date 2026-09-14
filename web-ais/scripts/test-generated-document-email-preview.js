@@ -105,7 +105,7 @@ assert.ok(documentPreviewIndex >= 0, "Не найден предваритель
 assert.ok(emailPreviewIndex > documentPreviewIndex, "Письмо должно показываться после документа.");
 assert.ok(storageIndex > emailPreviewIndex, "Отправка и сохранение не должны начинаться до подтверждения письма.");
 assert.match(generationBlock, /cancelGeneratedDocumentPreview\(pendingPreviewToken, documentProcessingOrigin\)/u);
-assert.match(generationBlock, /let emailRequest = prepareStudentDocumentEmailRequest/u);
+assert.match(generationBlock, /let emailRequest = options\.skipEmail \? null : prepareStudentDocumentEmailRequest/u);
 assert.match(generationBlock, /emailRequest = reviewedEmailRequest/u);
 
 const escapeBlock = sourceBlock(appSource, "function closeTopmostWindowByEscape()", "function bindEvents(");
@@ -116,10 +116,9 @@ assert.match(stylesSource, /\.generated-document-email-preview-dialog/u);
 assert.match(stylesSource, /\.generated-document-email-frame/u);
 assert.match(stylesSource, /\.generated-document-email-workspace\.is-editing/u);
 assert.match(stylesSource, /\.generated-document-email-editor/u);
-assert.match(
-  stylesSource,
-  /\[data-action="confirm-generated-document-preview"\]\s*\{[\s\S]{0,120}grid-column:\s*auto;[\s\S]{0,120}grid-row:\s*auto;[\s\S]{0,220}width:\s*max-content;/u
-);
+// The preview toolbar now uses a shared flex row, not per-button grid placement.
+assert.match(stylesSource, /\.generated-document-preview-buttons\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/u);
+assert.match(stylesSource, /\.generated-document-preview-buttons button\s*\{[^}]*flex:\s*0 0 auto;[^}]*width:\s*auto;/u);
 assert.match(stylesSource, /@media \(max-width: 720px\)[\s\S]*\.generated-document-email-summary/u);
 
 console.log("generated document email preview checks: OK");
