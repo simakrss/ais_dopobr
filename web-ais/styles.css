@@ -21347,6 +21347,48 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #f8faf9;
 }
 
+.contract-documents-tab { gap: 5px; align-content: start; }
+.contract-documents-tab > .contract-card-section { padding: 6px; }
+.contract-documents-tab .form-section-head { margin-bottom: 4px; }
+.contract-documents-tab .form-section-head h3 { font-size: 14px; }
+.contract-documents-tab .contract-passport-section .contract-form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 6px;
+}
+.contract-documents-tab .contract-passport-section label[data-field-key="identityIssuer"],
+.contract-documents-tab .contract-passport-section label[data-field-key="address"] { grid-column: span 2; }
+.contract-documents-tab .contract-form-grid :is(input, select, textarea) { min-height: 28px; padding: 3px 6px; }
+.contract-documents-tab .contract-form-grid textarea[name="address"] { height: 36px; min-height: 36px; resize: vertical; }
+.contract-documents-tab .student-document-recognition-toolbar { padding: 4px 6px; gap: 6px; }
+.contract-documents-tab .contract-sdo-panel { padding: 4px 6px 6px; margin: 0; }
+.contract-documents-tab .orders-sdo-lms-row { gap: 5px; }
+.contract-documents-tab .orders-sdo-message-head { margin: 4px 0; gap: 5px; }
+.contract-documents-tab .orders-sdo-message { min-height: 112px; height: 112px; padding: 5px 6px; }
+@media (max-width: 720px) {
+  .contract-documents-tab .contract-passport-section .contract-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .contract-documents-tab .contract-passport-section .contract-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .contract-documents-tab .contract-passport-section label[data-field-key] { grid-column: 1 / -1; }
+}
+
+.card-field-formula-dialog { width: min(900px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+.card-field-formula-body { padding: 12px; overflow: auto; min-height: 0; }
+.card-field-formula-body > .muted { margin: 0 0 10px; font-size: 12px; line-height: 1.4; }
+.card-field-formula-body form { min-width: 0; }
+.card-field-formula-body label { display: grid; gap: 5px; }
+.card-field-formula-body .communication-template-formula-editor { min-height: 160px; max-height: 38vh; overflow: auto; }
+.card-formula-available-fields { margin: 10px 0; }
+.card-formula-available-fields summary { cursor: pointer; padding: 5px 0; }
+.card-formula-available-fields .communication-template-field-list { max-height: 170px; overflow: auto; }
+.card-formula-save-status { margin: 8px 0 0; font-size: 13px; color: var(--teal); overflow-wrap: anywhere; }
+.card-field-formula-dialog .data-formula-actions { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .card-field-formula-backdrop { padding: 8px; }
+  .card-field-formula-dialog .data-formula-form { grid-template-columns: minmax(0, 1fr); }
+  .card-field-formula-dialog .data-formula-token-list { max-height: 100px; overflow: auto; }
+}
+
 .student-communications-tab {
   align-content: start;
   min-width: 0;

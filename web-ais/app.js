@@ -196,10 +196,18 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.448",
+    version: "1.7.449",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.449",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Уплотнена вкладка «Документы, СДО» сотрудника: сокращены отступы, паспортные поля размещены компактнее, уменьшена высота адреса регистрации и сообщения СДО.",
+        "Из контекстного меню номеров и типовых сообщений слушателя и сообщений сотрудника можно открыть редактор соответствующей формулы поверх карточки. После сохранения поле пересчитывается, зависимые значения обновляются при вводе параметров; остальные данные карточки и ручные правки других сообщений сохраняются."
+      ]
+    },
     {
       version: "1.7.448",
       releasedAt: "2026-09-14",
@@ -4245,7 +4253,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ВидДоговораКарточки: "{ВидДоговораКарточки}",
     ПредметДоговораКарточки: "{ПредметДоговораКарточки}",
     УсловияОплатыКарточки: "{УсловияОплатыКарточки}",
-    СообщениеДоступаКарточки: "{СообщениеДоступаКарточки}"
+    СообщениеДоступаКарточки: "Данные для доступа к порталу дистанционного обучения (https://portal.edu-plus.ru):\n\nЛогин: {ЛогинКарточки}\nПароль: {ПарольКарточки}\n\nУчебный центр Цифровизация Плюс\nwww.edu-plus.ru"
   };
   const communicationTemplateFieldAliasMap = {
     ФИО: "ФИОКарточки",
@@ -30299,7 +30307,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const savedMessage = String(record.portalCredentials || "");
     if (!options.regenerate && savedMessage.trim()) return savedMessage;
     if (![record.type, record.login, record.password].some((value) => String(value || "").trim())) return "";
-    return [
+    const defaultMessage = [
       "Данные для доступа к порталу дистанционного обучения (https://portal.edu-plus.ru):",
       "",
       `Логин: ${String(record.login || "")}`,
@@ -30308,6 +30316,25 @@ MAX - https://bizvmax.ru/zifra_plus
       "Учебный центр Цифровизация Плюс",
       "www.edu-plus.ru"
     ].join("\n");
+    return applyStudentCommunicationTemplate("{СообщениеДоступаКарточки}", {
+      СообщениеДоступаКарточки: defaultMessage,
+      ФИОКарточки: String(record.name || ""),
+      EmailКарточки: String(record.email || ""),
+      ЛогинКарточки: String(record.login || ""),
+      ПарольКарточки: String(record.password || ""),
+      ДолжностьКарточки: String(record.position || ""),
+      ТелефонКарточки: String(record.phone || ""),
+      ТелеграмКарточки: String(record.telegram || ""),
+      КупонКарточки: String(record.coupon || ""),
+      IDКупонаКарточки: String(record.couponId || ""),
+      НомерДоговораКарточки: String(record.contractNo || ""),
+      ДатаДоговораКарточки: formatStudentCommunicationDate(record.contractDate),
+      ВидДоговораКарточки: String(record.type || ""),
+      ПредметДоговораКарточки: String(record.subject || ""),
+      УсловияОплатыКарточки: String(record.paymentTerms || ""),
+      ИмяОтчество: getStudentCommunicationAddressee(record),
+      ЕстьИмяОтчество: Boolean(getStudentCommunicationAddressee(record))
+    });
   }
 
   function renderContractSdoSection(record = {}) {
@@ -30359,6 +30386,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(state.modal?.draft || {})
     };
     output.value = buildContractPortalCredentials({
+      ...record,
       portalCredentials: output.value,
       type: form.elements.type?.value ?? record.type ?? "",
       login: form.elements.login?.value ?? record.login ?? "",
@@ -32192,8 +32220,8 @@ MAX - https://bizvmax.ru/zifra_plus
                     ${renderStudentDocumentRecognitionToolbar(record, { entityType: "contract" })}
                     ${renderContractSection("Паспортные данные", [
                       "citizenship", "birthDate", "identityDocumentType", "identityDocument", "identityIssueDate",
-                      "identityDepartmentCode", "identityIssuer", "address", "snils", "inn"
-                    ], record)}
+                      "identityDepartmentCode", "snils", "inn", "identityIssuer", "address"
+                    ], record, "contract-passport-section")}
                     ${renderContractSdoSection(record)}
                   </div>
 
@@ -40977,6 +41005,11 @@ MAX - https://bizvmax.ru/zifra_plus
       communicationFieldDialog.closeCommunicationTemplateFieldDialog?.();
       return true;
     }
+    const cardFieldFormulaDialog = document.querySelector("[data-card-field-formula-dialog]");
+    if (cardFieldFormulaDialog) {
+      cardFieldFormulaDialog.closeCardFieldFormulaDialog?.();
+      return true;
+    }
     if (document.querySelector("[data-communication-template-field-menu]")) {
       hideCommunicationTemplateFieldMenu();
       return true;
@@ -45390,6 +45423,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function enhanceCopyableFields() {
     const form = document.getElementById("recordForm");
     if (!form) return;
+    bindCardFormulaRecalculation(form);
     form.querySelectorAll("input, select, textarea").forEach((control) => {
       if (!isCopyableControl(control)) return;
       if (control.dataset.copyContextBound === "true") return;
@@ -45420,6 +45454,7 @@ MAX - https://bizvmax.ru/zifra_plus
     initializeFieldControlHistory(control);
     const historyEditable = isFieldEditHistoryControl(control);
     const settingsDictionary = String(control?.dataset?.settingsDictionary || "").trim();
+    const formulaBinding = getCardFieldFormulaBinding(control);
     const selectRecognitionArea = typeof options.onSelectRecognitionArea === "function"
       ? options.onSelectRecognitionArea
       : null;
@@ -45497,6 +45532,12 @@ MAX - https://bizvmax.ru/zifra_plus
         </svg>
         <span>Вернуть</span>
       </button>
+      ${formulaBinding ? `
+        <span class="field-copy-divider" aria-hidden="true"></span>
+        <button data-action="edit-card-field-formula" type="button">
+          ${renderCommunicationActionIcon("edit")}<span>Редактировать формулу</span>
+        </button>
+      ` : ""}
       ${settingsDictionary ? `
         <span class="field-copy-divider" aria-hidden="true"></span>
         <button class="field-edit-list-button" data-action="edit-settings-list" type="button">
@@ -45644,6 +45685,12 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     editListButton?.addEventListener("pointerdown", editListNow);
     editListButton?.addEventListener("click", editListNow);
+    popup.querySelector("[data-action='edit-card-field-formula']")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideFieldCopyPopup();
+      openCardFieldFormulaSettings(control);
+    });
     const selectRecognitionAreaButton = popup.querySelector("[data-action='select-student-document-field-area']");
     let selectRecognitionAreaStarted = false;
     const selectRecognitionAreaNow = (event) => {
@@ -45659,6 +45706,258 @@ MAX - https://bizvmax.ru/zifra_plus
     window.setTimeout(() => {
       document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
     }, 0);
+  }
+
+  function getCardFieldFormulaBinding(control) {
+    const form = control?.closest?.("#recordForm");
+    const config = form?.dataset?.config;
+    if (!["students", "contracts"].includes(config)) return null;
+    const field = String(control.name || "");
+    if (config === "students") {
+      const number = dataFormulaDefaults.find((item) => item.targetField === field);
+      if (number) return { kind: "number", key: number.key, field, label: number.label, dictionary: "dataFormulas" };
+    }
+    const employee = config === "contracts";
+    const messages = employee ? employeeCommunicationMessages : studentCommunicationMessages;
+    const index = messages.findIndex((item) => item.key === field);
+    if (index >= 0) return {
+      kind: "message", field, index, label: messages[index].label,
+      dictionary: employee ? "employeeCommunicationTemplates" : "communicationTemplates"
+    };
+    if (employee && field === "portalCredentials") return {
+      kind: "field", key: "СообщениеДоступаКарточки", field,
+      dictionary: "communicationTemplateFieldOverrides", label: "Доступ сотрудника к порталу СДО"
+    };
+    return null;
+  }
+
+  function getCardFieldFormula(binding) {
+    if (binding.kind === "number") return normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
+      .find((item) => item.key === binding.key)?.template || "";
+    if (binding.kind === "field") return getCommunicationTemplateFieldDefinitions()
+      .find((item) => item.name === binding.key)?.formula || "";
+    const normalize = binding.dictionary === "employeeCommunicationTemplates"
+      ? normalizeEmployeeCommunicationTemplates : normalizeCommunicationTemplates;
+    return normalize(state.data.dictionaries[binding.dictionary])[binding.index] || "";
+  }
+
+  function setCardFieldFormula(binding, formula) {
+    // Merge just the selected formula into the latest state, never an old settings snapshot.
+    if (binding.kind === "number") {
+      state.data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
+        .map((item) => item.key === binding.key ? { ...item, template: formula } : item);
+    } else if (binding.kind === "field") {
+      state.data.dictionaries.communicationTemplateFieldOverrides = {
+        ...state.data.dictionaries.communicationTemplateFieldOverrides, [binding.key]: formula
+      };
+    } else {
+      const normalize = binding.dictionary === "employeeCommunicationTemplates"
+        ? normalizeEmployeeCommunicationTemplates : normalizeCommunicationTemplates;
+      const values = normalize(state.data.dictionaries[binding.dictionary]);
+      values[binding.index] = formula;
+      state.data.dictionaries[binding.dictionary] = values;
+    }
+  }
+
+  function getCardGeneratedFormulaValues(form) {
+    if (form?.dataset.config === "contracts") {
+      const record = collectContractFormDraft({recalculatePaymentAccounting: false});
+      return { ...generateEmployeeCommunicationMessages(record), portalCredentials: buildContractPortalCredentials(record, { regenerate: true }) };
+    }
+    return form?.dataset.config === "students" ? generateStudentCommunicationMessages(collectStudentFormDraft()) : {};
+  }
+
+  function refreshCardFormulaValues(form, { forceField = "" } = {}) {
+    if (!form?.isConnected || form.cardFormulaUpdating) return;
+    const previous = form.cardGeneratedFormulaValues || {};
+    const changed = {};
+    form.cardFormulaUpdating = true;
+    try {
+      // Numbers are inputs to message formulas, so calculate them first.
+      for (const key of state.modal?.autoFormulaFields || []) {
+        const input = form.elements[key];
+        const binding = getCardFieldFormulaBinding(input);
+        if (binding?.kind !== "number") continue;
+        const definition = dataFormulaDefaults.find((item) => item.key === binding.key);
+        const date = parseOrdersSdoDate(form.elements[definition.dateField]?.value);
+        const value = date ? getGeneratedNumberFromDataFormula(binding.key, date, form.dataset.id).value : "";
+        if (input.value !== value) {
+          input.value = value;
+          changed[key] = value;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+      const next = getCardGeneratedFormulaValues(form);
+      for (const [key, value] of Object.entries(next)) {
+        const input = form.elements[key];
+        if (!input) continue;
+        const current = String(input.value || "");
+        if (key === forceField || !current || current === String(previous[key] ?? "")) {
+          if (current !== String(value)) {
+            input.value = String(value);
+            changed[key] = String(value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          input.closest(".communication-message-card")?.classList.remove("is-customized");
+        }
+        if (input.hasAttribute("data-generated-message")) input.dataset.generatedMessage = encodeURIComponent(value);
+      }
+      if (state.modal && Object.keys(changed).length) {
+        state.modal.draft = { ...(state.modal.draft || {}), ...changed };
+        state.modal.hasDraftChanges = true;
+      }
+      form.cardGeneratedFormulaValues = next;
+    } finally { form.cardFormulaUpdating = false; }
+  }
+
+  function bindCardFormulaRecalculation(form) {
+    if (!["students", "contracts"].includes(form.dataset.config) || form.cardFormulaBound) return;
+    form.cardFormulaBound = true;
+    form.cardGeneratedFormulaValues = getCardGeneratedFormulaValues(form);
+    let queued = false;
+    const update = (event) => {
+      if (form.cardFormulaUpdating) return;
+      const name = event.target.name;
+      if (state.modal?.autoFormulaFields?.includes(name)) {
+        // Explicit edits return a generated number to manual mode.
+        state.modal.autoFormulaFields = state.modal.autoFormulaFields.filter((key) => key !== name);
+      }
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => { queued = false; refreshCardFormulaValues(form); });
+    };
+    form.addEventListener("input", update);
+    form.addEventListener("change", update);
+  }
+
+  function validateCardFieldFormula(binding, formula) {
+    if (formula.length > 30000) return "Формула слишком длинная (максимум 30 000 символов).";
+    if (binding.kind === "number") {
+      if (!formula.trim()) return "Укажите формулу номера.";
+      const allowed = new Set(dataFormulaTokenDefinitions.map((item) => item.token));
+      const unknown = (formula.match(/\{[^{}]*\}/g) || []).find((token) => !allowed.has(token));
+      if (unknown) return `Неизвестный блок формулы: ${unknown}`;
+    }
+    const stack = [];
+    for (const token of formula.match(/\{\{(?:если:[^{}]+|иначе|конец)\}\}/g) || []) {
+      if (token.startsWith("{{если:")) stack.push(false);
+      else if (token === "{{иначе}}") {
+        if (!stack.length || stack[stack.length - 1]) return "Проверьте условие перед блоком {{иначе}}.";
+        stack[stack.length - 1] = true;
+      } else if (!stack.length) return "Лишний блок {{конец}}.";
+      else stack.pop();
+    }
+    return stack.length ? "Закройте каждое условие блоком {{конец}}." : "";
+  }
+
+  function openCardFieldFormulaSettings(control) {
+    const binding = getCardFieldFormulaBinding(control);
+    if (!binding) return false;
+    if (!canAccessView("settings") || isDatabaseDemoMode()) {
+      alert("Недостаточно прав для редактирования формул настроек.");
+      return false;
+    }
+    if (document.querySelector("[data-card-field-formula-dialog]")) return false;
+    if (isSettingsDraftSessionActive()) {
+      alert("Сначала сохраните или отмените открытый черновик настроек.");
+      return false;
+    }
+    const card = control.closest("#recordForm");
+    let baseline = getCardFieldFormula(binding);
+    const dialog = document.createElement("div");
+    dialog.className = "modal-backdrop settings-list-dialog-backdrop card-field-formula-backdrop";
+    dialog.dataset.cardFieldFormulaDialog = "";
+    const isNumber = binding.kind === "number";
+    dialog.innerHTML = `
+      <section class="modal card-field-formula-dialog" role="dialog" aria-modal="true" aria-label="Редактирование формулы: ${escapeAttr(binding.label)}">
+        <header class="modal-head"><div><p class="eyebrow">${isNumber ? "Конструктор формул данных" : "Шаблоны типовых сообщений"}</p><h2>${escapeHtml(binding.label)}</h2></div><button type="button" class="icon-button" data-close-card-formula aria-label="Закрыть">×</button></header>
+        <div class="card-field-formula-body">
+          <p class="muted">Формула общая для всех карточек. После сохранения текущее поле пересчитается, его ручной текст будет заменён. Остальные введённые данные останутся в карточке.</p>
+          ${isNumber ? renderDataFormulaDictionary(state.data.dictionaries.dataFormulas) : `
+            <form data-card-message-formula>
+              <label><span>Формула / шаблон сообщения</span><div class="communication-template-editor communication-template-formula-editor" contenteditable="true" data-formula-editor role="textbox" aria-label="Формула поля" aria-multiline="true">${renderCommunicationTemplateFormulaEditorContent(baseline)}</div><input type="hidden" name="formula" value="${escapeAttr(baseline)}"></label>
+              <details class="card-formula-available-fields"><summary>Доступные поля — перетащите в формулу</summary><div class="communication-template-field-list">${getCommunicationTemplateFieldDefinitions().map((field) => renderCommunicationTemplateFieldToken(field, "Перетащите в формулу; правый щелчок — настройки поля")).join("")}</div></details>
+              <div class="data-formula-actions"><button type="submit" class="primary-button">Сохранить и обновить</button><button type="button" class="ghost-button" data-close-card-formula>Отмена</button></div>
+            </form>`}
+          <p class="card-formula-save-status" role="status" aria-live="polite"></p>
+        </div>
+      </section>`;
+    document.body.appendChild(dialog);
+    const form = dialog.querySelector("form");
+    if (isNumber) {
+      const index = dataFormulaDefaults.findIndex((item) => item.key === binding.key);
+      form.querySelectorAll(".data-formula-item").forEach((item, itemIndex) => { if (itemIndex !== index) item.remove(); });
+      form.querySelector("[data-action='reset-data-formulas']")?.remove();
+      form.querySelector("[type='submit']").textContent = "Сохранить и обновить";
+      form.querySelector("[type='submit']").title = "Сохранить общую формулу и пересчитать поле карточки";
+      form.dataset.activeFormulaIndex = String(index);
+      bindDataFormulaConstructor(dialog);
+    } else bindCommunicationTemplateFieldDialogFields(dialog);
+    const editor = form.querySelector("[contenteditable='true']");
+    const status = dialog.querySelector("[role='status']");
+    let saving = false;
+    const close = async () => {
+      if (saving) return false;
+      if (serializeCommunicationTemplateEditor(editor) !== baseline) {
+        const decision = await chooseUnsavedChangesAction({title: "Формула не сохранена", message: "Сохранить формулу и пересчитать поле перед закрытием?"});
+        if (decision === "cancel") return false;
+        if (decision === "save") { form.requestSubmit(); return false; }
+      }
+      dialog.remove();
+      if (control.isConnected) control.focus({preventScroll: true});
+      return true;
+    };
+    dialog.closeCardFieldFormulaDialog = close;
+    dialog.querySelectorAll("[data-close-card-formula]").forEach((button) => button.addEventListener("click", close));
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
+      if (event.key === "Tab") {
+        const focusable = Array.from(dialog.querySelectorAll("button, input:not([type='hidden']), select, textarea, summary, [contenteditable='true']"))
+          .filter((element) => !element.disabled && element.offsetParent !== null);
+        const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1];
+        if (document.activeElement === edge) {
+          event.preventDefault();
+          (event.shiftKey ? focusable[focusable.length - 1] : focusable[0])?.focus();
+        }
+      }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (saving) return;
+      if (!canAccessView("settings") || isDatabaseDemoMode()) { status.textContent = "Нет прав на сохранение формулы."; return; }
+      const formula = serializeCommunicationTemplateEditor(editor);
+      const error = validateCardFieldFormula(binding, formula);
+      if (error) { status.textContent = error; return; }
+      if (getCardFieldFormula(binding) !== baseline && getCardFieldFormula(binding) !== formula) {
+        status.textContent = "Эту формулу уже изменил другой пользователь. Закройте окно и откройте актуальную формулу. Ваш текст остаётся в редакторе.";
+        return;
+      }
+      saving = true;
+      form.querySelector("[type='submit']").disabled = true;
+      status.textContent = "Сохранение формулы…";
+      try {
+        setCardFieldFormula(binding, formula);
+        baseline = formula;
+        addAudit("Изменена формула из карточки", binding.label, "Сохранены параметры формулы");
+        persist();
+        const generation = sharedStateChangeGeneration;
+        if (isNumber && state.modal) state.modal.autoFormulaFields = unique([...(state.modal.autoFormulaFields || []), binding.field]);
+        refreshCardFormulaValues(card, {forceField: binding.field});
+        const saved = await flushSharedApplicationStateThroughGeneration(generation);
+        status.textContent = saved
+          ? "Формула сохранена. Поле обновлено; данные карточки сохраняются её кнопкой «Сохранить»."
+          : "Поле обновлено локально, но общая база ещё не подтвердила сохранение. Проверьте соединение и повторите сохранение.";
+      } catch (failure) {
+        status.textContent = `Не удалось завершить сохранение: ${failure.message}`;
+      } finally {
+        saving = false;
+        form.querySelector("[type='submit']").disabled = false;
+      }
+    });
+    editor.focus({preventScroll: true});
+    return true;
   }
 
   function openSettingsDictionary(dictionary, sourceControl = null) {
@@ -59985,6 +60284,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function saveCommunicationTemplateField(dialog, existingField) {
+    if (document.querySelector("[data-card-field-formula-dialog]") && (!canAccessView("settings") || isDatabaseDemoMode())) {
+      alert("Недостаточно прав для редактирования формул настроек.");
+      return;
+    }
     const form = dialog.querySelector("form");
     dialog.querySelectorAll("[data-formula-editor]").forEach(syncCommunicationTemplateFormulaEditor);
     const name = getCommunicationTemplateFieldAlias(normalizeCommunicationTemplateFieldName(form.elements.fieldName.value));
@@ -60008,11 +60311,24 @@ MAX - https://bizvmax.ru/zifra_plus
     addAudit(existingField ? "Изменено поле шаблона" : "Добавлено поле шаблона", name, formula);
     persist();
     dialog.remove();
+    if (refreshCardAfterCommunicationFormulaChange()) return;
     render();
+  }
+
+  function refreshCardAfterCommunicationFormulaChange() {
+    const dialog = document.querySelector("[data-card-field-formula-dialog]");
+    if (!dialog) return false;
+    const fields = dialog.querySelector(".communication-template-field-list");
+    if (fields) fields.innerHTML = getCommunicationTemplateFieldDefinitions().map((field) => renderCommunicationTemplateFieldToken(
+      field, "Перетащите в формулу; правый щелчок — настройки поля"
+    )).join("");
+    refreshCardFormulaValues(document.getElementById("recordForm"));
+    return true;
   }
 
   function deleteCommunicationTemplateField(field) {
     hideCommunicationTemplateFieldMenu();
+    if (document.querySelector("[data-card-field-formula-dialog]") && (!canAccessView("settings") || isDatabaseDemoMode())) return;
     if (!field.custom || !confirm(`Удалить пользовательское поле {${field.name}}? Ссылки на него останутся в сообщениях как обычный текст.`)) return;
     collectCommunicationTemplateFormDraft();
     state.data.dictionaries.communicationTemplateCustomFields = state.data.dictionaries.communicationTemplateCustomFields
@@ -60020,6 +60336,7 @@ MAX - https://bizvmax.ru/zifra_plus
     delete state.data.dictionaries.communicationTemplateFieldOverrides[field.name];
     addAudit("Удалено поле шаблона", field.name, "");
     persist();
+    if (refreshCardAfterCommunicationFormulaChange()) return;
     render();
   }
 
@@ -60092,16 +60409,18 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function restoreCommunicationTemplateField(field) {
     hideCommunicationTemplateFieldMenu();
+    if (document.querySelector("[data-card-field-formula-dialog]") && (!canAccessView("settings") || isDatabaseDemoMode())) return;
     collectCommunicationTemplateFormDraft();
     delete state.data.dictionaries.communicationTemplateFieldOverrides[field.name];
     addAudit("Восстановлено поле шаблона", field.name, field.initialFormula);
     persist();
+    if (refreshCardAfterCommunicationFormulaChange()) return;
     render();
   }
 
-  function bindDataFormulaConstructor() {
+  function bindDataFormulaConstructor(root = document) {
     const tokenMime = "application/x-ais-data-formula-token";
-    const form = document.querySelector("form[data-action='save-data-formulas']");
+    const form = root.querySelector("form[data-action='save-data-formulas']");
     if (!form) return;
     let draggedBlock = null;
 

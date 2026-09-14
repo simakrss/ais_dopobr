@@ -188,6 +188,7 @@ async function main() {
     const popup = {};
     const control = {};
     const historyEditable = true;
+    const formulaBinding = null;
     const canUndoFieldControl = () => false;
     const canRedoFieldControl = () => false;
     const escapeHtml = (value) => value;

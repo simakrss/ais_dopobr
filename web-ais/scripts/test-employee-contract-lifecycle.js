@@ -404,6 +404,9 @@ assert.equal(clientExpirationContext.clientExpired.status, "Истек");
 
 const duplicateContext = {
   CONTRACT_SECTIONS: [ACTIVE_SECTION, PARTNER_SECTION, EXPIRED_SECTION],
+  getStudentCommunicationAddressee: record => String(record.name || ""),
+  applyStudentCommunicationTemplate: (_template, fields) => fields.СообщениеДоступаКарточки,
+  formatStudentCommunicationDate: value => value || "",
   normalizeContractRecord(record = {}) {
     const section = record.section || ACTIVE_SECTION;
     return {
