@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -355,14 +355,146 @@ function ais_pg_mutate($action, $data) {
         $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
     }
 }
+function ais_pg_sync_landing($id) {
+    $post = get_post($id);
+    if (!$post || !in_array($post->post_type, array('other-course', 'courses-pk', 'courses-pp'), true)
+        || !in_array($post->post_status, array('draft', 'publish'), true)) throw new RuntimeException('Лендинг не найден или недоступен. Проверьте код в карточке.');
+    if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
+    $fields = array();
+    foreach (get_field_objects($id, false) ?: array() as $field) $fields[$field['name']] = ais_pg_acf_value($field, $field['value']);
+    $offers = array();
+    foreach ($fields['blok_ceny'] ?? array() as $index => $row) {
+        $url = wp_parse_url(html_entity_decode((string) ($row['ssylka_na_registraciyu'] ?? ''), ENT_QUOTES, 'UTF-8'));
+        if (!$url || !in_array($url['scheme'] ?? '', array('https', 'http'), true) || strtolower($url['host'] ?? '') !== 'zifra-plus.ru'
+            || isset($url['user']) || isset($url['pass']) || isset($url['port'])) continue;
+        parse_str($url['query'] ?? '', $query);
+        $product_id = $query['add-to-cart'] ?? '';
+        if (!is_scalar($product_id) || !preg_match('/^[1-9]\d*$/D', (string) $product_id)) continue;
+        $offers[] = array('index' => $index, 'productId' => (int) $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '');
+    }
+    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_modified_gmt, $post->post_status, $post->post_content, $fields)));
+    return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'fields' => $fields, 'offers' => $offers, 'version' => $version));
+}
+function ais_pg_sync_product($id) {
+    if (!function_exists('wc_get_product')) throw new RuntimeException('WooCommerce недоступен.');
+    $product = wc_get_product($id);
+    if (!$product || !$product->is_type('simple') || !in_array($product->get_status(), array('draft', 'publish'), true)) throw new RuntimeException('Товар не найден, недоступен или не является простым товаром.');
+    $values = array('title' => $product->get_name(), 'price' => $product->get_price(), 'regularPrice' => $product->get_regular_price(),
+        'salePrice' => $product->get_sale_price(), 'descriptionHtml' => $product->get_description(),
+        'saleFrom' => (string) $product->get_date_on_sale_from(), 'saleTo' => (string) $product->get_date_on_sale_to());
+    return array_merge(ais_pg_result($id), $values, array('version' => hash('sha256', wp_json_encode(array($values, $product->get_status(), (string) $product->get_date_modified())))));
+}
+function ais_pg_resolve_site($data) {
+    if (ais_pg_role() !== 'edu') throw new RuntimeException('Поиск лендинга доступен только на edu-plus.ru.');
+    $id = (int) ($data['landingId'] ?? 0);
+    if (!$id) {
+        $slug = $data['slug'] ?? '';
+        if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Не указан код лендинга.');
+        $ids = get_posts(array('post_type' => array('other-course', 'courses-pk', 'courses-pp'), 'post_status' => array('draft', 'publish'),
+            'name' => $slug, 'posts_per_page' => 2, 'fields' => 'ids'));
+        if (count($ids) !== 1) throw new RuntimeException('Лендинг по коду не найден однозначно. Укажите его числовой ID в карточке программы.');
+        $id = (int) $ids[0];
+    }
+    return ais_pg_sync_landing($id);
+}
+function ais_pg_sync_validate($data) {
+    $model = $data['model'] ?? array();
+    ais_pg_program_type($model);
+    if (!is_string($model['name'] ?? null) || trim($model['name']) === '' || mb_strlen($model['name']) > 500
+        || !is_string($model['productName'] ?? null) || trim($model['productName']) === '' || mb_strlen($model['productName']) > 500) throw new RuntimeException('Проверьте название программы и товара.');
+    foreach (array('price', 'oldPrice', 'hours') as $key) {
+        if (!isset($model[$key]) || !is_numeric($model[$key]) || $model[$key] < 0 || $model[$key] > ($key === 'hours' ? 10000 : 10000000)) throw new RuntimeException('Проверьте стоимость и часы программы.');
+    }
+    if ($model['hours'] <= 0) throw new RuntimeException('Количество часов должно быть положительным.');
+    $id = (int) ($data[ais_pg_role() === 'edu' ? 'landingId' : 'productId'] ?? 0);
+    $snapshot = ais_pg_role() === 'edu' ? ais_pg_sync_landing($id) : ais_pg_sync_product($id);
+    if (!is_string($data['version'] ?? null) || !hash_equals($snapshot['version'], $data['version'])) throw new RuntimeException('Данные на сайте изменились. Обновите проверку перед синхронизацией.');
+    if (ais_pg_role() === 'edu') {
+        $matching = array_filter($snapshot['offers'], function ($offer) use ($data) { return $offer['productId'] === (int) ($data['productId'] ?? 0); });
+        if (count($matching) !== 1) throw new RuntimeException('Нужен один ценовой блок выбранного товара. Проверьте ссылки регистрации на лендинге.');
+        // Refuse malformed/missing price blocks before the shop is changed.
+        $row = $snapshot['fields']['blok_ceny'][array_values($matching)[0]['index']];
+        foreach (array('stoimost_kursa', 'kolichestvo_chasov', 'staraya_cena', 'skidka') as $key) {
+            if (!array_key_exists($key, $row)) throw new RuntimeException('В ценовом блоке отсутствует поле ' . $key . '. Проверьте ACF.');
+        }
+    }
+    return $snapshot;
+}
+function ais_pg_sync_existing($data, $check_only = false) {
+    global $wpdb;
+    $id = (int) ($data[ais_pg_role() === 'edu' ? 'landingId' : 'productId'] ?? 0);
+    $lock = 'ais_pg_sync_' . substr(hash('sha256', $wpdb->prefix . ':' . $id), 0, 45);
+    if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock)) !== '1') throw new RuntimeException('Страница уже обновляется. Повторите через несколько секунд.');
+    try {
+        $snapshot = ais_pg_sync_validate($data);
+        if ($check_only) return array('ok' => true);
+        $model = $data['model'];
+        $price = (string) $model['price'];
+        $old = (float) $model['oldPrice'];
+        if (ais_pg_role() === 'shop') {
+            $product = wc_get_product($id);
+            $product->set_name(sanitize_text_field($model['productName']));
+            $product->set_regular_price($old > (float) $price ? (string) $old : $price);
+            $product->set_sale_price($old > (float) $price ? $price : '');
+            // The user asks for the current AIS price to take effect now.
+            $product->set_date_on_sale_from(null);
+            $product->set_date_on_sale_to(null);
+            $product->set_price($price);
+            if (!empty($model['descriptionHtml'])) $product->set_description(wp_kses_post($model['descriptionHtml']));
+            if (!$product->save()) throw new RuntimeException('Не удалось сохранить товар.');
+            $actual = ais_pg_sync_product($id);
+            if ($actual['title'] !== sanitize_text_field($model['productName']) || (float) $actual['price'] !== (float) $price
+                || (float) $actual['regularPrice'] !== ($old > (float) $price ? $old : (float) $price)
+                || (string) $actual['salePrice'] !== ($old > (float) $price ? (string) $actual['price'] : '')) throw new RuntimeException('Магазин не подтвердил название или цену. Повторите проверку.');
+        } else {
+            $fields = $snapshot['fields'];
+            $rows = $fields['blok_ceny'];
+            $offer = array_values(array_filter($snapshot['offers'], function ($offer) use ($data) { return $offer['productId'] === (int) $data['productId']; }))[0];
+            $prices = array('stoimost_kursa' => $price, 'kolichestvo_chasov' => (string) $model['hours'],
+                'staraya_cena' => $old > (float) $price ? (string) $old : '', 'skidka' => $old > (float) $price ? (string) round(100 * (1 - (float) $price / $old)) : '0');
+            $rows[$offer['index']] = array_merge($rows[$offer['index']], $prices);
+            $patch = array('blok_ceny' => $rows, 'podacha_zayavki_nazvanie_kursa' => sanitize_text_field($model['name']));
+            // Shared header prices describe the first offer. Other offers must not change them.
+            if ($offer['index'] === 0) $patch = array_merge($patch, $prices);
+            foreach (array('duration' => 'srok', 'studyForm' => 'forma_obucheniya', 'startLabel' => 'data_starta',
+                'descriptionHtml' => 'opisanie_dokumenta', 'speakerHtml' => 'tekst_etap_obucheniya_1') as $source => $destination) {
+                if (!empty($model[$source])) $patch[$destination] = wp_kses_post($model[$source]);
+            }
+            if (!empty($model['descriptionHtml']) && $model['type'] !== 'ПРО') $patch['opisanie_o_programme'] = wp_kses_post($model['descriptionHtml']);
+            $definitions = get_field_objects($id, false) ?: array();
+            $written = array();
+            foreach ($definitions as $field) {
+                $name = $field['name'];
+                if (!array_key_exists($name, $patch)) continue;
+                update_field($field['key'], ais_pg_acf_value($field, $patch[$name], true), $id);
+                $written[$name] = $patch[$name];
+            }
+            $result = wp_update_post(wp_slash(array('ID' => $id, 'post_title' => sanitize_text_field($model['name']))), true);
+            if (is_wp_error($result)) throw new RuntimeException('Не удалось сохранить название лендинга.');
+            // Read through fresh ACF values, not the request-local value cache.
+            if (function_exists('acf_flush_value_cache')) acf_flush_value_cache($id);
+            $actual = ais_pg_sync_landing($id);
+            foreach ($written as $name => $value) {
+                if (($actual['fields'][$name] ?? null) != $value) throw new RuntimeException('Сайт не подтвердил поле ' . $name . '. Обновите проверку.');
+            }
+            if ($actual['title'] !== sanitize_text_field($model['name'])) throw new RuntimeException('Сайт не подтвердил название лендинга.');
+        }
+        // No publication, permalink, redirect, review, image, download or identity changes.
+        return ais_pg_result($id);
+    } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
+}
 function ais_pg_dispatch($request) {
     try {
         $action = basename($request->get_route());
         if ($request->get_method() === 'POST') {
             if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
-            return ais_pg_mutate($action, $request->get_json_params() ?: array());
+            $data = $request->get_json_params() ?: array();
+            if ($action === 'resolve-site') return ais_pg_resolve_site($data);
+            if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
+            return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.2.0', 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if ($action === 'health') return array('ok' => true, 'version' => '1.3.0', 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'));
+        if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
             $posts = get_posts(array('post_type' => $action === 'catalog' ? array('other-course', 'courses-pk', 'courses-pp') : 'other-course', 'post_status' => 'publish', 'posts_per_page' => -1, 'orderby' => 'title', 'order' => 'ASC'));
@@ -378,8 +510,8 @@ function ais_pg_dispatch($request) {
     }
 }
 add_action('rest_api_init', function () {
-    foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
-    foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)', 'sync-product/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('prepare-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'check-sync', 'sync-existing') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
 // This filter runs ONLY after WooCommerce has checked download/order permissions.
 add_filter('woocommerce_file_download_method', function ($method, $id, $file) {

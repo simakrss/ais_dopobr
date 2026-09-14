@@ -39996,14 +39996,14 @@ async function route(req, res) {
     return;
   }
   if (requestUrl.pathname.startsWith("/api/program-sites/")) {
-    if (authUser?.role !== "admin") {
-      sendError(res, 403, "Создание программ на сайте доступно только администратору.");
+    const action = requestUrl.pathname.slice("/api/program-sites/".length);
+    if (authUser?.role !== "admin" && action !== "resolve") {
+      sendError(res, 403, "Изменение программ на сайте доступно только администратору.");
       return;
     }
     try {
-      const action = requestUrl.pathname.slice("/api/program-sites/".length);
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
-      const writing = req.method === "POST" && ["prepare", "publish"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
       if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
         || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
@@ -40028,6 +40028,19 @@ async function route(req, res) {
       const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
       if (!savedProgram) { sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
       const program = programSiteGenerator.withTrainingPlan(savedProgram, shared.document.data);
+      if (["resolve", "preview-sync", "sync"].includes(action)) {
+        let result;
+        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash);
+        else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId);
+        else {
+          const resolved = await programSiteGenerator.resolveSite(program, call);
+          result = {ok: true, landing: {id: resolved.landing.id, url: resolved.landing.url, editUrl: resolved.landing.editUrl},
+            product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl},
+            products: resolved.products.map(item => ({id: item.id, title: item.title, url: item.url, editUrl: item.editUrl}))};
+        }
+        sendJson(res, 200, result);
+        return;
+      }
       programSiteGenerator.normalizeProgram(program);
       const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
         loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,

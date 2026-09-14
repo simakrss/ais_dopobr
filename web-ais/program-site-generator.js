@@ -60,7 +60,7 @@ function normalizeProgram(program = {}) {
   const name = text(program.name, 500);
   const productName = text(program.siteProductName || name, 500);
   if (!name || !productName) fail("Заполните название программы.");
-  if (Array.from(productName).length > 128) fail("Название товара превышает 128 символов. Укажите более короткое название на вкладке «Сайт».");
+  if (Array.from(productName).length > 128) fail("Название товара превышает 128 символов. Укажите более короткое название в параметрах генератора «Создать на сайте».");
   const slug = text(program.landingCode, 100).replace(/^\/+|\/+$/g, "");
   if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) fail("Код лендинга: от 2 до 80 символов — строчные латинские буквы, цифры, дефис и подчёркивание.");
   const date = webinar ? text(program.webinarDate, 10) : "";
@@ -76,7 +76,7 @@ function normalizeProgram(program = {}) {
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Укажите положительное количество часов.");
   const descriptionHtml = text(program.siteDescription);
   const speakerHtml = text(program.siteSpeaker);
-  if (!descriptionHtml || (webinar && !speakerHtml)) fail("Заполните описание программы и, для ПРО, сведения о спикере на вкладке «Сайт».");
+  if (!descriptionHtml || (webinar && !speakerHtml)) fail("Заполните описание программы и, для ПРО, сведения о спикере в параметрах генератора «Создать на сайте».");
   return {
     key: crypto.createHash("sha256").update(`ais-program:${id}`).digest("hex"),
     id, type, postType: spec.postType, name, nameEnglish: text(program.nameEnglish || program["Название программы на английском"], 1000), productName, slug, date, time, price, oldPrice, hours,
@@ -233,4 +233,80 @@ async function publish(program, templateId, expectedHash, call, certificate) {
   return {ok: true, stage: "published", product: {...product, ...redirectedProduct}, landing, hash, templateId: Number(templateId)};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, normalizeProgram, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish};
+// Synchronization is deliberately independent of generation: legacy courses need neither
+// a webinar meeting nor new sample documents just to change their price/name.
+function syncTarget(program) {
+  const code = text(program.landingCode, 200).replace(/^\/+|\/+$/g, "");
+  if (/^[1-9]\d*$/.test(code)) return {landingId: Number(code)};
+  if (/^[a-z0-9][a-z0-9_-]{1,79}$/.test(code)) return {slug: code};
+  if (code) fail("Проверьте код лендинга: нужен ID страницы или её код в адресе.");
+  if (Number(program.sitePublication?.landing?.id) > 0) return {landingId: Number(program.sitePublication.landing.id)};
+  try {
+    const url = new URL(program.promoSite || program.landingUrl);
+    if (url.origin !== SITES.edu || url.username || url.password) throw new Error();
+    if (/^[1-9]\d*$/.test(url.searchParams.get("p") || "")) return {landingId: Number(url.searchParams.get("p"))};
+    const slug = url.pathname.split("/").filter(Boolean).at(-1);
+    if (/^[a-z0-9][a-z0-9_-]{1,79}$/.test(slug)) return {slug};
+  } catch { /* Report a useful field error below. */ }
+  fail("Укажите код лендинга или ссылку edu-plus.ru на вкладке «Основное».");
+}
+
+function normalizeSyncProgram(program) {
+  const id = text(program.id, 200), name = text(program.name, 500);
+  const type = programType(program);
+  if (!id || !name) fail("Сохраните программу с заполненным названием.");
+  if (program.price === "" || program.price == null) fail("Заполните стоимость программы (для бесплатной — 0).");
+  const price = Number(program.price), oldPrice = Number(program.oldPrice || 0), hours = Number(program.hours);
+  if (![price, oldPrice].every(value => Number.isFinite(value) && value >= 0 && value <= 10000000)) fail("Проверьте стоимость и старую цену.");
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Проверьте количество часов.");
+  return {id, type, name, productName: text(program.siteProductName || name, 500), price, oldPrice, hours,
+    duration: text(program.duration, 200), studyForm: text(program.studyForm, 300),
+    descriptionHtml: text(program.siteDescription), speakerHtml: text(program.siteSpeaker),
+    startLabel: text(program.siteStartLabel, 200)};
+}
+
+async function resolveSite(program, call, requestedProductId = 0) {
+  const target = syncTarget(program);
+  const landing = await call("edu", "/resolve-site", target);
+  const offers = Array.isArray(landing.offers) ? landing.offers : [];
+  const ids = [...new Set(offers.map(offer => Number(offer.productId)).filter(id => Number.isSafeInteger(id) && id > 0))];
+  if (!ids.length || ids.length > 30) fail("На лендинге не найдены однозначные ссылки регистрации в интернет-магазине.");
+  const products = await Promise.all(ids.map(id => call("shop", `/sync-product/${id}`)));
+  const explicit = Number(requestedProductId || 0);
+  if (explicit && !ids.includes(explicit)) fail("Выбранный товар не связан с этим лендингом.", 409);
+  const remembered = Number(program.siteSync?.product?.id || program.sitePublication?.product?.id || 0);
+  const matches = offers.filter(offer => Number(offer.hours) === Number(program.hours));
+  const matchIds = [...new Set(matches.map(offer => Number(offer.productId)))];
+  const selected = explicit || (ids.includes(remembered) ? remembered : ids.length === 1 ? ids[0] : matchIds.length === 1 ? matchIds[0] : 0);
+  const product = products.find(item => Number(item.id) === selected) || null;
+  return {ok: true, target, landing, products, product};
+}
+
+async function previewSync(program, call, productId = 0) {
+  const model = normalizeSyncProgram(program);
+  const resolved = await resolveSite(program, call, productId);
+  const publicLanding = {...resolved.landing};
+  delete publicLanding.fields;
+  const hash = resolved.product ? crypto.createHash("sha256").update(JSON.stringify({model, target: resolved.target,
+    landing: resolved.landing.version, product: resolved.product.version, productId: resolved.product.id})).digest("hex") : "";
+  return {...resolved, landing: publicLanding, model, hash};
+}
+
+async function synchronize(program, call, productId, expectedHash) {
+  const plan = await previewSync(program, call, productId);
+  if (!plan.product || !expectedHash || plan.hash !== expectedHash) fail("Данные программы или сайтов изменились. Обновите проверку перед синхронизацией.", 409);
+  // Preflight both sites before the first write. Each write also rechecks its snapshot
+  // under a lock on the actual post ID (several AIS variants can share one landing).
+  const payload = {model: plan.model, landingId: plan.landing.id, productId: plan.product.id};
+  await call("edu", "/check-sync", {...payload, version: plan.landing.version});
+  await call("shop", "/check-sync", {...payload, version: plan.product.version});
+  let product;
+  try { product = await call("shop", "/sync-existing", {...payload, version: plan.product.version}); }
+  catch (error) { fail(`Не подтверждено обновление магазина. Лендинг не изменялся. Обновите проверку и повторите синхронизацию. ${error.message}`, 409); }
+  let landing;
+  try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
+  catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
+  return {ok: true, landing, product, syncedAt: new Date().toISOString()};
+}
+
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, normalizeProgram, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, previewSync, synchronize};

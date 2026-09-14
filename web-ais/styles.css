@@ -13945,6 +13945,7 @@ body.card-window-moving {
 }
 
 .program-form-grid label[data-field-key="name"],
+.program-form-grid label[data-field-key="nameEnglish"],
 .program-form-grid label[data-field-key="shortName"],
 .program-form-grid label[data-field-key="promoSite"],
 .program-form-grid label[data-field-key="gradeReportUrl"],
@@ -31013,6 +31014,15 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .program-site-actions a { text-decoration: none; }
 .program-site-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.program-site-fields .program-field-wide { grid-column: 1 / -1; }
+.program-site-panel { display: grid; gap: 12px; align-content: start; }
+.program-site-panel > p { margin: 0; }
+.program-site-panel > button { justify-self: start; }
+.program-site-panel .program-site-actions a { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.program-site-generator-fields { display: grid; gap: 10px; }
+.program-site-generator-fields[hidden] { display: none !important; }
+.program-site-sync-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.program-site-sync-summary dd { margin: 0; }
 .program-site-fields textarea { font-family: Consolas, monospace; min-height: 80px; }
 @media (max-width: 600px) {
   .program-site-fields { grid-template-columns: minmax(0, 1fr); }
