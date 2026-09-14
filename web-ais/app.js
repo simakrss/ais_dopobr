@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.458",
+    version: "1.7.459",
     releasedAt: "2026-09-14"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.459",
+      releasedAt: "2026-09-14",
+      changes: [
+        "Рядом со ссылкой подключения SberJazz добавлена кнопка «Создать ссылку», открывающая страницу встреч SaluteJazz в новой вкладке."
+      ]
+    },
     {
       version: "1.7.458",
       releasedAt: "2026-09-14",
@@ -32693,7 +32700,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderProgramGeneratorFields(record) {
     return `<div class="program-site-generator-fields" data-site-generator-fields hidden>
       <input type="hidden" name="siteTemplateId" value="${escapeAttr(record?.siteTemplateId || "")}">
-      <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">ПРО: создайте встречу SberJazz и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${configs.programs.fields.filter(item => ["webinarDate", "webinarTime", "webinarJoinUrl"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>
+      <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">ПРО: создайте встречу SberJazz и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${configs.programs.fields.filter(item => ["webinarDate", "webinarTime"].includes(item.key)).map(item => renderField(item, record || {})).join("")}
+        <div class="program-site-jazz-link-row">${renderField(configs.programs.fields.find(item => item.key === "webinarJoinUrl"), record || {})}<a class="ghost-button compact-button" href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Открыть SaluteJazz для создания ссылки подключения">Создать ссылку ↗</a></div>
+      </div></div>
       <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
   }
 

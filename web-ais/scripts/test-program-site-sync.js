@@ -82,7 +82,7 @@ if (process.argv.includes("--serve")) {
   const source=app.slice(app.indexOf("  function renderProgramSiteLink("),app.indexOf("  function renderProgramModal("));
   // Optional real public landing for visual inspection; no write calls leave the fixture.
   const livePreview=process.env.AIS_QA_LANDING_PREVIEW === "1";
-  const uiProgram={...program, sitePrototype:{programId:'source-program',landingCode:'3878',name:'Прототип курса'}, ...(process.env.AIS_QA_SITE_MISSING === "1" ? {landingCode:'new-program'} : {})};
+  const uiProgram={...program, type:process.env.AIS_QA_PROGRAM_TYPE || program.type, sitePrototype:{programId:'source-program',landingCode:'3878',name:'Прототип курса'}, ...(process.env.AIS_QA_SITE_MISSING === "1" ? {landingCode:'new-program'} : {})};
   const uiLanding={...landing,...(livePreview?{url:"https://edu-plus.ru/courses-pk/pk-access/",title:"Microsoft Access + SQL",previewImageUrl:"https://edu-plus.ru/wp-content/uploads/db_logo.jpg"}:{})};
   // Long shop titles reproduce the intrinsic grid-width overlap with the preview.
   const uiProducts=products.map((item,i)=>({...item,title:`Курс ${i ? 'повышения квалификации' : 'дополнительного образования'} «Базовый курс по системному администрированию информационных систем и баз данных» — 72 ч`}));

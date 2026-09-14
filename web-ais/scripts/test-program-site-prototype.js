@@ -80,6 +80,19 @@ async function main() {
   assert.match(app, /values\.siteTemplateId = String\(formData\.get\("siteTemplateId"\)/);
   for (const id of [undefined, "", 0, -1, "foo", 1.5]) assert.throws(() => pg.validateTemplateId(id), /обязательное/);
   assert.equal(pg.validateTemplateId("42"), 42);
+  context.escapeAttr = value => String(value).replaceAll('"', '&quot;');
+  context.configs = {programs: {fields: ["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].map(key => ({key, options: {programTab: "site"}}))}};
+  context.renderField = (field, record) => `<label><input name="${field.key}" value="${context.escapeAttr(record[field.key] || '')}"></label>`;
+  vm.runInContext(extract("  function renderProgramGeneratorFields(", "  function getDefaultProgramSiteTemplateId("), context);
+  const jazzUrl = "https://jazz.sber.ru/meeting?psw=example";
+  const webinarFields = context.renderProgramGeneratorFields({type: "ПРО", webinarJoinUrl: jazzUrl});
+  assert.match(webinarFields, /class="program-site-jazz-link-row"><label><input name="webinarJoinUrl"/);
+  assert.match(webinarFields, /href="https:\/\/salutejazz\.ru\/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"/);
+  assert.ok(webinarFields.includes(jazzUrl), "The existing meeting link remains unchanged");
+  assert.doesNotMatch(webinarFields, /name="siteDescription"|name="siteSpeaker"/);
+  assert.match(context.renderProgramGeneratorFields({type: "КПК"}), /data-site-webinar-only hidden/);
+  const css = fs.readFileSync(path.join(__dirname, "../styles.css"), "utf8");
+  assert.match(css, /\.program-site-jazz-link-row\s*\{[^}]*flex-wrap: wrap/);
   console.log("PASS: required/source prototype, saved selection, exact presence, offline/invalid fail-closed, shop independence, mutually exclusive actions, draft continuation");
 }
 main().catch(error => {console.error(error); process.exitCode = 1;});
