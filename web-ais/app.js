@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.461",
+    version: "1.7.462",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.462",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Пол слушателя и сотрудника автоматически заполняется по ФИО при вводе и импорте. Ручной выбор сохраняется, неоднозначные имена не приводят к случайной подстановке."
+      ]
+    },
     {
       version: "1.7.461",
       releasedAt: "2026-09-15",
@@ -5864,6 +5871,7 @@ MAX - https://bizvmax.ru/zifra_plus
       fields: [
         field("section", "Раздел", "select", true, null, CONTRACT_SECTIONS),
         field("name", "ФИО / контрагент", "text", true, null, { wide: true }),
+        field("gender", "Пол", "select", false, null, ["Женский", "Мужской"]),
         field("position", "Должность"),
         field("degree", "Ученая степень"),
         field("academicTitle", "Ученое звание"),
@@ -6478,7 +6486,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "login", "password", "portalAccess", "portalNotes"
   ]);
   const STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS = Object.freeze([
-    "nameEnglish", "gender", "noDeclension", "addressByFirstName",
+    "nameEnglish", "gender", "genderSource", "noDeclension", "addressByFirstName",
     "telegram", "whatsapp", "messengerUrl", "preferredMessenger",
     "registrationAddress", "mailingAddress",
     "photoPath", "photoData", "photoUrl"
@@ -7262,13 +7270,58 @@ MAX - https://bizvmax.ru/zifra_plus
       .replace(/\s+/g, " ");
   }
 
-  function autoFillStudentGender(name) {
-    const gender = inferStudentGender(name);
-    const genderInput = document.querySelector("[name='gender']");
-    if (!gender || !genderInput) return;
-    genderInput.value = gender;
-    genderInput.dispatchEvent(new Event("input", { bubbles: true }));
-    genderInput.dispatchEvent(new Event("change", { bubbles: true }));
+  function inferPersonGender(name) {
+    const text = String(name || "").normalize("NFKC").toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/[‐‑–—]/g, "-").trim();
+    if (!text || /(?:^|\s)(?:ооо|ао|пао|зао|оао|ано|нко|фгбу|фгбоу|мбоу|ип)(?:\s|$|[«"])/.test(text)) return "";
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.some(word => !/^[а-я-]+$/.test(word))) return ""; // Initials, numbers and unfinished punctuation are ambiguous.
+    const male = new Set("александр алексей анатолий андрей антон аркадий арсен арсений артем артемий артур афанасий ахмед борис вадим валентин валерий василий виктор виталий владимир владислав всеволод вячеслав гавриил геннадий георгий герман глеб григорий давид даниил данил данила демид денис дмитрий добрыня евгений евдоким егор елисей емельян ефим захар игнат игнатий игорь иван илья иосиф исаак исмаил камиль кирилл клим константин кузьма лаврентий лев леонид лука макар максим марат марк матвей михаил назар никита николай олег оскар павел петр платон прохор радмир рафаэль ренат ринат роберт родион роман ростислав руслан рустам савва савелий святослав семен сергей станислав степан султан тарас тимофей тимур тихон федор феликс филипп фома шамиль эдуард эльдар эмиль юлиан юрий яков ян ярослав".split(" "));
+    const female = new Set("аврора агата аглая агния ада аида аксинья алевтина александра алина алиса алла альбина амалия анастасия ангелина анжела анжелика анна антонина анфиса ариадна арина ася белла валентина валерия варвара василиса вера вероника виктория виолетта галина дарина дарья диана дина доминика евгения евдокия екатерина елена елизавета жанна зинаида злата зоя илона инга инесса инна ирина ия камилла карина кира клавдия кристина ксения лада лариса лейла лера лидия лилия лина лолита любовь людмила майя маргарита марианна марина мария марта мила милана милена мирослава надежда наталия наталья нелли нина нинель нонна оксана олеся ольга пелагея полина раиса регина римма роза руслана светлана серафима софия софья стелла таисия тамара татьяна ульяна фаина флора юлия яна янина ярослава".split(" "));
+    const nameGender = word => {
+      const parts = word.split("-").filter(Boolean);
+      const genders = parts.map(part => male.has(part) ? "Мужской" : female.has(part) ? "Женский" : "");
+      return genders.length && genders.every(value => value && value === genders[0]) ? genders[0] : "";
+    };
+    // Standard surname/name/patronymic order. Never infer from surname endings.
+    const given = words.length === 1 ? nameGender(words[0]) : nameGender(words[1]);
+    const patronymic = words.length >= 3 ? words.slice(2).join("-") : "";
+    const patronymicGender = /(?:овна|евна|ична|инична|кызы|гызы|кизи)$/.test(patronymic) ? "Женский"
+      : /(?:ович|евич|ич|оглы|оглу|улы|угли)$/.test(patronymic) ? "Мужской" : "";
+    if (given && patronymicGender && given !== patronymicGender) return "";
+    return patronymicGender || given;
+  }
+
+  function fillMissingPersonGender(record = {}) {
+    if (String(record.gender || "").trim() || record.genderSource === "manual") return record;
+    const gender = inferPersonGender(record.name);
+    return gender ? {...record, gender, genderSource: "auto"} : record;
+  }
+
+  function bindPersonGenderAutofill(form) {
+    if (!form || !["students", "contracts"].includes(form.dataset.config) || form.dataset.genderBound) return;
+    const nameInput = form.elements.name, genderInput = form.elements.gender;
+    if (!nameInput || !genderInput || genderInput.disabled) return;
+    form.dataset.genderBound = "true";
+    const saved = state.data.collections[form.dataset.config]?.find(row => String(row.id) === String(form.dataset.id)) || {};
+    const draft = {...saved, ...(state.modal?.draft || {})};
+    form.dataset.genderSource = draft.genderSource || (genderInput.value ? "manual" : "auto");
+    let updating = false;
+    const update = () => {
+      if (form.dataset.genderSource === "manual" || nameInput.disabled || nameInput.readOnly) return;
+      const gender = inferPersonGender(nameInput.value);
+      if (genderInput.value === gender) return;
+      updating = true;
+      try {
+        genderInput.value = gender;
+        genderInput.dispatchEvent(new Event("input", {bubbles: true}));
+        genderInput.dispatchEvent(new Event("change", {bubbles: true}));
+      } finally { updating = false; }
+    };
+    nameInput.addEventListener("input", update);
+    nameInput.addEventListener("change", update);
+    for (const event of ["input", "change"]) genderInput.addEventListener(event, () => {
+      if (!updating) form.dataset.genderSource = "manual";
+    });
   }
 
   function inferStudentGender(name) {
@@ -9193,7 +9246,7 @@ MAX - https://bizvmax.ru/zifra_plus
     // The academic year runs from September 1 through August 31 (Moscow date).
     const academicEndYear = Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) >= 9 ? 1 : 0);
     const fields = [
-      "name", "position", "degree", "academicTitle",
+      "name", "gender", "genderSource", "position", "degree", "academicTitle",
       "phone", "whatsapp", "email", "telegram", "preferredMessenger",
       "photoPath", "photoUrl", "photoData",
       "coupon", "couponId", "notificationEmail",
@@ -20490,10 +20543,16 @@ MAX - https://bizvmax.ru/zifra_plus
       ...STUDENT_APPLICATION_REUSABLE_SDO_FIELDS,
       ...STUDENT_APPLICATION_REUSABLE_PERSONAL_FIELDS
     ].forEach((key) => {
-      if (key === "login" || key === "password") return;
+      if (["login", "password", "gender", "genderSource"].includes(key)) return;
       const value = sourceValue(key);
       if (hasReusableStudentPersonalValue(value)) nextRecord[key] = value;
     });
+    // Gender and its provenance must come from the same record, including a manual blank.
+    const genderSource = sources.find(source => hasReusableStudentPersonalValue(source.gender) || source.genderSource === "manual");
+    if (genderSource) {
+      nextRecord.gender = genderSource.gender || "";
+      nextRecord.genderSource = genderSource.genderSource || "manual";
+    }
     const credentialSource = getLatestStudentApplicationCredentialSource(sources, row);
     if (credentialSource) {
       nextRecord.login = credentialSource.login;
@@ -21849,6 +21908,11 @@ MAX - https://bizvmax.ru/zifra_plus
       directExpenses: []
     };
     record = reuseExistingStudentPersonalData(record, row, existingStudentsLookup, selectedProgramId);
+    if (String(row.gender || "").trim()) {
+      record.gender = normalizeStudentGender(row.gender);
+      record.genderSource = "manual";
+    }
+    record = fillMissingPersonGender(record);
     record.additionalStatus = resolveProStudentAdditionalStatus(
       record,
       program?.type || record.educationType,
@@ -30304,7 +30368,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = keys.map(getContractField).filter(Boolean);
     return `
       <div class="form-grid contract-form-grid ${className}">
-        ${fields.map((item) => renderField(item, record)).join("")}
+        ${fields.map((item) => item.key === "gender" ? renderStudentGenderField(record) : renderField(item, record)).join("")}
       </div>
     `;
   }
@@ -30359,7 +30423,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderContractCounterpartySection(record) {
-    const keys = ["section", "name", "position", "degree", "academicTitle", "phone", "email", "telegram"];
+    const keys = ["section", "name", "gender", "position", "degree", "academicTitle", "phone", "email", "telegram"];
     return `
       <section class="form-section contract-card-section contract-counterparty-section">
         <div class="form-section-head">
@@ -35355,7 +35419,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentGenderField(record) {
-    const value = record.gender || "";
+    const value = normalizeStudentGender(record.gender);
     const options = ["", "Женский", "Мужской"];
     return `
       <label class="student-gender-field">
@@ -42149,9 +42213,7 @@ MAX - https://bizvmax.ru/zifra_plus
       target.focus();
     });
 
-    document.querySelector("[name='name']")?.addEventListener("input", (event) => {
-      autoFillStudentGender(event.target.value);
-    });
+    bindPersonGenderAutofill(document.querySelector("#recordForm"));
 
     document.querySelectorAll("[data-action='open-student-messenger']").forEach((button) => {
       button.addEventListener("click", () => openStudentMessenger(button.dataset.messenger));
@@ -44399,6 +44461,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (formElement.dataset.genderSource) values.genderSource = formElement.dataset.genderSource;
     values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
     values.photoPath = normalizePersonPhotoCardPath(values.photoPath);
     values.discountUnit = "percent";
@@ -44525,6 +44588,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const raw = formData.get(item.key);
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
+    if (formElement.dataset.genderSource) values.genderSource = formElement.dataset.genderSource;
     values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
     formData.forEach((raw, key) => {
       if (/^event_[A-Za-z0-9_-]+_(state|date|label)$/.test(key)) values[key] = String(raw || "");
@@ -45761,11 +45825,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const current = collectContractFormDraft();
     const pick = (...values) => values.find((value) => String(value ?? "").trim()) ?? "";
     const studentPhotoPath = pick(student.photoPath, student.photoUrl, current.photoPath);
-    state.modal.draft = normalizeContractRecord({
+    const preserveGender = current.genderSource === "manual" || (current.gender && current.genderSource !== "auto");
+    state.modal.draft = fillMissingPersonGender(normalizeContractRecord({
       ...current,
       sourceStudentId: student.id,
       sourceStudentUid: student.uid || current.sourceStudentUid || "",
       name: pick(student.name, current.name),
+      gender: preserveGender ? current.gender : (student.gender || ""),
+      genderSource: preserveGender ? "manual" : (student.genderSource || (student.gender ? "manual" : "")),
       position: pick(student.position, current.position),
       phone: pick(student.phone, current.phone),
       email: pick(student.email, current.email),
@@ -45785,7 +45852,7 @@ MAX - https://bizvmax.ru/zifra_plus
       login: pick(student.login, current.login),
       password: pick(student.password, current.password),
       coupon: pick(student.partnerCoupon, student.coupon, current.coupon)
-    });
+    }));
     state.modal.hasDraftChanges = true;
     closeContractStudentPicker();
     render();
@@ -48867,6 +48934,8 @@ MAX - https://bizvmax.ru/zifra_plus
       values[item.key] = item.type === "number" ? Number(raw || 0) : String(raw || "");
     });
     if (isStudentCard || isContractCard) {
+      if (formElement.dataset.genderSource) values.genderSource = formElement.dataset.genderSource;
+      Object.assign(values, fillMissingPersonGender(values));
       values.preferredMessenger = normalizePreferredMessenger(formData.get("preferredMessenger"));
       values.photoPath = normalizePersonPhotoCardPath(values.photoPath);
     }
@@ -65933,7 +66002,7 @@ MAX - https://bizvmax.ru/zifra_plus
           });
         }
         let normalized = applyMappedAgentToStudentRecord(
-          normalizeStudentRecord(studentFields),
+          fillMissingPersonGender(normalizeStudentRecord(studentFields)),
           { onlyWhenEmpty: true }
         );
         normalized = mergeImportedStudentAgentPaymentMetadata(
@@ -66018,7 +66087,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const nextContracts = importedContracts.map((contract) => {
         const record = { ...contract };
         delete record.databaseSync;
-        return normalizeContractRecord(record);
+        return fillMissingPersonGender(normalizeContractRecord(record));
       });
       const contractSectionSummary = formatContractDatabaseSectionSummary(
         payload.contractSectionCounts,

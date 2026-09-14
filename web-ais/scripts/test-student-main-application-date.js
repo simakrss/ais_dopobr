@@ -37,7 +37,7 @@ const extract = (name) => {
 };
 const escape = value => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const englishName = new Function("escapeHtml", "escapeAttr", `${extract("renderStudentEnglishNameField")}\nreturn renderStudentEnglishNameField;`)(escape, escape);
-const gender = new Function("escapeHtml", "escapeAttr", `${extract("renderStudentGenderField")}\nreturn renderStudentGenderField;`)(escape, escape);
+const gender = new Function("escapeHtml", "escapeAttr", `${extract("normalizeStudentGender")}\n${extract("renderStudentGenderField")}\nreturn renderStudentGenderField;`)(escape, escape);
 const nameOptions = new Function("isChecked", `${extract("renderStudentNameOptions")}\nreturn renderStudentNameOptions;`)(() => false);
 const render = new Function(
   "renderStudentField", "renderStudentEnglishNameField", "renderStudentPhotoEditor", "renderStudentNameOptions",

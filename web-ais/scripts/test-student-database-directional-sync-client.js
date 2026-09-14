@@ -562,6 +562,7 @@ async function testRealSynchronizationImportPath() {
       "  function mergeImportedStudentAgentPaymentMetadata"
     )
       + "\n"
+      + extractBetween("  function inferPersonGender", "  function bindPersonGenderAutofill")
       + extractBetween("  async function importStudentsFromDatabase", "  function importJson")
       + "\nthis.operation = importStudentsFromDatabase;",
     context
@@ -665,6 +666,9 @@ async function testRealSynchronizationImportPath() {
   assert.equal(counters.persist, 1);
   assert.deepEqual(result.auditEntry, { action: "sync-audit" });
   assert.equal(context.state.data.collections.students[0].phone, "");
+  assert.equal(context.state.data.collections.students[0].gender, "Женский");
+  assert.equal(context.state.data.collections.students[0].genderSource, "auto");
+  assert.equal(payload.students[0].gender, undefined, "Reading the workbook must not mutate source gender values.");
   assert.equal(context.state.data.collections.students[0].note, "");
   assert.equal(context.state.data.collections.students[0].photoData, previousStudent.photoData);
   assert.deepEqual(
@@ -672,6 +676,8 @@ async function testRealSynchronizationImportPath() {
     previousStudent.documentRecognitionResult
   );
   assert.equal(context.state.data.collections.contracts[0].id, previousContract.id);
+  assert.equal(context.state.data.collections.contracts[0].gender, "Мужской");
+  assert.equal(context.state.data.collections.contracts[0].genderSource, "auto");
   assert.equal(context.state.data.collections.contracts[0].note, "");
   assert.deepEqual(context.state.data.collections.contracts[0].webApproval, { keep: true });
   assert.equal(context.state.data.collections.inventory[0].id, "inventory-web");
