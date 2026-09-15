@@ -75,14 +75,14 @@ async function main() {
   assert.equal(buttons["resume-program-site"].disabled, true);
 
   assert.match(app, /data-site-template[^>]+required/);
-  assert.match(app, /if \(!select\.value \|\| !select\.reportValidity\(\)\)/);
-  assert.match(extract("  function renderProgramGeneratorFields(", "  function getDefaultProgramSiteTemplateId("), /"siteDescription", "siteSpeaker"\]\.includes/);
+  assert.match(app, /if \(!select\.value\) \{ select\.focus\(\); throw new Error\("Выберите прототип лендинга: это обязательное поле/);
+  assert.doesNotMatch(extract("  function renderProgramGeneratorFields(", "  function createProgramSiteProgress("), /parameter\("siteDescription"|parameter\("siteSpeaker"/);
   assert.match(app, /values\.sitePrototype = copyDuplicateFieldValue\(sourcePrototype\)/);
   assert.match(app, /values\.siteTemplateId = String\(formData\.get\("siteTemplateId"\)/);
   for (const id of [undefined, "", 0, -1, "foo", 1.5]) assert.throws(() => pg.validateTemplateId(id), /обязательное/);
   assert.equal(pg.validateTemplateId("42"), 42);
   context.escapeAttr = value => String(value).replaceAll('"', '&quot;');
-  context.configs = {programs: {fields: ["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].map(key => ({key, options: {programTab: "site"}}))}};
+  context.configs = {programs: {fields: ["webinarDate", "webinarTime", "webinarJoinUrl", "siteProductName", "siteStartLabel", "siteSampleDate", "siteDescription", "siteSpeaker"].map(key => ({key, options: {programTab: "site"}}))}};
   context.renderField = (field, record) => `<label><input name="${field.key}" value="${context.escapeAttr(record[field.key] || '')}"></label>`;
   vm.runInContext(extract("  function renderProgramGeneratorFields(", "  function getDefaultProgramSiteTemplateId("), context);
   const jazzUrl = "https://jazz.sber.ru/meeting?psw=example";

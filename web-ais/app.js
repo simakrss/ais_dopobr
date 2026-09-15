@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.475",
+    version: "1.7.476",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.476",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Уплотнены параметры генерации сайта: даты и время объединены в одну строку, кнопки сохранения и открытия прототипа размещены рядом с полями. Поиск встроен в списки прототипов; промосообщение скрыто в окне генератора."
+      ]
+    },
     {
       version: "1.7.475",
       releasedAt: "2026-09-15",
@@ -32871,14 +32878,21 @@ MAX - https://bizvmax.ru/zifra_plus
     finally { if (links.dataset.requestId === requestId) links.dataset.loading = "false"; }
   }
 
+  function renderProgramSiteCatalogCombo(kind = "image") {
+    const prototype = kind === "prototype";
+    return `<div class="program-site-image-combo ${prototype ? "program-site-prototype-combo" : ""}">
+      <button type="button" class="program-site-image-trigger" data-image-source ${prototype ? 'data-site-template aria-required="true"' : ''} role="combobox" aria-label="${prototype ? "Прототип лендинга" : "Источник изображения"}" aria-haspopup="listbox" aria-expanded="false" disabled><span>Загрузка…</span></button>
+      <div class="program-site-image-popup" data-image-popup hidden>
+        <input type="search" data-image-search aria-label="${prototype ? "Поиск в списке прототипов" : "Поиск в списке изображений"}" placeholder="Найти по названию…" autocomplete="off">
+        <div class="program-site-image-options" data-image-options role="listbox" aria-label="${prototype ? "Прототипы лендингов" : "Изображения лендингов"}"></div>
+      </div></div>`;
+  }
+
   function renderProgramSiteImagePicker() {
     return `<details class="program-site-image-picker"><summary>Изображение записи — лендинг и магазин</summary>
       <div class="program-site-image-layout"><div class="program-site-image-controls">
-        <label><span>Поиск источника по названию</span><input type="search" data-image-search placeholder="Название другого лендинга"></label>
-        <div class="program-site-image-field"><span>Взять изображение из лендинга</span><div class="program-site-image-combo">
-          <button type="button" class="program-site-image-trigger" data-image-source role="combobox" aria-label="Источник изображения" aria-haspopup="listbox" aria-expanded="false" disabled><span>Загрузка…</span></button>
-          <div class="program-site-image-options" data-image-options role="listbox" aria-label="Изображения лендингов" hidden></div>
-        </div></div></div><div data-image-preview></div><p class="muted" data-image-caption></p></div></details>`;
+        <div class="program-site-image-field"><span>Взять изображение из лендинга</span>${renderProgramSiteCatalogCombo()}</div>
+        </div><div data-image-preview></div><p class="muted" data-image-caption></p></div></details>`;
   }
 
   function sortProgramSiteTemplates(items) {
@@ -32887,34 +32901,43 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindProgramSiteImagePicker(container, {value = "", defaultLabel, onChange}) {
-    const picker = container.querySelector(".program-site-image-picker");
+    return bindProgramSiteCatalogPicker(container, {value, defaultLabel, onChange});
+  }
+
+  function bindProgramSiteCatalogPicker(container, {value = "", defaultLabel, onChange, kind = "image"}) {
+    const prototype = kind === "prototype";
+    const picker = container.querySelector(prototype ? "[data-site-prototype-picker]" : ".program-site-image-picker");
     const select = picker.querySelector("[data-image-source]");
     const search = picker.querySelector("[data-image-search]");
     const list = picker.querySelector("[data-image-options]");
+    const popup = picker.querySelector("[data-image-popup]");
     const combo = picker.querySelector(".program-site-image-combo");
     list.id = `program-site-images-${Math.random().toString(36).slice(2)}`;
     select.setAttribute("aria-controls", list.id);
+    search.setAttribute("aria-controls", list.id);
     let items = [], selected = String(value || ""), active = 0, ready = false;
-    picker.open = Boolean(selected);
+    if (!prototype) picker.open = Boolean(selected);
     const choices = () => [...list.querySelectorAll("[data-image-option]")];
     const highlight = (index, scroll = false) => {
       const options = choices();
       active = Math.max(0, Math.min(index, options.length - 1));
       options.forEach((option, i) => option.classList.toggle("is-active", i === active));
-      if (!list.hidden && options[active]) {
+      if (!popup.hidden && options[active]) {
         select.setAttribute("aria-activedescendant", options[active].id);
+        search.setAttribute("aria-activedescendant", options[active].id);
         if (scroll) {
           // Scroll only the options, never the surrounding program dialog.
           const top = options[active].offsetTop, bottom = top + options[active].offsetHeight;
           if (top < list.scrollTop) list.scrollTop = top;
           else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
         }
-      } else select.removeAttribute("aria-activedescendant");
+      } else { select.removeAttribute("aria-activedescendant"); search.removeAttribute("aria-activedescendant"); }
     };
     const close = () => {
-      list.hidden = true;
+      popup.hidden = true;
       select.setAttribute("aria-expanded", "false");
       select.removeAttribute("aria-activedescendant");
+      search.removeAttribute("aria-activedescendant");
     };
     const open = () => {
       if (select.disabled || !ready) return;
@@ -32922,27 +32945,32 @@ MAX - https://bizvmax.ru/zifra_plus
       const below = Math.min(window.innerHeight, bounds.bottom) - field.bottom - 10;
       const above = field.top - Math.max(0, bounds.top) - 10;
       const opensUp = below < Math.min(300, window.innerHeight * .45) && above > below;
-      list.classList.toggle("opens-up", opensUp);
-      list.style.maxHeight = `${Math.max(68, Math.min(300, window.innerHeight * .45, opensUp ? above : below))}px`;
-      list.hidden = false;
+      popup.classList.toggle("opens-up", opensUp);
+      popup.style.maxHeight = `${Math.max(110, Math.min(340, window.innerHeight * .5, opensUp ? above : below))}px`;
+      search.value = ""; draw();
+      popup.hidden = false;
       select.setAttribute("aria-expanded", "true");
       highlight(choices().findIndex(option => option.dataset.imageOption === selected), true);
+      search.focus({preventScroll: true});
     };
     const draw = () => {
       const query = search.value.trim().toLocaleLowerCase("ru-RU");
-      const options = items.filter(item => String(item.id) === selected || String(item.title).toLocaleLowerCase("ru-RU").includes(query));
+      const options = items.filter(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query));
       const source = items.find(item => String(item.id) === selected);
       const unavailable = selected && !source ? `Источник №${selected} недоступен — выберите другой` : "";
       const label = source?.title || unavailable || defaultLabel;
       select.innerHTML = `<span>${escapeHtml(label)}</span>`;
       select.title = label;
-      const rows = [{id: "", title: defaultLabel}, ...(unavailable ? [{id: selected, title: unavailable}] : []), ...options];
+      select.value = prototype && !source ? "" : selected;
+      if (prototype) select.setAttribute("aria-invalid", String(!select.value));
+      const rows = query ? options : [{id: "", title: defaultLabel}, ...(unavailable ? [{id: selected, title: unavailable}] : []), ...options];
       list.innerHTML = rows.map((item, index) => {
         const url = getProgramLandingPreviewImage(item.previewImageUrl) || getProgramLandingPreviewImage(item.imageUrl);
         return `<button type="button" class="program-site-image-option" role="option" tabindex="-1" id="${list.id}-${index}" data-image-option="${escapeAttr(item.id)}" aria-selected="${String(item.id) === selected}" title="${escapeAttr(item.title)}">
-          ${url ? `<img src="${escapeAttr(url)}" alt="" width="56" height="56" loading="lazy" referrerpolicy="no-referrer">` : '<span class="program-site-image-placeholder" aria-hidden="true">—</span>'}<span>${escapeHtml(item.title)}</span></button>`;
-      }).join("") + (query && !options.some(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query)) ? '<p class="muted" role="status">По этому названию изображения не найдены.</p>' : "");
+          ${prototype ? "" : url ? `<img src="${escapeAttr(url)}" alt="" width="56" height="56" loading="lazy" referrerpolicy="no-referrer">` : '<span class="program-site-image-placeholder" aria-hidden="true">—</span>'}<span>${escapeHtml(item.title)}</span></button>`;
+      }).join("") + (query && !options.length ? '<p class="muted" role="status">По этому названию ничего не найдено.</p>' : "");
       highlight(rows.findIndex(item => String(item.id) === selected));
+      if (prototype) return;
       const url = getProgramLandingPreviewImage(source?.previewImageUrl) || getProgramLandingPreviewImage(source?.imageUrl);
       picker.querySelector("[data-image-preview]").innerHTML = url ? `<img src="${escapeAttr(url)}" alt="Выбранное изображение записи" loading="lazy" referrerpolicy="no-referrer">` : "";
       picker.querySelector("[data-image-caption]").textContent = source ? "Это изображение будет установлено на лендинге и у выбранного товара. Фото автора, отзывы и образцы документов не меняются." : selected ? "Сохранённый источник отсутствует в списке доступных изображений." : defaultLabel;
@@ -32953,30 +32981,41 @@ MAX - https://bizvmax.ru/zifra_plus
       selected = next; close(); draw(); select.focus();
       if (changed) onChange?.(selected);
     };
-    search.addEventListener("input", () => { close(); draw(); });
-    search.addEventListener("keydown", event => {
-      if (event.key === "ArrowDown" && !select.disabled && ready) { event.preventDefault(); select.focus(); open(); }
-      if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
-    });
-    select.addEventListener("click", () => { if (list.hidden) open(); else close(); });
-    select.addEventListener("keydown", event => {
+    search.addEventListener("input", () => { if (!select.disabled && ready) { draw(); list.scrollTop = 0; } });
+    select.addEventListener("click", () => { if (popup.hidden) open(); else close(); });
+    const keydown = event => {
       if (select.disabled || !ready) return;
-      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      if (["ArrowDown", "ArrowUp"].includes(event.key) || (event.target === select && ["Home", "End"].includes(event.key))) {
         event.preventDefault();
-        if (list.hidden) open();
+        event.stopPropagation();
+        if (popup.hidden) open();
         else highlight(event.key === "Home" ? 0 : event.key === "End" ? choices().length - 1 : active + (event.key === "ArrowDown" ? 1 : -1), true);
-      } else if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault(); if (list.hidden) open(); else choose(choices()[active]);
-      } else if (event.key === "Escape" && !list.hidden) {
-        event.preventDefault(); event.stopPropagation(); close();
-      } else if (event.key === "Tab") close();
-    });
+      } else if (event.key === "Enter" || (event.key === " " && event.target === select)) {
+        event.preventDefault(); event.stopPropagation(); if (popup.hidden) open(); else choose(choices()[active]);
+      } else if (event.key === "Escape" && !popup.hidden) {
+        event.preventDefault(); event.stopPropagation(); close(); select.focus({preventScroll: true});
+      } else if (event.key === "Tab") {
+        close(); select.focus({preventScroll: true});
+      } else if (event.target === select && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault(); open(); search.value = event.key; draw();
+      }
+    };
+    search.addEventListener("keydown", keydown);
+    select.addEventListener("keydown", keydown);
     list.addEventListener("click", event => choose(event.target.closest("[data-image-option]")));
-    container.addEventListener("click", event => { if (!combo.contains(event.target) && event.target !== search) close(); });
+    container.addEventListener("click", event => {
+      // Rendering a fresh label can detach the clicked span during this event.
+      if (!event.composedPath?.().includes(combo) && !combo.contains(event.target)) close();
+    });
     picker.addEventListener("focusout", event => { if (!combo.contains(event.relatedTarget) && event.relatedTarget !== search) close(); });
-    picker.addEventListener("toggle", () => { if (!picker.open) close(); });
+    if (!prototype) picker.addEventListener("toggle", () => { if (!picker.open) close(); });
     draw();
-    return {setItems(catalog) { items = sortProgramSiteTemplates(catalog.filter(item => getProgramLandingPreviewImage(item.imageUrl))); ready = true; draw(); select.disabled = false; }, value: () => selected};
+    return {setItems(catalog, nextValue = selected) {
+      items = sortProgramSiteTemplates(catalog.filter(item => prototype || getProgramLandingPreviewImage(item.imageUrl)));
+      selected = String(nextValue || "");
+      if (prototype && !items.some(item => String(item.id) === selected)) selected = "";
+      ready = true; close(); search.value = ""; draw(); select.disabled = false;
+    }, value: () => selected};
   }
 
   async function openProgramSiteSync() {
@@ -33054,13 +33093,22 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderProgramGeneratorFields(record) {
+    const webinar = String(record?.type || "").toUpperCase() === "ПРО";
+    const parameter = (key, label) => {
+      const item = configs.programs.fields.find(field => field.key === key);
+      return renderField({...item, label: label || item.label, options: {...item.options, wide: false}}, record || {});
+    };
     return `<div class="program-site-generator-fields" data-site-generator-fields hidden>
       <input type="hidden" name="siteTemplateId" value="${escapeAttr(record?.siteTemplateId || "")}">
       <input type="hidden" name="siteImageSourceId" value="${escapeAttr(record?.siteImageSourceId || "")}">
-      <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">ПРО: создайте встречу SberJazz и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${configs.programs.fields.filter(item => ["webinarDate", "webinarTime"].includes(item.key)).map(item => renderField(item, record || {})).join("")}
-        <div class="program-site-jazz-link-row">${renderField(configs.programs.fields.find(item => item.key === "webinarJoinUrl"), record || {})}<a class="ghost-button compact-button" href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Открыть SaluteJazz для создания ссылки подключения">Создать ссылку ↗</a></div>
-      </div></div>
-      <div class="form-grid program-site-fields">${configs.programs.fields.filter(item => item.options?.programTab === "site" && !["webinarDate", "webinarTime", "webinarJoinUrl", "siteDescription", "siteSpeaker"].includes(item.key)).map(item => renderField(item, record || {})).join("")}</div></div>`;
+      <div class="form-grid program-site-fields program-site-schedule-fields ${webinar ? "" : "is-non-webinar"}">
+        <div data-site-webinar-only ${webinar ? "" : "hidden"}>${parameter("webinarDate")}</div>
+        <div data-site-webinar-only ${webinar ? "" : "hidden"}>${parameter("webinarTime")}</div>
+        <div title="По умолчанию — ежедневно">${parameter("siteStartLabel", "Начало обучения")}</div>
+        <div title="По умолчанию — текущая дата">${parameter("siteSampleDate", "Дата в образцах")}</div>
+      </div>
+      <div data-site-webinar-only ${webinar ? "" : "hidden"}><div class="program-site-jazz-link-row">${parameter("webinarJoinUrl")}<a class="ghost-button compact-button" href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Открыть SaluteJazz для создания ссылки подключения">Создать ссылку ↗</a></div></div>
+      <div class="program-site-product-row">${parameter("siteProductName")}<div data-site-save-host></div></div></div>`;
   }
 
   function createProgramSiteProgress(dialog) {
@@ -33175,10 +33223,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <p class="muted">Описание программы и сведения об авторе копируются из выбранного прототипа.</p>
         <details data-site-parameters><summary>Параметры генерации</summary><div data-site-parameters-host></div><div class="program-site-parameters-actions"><button class="primary-button" type="button" data-site-save-parameters>Сохранить параметры</button></div></details>
         <div class="program-site-prototype-fields">
-          <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
-          <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
+          <div class="program-site-image-field" data-site-prototype-picker><span>Прототип с edu-plus.ru *</span>${renderProgramSiteCatalogCombo("prototype")}</div>
+          <div data-site-prototype-link></div>
         </div>
-        <div data-site-prototype-link></div>
         ${renderProgramSiteImagePicker()}
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Код лендинга формируется автоматически из названия программы с проверкой свободного адреса и сохраняется в карточке. Ранее указанный свободный код сохраняется. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка использует тот же адрес и обновляет только собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
@@ -33192,6 +33239,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (generatorFields) {
       generatorFields.querySelectorAll("input, select, textarea").forEach(control => control.setAttribute("form", "recordForm"));
       dialog.querySelector("[data-site-parameters-host]").appendChild(generatorFields);
+      generatorFields.querySelector("[data-site-save-host]").appendChild(dialog.querySelector(".program-site-parameters-actions"));
       generatorFields.hidden = false;
       dialog.querySelector("[data-site-parameters]").open = !program.sitePublication;
     }
@@ -33205,6 +33253,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let templates = [];
     let result = program.sitePublication || null;
     let busy = false;
+    const prototypePicker = bindProgramSiteCatalogPicker(dialog, {kind: "prototype", defaultLabel: "Выберите прототип", onChange: () => onTemplateChange()});
     const imageInput = generatorFields?.querySelector('[name="siteImageSourceId"]');
     const imagePicker = bindProgramSiteImagePicker(dialog, {value: imageInput?.value, defaultLabel: "Изображение прототипа лендинга", onChange: value => {
       if (imageInput) imageInput.value = value;
@@ -33230,7 +33279,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return payload;
     };
     const saveParameters = async () => {
-      if (!select.value || !select.reportValidity()) throw new Error("Выберите прототип лендинга: это обязательное поле.");
+      if (!select.value) { select.focus(); throw new Error("Выберите прототип лендинга: это обязательное поле."); }
       if (templateInput) templateInput.value = select.value;
       // Form-associated controls remain part of the program card while in this dialog.
       if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Не удалось сохранить параметры программы. Проверьте поля и связь с общей базой.");
@@ -33275,7 +33324,6 @@ MAX - https://bizvmax.ru/zifra_plus
           <p class="muted">Проверьте все страницы образцов документов. Отзывы, фотографии автора и остальные неизменённые блоки копируются из прототипа и могут относиться к другой программе.</p>
           <label class="program-site-review"><input type="checkbox" data-site-reviewed>Я проверил лендинг и товар, включая цены, дату, изображения и сертификаты</label>
           <button class="primary-button" type="button" data-site-publish disabled>Опубликовать страницу и товар</button>`}
-        ${result.promoMessage ? `<label><span>Промосообщение</span><textarea readonly rows="5">${escapeHtml(result.promoMessage)}</textarea></label>` : ""}
         <p class="muted">После публикации: проверьте оформление заказа${type === "ПРО" ? " и выдачу подключения" : ""}, согласуйте материалы, обновите приказ о наборе. Рассылка, оплата тестового заказа и изменение главной страницы автоматически не выполняются.</p>`;
       const review = resultArea.querySelector("[data-site-reviewed]");
       const publishButton = resultArea.querySelector("[data-site-publish]");
@@ -33312,11 +33360,9 @@ MAX - https://bizvmax.ru/zifra_plus
       dialog.querySelector("[data-site-prototype-link]").innerHTML = renderProgramSiteLink(template?.url, "Открыть прототип");
       prepareButton.disabled = busy || !template;
     };
-    const filterTemplates = () => {
+    const updateTemplates = () => {
       const selected = select.value || String(result?.templateId || "") || getDefaultProgramSiteTemplateId(program, templates);
-      const query = dialog.querySelector("[data-site-search]").value.trim().toLocaleLowerCase("ru-RU");
-      select.innerHTML = '<option value="">Выберите прототип</option>' + sortProgramSiteTemplates(templates).filter(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query) || String(item.id) === selected)
-        .map(item => `<option value="${escapeAttr(item.id)}" ${String(item.id) === selected ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("");
+      prototypePicker.setItems(templates, selected);
       updatePrototypeLink();
     };
     const load = async () => {
@@ -33327,17 +33373,16 @@ MAX - https://bizvmax.ru/zifra_plus
         const payload = await request("templates");
         imagePicker.setItems(Array.isArray(payload.templates) ? payload.templates : []);
         templates = Array.isArray(payload.templates) ? payload.templates.filter(item => type === "ДОП" || (item.postType || "other-course") === postType) : [];
-        filterTemplates();
+        updateTemplates();
         status.textContent = select.value ? "Прототип выбран. Описание и автор будут скопированы из него; сайты пока не изменены." : templates.length ? "Выберите обязательный прототип. Сайты пока не изменены." : "Опубликованные прототипы для этого вида программы не найдены.";
       } catch (error) { status.textContent = error.message; }
       finally { setBusy(false); }
     };
-    select.addEventListener("change", () => {
+    const onTemplateChange = () => {
       if (result && Number(select.value) !== Number(result.templateId)) { result = null; drawResult(); }
       updatePrototypeLink();
       status.textContent = select.value ? "Описание и автор будут скопированы из выбранного прототипа." : "Выберите прототип лендинга: это обязательное поле.";
-    });
-    dialog.querySelector("[data-site-search]").addEventListener("input", filterTemplates);
+    };
     dialog.querySelector("[data-site-reload]").addEventListener("click", load);
     prepareButton.addEventListener("click", async () => {
       if (busy || !select.value) return;
@@ -33373,6 +33418,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (busy) return;
       progress.dispose();
       if (generatorFields && generatorHome?.isConnected) {
+        // The save handler belongs to this dialog, not the reusable card fields.
+        generatorFields.querySelector(".program-site-parameters-actions")?.remove();
         generatorFields.hidden = true;
         generatorHome.appendChild(generatorFields);
         generatorFields.querySelectorAll("[form]").forEach(control => control.removeAttribute("form"));
@@ -42745,8 +42792,9 @@ MAX - https://bizvmax.ru/zifra_plus
     bindProgramSiteAddressChanges(document.querySelector("#recordForm[data-config='programs']"));
     if (document.querySelector('[data-program-tab-panel="site"]:not([hidden])')) void refreshProgramSiteLinks();
     document.querySelector("#recordForm[data-config='programs'] [name='type']")?.addEventListener("change", event => {
-      const webinarFields = document.querySelector("[data-site-webinar-only]");
-      if (webinarFields) webinarFields.hidden = String(event.target.value || "").toUpperCase() !== "ПРО";
+      const webinar = String(event.target.value || "").toUpperCase() === "ПРО";
+      document.querySelectorAll("[data-site-webinar-only]").forEach(field => { field.hidden = !webinar; });
+      document.querySelector(".program-site-schedule-fields")?.classList.toggle("is-non-webinar", !webinar);
     });
     document.querySelector("[data-action='copy-employee-new-contract']")
       ?.addEventListener("click", copyEmployeeForNewContract);

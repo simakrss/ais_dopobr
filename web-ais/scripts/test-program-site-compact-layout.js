@@ -24,17 +24,17 @@ function preview(type = "ПРО", result = false) {
   const renderField = new Function("state", "escapeAttr", "escapeHtml", `${extract(source, "  function renderField(", "  function renderStudentModal(")} return renderField;`)({modal: {config: "programs"}}, escape, escape);
   const renderGenerator = new Function("configs", "renderField", "escapeAttr", `${extract(source, "  function renderProgramGeneratorFields(", "  function createProgramSiteProgress(")} return renderProgramGeneratorFields;`)({programs: {fields}}, renderField, escape);
   const program = {type, name: "Тестовая образовательная программа: актуальное название статьи как основной критерий конкурентоспособности автора", webinarDate: "2026-09-18", webinarTime: "18:00", webinarJoinUrl: "https://salutejazz.ru/example", siteSampleDate: "2026-09-15"};
-  const renderPicker = new Function(`${extract(source, "  function renderProgramSiteImagePicker(", "  function bindProgramSiteImagePicker(")} return renderProgramSiteImagePicker;`)();
+  const pickerRenderers = new Function(`${extract(source, "  function renderProgramSiteCatalogCombo(", "  function bindProgramSiteImagePicker(")} return {renderProgramSiteImagePicker, renderProgramSiteCatalogCombo};`)();
   const renderLink = new Function("escapeAttr", "escapeHtml", `${source.match(/  function renderProgramSiteLink\([\s\S]*?\n  }/)[0]} return renderProgramSiteLink;`)(escape, escape);
-  let html = new Function("escapeHtml", "type", "program", "bilingual", "renderProgramSiteImagePicker", `return ${markup};`)(escape, type, program, ["ПРО", "ДОП"].includes(type), renderPicker);
+  let html = new Function("escapeHtml", "type", "program", "bilingual", "renderProgramSiteImagePicker", "renderProgramSiteCatalogCombo", `return ${markup};`)(escape, type, program, ["ПРО", "ДОП"].includes(type), pickerRenderers.renderProgramSiteImagePicker, pickerRenderers.renderProgramSiteCatalogCombo);
   html = html.replace("<details data-site-parameters>", "<details data-site-parameters open>")
     .replace('<div data-site-prototype-link></div>', `<div data-site-prototype-link>${renderLink('https://edu-plus.ru/other_course/test-prototype/', 'Открыть прототип')}</div>`)
-    .replace('<div data-site-parameters-host></div>', `<div data-site-parameters-host>${renderGenerator(program).replace('data-site-generator-fields hidden', 'data-site-generator-fields')}</div>`)
-    .replace('required disabled><option value="">Загрузка…</option>', 'required><option value="42">Тестовый лендинг-прототип образовательной программы</option>');
+    .replace('<div data-site-parameters-host></div>', `<div data-site-parameters-host>${renderGenerator(program).replace('data-site-generator-fields hidden', 'data-site-generator-fields')}</div>`);
   if (result) html = html.replace('<section data-site-result hidden></section>', '<section data-site-result><h3>Черновики подготовлены</h3><p>ID товара: 123; ID лендинга: 456</p><div class="program-site-actions"><a class="ghost-button compact-button" href="#">Просмотреть лендинг</a><a class="ghost-button compact-button" href="#">Редактировать товар</a></div><p class="muted">Образцы созданы для этой программы.</p><label class="program-site-review"><input type="checkbox"> Проверены все блоки лендинга и образцы документов</label><button class="primary-button" data-site-publish>Опубликовать</button></section>');
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка компактной формы ${escape(type)}</title><link rel="stylesheet" href="/styles.css"></head><body><form id="recordForm"></form><dialog class="${className}" aria-label="Тестовая форма генератора">${html}</dialog><script>
     const dialog = document.querySelector('dialog'), card = document.querySelector('#recordForm'), select = dialog.querySelector('[data-site-template]'), status = dialog.querySelector('[data-site-status]');
     const templateInput = dialog.querySelector('[name="siteTemplateId"]'); let busy = false;
+    dialog.querySelector('[data-site-save-host]').appendChild(dialog.querySelector('.program-site-parameters-actions'));
     dialog.querySelectorAll('[data-site-generator-fields] input, [data-site-generator-fields] select, [data-site-generator-fields] textarea').forEach(control => control.setAttribute('form', 'recordForm'));
     const setBusy = value => { busy = value; dialog.querySelector('[data-site-save-parameters]').disabled = value; };
     const saveRecordFormBeforeContinuation = async (form, options) => {
@@ -48,7 +48,7 @@ function preview(type = "ПРО", result = false) {
     const escapeHtml = ${escape.toString()}, escapeAttr = escapeHtml;
     const validatePreviewImage = ${source.match(/  function getProgramLandingPreviewImage\([\s\S]*?\n  }/)[0]};
     const getProgramLandingPreviewImage = value => validatePreviewImage(value) ? '/fixture-cover.svg?image=' + encodeURIComponent(new URL(value).pathname) : '';
-    ${extract(source, "  function renderProgramSiteImagePicker(", "  async function openProgramSiteSync(")}
+    ${extract(source, "  function renderProgramSiteCatalogCombo(", "  async function openProgramSiteSync(")}
     const fixtureCatalog = [
       {id: 9, title: 'Язык и культура общения'},
       {id: 2, title: 'Инструменты оптимизации профиля автора в Российском индексе научного цитирования (РИНЦ): электронные образовательные технологии'},
@@ -60,11 +60,15 @@ function preview(type = "ПРО", result = false) {
     ].map(item => ({...item, imageUrl: item.id === 4 ? '' : 'https://edu-plus.ru/wp-content/uploads/fixture-' + item.id + '.jpg'}));
     const imagePicker = bindProgramSiteImagePicker(dialog, {value: new URLSearchParams(location.search).has('images') ? '2' : '', defaultLabel: 'Изображение прототипа лендинга', onChange: value => {dialog.querySelector('[name="siteImageSourceId"]').value = value; status.textContent = 'Тест: источник изображения в форме — ' + new FormData(card).get('siteImageSourceId');}});
     imagePicker.setItems(fixtureCatalog);
-    let templates = fixtureCatalog, result = null, program = {};
+    let templates = fixtureCatalog.map(item=>({...item,url:'https://edu-plus.ru/other_course/test-prototype/'})), result = null, program = {};
     const getDefaultProgramSiteTemplateId = () => '2';
-    const updatePrototypeLink = () => {};
-    ${extract(source, "    const filterTemplates = () => {", "    const load = async () => {")}
-    select.value = ''; filterTemplates(); dialog.querySelector('[data-site-search]').addEventListener('input', filterTemplates);
+    const prepareButton = dialog.querySelector('[data-site-prepare]');
+    const renderProgramSiteLink = ${source.match(/  function renderProgramSiteLink\([\s\S]*?\n  }/)[0]};
+    const drawResult = () => {};
+    ${extract(source, "    const updatePrototypeLink = () => {", "    const load = async () => {")}
+    ${extract(source, "    const onTemplateChange = () => {", '    dialog.querySelector("[data-site-reload]")')}
+    const prototypePicker = bindProgramSiteCatalogPicker(dialog, {kind:'prototype',defaultLabel:'Выберите прототип',onChange:()=>onTemplateChange()});
+    updateTemplates();
     dialog.showModal(); document.querySelector('[data-site-close]').onclick=()=>dialog.close();
   </script></body></html>`;
 }
@@ -72,9 +76,11 @@ async function checks() {
   const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
   assert.match(css, /\.program-site-generator-dialog \.program-site-fields\s*\{[^}]*padding:\s*0;[^}]*gap:\s*7px 10px;/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-body\s*\{[^}]*gap:\s*8px;[^}]*padding:\s*10px 12px;/);
-  assert.match(css, /\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\)/);
+  assert.match(css, /\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(css, /\.program-site-generator-dialog \[data-site-prototype-link\]\s*\{[^}]*display: flex;[^}]*justify-content: flex-end;/);
-  assert.match(css, /@media \(max-width: 600px\)\s*\{[^}]*\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /\.program-site-generator-dialog \.program-site-schedule-fields \{[^}]*grid-template-columns: minmax\(135px, 1.1fr\) minmax\(105px, .8fr\) minmax\(0, 1.4fr\) minmax\(135px, 1.1fr\)/);
+  assert.match(css, /@media \(max-width: 600px\)\s*\{[^}]*\.program-site-generator-dialog \.program-site-schedule-fields/);
+  assert.match(css, /\.program-site-product-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(css, /\.program-site-generator-dialog \[data-site-status\]:empty/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-parameters-actions\s*\{[^}]*display: flex;[^}]*justify-content: flex-end;/);
   for (const type of ["ПРО", "ДОП", "КПК", "ППП"]) {
@@ -85,9 +91,15 @@ async function checks() {
     assert.match(html, /program-site-prototype-fields/);
     assert.match(html, /data-site-prototype-link><a[^>]+target="_blank"[^>]+>Открыть прототип<\/a>/);
     assert.match(html, /class="primary-button" type="button" data-site-save-parameters/);
+    assert.match(html, /program-site-product-row[\s\S]*?name="siteProductName"[\s\S]*?data-site-save-host/);
+    assert.match(html, /data-image-popup hidden>\s*<input type="search" data-image-search/);
+    assert.doesNotMatch(html, /Поиск прототипа по названию|Поиск источника по названию|data-site-search/);
     if (type !== "ПРО") assert.match(html, /data-site-webinar-only hidden/);
   }
   const source = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const generator = extract(source, '  async function openProgramSiteGenerator(', '  function renderProgramModal(');
+  assert.doesNotMatch(generator, /result\.promoMessage|<span>Промосообщение<\/span>/);
+  assert.match(generator, /querySelector\("\.program-site-parameters-actions"\)\?\.remove\(\)/, 'Old dialog save handler is removed before returning fields to the card');
   const binding = saveBinding(source);
   assert.ok(binding.indexOf('await saveParameters();') < binding.indexOf('.open = false'), 'Collapse only after confirmed save');
   for (const outcome of ['success', 'false', 'error', 'invalid']) {
@@ -95,7 +107,7 @@ async function checks() {
     const button = {disabled: false, addEventListener: (_event, callback) => {handler = callback;}};
     const details = {open: true}, summary = {focused: false, focus() {this.focused = true;}};
     const status = {textContent: ''}, templateInput = {value: ''}, card = {};
-    const select = {value: outcome === 'invalid' ? '' : '42', reportValidity: () => true};
+    const select = {value: outcome === 'invalid' ? '' : '42', focus() {this.focused = true;}};
     const dialog = {querySelector: selector => ({'[data-site-save-parameters]':button, '[data-site-parameters]':details, '[data-site-parameters] > summary':summary})[selector]};
     const save = async (form, options) => {
       calls++; assert.equal(form, card); assert.equal(options.flush, true);
