@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.485",
+    version: "1.7.486",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.486",
+      releasedAt: "2026-09-15",
+      changes: [
+        "В контекстном меню слушателей ПРО доступны напоминания участникам вебинара и преподавателю: просмотр получателей и текста, дата и время, SberJazz и число регистраций. Шаблоны редактируются в настройках «Сообщения вебинаров (ПРО)»."
+      ]
+    },
     {
       version: "1.7.485",
       releasedAt: "2026-09-15",
@@ -4133,6 +4140,42 @@
   ]);
   const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
   const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
+  const WEBINAR_MESSAGE_FIELDS = Object.freeze([
+    "НазваниеПрограммы", "ДатаВебинара", "ВремяВебинара", "СсылкаПодключения", "КоличествоРегистраций", "ИмяОтчество", "ФИОПреподавателя"
+  ]);
+  const WEBINAR_MESSAGE_DEFAULTS = Object.freeze([
+    {
+      id: "students", label: "Слушателям",
+      subject: "Напоминание о вебинаре: {НазваниеПрограммы}",
+      message: `Добрый день!
+
+Напоминаем, что Вы были зарегистрированы на мероприятие «{НазваниеПрограммы}», которое состоится {ДатаВебинара} в {ВремяВебинара} мск
+
+Ссылка на подключение - {СсылкаПодключения}
+
+По окончании вышлем сертификат и запись мероприятия
+
+Вступайте в наши группы:
+MAX - https://bizvmax.ru/zifra_plus
+ВК - https://vk.com/zifra_plus
+Телеграмм - https://t.me/zifra_plus
+
+Учебный центр «Цифровизация Плюс»
+https://edu-plus.ru, mail@edu-plus.ru`
+    },
+    {
+      id: "teacher", label: "Преподавателю",
+      subject: "Проведение вебинара: {НазваниеПрограммы}",
+      message: `Добрый день, {ИмяОтчество}!
+
+Напоминаю, что вебинар «{НазваниеПрограммы}», состоится {ДатаВебинара} в {ВремяВебинара} мск
+
+Ссылка на подключение - {СсылкаПодключения}
+
+Всего зарегистрировалось - {КоличествоРегистраций} чел.`
+    }
+  ]);
+  let webinarMessageEventsBound = false;
   const PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS = "Вебинары. Архив";
   let browserStateIndexedDbMode = false;
   try {
@@ -7893,6 +7936,7 @@ MAX - https://bizvmax.ru/zifra_plus
     data.dictionaries.statuses = [...STUDENT_STATUS_ORDER];
     if (!hasDiscountRules) data.dictionaries.discountRules = getDefaultDiscountRuleValues();
     data.dictionaries.communicationTemplates = normalizeCommunicationTemplates(data.dictionaries.communicationTemplates);
+    data.dictionaries.webinarMessageTemplates = normalizeWebinarMessageTemplates(data.dictionaries.webinarMessageTemplates);
     data.dictionaries.communicationTemplateDescriptions = normalizeCommunicationTemplateDescriptions(
       data.dictionaries.communicationTemplateDescriptions
     );
@@ -13956,6 +14000,12 @@ MAX - https://bizvmax.ru/zifra_plus
       aisHistoryNavigationCloseModalRequested = false;
       aisHistoryNavigationDiscardApproved = false;
       // Keep the live form intact; the next Back should still reach the previous screen.
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    const webinarComposer = document.querySelector("[data-webinar-message-composer]");
+    if (webinarComposer) {
+      webinarComposer.closeWebinarMessageComposer?.();
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
@@ -23243,7 +23293,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 trainingDeadlinePassed ? "Срок окончания обучения истёк" : ""
               ].filter(Boolean).join("\n");
               return `
-              <tr class="${rowClasses}" ${lockedByOther ? "data-record-locked" : ""} ${rowTitle ? `title="${escapeAttr(rowTitle)}"` : ""}>
+              <tr class="${rowClasses}" ${configId === "students" ? `data-webinar-student-id="${escapeAttr(row.id)}"` : ""} ${lockedByOther ? "data-record-locked" : ""} ${rowTitle ? `title="${escapeAttr(rowTitle)}"` : ""}>
                 <td class="select-col">
                   <input type="checkbox" data-action="toggle-row-selection" data-config="${configId}" data-id="${row.id}" ${selected.includes(String(row?.id || "").trim()) ? "checked" : ""} aria-label="Выбрать строку">
                 </td>
@@ -24611,6 +24661,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const selectedItem = dictionaryItems.find((item) => item.key === selectedKey);
     const selectedValues = selectedItem?.values || [];
     const isCommunicationTemplates = selectedKey === "communicationTemplates";
+    const isWebinarMessageTemplates = selectedKey === "webinarMessageTemplates";
     const isDataFormulas = selectedKey === "dataFormulas";
     const isSdoSettings = selectedKey === "sdoSettings";
     const isPaymentSettings = selectedKey === "paymentSettings";
@@ -24622,7 +24673,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const isPartnerProgramSettings = selectedKey === "partnerProgramSettings";
     const isNotificationSettings = selectedKey === "notificationSettings";
     const isStudentEventSettings = selectedKey === "studentEventSettings";
-    const isSpecialDictionary = isCommunicationTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings;
+    const isSpecialDictionary = isCommunicationTemplates || isWebinarMessageTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings;
     const communicationTemplateFieldSortOrder = state.communicationTemplateFieldSort === "desc" ? "desc" : "asc";
     const hasDraftChanges = hasUnsavedSettingsChanges();
     const settingsDraftSaveBusy = isSettingsDraftSaveBusy();
@@ -24695,7 +24746,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   ${isCommunicationTemplates ? `
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "asc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="asc" type="button" title="Сортировать поля по алфавиту" aria-label="Сортировать поля по алфавиту" aria-pressed="${communicationTemplateFieldSortOrder === "asc" ? "true" : "false"}">А→Я</button>
                     <button class="icon-button communication-template-field-sort-button ${communicationTemplateFieldSortOrder === "desc" ? "active" : ""}" data-action="sort-communication-template-fields" data-order="desc" type="button" title="Сортировать поля против алфавита" aria-label="Сортировать поля против алфавита" aria-pressed="${communicationTemplateFieldSortOrder === "desc" ? "true" : "false"}">Я→А</button>
-                  ` : isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings ? "" : `
+                  ` : isWebinarMessageTemplates || isDataFormulas || isSdoSettings || isPaymentSettings || isDocumentPathSettings || isEducationRegistrationTypeCodes || isFinalAttestationSettings || isIssuedDocumentSettings || isProgramCommissionSettings || isPartnerProgramSettings || isNotificationSettings || isStudentEventSettings ? "" : `
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="asc" type="button" title="Сортировать по алфавиту" aria-label="Сортировать по алфавиту">А→Я</button>
                     <button class="icon-button dictionary-sort-button" data-action="dict-sort" data-dict="${selectedKey}" data-order="desc" type="button" title="Сортировать против алфавита" aria-label="Сортировать против алфавита">Я→А</button>
                   `}
@@ -24723,6 +24774,8 @@ MAX - https://bizvmax.ru/zifra_plus
               </div>
               ${isCommunicationTemplates
                 ? renderCommunicationTemplateDictionary(selectedValues)
+                : isWebinarMessageTemplates
+                  ? renderWebinarMessageSettings(selectedValues)
                 : isDataFormulas
                   ? renderDataFormulaDictionary(selectedValues)
                 : isSdoSettings
@@ -40058,6 +40111,329 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function normalizeWebinarMessageTemplates(values) {
+    const saved = Array.isArray(values) ? values : [];
+    return WEBINAR_MESSAGE_DEFAULTS.map((item) => {
+      const value = saved.find((entry) => entry?.id === item.id);
+      return {
+        id: item.id,
+        label: item.label,
+        subject: String(value?.subject ?? item.subject),
+        message: String(value?.message ?? item.message)
+      };
+    });
+  }
+
+  function renderWebinarMessageSettings(values) {
+    return `<form class="webinar-message-settings" data-action="save-webinar-message-templates">
+      <p class="muted">Напоминания отправляются вручную из контекстного меню списка слушателей, только для ПРО. Дата, время по Москве и ссылка берутся из параметров программы. Количество регистраций — все записи этой программы со статусом «На зачисление», включая записи без Email.</p>
+      <p class="muted">Подстановки: ${WEBINAR_MESSAGE_FIELDS.map((name) => `<code>{${escapeHtml(name)}}</code>`).join(" · ")}</p>
+      ${normalizeWebinarMessageTemplates(values).map((item) => `<details open class="webinar-message-template">
+        <summary>${escapeHtml(item.label)}</summary>
+        <label>Тема письма<input name="${item.id}Subject" maxlength="200" value="${escapeAttr(item.subject)}" required></label>
+        <label>Текст письма<textarea name="${item.id}Message" rows="10" maxlength="100000" required>${escapeHtml(item.message)}</textarea></label>
+      </details>`).join("")}
+      <div class="communication-template-actions"><button class="ghost-button settings-apply-button" type="submit">Применить шаблоны</button></div>
+    </form>`;
+  }
+
+  function getWebinarTemplateError(subject, message) {
+    if (!String(subject || "").trim() || !String(message || "").trim()) return "Заполните тему и текст письма.";
+    if (String(subject).length > 200 || String(message).length > 100000) return "Превышена допустимая длина темы или текста письма.";
+    const unknown = [...`${subject}\n${message}`.matchAll(/\{([^{}]+)\}/gu)]
+      .map((match) => match[1]).filter((name) => !WEBINAR_MESSAGE_FIELDS.includes(name));
+    return unknown.length ? `Неизвестные подстановки: ${[...new Set(unknown)].join(", ")}.` : "";
+  }
+
+  function saveWebinarMessageSettings(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const templates = WEBINAR_MESSAGE_DEFAULTS.map((item) => ({
+      id: item.id, label: item.label,
+      subject: String(form.elements[`${item.id}Subject`]?.value || "").trim(),
+      message: String(form.elements[`${item.id}Message`]?.value || "").trim()
+    }));
+    for (const item of templates) {
+      const error = getWebinarTemplateError(item.subject, item.message);
+      if (error) { alert(`${item.label}: ${error}`); return; }
+    }
+    state.data.dictionaries.webinarMessageTemplates = templates;
+    addAudit("Изменен справочник", dictionaryTitle("webinarMessageTemplates"), "Обновлены шаблоны напоминаний слушателям и преподавателю");
+    persist();
+    render();
+  }
+
+  function getWebinarProgramForStudent(student, programs = state.data.collections.programs || []) {
+    if (!student) return null;
+    const programId = String(student.programId || "").trim();
+    const name = normalizeProgramName(student.program);
+    let matches = programId
+      ? programs.filter((program) => String(program.id) === programId)
+      : programs.filter((program) => name && normalizeProgramName(program.name) === name);
+    if (!programId && !matches.length) matches = programs.filter((program) => name && normalizeProgramName(program.shortName) === name);
+    if (matches.length !== 1 || String(matches[0].type || "").trim().toUpperCase() !== "ПРО") return null;
+    return matches[0];
+  }
+
+  function getWebinarMessageContext(programId, audience = "students", teacherId = "", collections = state.data.collections) {
+    const programs = collections.programs || [];
+    const program = programs.find((item) => String(item.id) === String(programId));
+    if (!program || String(program.type || "").trim().toUpperCase() !== "ПРО") throw new Error("Напоминания доступны только для вебинаров ПРО.");
+    if (!["students", "teacher"].includes(audience)) throw new Error("Неизвестный вид сообщения.");
+    const registrations = (collections.students || []).filter((student) => (
+      normalizeProgramName(student.status) === normalizeProgramName("На зачисление")
+      && getWebinarProgramForStudent(student, programs)?.id === program.id
+    )).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
+    const teacher = audience === "teacher"
+      ? (collections.contracts || []).find((item) => String(item.id) === String(teacherId))
+      : null;
+    const errors = [];
+    const dateText = String(program.webinarDate || "").trim();
+    const dateParts = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(dateText);
+    const ruDateParts = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/u.exec(dateText);
+    const isoDate = dateParts ? dateText : ruDateParts ? `${ruDateParts[3]}-${ruDateParts[2].padStart(2, "0")}-${ruDateParts[1].padStart(2, "0")}` : "";
+    const date = new Date(`${isoDate}T12:00:00Z`);
+    const validDate = Boolean(isoDate && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === isoDate);
+    if (!validDate) errors.push("В параметрах программы укажите корректную дату вебинара.");
+    const time = String(program.webinarTime || "").trim();
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) errors.push("В параметрах программы укажите время вебинара по Москве.");
+    let joinUrl = "";
+    try {
+      const url = new URL(String(program.webinarJoinUrl || "").trim());
+      if (url.protocol === "https:" && !url.username && !url.password) joinUrl = url.href;
+    } catch { /* Missing or malformed connection URL is reported below. */ }
+    if (!joinUrl) errors.push("В параметрах программы укажите корректную HTTPS-ссылку подключения SberJazz.");
+    if (audience === "teacher" && !teacher) errors.push("Выберите преподавателя из базы сотрудников.");
+    if (audience === "students" && !registrations.length) errors.push("У этой программы нет слушателей со статусом «На зачисление».");
+    const seenEmails = new Set();
+    const recipients = [];
+    const skipped = [];
+    for (const record of audience === "teacher" ? (teacher ? [teacher] : []) : registrations) {
+      const email = String(record.email || "").trim();
+      const key = email.toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
+        skipped.push({ id: record.id, name: record.name, email, reason: "Нет корректного Email" });
+      } else if (seenEmails.has(key)) {
+        skipped.push({ id: record.id, name: record.name, email, reason: "Повтор Email — будет одно письмо" });
+      } else {
+        seenEmails.add(key);
+        recipients.push({ id: String(record.id), name: String(record.name || ""), email });
+      }
+    }
+    if (!recipients.length && (registrations.length || teacher)) errors.push("Нет получателей с корректным Email.");
+    const fields = {
+      НазваниеПрограммы: String(program.name || ""),
+      ДатаВебинара: validDate ? `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}.${isoDate.slice(0, 4)}` : "",
+      ВремяВебинара: time.replace(":", "."),
+      СсылкаПодключения: joinUrl,
+      КоличествоРегистраций: String(registrations.length),
+      ИмяОтчество: teacher ? (getStudentCommunicationAddressee(teacher) || String(teacher.name || "коллега")) : "",
+      ФИОПреподавателя: String(teacher?.name || "")
+    };
+    const fingerprint = JSON.stringify({ programId, audience, fields, recipients, skipped });
+    return { programId, audience, teacherId, program, registrations, recipients, skipped, fields, errors, fingerprint };
+  }
+
+  function renderWebinarMessage(template, fields) {
+    return String(template || "").replace(/\{([^{}]+)\}/gu, (match, name) => (
+      Object.prototype.hasOwnProperty.call(fields, name) ? String(fields[name]) : match
+    ));
+  }
+
+  async function deliverWebinarMessages(context, content, options = {}) {
+    if (context.errors.length) throw new Error(context.errors.join("\n"));
+    if (!String(content.subject || "").trim() || !String(content.message || "").trim()) throw new Error("Заполните тему и текст письма.");
+    if (content.subject.length > 200 || new TextEncoder().encode(content.message).length > 100000) throw new Error("Сократите тему до 200 символов или текст до 100 КБ.");
+    const results = [];
+    let stopped = "";
+    for (const recipient of context.recipients) {
+      // send-mail.php permits 20 requests/minute. Keep room for other mail actions.
+      if (results.length && !options.shouldStop?.()) await new Promise((resolve) => setTimeout(resolve, 3500));
+      if (options.shouldStop?.()) { stopped = "Отправка остановлена пользователем."; break; }
+      let current;
+      try { current = getWebinarMessageContext(context.programId, context.audience, context.teacherId); }
+      catch (error) { stopped = `${error.message} Оставшаяся рассылка остановлена.`; break; }
+      if (current.errors.length || current.fingerprint !== context.fingerprint) {
+        stopped = "Данные программы или получателей изменились. Обновите предпросмотр перед новой отправкой.";
+        break;
+      }
+      options.onProgress?.(results.length, context.recipients.length, recipient);
+      let sent;
+      try {
+        sent = await sendServerEmail({
+          email: recipient.email, subject: content.subject, message: content.message,
+          entityType: context.audience === "teacher" ? "contracts" : "students",
+          entityId: recipient.id, entityName: recipient.name,
+          recipientMode: context.audience === "teacher" ? "employee" : "student",
+          recipientLabel: context.audience === "teacher" ? "преподавателя" : "слушателя",
+          messageType: `Напоминание о вебинаре (${context.audience === "teacher" ? "преподавателю" : "слушателю"}): ${context.program.name}`,
+          skipConfirmation: true, quiet: true
+        });
+      } catch { sent = null; }
+      results.push({ ...recipient, status: sent === true ? "sent" : sent === null ? "unknown" : "failed" });
+      if (sent !== true) {
+        stopped = sent === null
+          ? "Результат последней отправки неизвестен. Проверьте журнал действий и папку «Отправленные» перед повтором."
+          : "Письмо не отправлено. Проверьте журнал действий. Оставшаяся рассылка остановлена.";
+        break;
+      }
+    }
+    return { results, stopped, sent: results.filter((item) => item.status === "sent").length, remaining: context.recipients.length - results.length };
+  }
+
+  function bindWebinarMessageActions() {
+    if (webinarMessageEventsBound) return;
+    webinarMessageEventsBound = true;
+    const open = (event, keyboard = false) => {
+      if (event.defaultPrevented) return;
+      const row = event.target.closest?.("[data-webinar-student-id]");
+      if (!row) return;
+      const student = (state.data.collections.students || []).find((item) => String(item.id) === row.dataset.webinarStudentId);
+      const program = getWebinarProgramForStudent(student);
+      if (!program) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showWebinarMessageMenu(row, program.id, keyboard ? 0 : event.clientX, keyboard ? 0 : event.clientY);
+    };
+    document.addEventListener("contextmenu", (event) => open(event));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) open(event, true);
+    });
+  }
+
+  function showWebinarMessageMenu(row, programId, x, y) {
+    hideFieldCopyPopup();
+    const menu = document.createElement("div");
+    menu.className = "field-copy-popup webinar-message-menu";
+    menu.dataset.fieldCopyPopup = "";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Сообщения вебинара");
+    menu.fieldCopyPopupReturnTarget = row.querySelector("button") || row;
+    menu.innerHTML = `<button type="button" role="menuitem" data-webinar-audience="students">Напоминание слушателям вебинара…</button>
+      <button type="button" role="menuitem" data-webinar-audience="teacher">Напоминание преподавателю вебинара…</button>`;
+    document.body.appendChild(menu);
+    const rect = row.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(x || rect.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y || rect.bottom, window.innerHeight - menu.offsetHeight - 8))}px`;
+    const items = [...menu.querySelectorAll("button")];
+    items.forEach((button) => button.addEventListener("click", () => {
+      hideFieldCopyPopup();
+      openWebinarMessageComposer(programId, button.dataset.webinarAudience, menu.fieldCopyPopupReturnTarget);
+    }));
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); hideFieldCopyPopup({ restoreFocus: true }); }
+      if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault();
+        const index = items.indexOf(document.activeElement);
+        items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+      }
+    });
+    document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
+    items[0].focus({ preventScroll: true });
+  }
+
+  function openWebinarMessageComposer(programId, audience, opener = null) {
+    if (document.querySelector("[data-webinar-message-composer]")) return;
+    let context;
+    try { context = getWebinarMessageContext(programId, audience); }
+    catch (error) { alert(error.message); return; }
+    const teachers = [...(state.data.collections.contracts || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
+    const teacherNames = String(context.program.teachers || "").split(/[\n;]+/u).map(normalizeProgramName).filter(Boolean);
+    const suggested = teachers.filter((item) => teacherNames.includes(normalizeProgramName(item.name)));
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop custom-record-email-backdrop";
+    backdrop.dataset.webinarMessageComposer = "";
+    backdrop.innerHTML = `<section class="modal custom-record-email-dialog webinar-message-dialog" role="dialog" aria-modal="true" aria-labelledby="webinarMessageTitle">
+      <header class="modal-head custom-record-email-head"><div><p class="eyebrow">Вебинар · ПРО</p><h2 id="webinarMessageTitle">${audience === "teacher" ? "Напоминание преподавателю" : "Напоминание слушателям"}</h2><p>${escapeHtml(context.program.name)}</p></div><button class="icon-button" type="button" data-webinar-close aria-label="Закрыть">×</button></header>
+      <form class="custom-record-email-form"><div class="custom-record-email-body">
+        ${audience === "teacher" ? `<label>Преподаватель<select name="teacherId" required><option value="">Выберите сотрудника</option>${teachers.map((teacher) => `<option value="${escapeAttr(teacher.id)}" ${suggested.length === 1 && suggested[0].id === teacher.id ? "selected" : ""}>${escapeHtml(teacher.name)} — ${escapeHtml(teacher.email || "Email не указан")}${suggested.includes(teacher) ? " · указан в программе" : ""}</option>`).join("")}</select></label>` : ""}
+        <div data-webinar-preview-summary></div>
+        <label>Тема письма<input name="subject" maxlength="200" required></label>
+        <label class="custom-record-email-message-field">Текст письма<textarea name="message" maxlength="100000" rows="12" required></textarea></label>
+        <p class="muted">Проверьте текст и получателей. Письма отправляются отдельно через системную почту с паузой 3,5 секунды и фиксируются в журнале действий. Не закрывайте вкладку до завершения. Повторное открытие и отправка создадут новые письма.</p>
+        <div data-webinar-send-results></div>
+      </div><footer class="custom-record-email-footer webinar-message-footer"><span data-webinar-send-status role="status" aria-live="polite"></span><button class="ghost-button" type="button" data-webinar-refresh>Обновить предпросмотр</button><button class="ghost-button" type="button" data-webinar-stop hidden>Остановить</button><button class="primary-button" type="submit">Отправить</button><button class="icon-button" type="button" data-webinar-close aria-label="Закрыть">×</button></footer></form>
+    </section>`;
+    const form = backdrop.querySelector("form");
+    const sendButton = form.querySelector("[type='submit']");
+    const status = backdrop.querySelector("[data-webinar-send-status]");
+    const refreshButton = backdrop.querySelector("[data-webinar-refresh]");
+    const stopButton = backdrop.querySelector("[data-webinar-stop]");
+    let sending = false;
+    let attempted = false;
+    let stopRequested = false;
+    const close = () => {
+      if (sending) { status.textContent = "Дождитесь завершения отправки или нажмите «Остановить»."; return; }
+      backdrop.remove();
+      opener?.focus?.({ preventScroll: true });
+    };
+    const updatePreview = () => {
+      if (sending || attempted) return;
+      try { context = getWebinarMessageContext(programId, audience, form.elements.teacherId?.value || ""); }
+      catch (error) { status.textContent = error.message; sendButton.disabled = true; return; }
+      const template = normalizeWebinarMessageTemplates(state.data.dictionaries.webinarMessageTemplates).find((item) => item.id === audience);
+      const templateError = getWebinarTemplateError(template.subject, template.message);
+      form.elements.subject.value = renderWebinarMessage(template.subject, context.fields);
+      form.elements.message.value = renderWebinarMessage(template.message, context.fields);
+      const errors = [...context.errors, ...(templateError ? [templateError] : [])];
+      backdrop.querySelector("[data-webinar-preview-summary]").innerHTML = `
+        <p><strong>${escapeHtml(context.fields.ДатаВебинара || "Дата не задана")} · ${escapeHtml(context.fields.ВремяВебинара || "Время не задано")} мск</strong>${context.fields.СсылкаПодключения ? ` · <a href="${escapeAttr(context.fields.СсылкаПодключения)}" target="_blank" rel="noopener noreferrer">Подключение к вебинару ↗</a>` : ""}</p>
+        <p>Зарегистрировано со статусом «На зачисление»: <strong>${context.registrations.length}</strong>. Получателей писем: <strong>${context.recipients.length}</strong>.</p>
+        <details class="webinar-message-recipients"><summary>Получатели (${context.recipients.length})${context.skipped.length ? ` · без отдельного письма: ${context.skipped.length}` : ""}</summary><ul>${context.recipients.map((item) => `<li>${escapeHtml(item.name)} — ${escapeHtml(item.email)}</li>`).join("")}${context.skipped.map((item) => `<li class="muted">${escapeHtml(item.name)} — ${escapeHtml(item.email || "Email отсутствует")}: ${escapeHtml(item.reason)}</li>`).join("")}</ul></details>
+        ${errors.length ? `<p class="advertising-inline-message is-error" role="alert">${errors.map(escapeHtml).join("<br>")}</p>` : ""}`;
+      sendButton.disabled = errors.length > 0 || !context.recipients.length;
+      sendButton.textContent = `Отправить (${context.recipients.length})`;
+      status.textContent = "Просмотр перед отправкой";
+    };
+    backdrop.closeWebinarMessageComposer = close;
+    backdrop.querySelectorAll("[data-webinar-close]").forEach((button) => button.addEventListener("click", close));
+    backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const items = [...backdrop.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary")].filter((item) => item.getClientRects().length);
+      const first = items[0]; const last = items[items.length - 1];
+      if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault(); (event.shiftKey ? last : first)?.focus();
+      }
+    });
+    form.elements.teacherId?.addEventListener("change", updatePreview);
+    refreshButton.addEventListener("click", updatePreview);
+    stopButton.addEventListener("click", () => { stopRequested = true; stopButton.disabled = true; status.textContent = "Остановка после текущего письма…"; });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (sending || attempted || sendButton.disabled || !form.reportValidity()) return;
+      sending = true;
+      const content = { subject: form.elements.subject.value.trim(), message: form.elements.message.value.trim() };
+      form.querySelectorAll("input, textarea, select").forEach((control) => { control.disabled = true; });
+      sendButton.disabled = true; refreshButton.disabled = true; stopButton.hidden = false;
+      form.setAttribute("aria-busy", "true");
+      try {
+        const result = await deliverWebinarMessages(context, content, {
+          shouldStop: () => stopRequested,
+          onProgress: (done, total, recipient) => {
+            attempted = true;
+            status.textContent = `Отправка ${done + 1} из ${total}: ${recipient.email}`;
+          }
+        });
+        status.textContent = `Отправлено: ${result.sent} из ${context.recipients.length}. Не начато: ${result.remaining}. ${result.stopped}`;
+        backdrop.querySelector("[data-webinar-send-results]").innerHTML = `<ul class="webinar-message-results">${result.results.map((item) => `<li>${escapeHtml(item.name)} — ${escapeHtml(item.email)}: <strong>${item.status === "sent" ? "отправлено" : item.status === "unknown" ? "результат неизвестен" : "не отправлено"}</strong></li>`).join("")}</ul>`;
+      } catch (error) { status.textContent = error.message || "Не удалось выполнить отправку."; }
+      finally {
+        sending = false;
+        stopButton.hidden = true;
+        form.removeAttribute("aria-busy");
+        if (!attempted) {
+          form.querySelectorAll("input, textarea, select").forEach((control) => { control.disabled = false; });
+          refreshButton.disabled = false;
+          sendButton.disabled = context.errors.length > 0 || !context.recipients.length;
+        }
+      }
+    });
+    document.body.appendChild(backdrop);
+    updatePreview();
+    (form.elements.teacherId || form.elements.subject).focus({ preventScroll: true });
+  }
+
   async function sendServerEmail({
     email,
     subject,
@@ -42173,6 +42549,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const webinarComposer = document.querySelector("[data-webinar-message-composer]");
+    if (webinarComposer) {
+      if (document.querySelector("[data-field-copy-popup]")) hideFieldCopyPopup({ restoreFocus: true });
+      else webinarComposer.closeWebinarMessageComposer?.();
+      return true;
+    }
     const duplicateConfirmation = document.querySelector("[data-record-duplicate-confirmation]");
     if (duplicateConfirmation) {
       duplicateConfirmation.cancelRecordDuplicateConfirmation?.();
@@ -42417,6 +42799,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindDirectExpenseNoteFilterOutsideClick();
     bindSystemHelpTooltips();
     bindTableValueFilterEvents();
+    bindWebinarMessageActions();
     bindShiftDragRequirement();
     bindLongPressDragRequirement();
     bindCardWindowControls();
@@ -44052,6 +44435,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", resetPartnerProgramDescriptionDraft);
     document.querySelector("form[data-action='save-training-end-notification-settings']")
       ?.addEventListener("submit", saveTrainingEndNotificationSettingsDraft);
+    document.querySelector("form[data-action='save-webinar-message-templates']")
+      ?.addEventListener("submit", saveWebinarMessageSettings);
     document.querySelector("[data-action='add-attestation-category']")?.addEventListener("click", () => addFinalAttestationSetting("category"));
     document.querySelector("[data-action='add-attestation-scale']")?.addEventListener("click", () => addFinalAttestationSetting("scale"));
     document.querySelectorAll("[data-action='remove-attestation-setting']").forEach((button) => {
@@ -72669,6 +73054,7 @@ MAX - https://bizvmax.ru/zifra_plus
       dataFormulas: "Конструктор формул данных",
       contractTemplateFields: "Конструктор полей договора",
       communicationTemplates: "Шаблоны типовых сообщений",
+      webinarMessageTemplates: "Сообщения вебинаров (ПРО)",
       roles: "Роли"
     };
     return map[key] || key;

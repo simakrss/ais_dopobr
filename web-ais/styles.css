@@ -25302,6 +25302,91 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   pointer-events: none;
 }
 
+.webinar-message-settings {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.webinar-message-settings > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.webinar-message-template {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.webinar-message-template summary {
+  font-weight: 700;
+}
+
+.webinar-message-template label {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.webinar-message-template :is(input, textarea),
+.webinar-message-dialog :is(input, textarea, select) {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.webinar-message-template textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.webinar-message-dialog {
+  width: min(900px, 96vw);
+}
+
+.webinar-message-dialog .muted,
+.webinar-message-dialog [data-webinar-preview-summary] {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.webinar-message-dialog [data-webinar-preview-summary] p {
+  margin: 0 0 8px;
+}
+
+.webinar-message-recipients ul,
+.webinar-message-results {
+  max-height: 180px;
+  overflow: auto;
+  padding-left: 22px;
+  overflow-wrap: anywhere;
+}
+
+.webinar-message-footer {
+  flex-wrap: wrap;
+}
+
+.webinar-message-footer [data-webinar-send-status] {
+  flex: 1 1 100%;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.webinar-message-footer [hidden] {
+  display: none;
+}
+
 .student-mailbox-backdrop {
   position: fixed;
   inset: 0;
