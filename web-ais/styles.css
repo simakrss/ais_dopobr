@@ -31125,8 +31125,11 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-sync-summary dd { margin: 0; }
 .program-site-fields textarea { font-family: Consolas, monospace; min-height: 80px; }
 .program-site-image-picker { min-width: 0; }
-.program-site-image-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; margin-top: 7px; }
-.program-site-image-controls { display: grid; gap: 7px; min-width: 0; }
+.program-site-image-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: start; }
+.program-site-image-details { min-width: 0; }
+.program-site-image-controls { display: grid; gap: 7px; min-width: 0; margin-top: 7px; }
+.program-site-image-details:not([open]) ~ [data-image-preview],
+.program-site-image-details:not([open]) ~ [data-image-caption] { display: none; }
 .program-site-image-layout [data-image-caption] { grid-column: 1 / -1; margin: 0; }
 .program-site-image-layout [data-image-preview]:empty { display: none; }
 .program-site-image-layout [data-image-preview] { display: flex; align-items: center; justify-content: center; }

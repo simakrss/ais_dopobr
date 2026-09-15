@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.479",
+    version: "1.7.480",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.480",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Миниатюра выбранного изображения в генераторе сайта поднята к заголовку блока; при сворачивании блока она скрывается вместе с параметрами."
+      ]
+    },
     {
       version: "1.7.479",
       releasedAt: "2026-09-15",
@@ -32941,10 +32948,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderProgramSiteImagePicker() {
-    return `<details class="program-site-image-picker"><summary>Изображение записи — лендинг и магазин</summary>
-      <div class="program-site-image-layout"><div class="program-site-image-controls">
+    return `<div class="program-site-image-picker"><div class="program-site-image-layout">
+      <details class="program-site-image-details"><summary>Изображение записи — лендинг и магазин</summary>
+        <div class="program-site-image-controls">
         <div class="program-site-image-field"><span>Взять изображение из лендинга</span>${renderProgramSiteCatalogCombo()}</div>
-        </div><div data-image-preview></div><p class="muted" data-image-caption></p></div></details>`;
+        </div></details><div data-image-preview></div><p class="muted" data-image-caption></p></div></div>`;
   }
 
   function sortProgramSiteTemplates(items) {

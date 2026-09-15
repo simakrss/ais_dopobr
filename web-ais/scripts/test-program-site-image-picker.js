@@ -21,8 +21,10 @@ assert.match(source, /prototypePicker\.setItems\(templates, selected\)/, "Main p
 const render = new Function(`${fn("renderProgramSiteCatalogCombo")} ${fn("renderProgramSiteImagePicker")} return renderProgramSiteImagePicker;`)();
 assert.match(render(), /data-image-source\s+role="combobox"[^>]*aria-expanded="false" disabled/);
 assert.match(render(), /data-image-popup hidden>\s*<input type="search" data-image-search/);
-assert.match(render(), /<div data-image-preview><\/div><p[^>]*data-image-caption/);
-assert.match(css, /\.program-site-image-layout \{[^}]*align-items: center;/);
+assert.match(render(), /<\/details><div data-image-preview><\/div><p[^>]*data-image-caption/);
+assert.match(render(), /<div class="program-site-image-layout">\s*<details class="program-site-image-details"><summary>/);
+assert.match(css, /\.program-site-image-layout \{[^}]*align-items: start;/);
+assert.match(css, /\.program-site-image-details:not\(\[open\]\) ~ \[data-image-preview\],[\s\S]*?\{ display: none; \}/);
 assert.match(css, /\.program-site-image-layout \[data-image-caption\] \{[^}]*grid-column: 1 \/ -1/);
 assert.match(css, /\.program-site-image-option > img,[^}]*width: 56px; height: 56px;/);
 assert.match(css, /\.program-site-image-trigger:focus-visible \{[^}]*var\(--teal\)/);
@@ -94,4 +96,4 @@ select.emit('click'); search.value = 'БАЗОВЫЙ'; search.emit('input');
 assert.deepEqual(list.options.map(item=>item.dataset.imageOption), ['4', '2']);
 assert.equal(select.value, '4', 'Prototype search is not a selection change');
 proto.setItems(catalog, 'missing'); assert.equal(select.value, ''); assert.equal(proto.value(), '', 'Missing prototype cannot bypass required selection');
-console.log('PASS: Russian alphabetic/numeric ordering, immutable catalog, 56px thumbnails, preview centering, search, keyboard, clicks, busy guard, unavailable sources and safe URLs');
+console.log('PASS: Russian alphabetic/numeric ordering, immutable catalog, 56px thumbnails, top-aligned collapsible preview, search, keyboard, clicks, busy guard, unavailable sources and safe URLs');
