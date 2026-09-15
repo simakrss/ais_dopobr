@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.477",
+    version: "1.7.478",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.478",
+      releasedAt: "2026-09-15",
+      changes: [
+        "В карточке программы кнопка закрытия размещена сразу после «Сохранить» и больше не переносится отдельно от неё."
+      ]
+    },
     {
       version: "1.7.477",
       releasedAt: "2026-09-15",
@@ -33508,26 +33515,31 @@ MAX - https://bizvmax.ru/zifra_plus
             data-program-commission-original-set-id="${escapeAttr(record?.commissionSetId || "")}"
             data-program-commission-base-revision="${sharedStateRevision}"
           >
-            <header class="modal-head">
-              <div>
+            <header class="modal-head program-modal-head">
+              <div class="program-modal-title">
                 <p class="eyebrow">${escapeHtml(config.title)}</p>
                 <h2 data-program-card-title>${escapeHtml(title)}</h2>
                 ${renderCardRecordLockStatus(record || {})}
               </div>
-              <div class="modal-head-actions">
-                ${state.modal?.id ? `
-                  <button
-                    class="ghost-button compact-button student-card-header-action"
-                    data-action="copy-program-with-training-plan"
-                    type="button"
-                    title="Создать копию программы вместе с учебным планом"
-                    aria-label="Создать копию программы вместе с учебным планом"
-                  >
-                    ${renderOrdersSdoIcon("copy")}
-                    <span>Дублировать</span>
-                  </button>
-                ` : ""}
-                <button class="primary-button" type="submit">Сохранить</button>
+              <div class="modal-head-actions program-modal-head-actions">
+                <div class="program-card-primary-actions">
+                  ${state.modal?.id ? `
+                    <button
+                      class="ghost-button compact-button student-card-header-action"
+                      data-action="copy-program-with-training-plan"
+                      type="button"
+                      title="Создать копию программы вместе с учебным планом"
+                      aria-label="Создать копию программы вместе с учебным планом"
+                    >
+                      ${renderOrdersSdoIcon("copy")}
+                      <span>Дублировать</span>
+                    </button>
+                  ` : ""}
+                  <div class="program-card-save-actions">
+                    <button class="primary-button" type="submit">Сохранить</button>
+                    <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
+                  </div>
+                </div>
                 <div class="student-card-nav program-card-nav" aria-label="Переход между карточками программ">
                   <button class="icon-button student-card-nav-button" data-action="navigate-program-card" data-direction="-1" type="button" title="Предыдущая программа" aria-label="Предыдущая программа" ${navigation.hasPrev ? "" : "disabled"}>
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"></path></svg>
@@ -33536,7 +33548,6 @@ MAX - https://bizvmax.ru/zifra_plus
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6l6 6-6 6"></path></svg>
                   </button>
                 </div>
-                <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
               </div>
             </header>
             <div class="program-modal-body">

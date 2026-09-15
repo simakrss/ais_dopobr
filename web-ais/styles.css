@@ -16550,6 +16550,52 @@ body.card-window-moving {
   gap: 10px;
 }
 
+.program-modal-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.program-modal-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.program-modal-head-actions {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.program-card-primary-actions,
+.program-card-save-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.program-card-save-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 600px) {
+  .program-modal-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .program-modal-head-actions {
+    justify-self: end;
+  }
+
+  .program-card-primary-actions {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+}
+
 .student-modal-head {
   align-items: flex-start;
 }
