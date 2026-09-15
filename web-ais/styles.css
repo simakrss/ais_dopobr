@@ -31100,7 +31100,8 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-generator-dialog .program-site-parameters-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
 .program-site-generator-dialog details > p { margin: 6px 0 0; }
 .program-site-generator-dialog .program-site-body label { gap: 3px; }
-.program-site-generator-dialog .program-site-prototype-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 7px 10px; min-width: 0; }
+.program-site-generator-dialog .program-site-prototype-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); align-items: end; gap: 7px 10px; min-width: 0; }
+.program-site-generator-dialog [data-site-prototype-link] { display: flex; justify-content: flex-end; }
 .program-site-generator-dialog .program-site-body input:not([type="checkbox"]),
 .program-site-generator-dialog .program-site-body select { min-height: 32px; padding: 5px 8px; }
 .program-site-generator-dialog .program-site-body .primary-button,

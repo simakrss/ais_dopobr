@@ -25,8 +25,10 @@ function preview(type = "ПРО", result = false) {
   const renderGenerator = new Function("configs", "renderField", "escapeAttr", `${extract(source, "  function renderProgramGeneratorFields(", "  function createProgramSiteProgress(")} return renderProgramGeneratorFields;`)({programs: {fields}}, renderField, escape);
   const program = {type, name: "Тестовая образовательная программа: актуальное название статьи как основной критерий конкурентоспособности автора", webinarDate: "2026-09-18", webinarTime: "18:00", webinarJoinUrl: "https://salutejazz.ru/example", siteSampleDate: "2026-09-15"};
   const renderPicker = new Function(`${extract(source, "  function renderProgramSiteImagePicker(", "  function bindProgramSiteImagePicker(")} return renderProgramSiteImagePicker;`)();
+  const renderLink = new Function("escapeAttr", "escapeHtml", `${source.match(/  function renderProgramSiteLink\([\s\S]*?\n  }/)[0]} return renderProgramSiteLink;`)(escape, escape);
   let html = new Function("escapeHtml", "type", "program", "bilingual", "renderProgramSiteImagePicker", `return ${markup};`)(escape, type, program, ["ПРО", "ДОП"].includes(type), renderPicker);
   html = html.replace("<details data-site-parameters>", "<details data-site-parameters open>")
+    .replace('<div data-site-prototype-link></div>', `<div data-site-prototype-link>${renderLink('https://edu-plus.ru/other_course/test-prototype/', 'Открыть прототип')}</div>`)
     .replace('<div data-site-parameters-host></div>', `<div data-site-parameters-host>${renderGenerator(program).replace('data-site-generator-fields hidden', 'data-site-generator-fields')}</div>`)
     .replace('required disabled><option value="">Загрузка…</option>', 'required><option value="42">Тестовый лендинг-прототип образовательной программы</option>');
   if (result) html = html.replace('<section data-site-result hidden></section>', '<section data-site-result><h3>Черновики подготовлены</h3><p>ID товара: 123; ID лендинга: 456</p><div class="program-site-actions"><a class="ghost-button compact-button" href="#">Просмотреть лендинг</a><a class="ghost-button compact-button" href="#">Редактировать товар</a></div><p class="muted">Образцы созданы для этой программы.</p><label class="program-site-review"><input type="checkbox"> Проверены все блоки лендинга и образцы документов</label><button class="primary-button" data-site-publish>Опубликовать</button></section>');
@@ -50,7 +52,8 @@ async function checks() {
   const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
   assert.match(css, /\.program-site-generator-dialog \.program-site-fields\s*\{[^}]*padding:\s*0;[^}]*gap:\s*7px 10px;/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-body\s*\{[^}]*gap:\s*8px;[^}]*padding:\s*10px 12px;/);
-  assert.match(css, /\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\)/);
+  assert.match(css, /\.program-site-generator-dialog \[data-site-prototype-link\]\s*\{[^}]*display: flex;[^}]*justify-content: flex-end;/);
   assert.match(css, /@media \(max-width: 600px\)\s*\{[^}]*\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css, /\.program-site-generator-dialog \[data-site-status\]:empty/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-parameters-actions\s*\{[^}]*display: flex;[^}]*justify-content: flex-end;/);
@@ -60,6 +63,7 @@ async function checks() {
     assert.match(html, /name="siteProductName"/); assert.match(html, /data-site-template[^>]*required/);
     assert.match(html, /data-site-prepare/); assert.match(html, /data-site-progress/); assert.match(html, /data-site-publish/);
     assert.match(html, /program-site-prototype-fields/);
+    assert.match(html, /data-site-prototype-link><a[^>]+target="_blank"[^>]+>Открыть прототип<\/a>/);
     assert.match(html, /class="primary-button" type="button" data-site-save-parameters/);
     if (type !== "ПРО") assert.match(html, /data-site-webinar-only hidden/);
   }
