@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.474",
+    version: "1.7.475",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.475",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Гиперссылки в текстовых полях, примечаниях и редакторах открываются двойным щелчком. Переход по Ctrl + щелчку сохранён; двойной щелчок по обычному тексту по-прежнему выделяет слово."
+      ]
+    },
     {
       version: "1.7.474",
       releasedAt: "2026-09-15",
@@ -33628,7 +33635,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderProgramPromoMessageEditor(item, record) {
     const value = String(record?.[item.key] ?? "");
-    const helpText = "Поддерживаются HTML и ссылки. Ctrl + щелчок открывает подсвеченную ссылку.";
+    const helpText = "Поддерживаются HTML и ссылки. Двойной щелчок или Ctrl + щелчок открывает подсвеченную ссылку.";
     return `
       <label class="program-promo-message-field" data-field-key="${escapeAttr(item.key)}">
         <span>${escapeHtml(item.label)}</span>
@@ -34197,7 +34204,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const isProgramExternalLink = state.modal?.config === "programs"
       && ["promoSite", "gradeReportUrl"].includes(item.key);
     const programExternalLinkAttrs = isProgramExternalLink
-      ? `data-program-external-link-field="${escapeAttr(item.key)}" title="Ctrl + щелчок: открыть ссылку из поля «${escapeAttr(item.label)}»"`
+      ? `data-program-external-link-field="${escapeAttr(item.key)}" title="Двойной щелчок или Ctrl + щелчок: открыть ссылку из поля «${escapeAttr(item.label)}»"`
       : "";
     const moneyStepAttribute = item.type === "number"
       ? getMoneyInputStepAttribute(state.modal?.config, item.key)
@@ -60248,7 +60255,7 @@ MAX - https://bizvmax.ru/zifra_plus
               aria-multiline="true"
               aria-label="${escapeAttr(`Значение поля ${normalizedName}`)}"
             ></div>
-            <small>Поддерживаются HTML, ссылки и изображения в формате data:image. Ctrl + щелчок открывает подсвеченную ссылку.</small>
+            <small>Поддерживаются HTML, ссылки и изображения в формате data:image. Двойной щелчок или Ctrl + щелчок открывает подсвеченную ссылку.</small>
           </label>
           <footer class="modal-actions">
             <button class="primary-button" type="submit">Сохранить</button>

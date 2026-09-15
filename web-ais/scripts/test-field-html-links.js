@@ -139,6 +139,10 @@ class MockOverlay {
     return selector === ".native-html-link-highlight-content" ? this.content : null;
   }
 
+  querySelectorAll() {
+    return this.links || [];
+  }
+
   remove() {
     if (!this.parentElement) return;
     this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
@@ -287,6 +291,7 @@ const api = window.AISFieldHtmlLinks;
 assert.ok(Object.isFrozen(api));
 assert.equal(typeof api.bind, "function");
 assert.equal(documentListeners.get("click").capture, true);
+assert.equal(documentListeners.get("dblclick").capture, true);
 assert.equal(documentListeners.get("input").capture, true);
 assert.equal(documentListeners.get("scroll").capture, true);
 assert.equal(documentListeners.get("keydown").capture, true);
@@ -356,6 +361,10 @@ function createClickEvent(target, options = {}) {
     calls,
     event: {
       target,
+      type: options.type || "click",
+      detail: options.detail || 0,
+      clientX: options.clientX,
+      clientY: options.clientY,
       ctrlKey: options.ctrlKey === true,
       metaKey: options.metaKey === true,
       button: options.button ?? 0,
@@ -723,4 +732,42 @@ assert.match(
   /version: "1\.7\.374"[\s\S]*?обычный текст больше не становится невидимым/u
 );
 
-console.log("field HTML link highlighting checks: OK");
+const doubleClick = documentListeners.get("dblclick").listener;
+for (const field of [...['text', 'search', 'email', 'url', 'tel'].map(type => new MockInput(source, type)), new MockTextarea(source)]) {
+  const host = new MockHost(); field.parentElement = host;
+  field.selectionStart = field.type === 'email' ? null : matches[0].start;
+  api.bind(field);
+  host.children[0].links = [{dataset: {templateExternalUrl: secondUrl}, getClientRects: () => [{left: 110, right: 200, top: 20, bottom: 34}]}];
+  let count = opened.length;
+  const event = createClickEvent(field, {type: 'dblclick', detail: 2, clientX: 140, clientY: 24});
+  doubleClick(event.event);
+  assert.equal(opened.length, ++count);
+  assert.equal(opened.at(-1).href, secondUrl, 'Double click follows pointer, not stale caret');
+  assert.equal(event.calls.preventDefault, 1);
+  for (const options of [
+    {clientX: 60, clientY: 24}, {clientX: 140, clientY: 45}, {clientX: 140, clientY: 11},
+    {clientX: 140, clientY: 24, button: 2}, {clientX: 140, clientY: 24, defaultPrevented: true},
+    {clientX: 140, clientY: 24, ctrlKey: true}, {clientX: 140, clientY: 24, metaKey: true}
+  ]) {
+    const skipped = createClickEvent(field, {type: 'dblclick', detail: 2, ...options});
+    doubleClick(skipped.event);
+    assert.equal(opened.length, count); assert.equal(skipped.calls.preventDefault, 0);
+  }
+  field.computedStyleOverrides = {paddingRight: '180px'};
+  doubleClick(createClickEvent(field, {type: 'dblclick', clientX: 140, clientY: 24}).event);
+  assert.equal(opened.length, count, 'Link behind clear-button inset must not open');
+}
+const span = {textContent: secondUrl, dataset: {templateExternalUrl: firstUrl}};
+const target = {closest: () => span};
+const countBefore = opened.length;
+doubleClick(createClickEvent(target, {type: 'dblclick', detail: 2}).event);
+assert.equal(opened.length, countBefore + 1); assert.equal(opened.at(-1).href, secondUrl);
+click(createClickEvent(target, {ctrlKey: true, detail: 1}).event);
+click(createClickEvent(target, {ctrlKey: true, detail: 2}).event);
+doubleClick(createClickEvent(target, {type: 'dblclick', ctrlKey: true, detail: 2}).event);
+assert.equal(opened.length, countBefore + 2, 'Ctrl-double-click opens only once');
+span.textContent = 'javascript:alert(1)';
+doubleClick(createClickEvent(target, {type: 'dblclick', detail: 2}).event);
+assert.equal(opened.length, countBefore + 2, 'Unsafe edited link is rejected');
+assert.match(rendered, /Двойной щелчок или Ctrl/u);
+console.log("field HTML link highlighting and double-click checks: OK");

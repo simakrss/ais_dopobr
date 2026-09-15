@@ -80,7 +80,7 @@
     let offset = 0;
     getMatches(source).forEach((item) => {
       result += escapeHtml(source.slice(offset, item.start));
-      result += `<span class="communication-template-html-link" data-template-external-url="${escapeHtml(item.url)}" title="${escapeHtml(`Ctrl + щелчок: открыть ${item.url}`)}">${escapeHtml(item.url)}</span>`;
+      result += `<span class="communication-template-html-link" data-template-external-url="${escapeHtml(item.url)}" title="${escapeHtml(`Двойной щелчок или Ctrl + щелчок: открыть ${item.url}`)}">${escapeHtml(item.url)}</span>`;
       offset = item.end;
     });
     return `${result}${escapeHtml(source.slice(offset))}`;
@@ -400,13 +400,32 @@
     positionFieldHighlight(field, overlay);
   }
 
+  function isLinkOpenGesture(event) {
+    if (event.defaultPrevented || Number(event.button || 0) !== 0) return false;
+    const modifier = event.ctrlKey || event.metaKey;
+    // A Ctrl-double-click already opens on its first click; do not open it again.
+    return event.type === "dblclick" ? !modifier : modifier && Number(event.detail || 0) < 2;
+  }
+
+  function getNativeFieldLinkAtPoint(field, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const overlay = fieldOverlays.get(field);
+    if (!overlay || overlay.hidden) return null;
+    const rect = field.getBoundingClientRect(), style = window.getComputedStyle(field);
+    const left = rect.left + (Number.parseFloat(style.borderLeftWidth) || 0);
+    const top = rect.top + (Number.parseFloat(style.borderTopWidth) || 0);
+    // Ignore clipped text, padding, scrollbar gutters and the clear-button area.
+    if (x < left + (Number.parseFloat(style.paddingLeft) || 0)
+      || x > left + field.clientWidth - (Number.parseFloat(style.paddingRight) || 0)
+      || y < top + (Number.parseFloat(style.paddingTop) || 0)
+      || y > top + field.clientHeight - (Number.parseFloat(style.paddingBottom) || 0)) return null;
+    return Array.from(overlay.querySelectorAll("[data-template-external-url]")).find(link => (
+      Array.from(link.getClientRects()).some(part => x >= part.left && x <= part.right && y >= part.top && y <= part.bottom)
+    )) || null;
+  }
+
   function handleNativeFieldClick(event) {
-    if (
-      event.defaultPrevented
-      || !(event.ctrlKey || event.metaKey)
-      || Number(event.button || 0) !== 0
-      || !isNativeField(event.target)
-    ) return false;
+    if (!isLinkOpenGesture(event) || !isNativeField(event.target)) return false;
     const field = event.target;
     syncFieldHighlight(field);
     let position = null;
@@ -422,7 +441,10 @@
         [link] = links;
       }
     }
-    const url = normalizeHttpUrl(link?.url || "");
+    // On double-click the browser may already have selected a word or moved the
+    // caret. Hit-test the painted URL instead of opening a nearby selected link.
+    const pointedLink = event.type === "dblclick" ? getNativeFieldLinkAtPoint(field, event.clientX, event.clientY) : null;
+    const url = normalizeHttpUrl(event.type === "dblclick" ? pointedLink?.dataset.templateExternalUrl : link?.url || "");
     if (!url) return false;
     event.preventDefault();
     event.stopImmediatePropagation?.();
@@ -432,11 +454,7 @@
   }
 
   function handleDocumentClick(event) {
-    if (
-      event.defaultPrevented
-      || !(event.ctrlKey || event.metaKey)
-      || Number(event.button || 0) !== 0
-    ) return;
+    if (!isLinkOpenGesture(event)) return;
     const renderedLink = event.target.closest?.("[data-template-external-url]");
     if (!renderedLink) {
       if (!handleNativeFieldClick(event)) handleEditableFieldClick(event);
@@ -550,6 +568,7 @@
       syncNativeFieldSelectionFromEvent({ target: document.activeElement });
     });
     document.addEventListener("click", handleDocumentClick, true);
+    document.addEventListener("dblclick", handleDocumentClick, true);
     window.addEventListener("blur", () => {
       setLinkModifierActive(false);
     });
