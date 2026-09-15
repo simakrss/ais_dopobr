@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.481",
+    version: "1.7.482",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.482",
+      releasedAt: "2026-09-15",
+      changes: [
+        "При создании программ ПРО, ДОП, КПК и ППП на сайте в интернет-магазине автоматически включается ограничение покупки до одного экземпляра товара в заказе и копируются категории товара выбранного прототипа."
+      ]
+    },
     {
       version: "1.7.481",
       releasedAt: "2026-09-15",

@@ -13,7 +13,7 @@ async function main() {
   const template = {id: 42, title: "Прототип", modified: "version", postType: "other-course", fields: {
     opisanie_dokumenta: fixtures[1].source, opisanie_o_programme: fixtures[2].source,
     tekst_etap_obucheniya_1: fixtures[6].source, blok_opisaniya_kursa: fixtures[7].source,
-    ssylka_na_registraciyu: "old", izobrazhenie_vydavaemogo_dokumenta: 1, prevyu_vydavaemogo_dokumenta_1: 1,
+    ssylka_na_registraciyu: "https://zifra-plus.ru/checkout/?add-to-cart=12", izobrazhenie_vydavaemogo_dokumenta: 1, prevyu_vydavaemogo_dokumenta_1: 1,
     izobrazhenie_vydavaemogo_dokumenta_2: 2, prevyu_vydavaemogo_dokumenta_2: 2
   }};
   const images = [{id: 11, language: "ru"}, {id: 12, language: "en"}], writes = [];

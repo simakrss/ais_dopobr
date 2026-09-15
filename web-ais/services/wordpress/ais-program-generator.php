@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.1
+ * Version: 1.7.2
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -428,12 +428,39 @@ function ais_pg_download_formats() {
     }
     return $formats;
 }
+function ais_pg_product_prototype_categories($data) {
+    // Older clients may resume a draft without category-copy parameters.
+    if (!array_key_exists('productTemplateId', $data)) return null;
+    $id = $data['productTemplateId'];
+    if ((!is_int($id) && !is_string($id)) || !preg_match('/^[1-9]\d*$/D', (string) $id) || (string) (int) $id !== (string) $id) throw new RuntimeException('Некорректный товар-прототип для копирования категорий.');
+    $product = wc_get_product((int) $id);
+    if (!$product || !$product->is_type('simple') || !in_array($product->get_status('edit'), array('draft', 'publish'), true)) throw new RuntimeException('Товар-прототип в интернет-магазине не найден или недоступен. Категории не скопированы. Проверьте ссылку регистрации прототипа.');
+    return array_map('intval', $product->get_category_ids('edit'));
+}
 function ais_pg_prepare_product($data) {
     if (!class_exists('WC_Product_Simple') || !class_exists('WC_Product_Download')) throw new RuntimeException('WooCommerce недоступен.');
     $id = ais_pg_find($data['key']);
     ais_pg_slug($data['slug'] ?? '', 'product', $id);
-    if ($id && get_post_meta($id, '_ais_generator_hash', true) === $data['hash']) return ais_pg_configure_product($id, $data);
-    if ($id && get_post_status($id) === 'publish') throw new RuntimeException('Товар уже опубликован с другими параметрами. Автоматическая перезапись запрещена.');
+    if ($id && get_post_meta($id, '_ais_generator_hash', true) !== $data['hash'] && get_post_status($id) === 'publish') throw new RuntimeException('Товар уже опубликован с другими параметрами. Автоматическая перезапись запрещена.');
+    $category_ids = ais_pg_product_prototype_categories($data);
+    if ($id && get_post_meta($id, '_ais_generator_hash', true) === $data['hash']) {
+        $product = wc_get_product($id);
+        if (!$product || !$product->is_type('simple')) throw new RuntimeException('Неверный тип ранее созданного товара.');
+        // Repair only this generated product when resuming preparation.
+        $changed = false;
+        if (!$product->get_sold_individually('edit')) {
+            $product->set_sold_individually(true);
+            $changed = true;
+        }
+        if ($category_ids !== null && ($product->get_category_ids('edit') !== $category_ids
+            || (int) get_post_meta($id, '_ais_generator_product_template', true) !== (int) $data['productTemplateId'])) {
+            $product->set_category_ids($category_ids);
+            $product->update_meta_data('_ais_generator_product_template', (int) $data['productTemplateId']);
+            $changed = true;
+        }
+        if ($changed && !$product->save()) throw new RuntimeException('Не удалось сохранить ограничение покупок и категории товара.');
+        return ais_pg_configure_product($id, $data);
+    }
     $name = sanitize_text_field($data['productName'] ?? '');
     if (!$name || mb_strlen($name) > 128 || !isset($data['price']) || !is_numeric($data['price']) || $data['price'] < 0 || $data['price'] > 10000000) throw new RuntimeException('Проверьте название товара (до 128 символов) и цену.');
     $type = ais_pg_program_type($data);
@@ -451,6 +478,11 @@ function ais_pg_prepare_product($data) {
     $product->set_status('draft');
     $product->set_virtual(true);
     $product->set_downloadable(true);
+    $product->set_sold_individually(true);
+    if ($category_ids !== null) {
+        $product->set_category_ids($category_ids);
+        $product->update_meta_data('_ais_generator_product_template', (int) $data['productTemplateId']);
+    }
     $product->set_catalog_visibility('hidden');
     $price = (string) $data['price'];
     $old = (float) ($data['oldPrice'] ?? 0);
@@ -848,7 +880,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.1', 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.2', 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

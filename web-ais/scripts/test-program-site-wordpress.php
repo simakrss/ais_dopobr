@@ -121,11 +121,13 @@ function wc_get_container() { return new class { function get($class) { return n
 function wc_get_logger() { return new class { function error($message, $context) { $GLOBALS['test_log'][] = array($message, $context); } }; }
 class WC_Product_Simple {
     public $id=0;
+    public $save_count=0;
     public $values=array(); public $meta=array();
     function is_type($type) { return $type==='simple'; }
     function __call($name,$args) { if (strpos($name,'get_')===0) return $this->values[substr($name,4)] ?? null; $this->values[substr($name,4)]=$args[0]; }
     function update_meta_data($key,$value) { $this->meta[$key]=$value; }
     function save() {
+        $this->save_count++;
         $id=$this->id ?: max(array_keys($GLOBALS['test_posts']))+1;
         $this->id=$id;
         $GLOBALS['test_posts'][$id]=array('type'=>'product','status'=>$this->values['status'],'key'=>$this->meta['_ais_generator_key'],'post_name'=>$this->values['slug'],'post_title'=>$this->values['name']);
@@ -180,6 +182,38 @@ define('OBJECT', 'OBJECT');
 require __DIR__ . '/../services/wordpress/ais-program-generator.php';
 function check($condition, $message) { if (!$condition) throw new RuntimeException('FAIL: ' . $message); }
 function rejects($callback, $message) { try { $callback(); } catch (RuntimeException $error) { return; } throw new RuntimeException('FAIL: ' . $message); }
+function check_purchase_limit($data, $id) {
+    $product = wc_get_product($id);
+    check($product->get_sold_individually('edit') === true, $data['type'] . ': new product is limited to one per order');
+    $before = serialize(array($product->values, $product->meta));
+    $post_count = count($GLOBALS['test_posts']);
+    $product->set_sold_individually(false);
+    $product->save();
+    $saved = $product->save_count;
+    check(ais_pg_mutate('prepare-product', $data)['id'] === $id, $data['type'] . ': retry keeps product ID');
+    check($product->get_sold_individually('edit') === true && $product->save_count === $saved + 1, $data['type'] . ': retry persists purchase limit on a legacy draft');
+    check(serialize(array($product->values, $product->meta)) === $before, $data['type'] . ': name, price, status and downloads remain unchanged');
+    $saved = $product->save_count;
+    ais_pg_mutate('prepare-product', $data);
+    check($product->save_count === $saved && count($GLOBALS['test_posts']) === $post_count, $data['type'] . ': repeated preparation does not save or duplicate an already limited product');
+}
+function category_prototype_fixture() {
+    $source = new WC_Product_Simple();
+    $source->set_name('Товар-прототип'); $source->set_slug('category-prototype'); $source->set_status('publish');
+    $source->set_category_ids(array(17, 29)); $source->update_meta_data('_ais_generator_key', '');
+    return $source->save();
+}
+function check_copied_categories($data, $id) {
+    $source = wc_get_product($data['productTemplateId']);
+    $source_before = serialize($source);
+    $product = wc_get_product($id);
+    check($product->get_category_ids('edit') === array(17, 29), $data['type'] . ': all shop categories copied from prototype');
+    check(get_post_meta($id, '_ais_generator_product_template') === $source->id, $data['type'] . ': shop prototype recorded independently of landing/image ID');
+    $product->set_category_ids(array(1)); $product->save();
+    ais_pg_mutate('prepare-product', $data);
+    check($product->get_category_ids('edit') === array(17, 29), $data['type'] . ': retry repairs categories, without retaining the default category');
+    check(serialize($source) === $source_before, $data['type'] . ': prototype itself is never saved or changed');
+}
 $code_request = array('key'=>str_repeat('9',64), 'postType'=>'courses-pk', 'slug'=>'osnovy-gramotnosti');
 $before_code = serialize(array($test_posts, $test_meta, $test_updates));
 check(ais_pg_landing_code($code_request)['slug'] === $code_request['slug'], 'Free code retained');
@@ -320,7 +354,10 @@ foreach (array('ДОП','КПК','ППП') as $course_type) {
     }
     check(ais_pg_mutate('publish',$landing_data)['status']==='publish','Course landing published after checks');
     $test_role='shop';
-    $product=ais_pg_mutate('prepare-product',array('key'=>$key,'hash'=>$hash,'type'=>$course_type,'slug'=>$landing_data['slug'],'productName'=>'Курс','price'=>100,'joinUrl'=>'not-a-url'));
+    $product_data=array('key'=>$key,'hash'=>$hash,'type'=>$course_type,'slug'=>$landing_data['slug'],'productName'=>'Курс','price'=>100,'joinUrl'=>'not-a-url','productTemplateId'=>category_prototype_fixture());
+    $product=ais_pg_mutate('prepare-product',$product_data);
+    check_purchase_limit($product_data, $product['id']);
+    check_copied_categories($product_data, $product['id']);
     check($test_product->values['downloadable']===true && count($test_product->values['downloads'])===1,'Every course has an education info download');
     check(ais_pg_download_target($product['id'])==='https://zifra-plus.ru/edu_info','Non-webinar download goes to education info');
     check(get_post_meta($product['id'],'_ais_webinar_file')==='' && get_post_meta($product['id'],'_ais_webinar_join_url')==='','No Jazz metadata for course');
@@ -330,9 +367,24 @@ foreach (array('ДОП','КПК','ППП') as $course_type) {
 // Public webinar HTML is accepted by WooCommerce and remains idempotent.
 $test_role = 'shop';
 $webinar_data = array('key'=>str_repeat('7',64), 'hash'=>str_repeat('8',64), 'type'=>'ПРО', 'slug'=>'new-webinar-txt',
-    'productName'=>'Онлайн-семинар', 'price'=>500, 'joinUrl'=>'https://jazz.sber.ru/meeting?psw=private-test#join');
+    'productName'=>'Онлайн-семинар', 'price'=>500, 'joinUrl'=>'https://jazz.sber.ru/meeting?psw=private-test#join','productTemplateId'=>category_prototype_fixture());
 check(ais_pg_download_formats() === array('html'=>true, 'txt'=>true), 'WooCommerce accepts generated HTML and existing TXT');
 $webinar_result = ais_pg_mutate('prepare-product', $webinar_data);
+check_purchase_limit($webinar_data, $webinar_result['id']);
+check_copied_categories($webinar_data, $webinar_result['id']);
+$category_before = serialize(array($test_posts, $test_meta, $test_products));
+foreach (array(0, -1, 1.5, true, array(), '001', 'missing', 999999) as $bad_id) rejects(function () use ($webinar_data, $bad_id) {
+    ais_pg_mutate('prepare-product', array_replace($webinar_data, array('productTemplateId'=>$bad_id)));
+}, 'Invalid or missing category prototype rejected before writes');
+check(serialize(array($test_posts, $test_meta, $test_products)) === $category_before, 'Failed category lookup leaves all products intact');
+$source = wc_get_product($webinar_data['productTemplateId']);
+$source->set_category_ids(array());
+check(ais_pg_product_prototype_categories($webinar_data) === array(), 'Empty prototype categories do not invent another category');
+$source->set_status('trash');
+rejects(function () use ($webinar_data) { ais_pg_product_prototype_categories($webinar_data); }, 'Trashed prototype refused');
+$source->set_status('publish'); $source->set_category_ids(array(17, 29));
+check(ais_pg_product_prototype_categories(array()) === null, 'Old clients do not clear existing categories');
+echo "PASS: purchase limit and shop prototype categories for ПРО, ДОП, КПК and ППП, legacy draft repair, idempotent retries and source protection\n";
 $connection = get_post_meta($webinar_result['id'], '_ais_webinar_file');
 $connection_path = ABSPATH . 'wp-content/uploads/dae-uploads/webinars/new-webinar-txt.html';
 check($connection === 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/new-webinar-txt.html', 'Public HTML URL uses exact landing code');

@@ -316,6 +316,28 @@ function buildLandingFields(template, model, productId, certificates) {
   return fields;
 }
 
+function prototypeProductId(template) {
+  const fields = template.fields || {};
+  const links = [];
+  const collect = (value, name = "") => {
+    if (name === "blok_opisaniya_kursa" || /otzyv|review/i.test(name)) return;
+    if (name === "ssylka_na_registraciyu" && typeof value === "string") links.push(value);
+    else if (Array.isArray(value)) value.forEach(item => collect(item));
+    else if (value && typeof value === "object") Object.entries(value).forEach(([key, item]) => collect(item, key));
+  };
+  // The generator keeps the first price offer, so its shop product is the prototype.
+  collect(fields.blok_ceny);
+  collect(fields);
+  for (const link of links) {
+    let url;
+    try { url = new URL(link.replace(/&(?:amp|#0*38|#x0*26);/gi, "&").trim()); } catch { continue; }
+    if (!["https:", "http:"].includes(url.protocol) || url.hostname !== "zifra-plus.ru" || url.username || url.password || url.port) continue;
+    const ids = url.searchParams.getAll("add-to-cart");
+    if (ids.length === 1 && /^[1-9]\d*$/.test(ids[0]) && Number.isSafeInteger(Number(ids[0]))) return Number(ids[0]);
+  }
+  fail("В прототипе не найдена ссылка регистрации на товар zifra-plus.ru для копирования категорий. Проверьте прототип.");
+}
+
 function payloadHash(model, templateId, certificateHash) {
   return crypto.createHash("sha256").update(JSON.stringify({model, templateId: Number(templateId), certificateHash})).digest("hex");
 }
@@ -327,6 +349,7 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   // Validate the prototype before creating anything in either website.
   if (!certificate?.hash || typeof certificate.generate !== "function") fail("Автосоздание сертификатов не подключено. Обновите систему.", 503);
   buildLandingFields(template, model, 1, [{language: "ru", id: 1}, {language: PROGRAM_TYPES[model.type].bilingual ? "en" : "page-2", id: 2}]);
+  const productTemplateId = prototypeProductId(template);
   const hash = payloadHash(model, templateId, certificate.hash);
   report("Формирование образцов документов об образовании");
   const images = await certificate.generate(report);
@@ -335,7 +358,7 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   if (!Array.isArray(assets.images) || assets.images.length !== images.length || images.some((image, index) => assets.images[index]?.language !== image.language)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
   buildLandingFields(template, model, 1, assets.images);
   report("Создание черновика товара на zifra-plus.ru");
-  const product = await call("shop", "/prepare-product", {...model, hash, imageUrl: model.imageSource?.imageUrl || template.imageUrl || ""});
+  const product = await call("shop", "/prepare-product", {...model, hash, productTemplateId, imageUrl: model.imageSource?.imageUrl || template.imageUrl || ""});
   const fields = buildLandingFields(template, model, product.id, assets.images);
   report("Создание лендинга с отзывами и образцами документов");
   const landing = await call("edu", "/prepare-landing", {
@@ -472,4 +495,4 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   return {ok: true, landing, product, syncedAt: new Date().toISOString()};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};

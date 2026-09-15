@@ -31,6 +31,7 @@ async function main() {
     const result = await pg.prepare({...program, type}, 42, call, cert);
     assert.equal(result.imageSourceId, 77);
     assert.equal(calls.find(c => c.endpoint === "/prepare-product").body.imageUrl, source.imageUrl);
+    assert.equal(calls.find(c => c.endpoint === "/prepare-product").body.productTemplateId, 12, "Shop category source is the landing's product, not the separately selected image source");
     assert.deepEqual(calls.find(c => c.endpoint === "/prepare-landing").body.imageSource, source);
     assert.equal(calls.some(c => c.endpoint === "/publish"), false, "Selecting an image cannot publish a draft");
     currentSource = {...source, version: "c".repeat(64)};

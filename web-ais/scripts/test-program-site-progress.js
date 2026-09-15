@@ -24,7 +24,7 @@ async function main() {
   store.start("admin", id2).finish("completed"); assert.equal(store.read("admin", id2).status, "completed");
 
   const phases = [], program = {id: "test", type: "ДОП", name: "Тест", price: 0, hours: 2, landingCode: "test-program"};
-  const template = {title: "Прототип", postType: "other-course", fields: {ssylka_na_registraciyu: "old", izobrazhenie_vydavaemogo_dokumenta: 1,
+  const template = {title: "Прототип", postType: "other-course", fields: {ssylka_na_registraciyu: "https://zifra-plus.ru/checkout/?add-to-cart=12", izobrazhenie_vydavaemogo_dokumenta: 1,
     prevyu_vydavaemogo_dokumenta_1: 1, izobrazhenie_vydavaemogo_dokumenta_2: 2, prevyu_vydavaemogo_dokumenta_2: 2}};
   const images = [{id: 1, language: "ru"}, {id: 2, language: "en"}];
   const certificate = {hash: "a".repeat(64), generate: async report => { report("Изображения страниц"); return images; }};
