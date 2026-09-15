@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.484",
+    version: "1.7.485",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.485",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Во время сбора email-адресов показываются анимированная полоса и прошедшее время, в том числе при наличии результатов предыдущего поиска."
+      ]
+    },
     {
       version: "1.7.484",
       releasedAt: "2026-09-15",
@@ -7018,6 +7025,7 @@ MAX - https://bizvmax.ru/zifra_plus
       tab: "collector",
       sourcePickerExpanded: false,
       loading: false,
+      collectionStartedAt: 0,
       loaded: false,
       resultLoading: false,
       resultLoaded: false,
@@ -16086,6 +16094,33 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${minutes} мин. ${String(seconds).padStart(2, "0")} сек.`;
   }
 
+  function getAdvertisingCollectionElapsed() {
+    const startedAt = Number(state.advertising.collectionStartedAt) || 0;
+    return formatAdvertisingDuration(startedAt ? Math.max(0, Date.now() - startedAt) : 0);
+  }
+
+  function renderAdvertisingCollectionProgress() {
+    if (!state.advertising.loading) return "";
+    return `
+      <div class="advertising-collection-progress" data-advertising-collection-progress>
+        <div class="advertising-collection-progress-heading">
+          <strong role="status">Сбор адресов выполняется</strong>
+          <span class="advertising-collection-elapsed" aria-live="off">Прошло: <span data-advertising-collection-elapsed>${escapeHtml(getAdvertisingCollectionElapsed())}</span></span>
+        </div>
+        <div class="advertising-collection-progress-track" role="progressbar" aria-label="Сбор email-адресов">
+          <span aria-hidden="true"></span>
+        </div>
+        <small>Источники опрашиваются, адреса объединяются. Дождитесь завершения.</small>
+      </div>
+    `;
+  }
+
+  function updateAdvertisingCollectionElapsed() {
+    if (!state.advertising.loading || state.view !== "advertising") return;
+    const elapsed = document.querySelector("[data-advertising-collection-elapsed]");
+    if (elapsed) elapsed.textContent = getAdvertisingCollectionElapsed();
+  }
+
   function formatAdvertisingEmailReceivedDate(value) {
     const date = new Date(value);
     return Number.isFinite(date.getTime())
@@ -17118,6 +17153,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </button>
             </div>
           </div>
+          ${renderAdvertisingCollectionProgress()}
           ${advertising.error ? `<div class="advertising-inline-message is-error" role="alert">${escapeHtml(advertising.error)}</div>` : ""}
           ${advertising.notice ? `<div class="advertising-inline-message is-success" role="status">${escapeHtml(advertising.notice)}</div>` : ""}
           ${isAdminUser() ? `<div class="advertising-source-picker">
@@ -17549,11 +17585,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     let refreshHistory = false;
     let revealNewAddresses = false;
+    let progressTimer = null;
     advertising.loading = true;
+    advertising.collectionStartedAt = Date.now();
     advertising.error = "";
     advertising.notice = "";
-    if (state.view === "advertising") render();
     try {
+      if (state.view === "advertising") render();
+      progressTimer = setInterval(updateAdvertisingCollectionElapsed, 1000);
       const response = await fetch(photoApiUrl("/api/advertising/email-collector/collect"), {
         method: "POST",
         credentials: "same-origin",
@@ -17589,7 +17628,9 @@ MAX - https://bizvmax.ru/zifra_plus
       advertising.error = error.message || "Не удалось собрать и сохранить email-адреса.";
       advertising.loaded = true;
     } finally {
+      if (progressTimer !== null) clearInterval(progressTimer);
       advertising.loading = false;
+      advertising.collectionStartedAt = 0;
       if (state.view === "advertising") {
         render();
         if (revealNewAddresses) {

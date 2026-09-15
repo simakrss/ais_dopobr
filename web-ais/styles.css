@@ -27438,8 +27438,72 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 }
 
 .advertising-heading-actions .auth-spinner {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
   width: 16px;
   height: 16px;
+}
+
+.advertising-collection-progress {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-soft);
+}
+
+.advertising-collection-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.advertising-collection-elapsed {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.advertising-collection-progress small {
+  color: var(--muted);
+}
+
+.advertising-collection-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, .14);
+}
+
+.advertising-collection-progress-track > span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+  animation: advertising-collection-progress 1.6s ease-in-out infinite;
+}
+
+@keyframes advertising-collection-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(286%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .advertising-collection-progress-track > span {
+    animation: none;
+    width: 100%;
+    opacity: .55;
+  }
+
+  .advertising-heading-actions .auth-spinner {
+    animation: none;
+  }
 }
 
 .advertising-source-toolbar {
