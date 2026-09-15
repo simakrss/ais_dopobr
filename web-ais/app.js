@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.469",
+    version: "1.7.470",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.470",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Генератор ПРО создаёт HTML-файл подключения к SberJazz в uploads/dae-uploads/webinars с именем по коду лендинга и добавляет его URL в скачиваемые файлы товара. Повторная подготовка обновляет старый TXT без потери других вложений."
+      ]
+    },
     {
       version: "1.7.469",
       releasedAt: "2026-09-15",

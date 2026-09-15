@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: АИС — генератор образовательных программ
- * Description: Копирование проверяемых черновиков и защищённое подключение к вебинарам.
- * Version: 1.6.0
+ * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
+ * Version: 1.7.0
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -361,15 +361,55 @@ function ais_pg_prepare_landing($data) {
     update_post_meta($id, '_ais_generator_hash', $data['hash']);
     return ais_pg_result($id);
 }
-function ais_pg_connection_file($key, $name, $url, $type = 'ПРО') {
-    // A connection link must never be stored in a predictable public uploads file.
+function ais_pg_public_webinar_file($key, $slug, $name, $url) {
+    if (ais_pg_role() !== 'shop' || !preg_match('/^[a-f0-9]{64}$/D', $key)
+        || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Проверьте код файла подключения к вебинару.');
+    $url = ais_pg_join_url($url);
+    $uploads = wp_upload_dir();
+    if (!empty($uploads['error']) || !preg_match('~^https?://zifra-plus\.ru/wp-content/uploads/?$~D', $uploads['baseurl'] ?? '')) {
+        throw new RuntimeException('Не удалось определить папку скачиваемых файлов магазина.');
+    }
+    $dir = rtrim($uploads['basedir'], '/\\') . '/dae-uploads/webinars';
+    $locks = dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files/public-locks';
+    if (!wp_mkdir_p($dir) || !wp_mkdir_p($locks)) throw new RuntimeException('Не удалось создать папку файлов подключения.');
+    // This public HTML is intentional: the administrator requested a direct
+    // webinar URL. Only escaped text/HTTPS URLs are written, never template HTML.
+    $marker = '<!-- AIS webinar ' . $key . ' -->';
+    $href = htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $title = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $content = "<!doctype html>\n<html lang=\"ru\"><head><meta charset=\"utf-8\">\n"
+        . $marker . "\n<meta name=\"robots\" content=\"noindex, nofollow\"><meta name=\"referrer\" content=\"no-referrer\">\n"
+        . '<meta http-equiv="refresh" content="0;URL=' . $href . '"><title>' . $title . "</title></head>\n"
+        . '<body><p>Подключение к вебинару: ' . $title . '</p><p>Если переход не произошёл автоматически, '
+        . '<a rel="noreferrer" href="' . $href . '">нажмите здесь для подключения</a>.</p></body></html>' . "\n";
+    $file = $dir . '/' . $slug . '.html';
+    $lock = fopen($locks . '/' . $slug . '.lock', 'c');
+    if (!$lock) throw new RuntimeException('Не удалось открыть файл подключения для сохранения.');
+    $temporary = false;
+    try {
+        if (!flock($lock, LOCK_EX | LOCK_NB)) throw new RuntimeException('Файл подключения сейчас занят. Повторите подготовку.');
+        if (is_link($file) || (file_exists($file) && (!is_file($file) || strpos((string) file_get_contents($file), $marker) === false))) {
+            throw new RuntimeException('HTML-файл с таким кодом уже существует и создан не этой программой. Он не изменён; выберите другой код.');
+        }
+        if (!is_file($file) || file_get_contents($file) !== $content) {
+            $temporary = tempnam($dir, '.ais-');
+            if (!$temporary || file_put_contents($temporary, $content, LOCK_EX) !== strlen($content)
+                || !chmod($temporary, 0644) || !rename($temporary, $file)) throw new RuntimeException('Не удалось сохранить HTML-файл подключения. Повторите подготовку.');
+            $temporary = false;
+        }
+    } finally {
+        if ($temporary && is_file($temporary)) unlink($temporary);
+        flock($lock, LOCK_UN); fclose($lock);
+    }
+    return 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/' . $slug . '.html';
+}
+function ais_pg_connection_file($key, $name, $url, $type = 'ПРО', $slug = '') {
+    if ($type === 'ПРО') return ais_pg_public_webinar_file($key, $slug, $name, $url);
+    // Keep the existing private education-info downloads for non-webinar courses.
     $dir = dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files/' . $key;
     if (!wp_mkdir_p($dir)) throw new RuntimeException('Не удалось создать защищённую папку подключения.');
-    // HTML is not an allowed WooCommerce download type on standard WordPress.
-    // The private TXT file satisfies its file checks; the authorized download
-    // hook below still redirects the purchaser to the full Jazz connection URL.
     $file = $dir . '/connection.txt';
-    $content = $name . "\r\n\r\n" . ($type === 'ПРО' ? 'Подключиться к вебинару SberJazz:' : 'Информация об обучении:') . "\r\n" . $url . "\r\n";
+    $content = $name . "\r\n\r\nИнформация об обучении:\r\n" . $url . "\r\n";
     if (file_put_contents($file, $content, LOCK_EX) !== strlen($content)) throw new RuntimeException('Не удалось сохранить файл подключения.');
     @chmod($file, 0600);
     return $file;
@@ -396,8 +436,8 @@ function ais_pg_prepare_product($data) {
     $webinar = $type === 'ПРО';
     ais_pg_redirect_manager();
     $url = $webinar ? ais_pg_join_url($data['joinUrl'] ?? '') : 'https://zifra-plus.ru/edu_info';
-    $file = ais_pg_connection_file($data['key'], $name, $url, $type);
-    // Approve only this generator's private directory, without weakening global checks.
+    $file = ais_pg_connection_file($data['key'], $name, $url, $type, $data['slug']);
+    // Approve only the download's own directory; retain WooCommerce validation.
     $registry_class = 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register';
     if (class_exists($registry_class)) wc_get_container()->get($registry_class)->add_approved_directory(dirname($file) . '/', true);
     $product = $id ? wc_get_product($id) : new WC_Product_Simple();
@@ -424,7 +464,7 @@ function ais_pg_prepare_product($data) {
             try { $download->check_is_valid(false); }
             catch (Throwable $error) {
                 ais_pg_log_failure($error, 'validate-webinar-download');
-                throw new RuntimeException('WooCommerce отклонил файл подключения. Проверьте доступ к защищённой папке и разрешение файлов TXT в настройках магазина.');
+                throw new RuntimeException('WooCommerce отклонил файл подключения. Проверьте доступ к папке скачиваемых файлов и разрешение формата HTML/TXT в магазине.');
             }
         }
         $downloads[] = $download;
@@ -554,6 +594,37 @@ function ais_pg_product_image($url) {
 }
 function ais_pg_configure_product($id, $data) {
     if (ais_pg_role() !== 'shop' || !get_post_meta($id, '_ais_generator_key', true)) throw new RuntimeException('Настройка доступна только для товара генератора.');
+    if ((get_post_meta($id, '_ais_program_type', true) ?: 'ПРО') === 'ПРО') {
+        $key = get_post_meta($id, '_ais_generator_key', true);
+        $name = $data['productName'] ?? get_post_field('post_title', $id);
+        $file = ais_pg_public_webinar_file($key, get_post_field('post_name', $id), $name, get_post_meta($id, '_ais_webinar_join_url', true));
+        $previous = get_post_meta($id, '_ais_download_file', true) ?: get_post_meta($id, '_ais_webinar_file', true);
+        // Re-preparing an older ready draft upgrades its private TXT in place.
+        // Keep the download ID (existing permissions) and unrelated attachments.
+        if ($previous !== $file) {
+            $product = wc_get_product($id);
+            if (!$product || !$product->is_type('simple')) throw new RuntimeException('Не найден товар для обновления файла подключения.');
+            $downloads = $product->get_downloads('edit');
+            $download_id = substr($key, 0, 32);
+            foreach ($downloads as $index => $existing) {
+                if ($existing->get_id() === $download_id || $existing->get_file() === $previous) {
+                    $download_id = $existing->get_id(); unset($downloads[$index]); break;
+                }
+            }
+            $download = new WC_Product_Download();
+            $download->set_id($download_id);
+            $download->set_name('Подключение к вебинару — ' . $name);
+            $download->set_file($file);
+            $registry_class = 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register';
+            if (class_exists($registry_class)) wc_get_container()->get($registry_class)->add_approved_directory(dirname($file) . '/', true);
+            if (method_exists($download, 'check_is_valid')) $download->check_is_valid(false);
+            $downloads[$download_id] = $download;
+            $product->set_downloads($downloads);
+            $product->update_meta_data('_ais_webinar_file', $file);
+            $product->update_meta_data('_ais_download_file', $file);
+            if (!$product->save()) throw new RuntimeException('Не удалось обновить скачиваемый файл товара.');
+        }
+    }
     $enabled = get_post_status($id) === 'publish' && get_post_meta($id, '_ais_landing_redirect', true) === '1';
     $rule_ids = ais_pg_save_product_redirects($id, $enabled);
     if (!empty($data['imageUrl'])) {
@@ -773,7 +844,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.6.0', 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.0', 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -834,8 +905,17 @@ add_action('wp_loaded', function () {
     nocache_headers();
     wp_die(esc_html($message), 'Регистрация ещё не открыта', array('response' => 409, 'back_link' => true));
 }, 5);
+// Allow HTML as a WooCommerce download, not as a general media-library upload.
+// This also permits later edits of the generated download in the product editor.
+add_filter('woocommerce_downloadable_file_allowed_mime_types', function ($types) {
+    if (ais_pg_role() === 'shop') $types['html'] = 'text/html';
+    return $types;
+});
 // This filter runs ONLY after WooCommerce has checked download/order permissions.
 add_filter('woocommerce_file_download_method', function ($method, $id, $file) {
+    // Public HTML files use WooCommerce's standard handler. Retain the legacy
+    // private-file redirect for existing orders and non-webinar programs.
+    if (strpos($file, 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/') === 0) return $method;
     return get_post_meta($id, '_ais_generator_key', true) && $file === (get_post_meta($id, '_ais_download_file', true) ?: get_post_meta($id, '_ais_webinar_file', true)) ? 'ais_webinar' : $method;
 }, 10, 3);
 add_action('woocommerce_download_file_ais_webinar', function ($file, $filename) {

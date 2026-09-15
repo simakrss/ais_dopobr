@@ -10,6 +10,13 @@ define('ABSPATH', $test_dir . '/wordpress/');
 file_put_contents($test_dir . '/ais-program-site.key', str_repeat('a',64));
 register_shutdown_function(function () use ($test_dir) {
     foreach (glob($test_dir . '/ais-webinar-files/*/connection.txt') as $file) { unlink($file); rmdir(dirname($file)); }
+    foreach (glob($test_dir . '/ais-webinar-files/public-locks/*.lock') as $file) unlink($file);
+    if (is_dir($test_dir . '/ais-webinar-files/public-locks')) rmdir($test_dir . '/ais-webinar-files/public-locks');
+    foreach (glob($test_dir . '/wordpress/wp-content/uploads/dae-uploads/webinars/*.html') as $file) unlink($file);
+    foreach (array('wp-content/uploads/dae-uploads/webinars', 'wp-content/uploads/dae-uploads', 'wp-content/uploads', 'wp-content') as $suffix) {
+        $dir = $test_dir . '/wordpress/' . $suffix;
+        if (is_dir($dir)) rmdir($dir);
+    }
     if (is_dir($test_dir . '/ais-webinar-files')) rmdir($test_dir . '/ais-webinar-files');
     foreach (glob($test_dir . '/certificate-sample-*.jpg') as $file) unlink($file);
     foreach (glob($test_dir . '/landing-*') as $file) unlink($file);
@@ -89,35 +96,46 @@ class WF301_functions {
 }
 function get_object_taxonomies($type, $output) { return array(); }
 function wp_mkdir_p($path) { return is_dir($path) || mkdir($path, 0700, true); }
+function wp_upload_dir() { return array('baseurl'=>'https://zifra-plus.ru/wp-content/uploads', 'basedir'=>ABSPATH . 'wp-content/uploads', 'error'=>false); }
 class WC_Product_Download {
     public $file; public $id; public $name;
     function set_file($file) { $this->file = $file; }
     function set_id($id) { $this->id = $id; }
     function set_name($name) { $this->name = $name; }
-    function is_allowed_filetype() { return pathinfo($this->file, PATHINFO_EXTENSION) === 'txt'; }
+    function get_file() { return $this->file; }
+    function get_id() { return $this->id; }
+    function is_allowed_filetype() {
+        $types = $GLOBALS['test_filters']['woocommerce_downloadable_file_allowed_mime_types'][0](array('txt'=>'text/plain'));
+        return isset($types[pathinfo($this->file, PATHINFO_EXTENSION)]);
+    }
     function check_is_valid($auto_add = true) {
-        if ($auto_add || !$this->is_allowed_filetype() || !is_file($this->file) || ($GLOBALS['test_approved_dir'] ?? '') !== dirname($this->file) . '/') throw new Exception('Download rejected: secret URL/path must not leak');
+        $local = str_replace('https://zifra-plus.ru/wp-content/uploads', ABSPATH . 'wp-content/uploads', $this->file);
+        if ($auto_add || !$this->is_allowed_filetype() || !is_file($local) || ($GLOBALS['test_approved_dir'] ?? '') !== dirname($this->file) . '/') throw new Exception('Download rejected: secret URL/path must not leak');
     }
 }
 class TestApprovedDirectories {
-    function add_approved_directory($dir, $enabled) { check($enabled, 'Only private directory enabled'); $GLOBALS['test_approved_dir'] = $dir; }
+    function add_approved_directory($dir, $enabled) { check($enabled, 'Download directory enabled'); $GLOBALS['test_approved_dir'] = $dir; }
 }
 class_alias('TestApprovedDirectories', 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register');
 function wc_get_container() { return new class { function get($class) { return new $class(); } }; }
 function wc_get_logger() { return new class { function error($message, $context) { $GLOBALS['test_log'][] = array($message, $context); } }; }
 class WC_Product_Simple {
+    public $id=0;
     public $values=array(); public $meta=array();
     function is_type($type) { return $type==='simple'; }
-    function __call($name,$args) { $this->values[substr($name,4)]=$args[0]; }
+    function __call($name,$args) { if (strpos($name,'get_')===0) return $this->values[substr($name,4)] ?? null; $this->values[substr($name,4)]=$args[0]; }
     function update_meta_data($key,$value) { $this->meta[$key]=$value; }
     function save() {
-        $id=max(array_keys($GLOBALS['test_posts']))+1;
-        $GLOBALS['test_posts'][$id]=array('type'=>'product','status'=>$this->values['status'],'key'=>$this->meta['_ais_generator_key'],'post_name'=>$this->values['slug']);
+        $id=$this->id ?: max(array_keys($GLOBALS['test_posts']))+1;
+        $this->id=$id;
+        $GLOBALS['test_posts'][$id]=array('type'=>'product','status'=>$this->values['status'],'key'=>$this->meta['_ais_generator_key'],'post_name'=>$this->values['slug'],'post_title'=>$this->values['name']);
         $GLOBALS['test_meta'][$id]=$this->meta;
         $GLOBALS['test_product']=$this;
+        $GLOBALS['test_products'][$id]=$this;
         return $id;
     }
 }
+function wc_get_product($id) { return $GLOBALS['test_products'][$id] ?? null; }
 function wp_upload_bits($name, $unused, $bytes) {
     $file = $GLOBALS['test_dir'] . '/' . $name; file_put_contents($file, $bytes);
     return array('file'=>$file, 'url'=>'https://edu-plus.ru/wp-content/uploads/' . $name, 'error'=>false);
@@ -309,23 +327,58 @@ foreach (array('ДОП','КПК','ППП') as $course_type) {
     check(get_post_meta($product['id'],'_ais_landing_url')===ais_pg_landing_url($course_type,$landing_data['slug']),'Correct course redirect URL');
     check(strpos(file_get_contents(get_post_meta($product['id'],'_ais_download_file')), 'https://zifra-plus.ru/edu_info') !== false,'Private info file created without Jazz URL');
 }
-// Webinar branch must use a private, allowed TXT file and remain idempotent.
+// Public webinar HTML is accepted by WooCommerce and remains idempotent.
 $test_role = 'shop';
 $webinar_data = array('key'=>str_repeat('7',64), 'hash'=>str_repeat('8',64), 'type'=>'ПРО', 'slug'=>'new-webinar-txt',
     'productName'=>'Онлайн-семинар', 'price'=>500, 'joinUrl'=>'https://jazz.sber.ru/meeting?psw=private-test#join');
-check(ais_pg_download_formats() === array('html'=>false, 'txt'=>true), 'Reproduce standard WooCommerce HTML rejection');
+check(ais_pg_download_formats() === array('html'=>true, 'txt'=>true), 'WooCommerce accepts generated HTML and existing TXT');
 $webinar_result = ais_pg_mutate('prepare-product', $webinar_data);
 $connection = get_post_meta($webinar_result['id'], '_ais_webinar_file');
-check($connection === $test_dir . '/ais-webinar-files/' . $webinar_data['key'] . '/connection.txt', 'Connection remains outside public WordPress');
-check(strpos(file_get_contents($connection), $webinar_data['joinUrl']) !== false, 'Complete private meeting URL retained');
+$connection_path = ABSPATH . 'wp-content/uploads/dae-uploads/webinars/new-webinar-txt.html';
+check($connection === 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/new-webinar-txt.html', 'Public HTML URL uses exact landing code');
+check(strpos(file_get_contents($connection_path), $webinar_data['joinUrl']) !== false, 'Complete meeting URL retained');
+check($test_product->values['downloads'][0]->get_file() === $connection, 'Product downloadable files contains the public HTML URL');
 check($test_product->values['downloadable'] === true && count($test_product->values['downloads']) === 1, 'Webinar has one authorized download');
 check(ais_pg_mutate('prepare-product', $webinar_data)['id'] === $webinar_result['id'], 'Retry does not duplicate the product');
 $download_hook = $test_filters['woocommerce_file_download_method'][0];
-check($download_hook('force', $webinar_result['id'], $connection) === 'ais_webinar', 'Authorized WooCommerce handler keeps redirecting to Jazz');
+check($download_hook('force', $webinar_result['id'], $connection) === 'force', 'Public HTML uses standard WooCommerce delivery');
 check($download_hook('force', $webinar_result['id'], '/another-file.txt') === 'force', 'No download authorization bypass for other files');
 ais_pg_log_failure(new Exception('private-test password full/path'), 'test-error');
 check(strpos(json_encode($test_log), 'private-test') === false, 'Diagnostic log excludes secret error messages');
-echo "PASS: private TXT webinar download, strict MIME/path validation, complete Jazz URL, own-product retry, authorization hooks, redacted diagnostics\n";
+// The provided example's meta refresh plus a fallback link, with safe escaping.
+$full_join = 'https://salutejazz.ru/calls/example?psw=AbCd_123&name=%D0%90#join';
+$html_url = ais_pg_public_webinar_file($webinar_data['key'], 'web_nazv', '<script>alert(1)</script> & семинар', $full_join);
+$html_path = ABSPATH . 'wp-content/uploads/dae-uploads/webinars/web_nazv.html';
+$html = file_get_contents($html_path);
+check($html_url === 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/web_nazv.html', 'Underscore in code is preserved');
+check(preg_match('/<meta http-equiv="refresh" content="0;URL=([^"]+)">/', $html, $refresh) === 1, 'Immediate redirect matches the supplied example');
+check(html_entity_decode($refresh[1], ENT_QUOTES, 'UTF-8') === $full_join, 'Query/password case and fragment survive HTML escaping');
+check(strpos($html, '<script>') === false && strpos($html, '&lt;script&gt;') !== false && strpos($html, '<a rel="noreferrer"') !== false, 'Escaped title and clickable fallback');
+check(!isset($test_filters['upload_mimes']), 'No global media upload permissions changed');
+$test_role = 'edu'; check(ais_pg_download_formats()['html'] === false, 'HTML download MIME is limited to the shop'); $test_role = 'shop';
+foreach (array('../bad', 'a', 'bad.html', 'Uppercase', 'bad/name') as $slug) rejects(function () use ($webinar_data, $slug, $full_join) {
+    ais_pg_public_webinar_file($webinar_data['key'], $slug, 'Test', $full_join);
+}, 'Invalid/path-traversal slug rejected');
+rejects(function () use ($webinar_data) { ais_pg_public_webinar_file($webinar_data['key'], 'web_nazv', 'Test', 'javascript:alert(1)'); }, 'Unsafe redirect rejected');
+rejects(function () use ($full_join) { ais_pg_public_webinar_file(str_repeat('9',64), 'web_nazv', 'Other', $full_join); }, 'Another program cannot overwrite HTML');
+check(file_get_contents($html_path) === $html, 'Collision leaves existing file intact');
+$manual_path = dirname($html_path) . '/manual.html'; file_put_contents($manual_path, 'Manual file');
+rejects(function () use ($webinar_data, $full_join) { ais_pg_public_webinar_file($webinar_data['key'], 'manual', 'Test', $full_join); }, 'Manual files not replaced');
+check(file_get_contents($manual_path) === 'Manual file', 'Manual file unchanged');
+ais_pg_public_webinar_file($webinar_data['key'], 'web_nazv', 'Updated', 'https://salutejazz.ru/calls/updated');
+check(strpos(file_get_contents($html_path), 'https://salutejazz.ru/calls/updated') !== false && strpos(file_get_contents($html_path), $full_join) === false, 'Same program updates its connection file');
+// Upgrade a ready legacy product without replacing extra downloads/permissions.
+$legacy_product = wc_get_product($webinar_result['id']);
+$legacy = clone $legacy_product->values['downloads'][0]; $legacy->set_file('/private/connection.txt');
+$extra = new WC_Product_Download(); $extra->set_id('extra'); $extra->set_file('/other/manual.pdf');
+$legacy_product->values['downloads'] = array($legacy->get_id()=>$legacy, 'extra'=>$extra);
+$test_meta[$webinar_result['id']]['_ais_download_file'] = '/private/connection.txt';
+$test_meta[$webinar_result['id']]['_ais_webinar_file'] = '/private/connection.txt';
+$upgraded = ais_pg_mutate('prepare-product', $webinar_data);
+check($upgraded['id'] === $webinar_result['id'], 'Legacy upgrade keeps product ID');
+check(count($legacy_product->values['downloads']) === 2 && $legacy_product->values['downloads']['extra'] === $extra, 'Extra downloads retained');
+check($legacy_product->values['downloads'][$legacy->get_id()]->get_file() === $connection, 'Legacy download ID retained for existing permissions');
+echo "PASS: public HTML webinar files, safe redirect/escaping, collision protection, legacy migration, MIME/path checks, own-product retry\n";
 // Optional real JPEG fixture exercises upload/retry without a WordPress DB or network.
 if (isset($argv[1]) && is_file($argv[1])) {
     $test_role = 'edu';
