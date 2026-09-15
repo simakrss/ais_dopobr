@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.482",
+    version: "1.7.483",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.483",
+      releasedAt: "2026-09-15",
+      changes: [
+        "После успешного создания сайта для ПРО поле «Ссылка на отчет по оценкам» автоматически заменяется ссылкой подключения SberJazz, использованной генератором."
+      ]
+    },
     {
       version: "1.7.482",
       releasedAt: "2026-09-15",
@@ -33390,8 +33397,27 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = state.data.collections.programs.find(item => item.id === programId);
       if (!current) throw new Error("Программа удалена из базы. Черновики на сайтах сохранены; проверьте их в WordPress.");
       current.sitePublication = value;
+      const gradeReportUrl = String(current.type || "").trim().toUpperCase() === "ПРО" && value?.type === "ПРО"
+        && value.ok === true && ["prepared", "published"].includes(value.stage)
+        && typeof value.gradeReportUrl === "string" && value.gradeReportUrl.startsWith("https://") ? value.gradeReportUrl : "";
+      const gradeReportInput = card.elements?.gradeReportUrl;
+      if (gradeReportUrl) {
+        // Use the server-confirmed meeting URL, not possibly edited dialog inputs.
+        current.gradeReportUrl = gradeReportUrl;
+        if (gradeReportInput && gradeReportInput.value !== gradeReportUrl) {
+          gradeReportInput.value = gradeReportUrl;
+          gradeReportInput.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+      }
       persist();
       if (!await flushSharedApplicationState()) throw new Error("Операция на сайтах завершена, но сведения о ней ещё не сохранены в общей базе. Не меняйте параметры; повторный запуск восстановит результат.");
+      if (gradeReportUrl && gradeReportInput?.value === gradeReportUrl) {
+        // Mark only this saved field clean; retain other unsaved card edits.
+        try {
+          const snapshot = JSON.parse(card.dataset.initialSnapshot);
+          if (Array.isArray(snapshot)) card.dataset.initialSnapshot = JSON.stringify(snapshot.map(item => item.name === "gradeReportUrl" ? {...item, value: gradeReportUrl} : item));
+        } catch { /* A missing baseline is initialized by the card on its next render. */ }
+      }
     };
     const samplesReady = () => (result?.type || "ПРО") === type && Array.isArray(result?.certificates)
       && (bilingual ? result.certificates.length === 2 : result.certificates.length >= 3 && result.certificates.length <= 8);

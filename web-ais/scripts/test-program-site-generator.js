@@ -85,6 +85,7 @@ async function main() {
   };
   const draft = await prepare(fixture, 42, fake);
   assert.equal(draft.stage, "prepared");
+  assert.equal(draft.gradeReportUrl, model.joinUrl, "PRO creation returns the exact meeting URL used by the generator");
   assert.equal(calls.find(item => item.endpoint === "/prepare-product").payload.startLabel, template.fields.data_starta);
   assert.equal(calls.find(item => item.endpoint === "/prepare-landing").payload.fields.data_starta, template.fields.data_starta);
   assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "edu/certificate-assets", "shop/prepare-product", "edu/prepare-landing"]);
@@ -101,7 +102,9 @@ async function main() {
   await assert.rejects(pg.publish(fixture, 42, draft.hash, fake, {...certificate, hash: "e".repeat(64)}), /изменились/);
   assert.ok(calls.every(item => item.endpoint.startsWith("/template/")), "Stale publication permits only read-only prototype checks");
   calls.length = 0;
-  await publish(fixture, 42, draft.hash, fake);
+  const published = await publish({...fixture, gradeReportUrl: model.joinUrl}, 42, draft.hash, fake);
+  assert.equal(published.type, "ПРО");
+  assert.equal(published.gradeReportUrl, model.joinUrl, "Grade report update does not invalidate the prepared publication hash");
   assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "edu/validate-publication", "shop/publish", "edu/publish", "shop/enable-redirect"]);
   await assert.rejects(publish(fixture, 42, draft.hash, async (site, endpoint) => {
     assert.ok(endpoint.startsWith("/template/"), "Changed prototype must block all writes");

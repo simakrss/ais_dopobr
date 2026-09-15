@@ -370,6 +370,7 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   return {
     ok: true, stage: product.status === "publish" && landing.status === "publish" && product.redirectEnabled === true ? "published" : "prepared",
     product, landing, type: model.type, templateId: Number(templateId), imageSourceId: model.imageSource?.id || 0, hash, certificates: assets.images.map((image, index) => ({...image, ...(images[index].label ? {label: images[index].label} : {})})), certificateHash: certificate.hash,
+    ...(model.type === "ПРО" ? {gradeReportUrl: model.joinUrl} : {}),
     promoMessage: `${model.name}\n${model.dateLabel}\nПродолжительность: ${model.hours} ч. Стоимость: ${model.price} ₽.\nРегистрация: ${model.landingUrl}`,
     checklist: ["Проверьте все блоки лендинга, изображения и сохранённые отзывы из прототипа.", "Проверьте все страницы автоматически созданных образцов документов.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг, затем запускайте рекламу и обновляйте приказ о наборе."]
   };
@@ -392,7 +393,8 @@ async function publish(program, templateId, expectedHash, call, certificate, rep
   report("Включение перехода из магазина на лендинг");
   const redirectedProduct = await call("shop", "/enable-redirect", {key: model.key, hash});
   if (product.status !== "publish" || landing.status !== "publish" || redirectedProduct.redirectEnabled !== true) fail("Сайты не подтвердили публикацию и включение перехода. Повторите публикацию с теми же параметрами.", 502);
-  return {ok: true, stage: "published", product: {...product, ...redirectedProduct}, landing, hash, templateId: Number(templateId)};
+  return {ok: true, stage: "published", type: model.type, product: {...product, ...redirectedProduct}, landing, hash, templateId: Number(templateId),
+    ...(model.type === "ПРО" ? {gradeReportUrl: model.joinUrl} : {})};
 }
 
 // Synchronization is deliberately independent of generation: legacy courses need neither

@@ -30,6 +30,7 @@ async function main() {
     const cert = {hash: "b".repeat(64), generate: async () => languages.map((language, index) => ({id: index + 1, language, base64: "fixture"}))};
     const result = await pg.prepare({...program, type}, 42, call, cert);
     assert.equal(result.imageSourceId, 77);
+    assert.equal(result.gradeReportUrl, type === "ПРО" ? program.webinarJoinUrl : undefined, "Only PRO replaces the grade report URL");
     assert.equal(calls.find(c => c.endpoint === "/prepare-product").body.imageUrl, source.imageUrl);
     assert.equal(calls.find(c => c.endpoint === "/prepare-product").body.productTemplateId, 12, "Shop category source is the landing's product, not the separately selected image source");
     assert.deepEqual(calls.find(c => c.endpoint === "/prepare-landing").body.imageSource, source);
