@@ -57,7 +57,7 @@ function preview(type = "ПРО", result = false) {
       {id: 7, title: 'Базовый курс — 2'},
       {id: 3, title: 'Ёмкие тексты и работа с информацией'},
       {id: 4, title: 'Без изображения'}
-    ].map(item => ({...item, imageUrl: item.id === 4 ? '' : 'https://edu-plus.ru/wp-content/uploads/fixture-' + item.id + '.jpg'}));
+    ].map(item => ({...item, startLabel: item.id === 2 ? 'По мере набора группы' : item.id === 1 ? '01.10.2026' : '', imageUrl: item.id === 4 ? '' : 'https://edu-plus.ru/wp-content/uploads/fixture-' + item.id + '.jpg'}));
     const imagePicker = bindProgramSiteImagePicker(dialog, {value: new URLSearchParams(location.search).has('images') ? '2' : '', defaultLabel: 'Изображение прототипа лендинга', onChange: value => {dialog.querySelector('[name="siteImageSourceId"]').value = value; status.textContent = 'Тест: источник изображения в форме — ' + new FormData(card).get('siteImageSourceId');}});
     imagePicker.setItems(fixtureCatalog);
     let templates = fixtureCatalog.map(item=>({...item,url:'https://edu-plus.ru/other_course/test-prototype/'})), result = null, program = {};
@@ -65,7 +65,8 @@ function preview(type = "ПРО", result = false) {
     const prepareButton = dialog.querySelector('[data-site-prepare]');
     const renderProgramSiteLink = ${source.match(/  function renderProgramSiteLink\([\s\S]*?\n  }/)[0]};
     const drawResult = () => {};
-    ${extract(source, "    const updatePrototypeLink = () => {", "    const load = async () => {")}
+    ${source.match(/  function applyProgramSitePrototypeStartLabel\([\s\S]*?\n  }/)[0]}
+    ${extract(source, "    const updatePrototypeLink = (", "    const load = async () => {")}
     ${extract(source, "    const onTemplateChange = () => {", '    dialog.querySelector("[data-site-reload]")')}
     const prototypePicker = bindProgramSiteCatalogPicker(dialog, {kind:'prototype',defaultLabel:'Выберите прототип',onChange:()=>onTemplateChange()});
     updateTemplates();

@@ -530,4 +530,11 @@ $before_stale = serialize(array($test_posts, $test_meta));
 rejects(function () use ($image_data) { ais_pg_mutate('prepare-landing', $image_data); }, 'Changed source blocks even idempotent retry');
 check(serialize(array($test_posts, $test_meta)) === $before_stale, 'Stale source rejected before any mutation');
 rejects(function () { ais_pg_image_source(900); }, 'No image rejected');
-echo "PASS: registration repair with preserved reviews, draft notice without purchase bypass, explicit image source selection and stale-source protection\n";
+foreach (array('По мере набора группы', '01.10.2026', 'Ежедневно', '') as $start_label) {
+    $test_meta[902]['data_starta'] = $start_label;
+    check(ais_pg_start_label(902) === $start_label, 'Catalog preserves the prototype start wording');
+}
+$test_meta[902]['data_starta'] = array('unexpected');
+check(ais_pg_start_label(902) === '', 'Non-text start field is not cast to Array');
+check(ais_pg_start_label(999999) === '', 'Missing start field stays empty');
+echo "PASS: registration repair with preserved reviews, draft notice without purchase bypass, explicit image source selection, stale-source protection and prototype start labels\n";

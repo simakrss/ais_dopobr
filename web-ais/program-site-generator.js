@@ -119,7 +119,8 @@ function normalizeProgram(program = {}) {
     joinUrl: webinar ? normalizeJoinUrl(program.webinarJoinUrl) : "",
     duration: text(program.duration, 200), studyForm: text(program.studyForm || "Дистанционная", 300), trainingPlan: program.siteTrainingPlan || [],
     landingUrl: `${SITES.edu}/${spec.base}/${slug}/`,
-    dateLabel: webinar ? `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)` : text(program.siteStartLabel || "Ежедневно", 200)
+    startLabel: text(program.siteStartLabel, 200),
+    dateLabel: webinar ? `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)} в ${time} (МСК)` : text(program.siteStartLabel, 200)
   };
 }
 
@@ -243,6 +244,10 @@ async function loadPrototypeModel(program, templateId, call) {
   if (imageSource) model.imageSource = imageSource;
   if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
   const fields = template.fields || {};
+  // Keep the prototype's start wording for every program type, including webinars.
+  // Webinar date/time still update the broadcast schedule independently.
+  if (!model.startLabel && typeof fields.data_starta === "string") model.startLabel = text(fields.data_starta, 200);
+  if (model.type !== "ПРО") model.dateLabel = model.startLabel;
   // Image delivery is independent of the reviewed document/price payload, so adding
   // it must not invalidate already prepared drafts on either website.
   const prototypeForHash = {...template};
@@ -265,7 +270,7 @@ function buildLandingFields(template, model, productId, certificates) {
     stoimost_kursa: String(model.price), kolichestvo_chasov: String(model.hours),
     staraya_cena: model.oldPrice > model.price ? String(model.oldPrice) : "",
     skidka: model.oldPrice > model.price ? String(Math.round(100 * (1 - model.price / model.oldPrice))) : "0",
-    data_starta: model.dateLabel, forma_obucheniya: model.studyForm,
+    data_starta: model.startLabel || (typeof template.fields?.data_starta === "string" ? text(template.fields.data_starta, 200) : ""), forma_obucheniya: model.studyForm,
     srok: model.type === "ПРО" ? "Однократное участие" : model.duration,
     ssylka_smotret_vse_kursy: "/" + PROGRAM_TYPES[model.type].base
   };

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.0
+ * Version: 1.7.1
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -147,6 +147,10 @@ function ais_pg_template($id) {
     if (!$post || !in_array($post->post_type, array('other-course', 'courses-pk', 'courses-pp'), true) || $post->post_status !== 'publish') throw new RuntimeException('Выберите опубликованную образовательную программу.');
     if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
     return $post;
+}
+function ais_pg_start_label($id) {
+    $value = get_post_meta($id, 'data_starta', true);
+    return is_string($value) ? $value : '';
 }
 function ais_pg_certificate_slots($type = 'ПРО') {
     $second = in_array($type, array('КПК', 'ППП'), true) ? 'page-2' : 'en';
@@ -844,7 +848,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.0', 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.1', 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -853,6 +857,7 @@ function ais_pg_dispatch($request) {
                 $image_id = (int) get_post_thumbnail_id($post->ID);
                 $image_url = $image_id ? wp_get_attachment_image_url($image_id, 'full') : '';
                 return array('id' => $post->ID, 'title' => $post->post_title, 'postType' => $post->post_type, 'url' => get_permalink($post->ID),
+                    'startLabel' => ais_pg_start_label($post->ID),
                     'imageUrl' => ais_pg_image_url_valid($image_url) ? $image_url : '',
                     'previewImageUrl' => ais_pg_image_url_valid($image_url) ? (wp_get_attachment_image_url($image_id, 'medium') ?: $image_url) : '');
             }, $posts));

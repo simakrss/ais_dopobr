@@ -24,6 +24,7 @@ async function main() {
   const model = pg.normalizeProgram(fixture);
   assert.equal(model.joinUrl, fixture.webinarJoinUrl);
   assert.equal(model.dateLabel, "30.09.2026 в 09:30 (МСК)");
+  assert.equal(model.startLabel, "", "Start wording is inherited separately from webinar schedule");
   assert.equal(model.landingUrl, "https://edu-plus.ru/other_course/test_webinar/");
   assert.equal(pg.normalizeProgram({...fixture, price: 0}).price, 0);
   for (const bad of [{type: "UNKNOWN"}, {type: ""}, {id: ""}, {name: ""}, {name: "а".repeat(129)}, {webinarDate: "2026-02-30"},
@@ -34,6 +35,7 @@ async function main() {
   }
   assert.equal(pg.normalizeProgram({...fixture, name: "а".repeat(200), siteProductName: "Короткое название"}).productName, "Короткое название");
   const fields = pg.buildLandingFields(template, model, 99);
+  assert.equal(fields.data_starta, template.fields.data_starta);
   assert.equal(fields.podacha_zayavki_nazvanie_kursa, fixture.name);
   assert.equal(fields.blok_ceny[0].stoimost_kursa, "390");
   assert.equal(fields.blok_ceny[0].skidka, "61");
@@ -51,7 +53,7 @@ async function main() {
   for (const type of ["ДОП", "КПК", "ППП"]) {
     const course = {...fixture, type, webinarDate: "", webinarTime: "", webinarJoinUrl: "", siteSpeaker: "", duration: "2 месяца", studyForm: "Заочная"};
     const normalized = pg.normalizeProgram(course);
-    assert.equal(normalized.joinUrl, ""); assert.equal(normalized.dateLabel, "Ежедневно");
+    assert.equal(normalized.joinUrl, ""); assert.equal(normalized.dateLabel, "");
     assert.match(normalized.landingUrl, new RegExp(pg.PROGRAM_TYPES[type].base));
     const plan = pg.withTrainingPlan(course, {collections:{trainingPlans:[{programId: course.id, discipline:"Модуль", totalHours:2},{programId:"another", programName:course.name, discipline:"Чужой план"}]}});
     assert.equal(plan.siteTrainingPlan.length, 1);
@@ -65,8 +67,8 @@ async function main() {
     const result = await pg.prepare(plan,42,async (site,endpoint,body)=>{
       if (endpoint.startsWith("/template/")) return courseTemplate;
       if (endpoint === "/certificate-assets") { assert.equal(body.type,type);return {images:generatedImages}; }
-      if (endpoint === "/prepare-product") {assert.equal(body.joinUrl,"");assert.equal(body.type,type);}
-      if (endpoint === "/prepare-landing") {assert.equal(body.type,type);assert.equal(body.certificatePages.length,languages.length);}
+      if (endpoint === "/prepare-product") {assert.equal(body.joinUrl,"");assert.equal(body.type,type);assert.equal(body.dateLabel,courseTemplate.fields.data_starta);}
+      if (endpoint === "/prepare-landing") {assert.equal(body.type,type);assert.equal(body.certificatePages.length,languages.length);assert.equal(body.fields.data_starta,courseTemplate.fields.data_starta);}
       return {id:99,status:"draft"};
     },{hash:"a".repeat(64),generate:async()=>generatedImages});
     assert.equal(result.type,type);assert.equal(result.certificates.length,languages.length);
@@ -83,6 +85,8 @@ async function main() {
   };
   const draft = await prepare(fixture, 42, fake);
   assert.equal(draft.stage, "prepared");
+  assert.equal(calls.find(item => item.endpoint === "/prepare-product").payload.startLabel, template.fields.data_starta);
+  assert.equal(calls.find(item => item.endpoint === "/prepare-landing").payload.fields.data_starta, template.fields.data_starta);
   assert.deepEqual(calls.map(c => `${c.site}${c.endpoint}`), ["edu/template/42", "edu/certificate-assets", "shop/prepare-product", "edu/prepare-landing"]);
   assert.equal(calls[3].payload.fields.blok_ceny[0].ssylka_na_registraciyu, "https://zifra-plus.ru/checkout/?add-to-cart=99");
   assert.equal(calls[3].payload.fields.izobrazhenie_vydavaemogo_dokumenta, 81);

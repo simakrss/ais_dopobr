@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.478",
+    version: "1.7.479",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.479",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Начало обучения в генераторе сайта подставляется из выбранного лендинга-прототипа. Автоматическая замена на «Ежедневно» отключена; значение можно изменить перед сохранением."
+      ]
+    },
     {
       version: "1.7.478",
       releasedAt: "2026-09-15",
@@ -6059,7 +6066,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("webinarTime", "Время (Москва)", "time", false, null, { programTab: "site" }),
         field("webinarJoinUrl", "Ссылка подключения SberJazz", "text", false, null, { programTab: "site", wide: true }),
         field("siteProductName", "Название товара (до 128 символов; если отличается от названия программы)", "text", false, null, { programTab: "site", wide: true }),
-        field("siteStartLabel", "Начало обучения на сайте (по умолчанию — ежедневно)", "text", false, null, { programTab: "site", wide: true }),
+        field("siteStartLabel", "Начало обучения на сайте (из прототипа)", "text", false, null, { programTab: "site", wide: true }),
         field("siteSampleDate", "Дата в образцах (по умолчанию — текущая)", "date", false, null, { programTab: "site" }),
         field("siteDescription", "Описание программы (HTML)", "textarea", false, null, { programTab: "site", wide: true, rows: 5 }),
         field("siteSpeaker", "Автор / спикер (HTML; необязательно для ДОП, КПК, ППП)", "textarea", false, null, { programTab: "site", wide: true, rows: 4 }),
@@ -33149,7 +33156,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="form-grid program-site-fields program-site-schedule-fields ${webinar ? "" : "is-non-webinar"}">
         <div data-site-webinar-only ${webinar ? "" : "hidden"}>${parameter("webinarDate")}</div>
         <div data-site-webinar-only ${webinar ? "" : "hidden"}>${parameter("webinarTime")}</div>
-        <div title="По умолчанию — ежедневно">${parameter("siteStartLabel", "Начало обучения")}</div>
+        <div title="Подставляется из выбранного прототипа; можно изменить">${parameter("siteStartLabel", "Начало обучения")}</div>
         <div title="По умолчанию — текущая дата">${parameter("siteSampleDate", "Дата в образцах")}</div>
       </div>
       <div data-site-webinar-only ${webinar ? "" : "hidden"}><div class="program-site-jazz-link-row">${parameter("webinarJoinUrl")}<a class="ghost-button compact-button" href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Открыть SaluteJazz для создания ссылки подключения">Создать ссылку ↗</a></div></div>
@@ -33216,6 +33223,16 @@ MAX - https://bizvmax.ru/zifra_plus
     // whose address changes on the next preparation attempt.
     if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Код лендинга не сохранён в общей базе. Черновики не создавались; повторите подготовку.");
     return result.landingCode;
+  }
+
+  function applyProgramSitePrototypeStartLabel(control, template, replace = false) {
+    if (!control || typeof template?.startLabel !== "string") return false;
+    if (!replace && String(control.value || "").trim()) return false;
+    const value = template.startLabel.trim().slice(0, 200);
+    if (control.value === value) return false;
+    control.value = value;
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
   }
 
   function getDefaultProgramSiteTemplateId(program, templates) {
@@ -33399,9 +33416,10 @@ MAX - https://bizvmax.ru/zifra_plus
         } finally { setBusy(false); }
       });
     };
-    const updatePrototypeLink = () => {
+    const updatePrototypeLink = (replaceStartLabel = false) => {
       const template = templates.find(item => String(item.id) === select.value);
       if (templateInput) templateInput.value = select.value;
+      applyProgramSitePrototypeStartLabel(dialog.querySelector('[name="siteStartLabel"]'), template, replaceStartLabel);
       dialog.querySelector("[data-site-prototype-link]").innerHTML = renderProgramSiteLink(template?.url, "Открыть прототип");
       prepareButton.disabled = busy || !template;
     };
@@ -33425,7 +33443,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const onTemplateChange = () => {
       if (result && Number(select.value) !== Number(result.templateId)) { result = null; drawResult(); }
-      updatePrototypeLink();
+      updatePrototypeLink(true);
       status.textContent = select.value ? "Описание и автор будут скопированы из выбранного прототипа." : "Выберите прототип лендинга: это обязательное поле.";
     };
     dialog.querySelector("[data-site-reload]").addEventListener("click", load);
