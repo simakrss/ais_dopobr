@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.468",
+    version: "1.7.469",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.469",
+      releasedAt: "2026-09-15",
+      changes: [
+        "В полях с крестиком очистки закреплён отступ справа: длинный текст, курсор и подсветка ссылок больше не заходят под кнопку, в том числе в компактных карточках и таблицах."
+      ]
+    },
     {
       version: "1.7.468",
       releasedAt: "2026-09-15",

@@ -3948,6 +3948,13 @@ button.mobile-registry-filters-toggle {
   padding-right: 40px;
 }
 
+.combo-input-wrap:has(> .combo-clear) > input {
+  min-width: 0;
+  /* Keep the native text/caret and link highlight outside the clear button.
+     Compact form padding shorthands must not override this reserved space. */
+  padding-right: var(--combo-clear-space, 40px) !important;
+}
+
 .combo-clear {
   position: absolute;
   right: 7px;
@@ -16129,8 +16136,8 @@ body.card-window-moving {
   transition: background-color 120ms ease, opacity 120ms ease;
 }
 
-.employee-payment-basis-cell .combo-input-wrap input {
-  padding-right: 27px;
+.employee-payment-basis-cell .combo-input-wrap {
+  --combo-clear-space: 27px;
 }
 
 .employee-payment-basis-cell .combo-clear {
@@ -22744,8 +22751,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   font-size: 13px;
 }
 
-.student-income-tab .expense-grid .combo-input-wrap input {
-  padding-right: 25px;
+.student-income-tab .expense-grid .combo-input-wrap {
+  --combo-clear-space: 25px;
 }
 
 .student-income-tab .expense-grid .combo-clear {
