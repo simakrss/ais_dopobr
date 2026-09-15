@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.473",
+    version: "1.7.474",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.474",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Прототипы лендингов отсортированы по алфавиту. В списке источников изображения добавлены миниатюры 56 × 56 px, а выбранное изображение выровнено по центру соседних полей."
+      ]
+    },
     {
       version: "1.7.473",
       releasedAt: "2026-09-15",
@@ -32861,32 +32868,108 @@ MAX - https://bizvmax.ru/zifra_plus
     return `<details class="program-site-image-picker"><summary>Изображение записи — лендинг и магазин</summary>
       <div class="program-site-image-layout"><div class="program-site-image-controls">
         <label><span>Поиск источника по названию</span><input type="search" data-image-search placeholder="Название другого лендинга"></label>
-        <label><span>Взять изображение из лендинга</span><select data-image-source aria-label="Источник изображения" disabled><option value="">Загрузка…</option></select></label>
-        <p class="muted" data-image-caption></p></div><div data-image-preview></div></div></details>`;
+        <div class="program-site-image-field"><span>Взять изображение из лендинга</span><div class="program-site-image-combo">
+          <button type="button" class="program-site-image-trigger" data-image-source role="combobox" aria-label="Источник изображения" aria-haspopup="listbox" aria-expanded="false" disabled><span>Загрузка…</span></button>
+          <div class="program-site-image-options" data-image-options role="listbox" aria-label="Изображения лендингов" hidden></div>
+        </div></div></div><div data-image-preview></div><p class="muted" data-image-caption></p></div></details>`;
+  }
+
+  function sortProgramSiteTemplates(items) {
+    return [...items].sort((left, right) => String(left.title || "").trim().localeCompare(String(right.title || "").trim(), "ru-RU", {sensitivity: "base", numeric: true})
+      || String(left.id).localeCompare(String(right.id), "ru-RU", {numeric: true}));
   }
 
   function bindProgramSiteImagePicker(container, {value = "", defaultLabel, onChange}) {
     const picker = container.querySelector(".program-site-image-picker");
     const select = picker.querySelector("[data-image-source]");
     const search = picker.querySelector("[data-image-search]");
-    let items = [], selected = String(value || "");
+    const list = picker.querySelector("[data-image-options]");
+    const combo = picker.querySelector(".program-site-image-combo");
+    list.id = `program-site-images-${Math.random().toString(36).slice(2)}`;
+    select.setAttribute("aria-controls", list.id);
+    let items = [], selected = String(value || ""), active = 0, ready = false;
     picker.open = Boolean(selected);
+    const choices = () => [...list.querySelectorAll("[data-image-option]")];
+    const highlight = (index, scroll = false) => {
+      const options = choices();
+      active = Math.max(0, Math.min(index, options.length - 1));
+      options.forEach((option, i) => option.classList.toggle("is-active", i === active));
+      if (!list.hidden && options[active]) {
+        select.setAttribute("aria-activedescendant", options[active].id);
+        if (scroll) {
+          // Scroll only the options, never the surrounding program dialog.
+          const top = options[active].offsetTop, bottom = top + options[active].offsetHeight;
+          if (top < list.scrollTop) list.scrollTop = top;
+          else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+        }
+      } else select.removeAttribute("aria-activedescendant");
+    };
+    const close = () => {
+      list.hidden = true;
+      select.setAttribute("aria-expanded", "false");
+      select.removeAttribute("aria-activedescendant");
+    };
+    const open = () => {
+      if (select.disabled || !ready) return;
+      const bounds = container.getBoundingClientRect(), field = combo.getBoundingClientRect();
+      const below = Math.min(window.innerHeight, bounds.bottom) - field.bottom - 10;
+      const above = field.top - Math.max(0, bounds.top) - 10;
+      const opensUp = below < Math.min(300, window.innerHeight * .45) && above > below;
+      list.classList.toggle("opens-up", opensUp);
+      list.style.maxHeight = `${Math.max(68, Math.min(300, window.innerHeight * .45, opensUp ? above : below))}px`;
+      list.hidden = false;
+      select.setAttribute("aria-expanded", "true");
+      highlight(choices().findIndex(option => option.dataset.imageOption === selected), true);
+    };
     const draw = () => {
       const query = search.value.trim().toLocaleLowerCase("ru-RU");
       const options = items.filter(item => String(item.id) === selected || String(item.title).toLocaleLowerCase("ru-RU").includes(query));
-      select.innerHTML = `<option value="">${escapeHtml(defaultLabel)}</option>`
-        + (selected && !items.some(item => String(item.id) === selected) ? `<option value="${escapeAttr(selected)}">Источник №${escapeHtml(selected)} недоступен — выберите другой</option>` : "")
-        + options.map(item => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.title)}</option>`).join("");
-      select.value = selected;
       const source = items.find(item => String(item.id) === selected);
-      const url = getProgramLandingPreviewImage(source?.previewImageUrl || source?.imageUrl);
+      const unavailable = selected && !source ? `Источник №${selected} недоступен — выберите другой` : "";
+      const label = source?.title || unavailable || defaultLabel;
+      select.innerHTML = `<span>${escapeHtml(label)}</span>`;
+      select.title = label;
+      const rows = [{id: "", title: defaultLabel}, ...(unavailable ? [{id: selected, title: unavailable}] : []), ...options];
+      list.innerHTML = rows.map((item, index) => {
+        const url = getProgramLandingPreviewImage(item.previewImageUrl) || getProgramLandingPreviewImage(item.imageUrl);
+        return `<button type="button" class="program-site-image-option" role="option" tabindex="-1" id="${list.id}-${index}" data-image-option="${escapeAttr(item.id)}" aria-selected="${String(item.id) === selected}" title="${escapeAttr(item.title)}">
+          ${url ? `<img src="${escapeAttr(url)}" alt="" width="56" height="56" loading="lazy" referrerpolicy="no-referrer">` : '<span class="program-site-image-placeholder" aria-hidden="true">—</span>'}<span>${escapeHtml(item.title)}</span></button>`;
+      }).join("") + (query && !options.some(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query)) ? '<p class="muted" role="status">По этому названию изображения не найдены.</p>' : "");
+      highlight(rows.findIndex(item => String(item.id) === selected));
+      const url = getProgramLandingPreviewImage(source?.previewImageUrl) || getProgramLandingPreviewImage(source?.imageUrl);
       picker.querySelector("[data-image-preview]").innerHTML = url ? `<img src="${escapeAttr(url)}" alt="Выбранное изображение записи" loading="lazy" referrerpolicy="no-referrer">` : "";
       picker.querySelector("[data-image-caption]").textContent = source ? "Это изображение будет установлено на лендинге и у выбранного товара. Фото автора, отзывы и образцы документов не меняются." : selected ? "Сохранённый источник отсутствует в списке доступных изображений." : defaultLabel;
     };
-    search.addEventListener("input", draw);
-    select.addEventListener("change", () => { selected = select.value; draw(); onChange?.(selected); });
+    const choose = option => {
+      if (select.disabled || !ready || !option) return;
+      const next = option.dataset.imageOption, changed = selected !== next;
+      selected = next; close(); draw(); select.focus();
+      if (changed) onChange?.(selected);
+    };
+    search.addEventListener("input", () => { close(); draw(); });
+    search.addEventListener("keydown", event => {
+      if (event.key === "ArrowDown" && !select.disabled && ready) { event.preventDefault(); select.focus(); open(); }
+      if (event.key === "Escape" && !list.hidden) { event.preventDefault(); event.stopPropagation(); close(); }
+    });
+    select.addEventListener("click", () => { if (list.hidden) open(); else close(); });
+    select.addEventListener("keydown", event => {
+      if (select.disabled || !ready) return;
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        if (list.hidden) open();
+        else highlight(event.key === "Home" ? 0 : event.key === "End" ? choices().length - 1 : active + (event.key === "ArrowDown" ? 1 : -1), true);
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault(); if (list.hidden) open(); else choose(choices()[active]);
+      } else if (event.key === "Escape" && !list.hidden) {
+        event.preventDefault(); event.stopPropagation(); close();
+      } else if (event.key === "Tab") close();
+    });
+    list.addEventListener("click", event => choose(event.target.closest("[data-image-option]")));
+    container.addEventListener("click", event => { if (!combo.contains(event.target) && event.target !== search) close(); });
+    picker.addEventListener("focusout", event => { if (!combo.contains(event.relatedTarget) && event.relatedTarget !== search) close(); });
+    picker.addEventListener("toggle", () => { if (!picker.open) close(); });
     draw();
-    return {setItems(catalog) { items = catalog.filter(item => getProgramLandingPreviewImage(item.imageUrl)); draw(); select.disabled = false; }, value: () => selected};
+    return {setItems(catalog) { items = sortProgramSiteTemplates(catalog.filter(item => getProgramLandingPreviewImage(item.imageUrl))); ready = true; draw(); select.disabled = false; }, value: () => selected};
   }
 
   async function openProgramSiteSync() {
@@ -33225,7 +33308,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const filterTemplates = () => {
       const selected = select.value || String(result?.templateId || "") || getDefaultProgramSiteTemplateId(program, templates);
       const query = dialog.querySelector("[data-site-search]").value.trim().toLocaleLowerCase("ru-RU");
-      select.innerHTML = '<option value="">Выберите прототип</option>' + templates.filter(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query) || String(item.id) === selected)
+      select.innerHTML = '<option value="">Выберите прототип</option>' + sortProgramSiteTemplates(templates).filter(item => String(item.title).toLocaleLowerCase("ru-RU").includes(query) || String(item.id) === selected)
         .map(item => `<option value="${escapeAttr(item.id)}" ${String(item.id) === selected ? "selected" : ""}>${escapeHtml(item.title)}</option>`).join("");
       updatePrototypeLink();
     };

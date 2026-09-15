@@ -45,6 +45,26 @@ function preview(type = "ПРО", result = false) {
       return 'fixture-program';
     };
     ${saveBinding(source)}
+    const escapeHtml = ${escape.toString()}, escapeAttr = escapeHtml;
+    const validatePreviewImage = ${source.match(/  function getProgramLandingPreviewImage\([\s\S]*?\n  }/)[0]};
+    const getProgramLandingPreviewImage = value => validatePreviewImage(value) ? '/fixture-cover.svg?image=' + encodeURIComponent(new URL(value).pathname) : '';
+    ${extract(source, "  function renderProgramSiteImagePicker(", "  async function openProgramSiteSync(")}
+    const fixtureCatalog = [
+      {id: 9, title: 'Язык и культура общения'},
+      {id: 2, title: 'Инструменты оптимизации профиля автора в Российском индексе научного цитирования (РИНЦ): электронные образовательные технологии'},
+      {id: 8, title: 'Базовый курс — 10'},
+      {id: 1, title: 'Актуальное название статьи'},
+      {id: 7, title: 'Базовый курс — 2'},
+      {id: 3, title: 'Ёмкие тексты и работа с информацией'},
+      {id: 4, title: 'Без изображения'}
+    ].map(item => ({...item, imageUrl: item.id === 4 ? '' : 'https://edu-plus.ru/wp-content/uploads/fixture-' + item.id + '.jpg'}));
+    const imagePicker = bindProgramSiteImagePicker(dialog, {value: new URLSearchParams(location.search).has('images') ? '2' : '', defaultLabel: 'Изображение прототипа лендинга', onChange: value => {dialog.querySelector('[name="siteImageSourceId"]').value = value; status.textContent = 'Тест: источник изображения в форме — ' + new FormData(card).get('siteImageSourceId');}});
+    imagePicker.setItems(fixtureCatalog);
+    let templates = fixtureCatalog, result = null, program = {};
+    const getDefaultProgramSiteTemplateId = () => '2';
+    const updatePrototypeLink = () => {};
+    ${extract(source, "    const filterTemplates = () => {", "    const load = async () => {")}
+    select.value = ''; filterTemplates(); dialog.querySelector('[data-site-search]').addEventListener('input', filterTemplates);
     dialog.showModal(); document.querySelector('[data-site-close]').onclick=()=>dialog.close();
   </script></body></html>`;
 }
@@ -103,6 +123,7 @@ if (process.argv.includes("--serve")) {
     const url = new URL(req.url, "http://127.0.0.1");
     if (url.pathname === "/shutdown" && req.method === "POST") {res.end("Stopped"); server.close(); clearTimeout(expiry); return;}
     if (url.pathname === "/styles.css") {res.setHeader("Content-Type", "text/css; charset=utf-8"); res.end(fs.readFileSync(path.join(root, "styles.css"))); return;}
+    if (url.pathname === "/fixture-cover.svg") {res.setHeader("Content-Type", "image/svg+xml"); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120"><rect width="160" height="120" fill="#edf6f5"/><rect x="25" y="20" width="110" height="65" rx="8" fill="#0e817a"/><circle cx="55" cy="45" r="12" fill="#ffe27b"/><path d="M35 75L70 50 85 63 115 35 127 75Z" fill="#fff"/><text x="80" y="109" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#24453e">'+escape(url.searchParams.get('image')?.match(/fixture-(\d+)/)?.[1] || '1')+'</text></svg>'); return;}
     if (url.pathname !== "/") {res.writeHead(404); res.end(); return;}
     const type = ["ПРО", "ДОП", "КПК", "ППП"].includes(url.searchParams.get("type")) ? url.searchParams.get("type") : "ПРО";
     res.setHeader("Content-Type", "text/html; charset=utf-8"); res.end(preview(type, url.searchParams.has("result")));
