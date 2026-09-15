@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.476",
+    version: "1.7.477",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.477",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Кнопка «Назад» сначала закрывает открытое контекстное меню. Текущая карточка, введённые данные и положение на экране сохраняются."
+      ]
+    },
     {
       version: "1.7.476",
       releasedAt: "2026-09-15",
@@ -13860,10 +13867,41 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function closeContextMenuBeforeHistoryNavigation() {
+    const menus = [
+      ["[data-field-copy-popup]", hideFieldCopyPopup],
+      ["[data-student-applications-import-context-menu]", closeStudentApplicationsImportContextMenu],
+      ["[data-system-mailbox-email-menu]", closeSystemMailboxEmailMenu],
+      ["[data-messenger-preference-menu]", closeMessengerPreferenceMenu],
+      ["[data-nav-item-menu]", closeNavItemMenu],
+      ["[data-orderable-tab-menu]", closeOrderableTabMenu],
+      ["[data-student-document-recognition-field-menu]", hideStudentDocumentRecognitionFieldMenu],
+      ["[data-communication-template-field-menu]", hideCommunicationTemplateFieldMenu],
+      ["[data-student-document-action-menu]", closeStudentDocumentActionMenu]
+    ];
+    const selector = menus.map(([menuSelector]) => menuSelector).join(", ");
+    const menu = [...document.querySelectorAll(selector)].reverse().find((element) => (
+      !element.hidden
+      && element.getClientRects().length > 0
+      && getComputedStyle(element).visibility !== "hidden"
+    ));
+    if (!menu) return false;
+    const [, closeMenu] = menus.find(([menuSelector]) => menu.matches(menuSelector));
+    closeMenu({ restoreFocus: true });
+    return true;
+  }
+
   async function handleAisHistoryNavigation(event) {
     if (aisHistoryNavigationRestoring) return;
     const targetSnapshot = sanitizeAisNavigationSnapshotForDemo(event.state?.aisNavigation || {});
     const currentSnapshot = captureAisNavigationSnapshot();
+    if (closeContextMenuBeforeHistoryNavigation()) {
+      aisHistoryNavigationCloseModalRequested = false;
+      aisHistoryNavigationDiscardApproved = false;
+      // Keep the live form intact; the next Back should still reach the previous screen.
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
     if (recordFormSavePending || documentTemplateSavePending || profileClosePending) {
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
