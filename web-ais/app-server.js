@@ -40042,8 +40042,8 @@ async function route(req, res) {
       }
       if (["resolve", "preview-sync", "sync"].includes(action)) {
         let result;
-        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash);
-        else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId);
+        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash, body.imageSourceId);
+        else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId, body.imageSourceId);
         else {
           // Unsaved addresses are accepted only for this read-only lookup. All site
           // mutations still use the authoritative saved program above.

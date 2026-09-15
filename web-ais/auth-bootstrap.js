@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260915-compact-program-generator-v1";
+  const AUTH_BUILD = "20260915-program-images-registration-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

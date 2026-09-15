@@ -62,6 +62,7 @@ function wp_insert_post($data, $errors) {
     return $id;
 }
 function wp_slash($data) { return $data; }
+function wp_json_encode($data) { return json_encode($data, JSON_UNESCAPED_UNICODE); }
 function sanitize_text_field($value) { return strip_tags($value); }
 function wp_kses_post($value) { return $value; }
 if (!function_exists('mb_strlen')) { function mb_strlen($value) { return preg_match_all('/./us', $value); } }
@@ -431,3 +432,49 @@ $landing_data['hash'] = hash('sha256', 'schedule-retry'); $landing_data['slug'] 
 check(ais_pg_mutate('prepare-landing', $landing_data)['id'] === $landing['id'], 'Existing own draft reused with changed promo slug');
 check($test_posts[$landing['id']]['post_name'] === 'web_nazv_v2', 'Own draft receives new requested slug');
 echo "PASS: WordPress signature, URL validation, nested ACF schema, locks, managed identity, stale versions, exact promo slug collisions, schedule parity and authorized download hooks\n";
+
+$link = '<a href="https://zifra-plus.ru/checkout/?ref=test&amp;add-to-cart=2732&amp;quantity=1">Регистрация</a>';
+$expected_link = str_replace('add-to-cart=2732', 'add-to-cart=5112', $link);
+check(ais_pg_registration_links($link, 5112) === $expected_link, 'Registration ID replaced, query and markup preserved');
+check(ais_pg_registration_links(array('nested'=>array($link)), 5112) === array('nested'=>array($expected_link)), 'Nested registration links replaced');
+foreach (array('blok_opisaniya_kursa','reviews','otzyvy') as $name) check(ais_pg_registration_links($link, 5112, $name) === $link, 'Review links preserved');
+foreach (array('https://evil.example/?add-to-cart=2732','https://zifra-plus.ru/edu_info?add-to-cart=2732','https://zifra-plus.ru/?download_file=2732') as $other) check(ais_pg_registration_links($other, 5112) === $other, 'Unrelated links untouched');
+update_post_meta($landing['id'], '_ais_generator_product', 5112);
+check(ais_pg_render_registration_links($link, $landing['id']) === $expected_link, 'Already-generated landing corrected at render time');
+check(ais_pg_render_registration_links($link, 900) === $link, 'Prototype rendering unchanged');
+$format_image_link = $test_filters['acf/format_value'][0];
+check($format_image_link($link, $landing['id'], array('name'=>'soderzhimoe_bloka')) === $link, 'Review child fields are never rewritten by the ACF formatting hook');
+check($format_image_link($link, $landing['id'], array('name'=>'opisanie_dokumenta')) === $expected_link, 'Old description registration buttons repaired');
+update_post_meta($landing['id'], 'blok_ceny', array(array(),array()));
+check(ais_pg_render_registration_links($link, $landing['id']) === $link, 'Manually added price variants are not collapsed at render time');
+update_post_meta($landing['id'], 'blok_ceny', array());
+$test_role = 'shop';
+$test_posts[5112] = array('type'=>'product','status'=>'draft','key'=>str_repeat('b',64));
+$test_meta[5112]['_ais_generator_key'] = str_repeat('b',64);
+check(strpos(ais_pg_draft_registration_message(5112), 'черновик') !== false, 'Draft has an actionable registration explanation');
+$test_posts[5112]['status'] = 'publish';
+check(ais_pg_draft_registration_message(5112) === '', 'Published product uses normal WooCommerce purchase checks');
+$test_posts[5112]['status'] = 'draft'; unset($test_meta[5112]['_ais_generator_key']);
+check(ais_pg_draft_registration_message(5112) === '' && ais_pg_draft_registration_message(999999) === '', 'Unmanaged/missing products are not intercepted');
+check($test_actions['wp_loaded'][1] < 20, 'Draft guard precedes WooCommerce add-to-cart handler');
+$test_role = 'edu';
+$test_posts[902] = array_merge($test_posts[900], array('post_title'=>'Источник изображения'));
+$image_file = $test_dir . '/landing-selected.jpg';
+file_put_contents($image_file, 'isolated-image-fixture');
+$test_posts[500]['file'] = $image_file;
+set_post_thumbnail(902, 500);
+$image_source = ais_pg_image_source(902);
+check($image_source['imageId'] === 500 && strlen($image_source['version']) === 64, 'Authoritative featured image and version loaded');
+check(ais_pg_validate_image_source($image_source) === $image_source, 'Current selection validated');
+$bad_source = array_merge($image_source, array('imageId'=>501));
+rejects(function () use ($bad_source) { ais_pg_validate_image_source($bad_source); }, 'Forged image rejected');
+$image_data = array_merge($landing_data, array('hash'=>hash('sha256','image-selection'), 'imageSource'=>$image_source, 'productId'=>5112));
+$image_landing = ais_pg_mutate('prepare-landing', $image_data);
+check(get_post_thumbnail_id($image_landing['id']) === 500, 'Chosen image overrides prototype thumbnail');
+check(get_post_thumbnail_id(900) === 0 && get_post_thumbnail_id(902) === 500, 'Prototype and image source unchanged');
+set_post_thumbnail(902, 501);
+$before_stale = serialize(array($test_posts, $test_meta));
+rejects(function () use ($image_data) { ais_pg_mutate('prepare-landing', $image_data); }, 'Changed source blocks even idempotent retry');
+check(serialize(array($test_posts, $test_meta)) === $before_stale, 'Stale source rejected before any mutation');
+rejects(function () { ais_pg_image_source(900); }, 'No image rejected');
+echo "PASS: registration repair with preserved reviews, draft notice without purchase bypass, explicit image source selection and stale-source protection\n";

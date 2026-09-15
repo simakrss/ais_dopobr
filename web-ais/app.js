@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.467",
+    version: "1.7.468",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.468",
+      releasedAt: "2026-09-15",
+      changes: [
+        "При создании и синхронизации программы можно выбрать изображение записи из другого лендинга для обоих сайтов. Для товара-черновика показывается пояснение о публикации; исправлены ссылки регистрации, скопированные из прототипа."
+      ]
+    },
     {
       version: "1.7.467",
       releasedAt: "2026-09-15",
@@ -32749,7 +32756,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="program-site-actions" data-program-site-links>${renderProgramSiteLink(landingUrl, "Лендинг — edu-plus.ru")}${renderProgramSiteLink(publication.product?.editUrl, "Карточка товара — zifra-plus.ru")}</div>
         <p class="muted" data-program-site-link-status>Ссылки определяются по сохранённому коду лендинга и его кнопкам регистрации.</p>
-        <p class="muted">Синхронизация обновляет название, стоимость, часы и заполненные сведения. Другие ценовые варианты, отзывы и изображения сохраняются.</p>
+        <p class="muted">Синхронизация обновляет название, стоимость, часы и заполненные сведения. Можно выбрать изображение записи из другого лендинга для двух сайтов. Другие ценовые варианты, отзывы и образцы документов сохраняются.</p>
       </div>
       <div class="program-site-preview" data-program-landing-preview data-preview-source="${escapeAttr(getProgramLandingPreviewUrl(landingUrl))}">${renderProgramLandingPreview("")}</div>
     </div>`;
@@ -32815,6 +32822,38 @@ MAX - https://bizvmax.ru/zifra_plus
     finally { if (links.dataset.requestId === requestId) links.dataset.loading = "false"; }
   }
 
+  function renderProgramSiteImagePicker() {
+    return `<details class="program-site-image-picker"><summary>Изображение записи — лендинг и магазин</summary>
+      <div class="program-site-image-layout"><div class="program-site-image-controls">
+        <label><span>Поиск источника по названию</span><input type="search" data-image-search placeholder="Название другого лендинга"></label>
+        <label><span>Взять изображение из лендинга</span><select data-image-source aria-label="Источник изображения" disabled><option value="">Загрузка…</option></select></label>
+        <p class="muted" data-image-caption></p></div><div data-image-preview></div></div></details>`;
+  }
+
+  function bindProgramSiteImagePicker(container, {value = "", defaultLabel, onChange}) {
+    const picker = container.querySelector(".program-site-image-picker");
+    const select = picker.querySelector("[data-image-source]");
+    const search = picker.querySelector("[data-image-search]");
+    let items = [], selected = String(value || "");
+    picker.open = Boolean(selected);
+    const draw = () => {
+      const query = search.value.trim().toLocaleLowerCase("ru-RU");
+      const options = items.filter(item => String(item.id) === selected || String(item.title).toLocaleLowerCase("ru-RU").includes(query));
+      select.innerHTML = `<option value="">${escapeHtml(defaultLabel)}</option>`
+        + (selected && !items.some(item => String(item.id) === selected) ? `<option value="${escapeAttr(selected)}">Источник №${escapeHtml(selected)} недоступен — выберите другой</option>` : "")
+        + options.map(item => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.title)}</option>`).join("");
+      select.value = selected;
+      const source = items.find(item => String(item.id) === selected);
+      const url = getProgramLandingPreviewImage(source?.previewImageUrl || source?.imageUrl);
+      picker.querySelector("[data-image-preview]").innerHTML = url ? `<img src="${escapeAttr(url)}" alt="Выбранное изображение записи" loading="lazy" referrerpolicy="no-referrer">` : "";
+      picker.querySelector("[data-image-caption]").textContent = source ? "Это изображение будет установлено на лендинге и у выбранного товара. Фото автора, отзывы и образцы документов не меняются." : selected ? "Сохранённый источник отсутствует в списке доступных изображений." : defaultLabel;
+    };
+    search.addEventListener("input", draw);
+    select.addEventListener("change", () => { selected = select.value; draw(); onChange?.(selected); });
+    draw();
+    return {setItems(catalog) { items = catalog.filter(item => getProgramLandingPreviewImage(item.imageUrl)); draw(); select.disabled = false; }, value: () => selected};
+  }
+
   async function openProgramSiteSync() {
     if (!isAdminUser() || isDatabaseDemoMode() || document.querySelector("[data-program-site-dialog]")) return;
     if (isSettingsDraftSessionActive()) { alert("Сначала сохраните или отмените черновик настроек."); return; }
@@ -32826,7 +32865,7 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Синхронизация программы с сайтами");
     dialog.innerHTML = `<header class="modal-head"><h2>Синхронизация с сайтами</h2><button type="button" class="icon-button" data-sync-close aria-label="Закрыть">×</button></header>
-      <div class="program-site-body"><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
+      <div class="program-site-body">${renderProgramSiteImagePicker()}<div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
       <div class="program-site-actions"><button class="primary-button" type="button" data-sync-apply disabled>Обновить сайт и магазин</button><button class="ghost-button" type="button" data-sync-refresh>Обновить проверку</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.showModal();
@@ -32834,9 +32873,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const preview = dialog.querySelector("[data-sync-preview]");
     const apply = dialog.querySelector("[data-sync-apply]");
     let plan = null, busy = false;
+    const imagePicker = bindProgramSiteImagePicker(dialog, {defaultLabel: "Не менять изображения", onChange: () => {
+      plan = null; apply.disabled = true;
+      void load(Number(preview.querySelector("[data-sync-product]")?.value || 0));
+    }});
     const setBusy = value => {
       busy = value;
-      dialog.querySelectorAll("button, select").forEach(control => { control.disabled = value; });
+      dialog.querySelectorAll("button, select, input").forEach(control => { control.disabled = value; });
       if (!value) apply.disabled = !plan?.hash;
     };
     const load = async productId => {
@@ -32844,14 +32887,15 @@ MAX - https://bizvmax.ru/zifra_plus
       setBusy(true); plan = null;
       status.textContent = "Проверка актуальных данных двух сайтов…";
       try {
-        plan = await programSiteRequest("preview-sync", {programId, productId});
+        plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value())});
         preview.innerHTML = `<div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div>
           <label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label>
           <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
           <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd>
           <dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Срок / форма</dt><dd>${escapeHtml(plan.model.duration || "без изменения")} / ${escapeHtml(plan.model.studyForm || "без изменения")}</dd></dl>
-          <p class="muted">${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название и общие сведения изменятся у всей страницы, цена — только у выбранного товара и его блока. " : ""}Описание программы и сведения об авторе сохраняются. Адреса страниц, отзывы, изображения, образцы документов, подключения и состояние публикации не изменятся.</p>`;
+          <p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название, изображение и общие сведения относятся ко всей странице, цена — только к выбранному товару и его блоку. " : ""}Описание, автор, адреса страниц, отзывы, образцы документов и подключения сохраняются. Состояние публикации не меняется.</p>
+          ${plan.product?.status === "draft" ? `<p class="program-site-notice">Товар — черновик: регистрация для посетителей откроется после публикации страницы и товара. Синхронизация не публикует их.</p>` : ""}`;
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
         status.textContent = plan.hash ? "Проверьте выбранный товар и подтвердите обновление." : "Выберите товар, соответствующий этой программе.";
       } catch (error) { status.textContent = error.message; }
@@ -32863,7 +32907,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status.textContent = "Обновление информации на сайте и в магазине…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Восстановите блокировку карточки и повторите проверку.");
-        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash});
+        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value())});
         const current = state.data.collections.programs.find(item => item.id === programId);
         if (!current) throw new Error("Сайты обновлены, но программа больше не найдена в базе.");
         current.siteSync = result;
@@ -32875,6 +32919,8 @@ MAX - https://bizvmax.ru/zifra_plus
       finally { plan = null; setBusy(false); }
     });
     dialog.querySelector("[data-sync-refresh]").addEventListener("click", () => { void load(Number(preview.querySelector("[data-sync-product]")?.value || 0)); });
+    void programSiteRequest("templates").then(payload => { if (dialog.isConnected) { imagePicker.setItems(payload.templates || []); if (busy) dialog.querySelector("[data-image-source]").disabled = true; } })
+      .catch(error => { if (dialog.isConnected) dialog.querySelector("[data-image-caption]").textContent = `Не удалось загрузить изображения: ${error.message}`; });
     const close = () => { if (!busy) { dialog.close(); dialog.remove(); } };
     dialog.querySelector("[data-sync-close]").addEventListener("click", close);
     dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
@@ -32885,6 +32931,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderProgramGeneratorFields(record) {
     return `<div class="program-site-generator-fields" data-site-generator-fields hidden>
       <input type="hidden" name="siteTemplateId" value="${escapeAttr(record?.siteTemplateId || "")}">
+      <input type="hidden" name="siteImageSourceId" value="${escapeAttr(record?.siteImageSourceId || "")}">
       <div data-site-webinar-only ${String(record?.type || "").toUpperCase() === "ПРО" ? "" : "hidden"}><p class="muted">ПРО: создайте встречу SberJazz и вставьте ссылку подключения.</p><div class="form-grid program-site-fields">${configs.programs.fields.filter(item => ["webinarDate", "webinarTime"].includes(item.key)).map(item => renderField(item, record || {})).join("")}
         <div class="program-site-jazz-link-row">${renderField(configs.programs.fields.find(item => item.key === "webinarJoinUrl"), record || {})}<a class="ghost-button compact-button" href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="Открыть SaluteJazz для создания ссылки подключения">Создать ссылку ↗</a></div>
       </div></div>
@@ -33007,6 +33054,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
         </div>
         <div data-site-prototype-link></div>
+        ${renderProgramSiteImagePicker()}
         <details class="muted"><summary>Прототип, повторный запуск и просмотр</summary><p>Код лендинга формируется автоматически из названия программы с проверкой свободного адреса и сохраняется в карточке. Ранее указанный свободный код сохраняется. Существующие страницы и опубликованные товары мастер не перезаписывает. Повторная подготовка использует тот же адрес и обновляет только собственные черновики. Для просмотра черновиков войдите в административные панели сайтов.</p></details>
         <div class="program-site-actions"><button class="primary-button" type="button" data-site-prepare disabled>Подготовить черновики</button><button class="ghost-button" type="button" data-site-reload>Обновить список</button></div>
         <div class="program-site-progress" data-site-progress hidden><progress aria-label="Выполнение генерации"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time title="Время выполнения" aria-label="Время выполнения" data-site-progress-time>0:00</time></div>
@@ -33032,6 +33080,12 @@ MAX - https://bizvmax.ru/zifra_plus
     let templates = [];
     let result = program.sitePublication || null;
     let busy = false;
+    const imageInput = generatorFields?.querySelector('[name="siteImageSourceId"]');
+    const imagePicker = bindProgramSiteImagePicker(dialog, {value: imageInput?.value, defaultLabel: "Изображение прототипа лендинга", onChange: value => {
+      if (imageInput) imageInput.value = value;
+      drawResult();
+      status.textContent = "Изображение выбрано. Подготовьте черновики с текущими параметрами перед публикацией.";
+    }});
     const setBusy = (value) => {
       busy = value;
       dialog.querySelectorAll("button, select, input, textarea").forEach(control => { control.disabled = value; });
@@ -33080,7 +33134,8 @@ MAX - https://bizvmax.ru/zifra_plus
         <p>ID товара: ${escapeHtml(result.product?.id || "—")}; ID лендинга: ${escapeHtml(result.landing?.id || "—")}</p>
         <div class="program-site-actions">${renderProgramSiteLink(result.landing?.previewUrl, "Просмотреть лендинг")}${renderProgramSiteLink(result.landing?.editUrl, "Редактировать лендинг")}${renderProgramSiteLink(result.product?.editUrl, "Редактировать товар")}</div>
         ${samplesReady() ? `<p class="muted">Образцы созданы для этой программы, без выдачи документов слушателям.</p><div class="program-site-actions">${result.certificates.map(image => renderProgramSiteLink(image.url, image.label || (image.language === "ru" ? "Образец — русский" : image.language === "en" ? "Образец — English" : "Приложение " + image.language))).join("")}</div>` : `<p class="muted">Повторите подготовку, чтобы автоматически создать актуальные образцы документов.</p>`}
-        ${result.stage === "published" ? `<div class="program-site-actions">${renderProgramSiteLink(result.landing?.url, "Открыть сайт")}${renderProgramSiteLink(result.product?.url, "Проверить переход из магазина")}</div>` : `
+        ${result.stage === "published" ? `<div class="program-site-actions">${renderProgramSiteLink(result.landing?.url, "Открыть сайт")}${renderProgramSiteLink(result.product?.url, "Проверить переход из магазина")}</div>` : Number(imageInput?.value || 0) !== Number(result.imageSourceId || 0) ? `<p class="program-site-notice">Изображение изменено. Повторите подготовку черновиков перед публикацией.</p>` : `
+          <p class="program-site-notice">Товар пока является черновиком. Кнопка «Регистрация» начнёт добавлять его в корзину после нажатия «Опубликовать страницу и товар».</p>
           <p class="muted">Проверьте все страницы образцов документов. Отзывы, фотографии автора и остальные неизменённые блоки копируются из прототипа и могут относиться к другой программе.</p>
           <label class="program-site-review"><input type="checkbox" data-site-reviewed>Я проверил лендинг и товар, включая цены, дату, изображения и сертификаты</label>
           <button class="primary-button" type="button" data-site-publish disabled>Опубликовать страницу и товар</button>`}
@@ -33134,6 +33189,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status.textContent = "Загрузка прототипов с edu-plus.ru…";
       try {
         const payload = await request("templates");
+        imagePicker.setItems(Array.isArray(payload.templates) ? payload.templates : []);
         templates = Array.isArray(payload.templates) ? payload.templates.filter(item => type === "ДОП" || (item.postType || "other-course") === postType) : [];
         filterTemplates();
         status.textContent = select.value ? "Прототип выбран. Описание и автор будут скопированы из него; сайты пока не изменены." : templates.length ? "Выберите обязательный прототип. Сайты пока не изменены." : "Опубликованные прототипы для этого вида программы не найдены.";
@@ -49101,6 +49157,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const sourcePrototype = currentRecord.sitePrototype || state.modal?.draft?.sitePrototype;
       if (sourcePrototype) values.sitePrototype = copyDuplicateFieldValue(sourcePrototype);
       if (formData.has("siteTemplateId")) values.siteTemplateId = String(formData.get("siteTemplateId") || "");
+      if (formData.has("siteImageSourceId")) values.siteImageSourceId = String(formData.get("siteImageSourceId") || "");
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
         if (formData.has(key)) values[key] = normalizeProgramListValue(formData.get(key));
       });

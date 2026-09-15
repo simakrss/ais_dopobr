@@ -1,6 +1,14 @@
 <?php
 // Isolated in-memory contract test. No WordPress, database, network, or site writes.
-define('ABSPATH', __DIR__ . '/isolated-not-a-wordpress/');
+$image_test_dir = sys_get_temp_dir() . '/ais-image-sync-' . bin2hex(random_bytes(8));
+mkdir($image_test_dir . '/wp-admin/includes', 0700, true);
+file_put_contents($image_test_dir . '/wp-admin/includes/image.php', '<?php // isolated image mock');
+file_put_contents($image_test_dir . '/cover.jpg', 'isolated image file');
+define('ABSPATH', $image_test_dir . '/');
+register_shutdown_function(function () use ($image_test_dir) {
+    unlink($image_test_dir . '/wp-admin/includes/image.php'); unlink($image_test_dir . '/cover.jpg');
+    rmdir($image_test_dir . '/wp-admin/includes'); rmdir($image_test_dir . '/wp-admin'); rmdir($image_test_dir);
+});
 define('OBJECT', 'OBJECT');
 $role = 'edu'; $posts = array(); $fields = array(); $products = array(); $writes = 0;
 function add_action(...$args) {} function add_filter(...$args) {}
@@ -15,13 +23,17 @@ function get_post($id) { return isset($GLOBALS['posts'][$id]) ? (object) $GLOBAL
 function get_post_status($id) { return $GLOBALS['posts'][$id]['post_status'] ?? ''; }
 function get_post_type($id) { return $GLOBALS['posts'][$id]['post_type'] ?? ''; }
 function get_post_meta($id,$key,$single=true) { return ''; }
-function get_post_thumbnail_id($id) {return $id===42?90:0;}
-function wp_get_attachment_image_url($id,$size) {return $id===90?'https://edu-plus.ru/wp-content/uploads/cover.jpg':false;}
+function get_post_thumbnail_id($id) {return $GLOBALS['thumbnails'][$id] ?? ($id===42?90:0);}
+function set_post_thumbnail($id,$image) {$GLOBALS['thumbnails'][$id]=$image;}
+function wp_get_attachment_image_url($id,$size) {return $id===90?'https://edu-plus.ru/wp-content/uploads/cover.jpg':($id===91?'https://edu-plus.ru/wp-content/uploads/other.jpg':false);}
+function get_attached_file($id) {return $GLOBALS['image_test_dir'].'/cover.jpg';}
+function get_post_field($key,$id) {return $GLOBALS['posts'][$id][$key] ?? '';}
+function wp_get_attachment_metadata($id) {return array('width'=>1);}
 function get_permalink($id) { return home_url('/item/' . $id . '/'); }
 function admin_url($path) { return home_url('/wp-admin/' . $path); }
 function add_query_arg($params,$url) { return $url . '?' . http_build_query($params); }
 function is_wp_error($value) { return false; }
-function get_posts($args) { return array_keys(array_filter($GLOBALS['posts'],function($post)use($args){return $post['post_name']===$args['name'] && in_array($post['post_type'],$args['post_type'],true);})); }
+function get_posts($args) { if($args['post_type']==='attachment') return array(191); return array_keys(array_filter($GLOBALS['posts'],function($post)use($args){return $post['post_name']===$args['name'] && in_array($post['post_type'],$args['post_type'],true);})); }
 function get_field_objects($id,$format=false) {
     $result=array();
     foreach($GLOBALS['fields'][$id] ?? array() as $name=>$value) {
@@ -48,7 +60,7 @@ class SyncProduct {
     function __construct($id) {$this->id=$id;$this->values=array('name'=>'Old product','status'=>'publish','price'=>'1000','regular_price'=>'1500','sale_price'=>'1000','description'=>'Existing description','date_on_sale_from'=>'','date_on_sale_to'=>'','date_modified'=>'2026-09-14', 'downloads'=>array('PRIVATE FILE'), 'slug'=>'unchanged', 'virtual'=>true);}
     function is_type($type) {return $type==='simple';}
     function __call($name,$args) { $key=substr($name,4);if(strpos($name,'get_')===0) return $this->values[$key] ?? ''; $this->values[$key]=$args[0]; }
-    function save() {$GLOBALS['products'][$this->id]=$this;$GLOBALS['writes']++;return $this->id;}
+    function save() {$GLOBALS['products'][$this->id]=$this;if(isset($this->values['image_id'])) set_post_thumbnail($this->id,$this->values['image_id']);$GLOBALS['writes']++;return $this->id;}
 }
 function wc_get_product($id) {return isset($GLOBALS['products'][$id]) ? clone $GLOBALS['products'][$id] : false;}
 require __DIR__ . '/../services/wordpress/ais-program-generator.php';
@@ -105,3 +117,27 @@ foreach(array('description','downloads','slug','virtual','status') as $key) chec
 check($products[12]->values['name']==='Old product','Unselected product not touched');
 check(!$wpdb->locked,'Shop lock released');
 echo "PASS: exact landing resolution, ACF price variants, free/old price, reviews/images/content/downloads preservation, legacy Woo product, stale snapshot, verification and retries\n";
+$role='edu';
+$posts[43]=array_merge($posts[42],array('ID'=>43,'post_title'=>'Источник','post_name'=>'source'));
+$posts[91]=array('post_type'=>'attachment','post_modified_gmt'=>'image-v1');
+$posts[90]=array('post_type'=>'attachment','post_modified_gmt'=>'image-v0');
+set_post_thumbnail(43,91);
+$image_source=ais_pg_image_source(43);
+$image_data=array('model'=>array_merge($model,array('imageSource'=>$image_source)),'landingId'=>42,'productId'=>13,'version'=>ais_pg_sync_landing(42)['version']);
+$image_before=$fields[42];$source_before=$posts[43];$count_before=$writes;
+ais_pg_sync_existing($image_data,true);
+check($writes===$count_before && get_post_thumbnail_id(42)===90,'Image preflight never changes destination');
+ais_pg_sync_existing($image_data);
+check(get_post_thumbnail_id(42)===91 && get_post_thumbnail_id(43)===91 && $posts[43]===$source_before,'Landing receives selected image, source intact');
+check($fields[42]['blok_opisaniya_kursa']===$image_before['blok_opisaniya_kursa'] && $fields[42]['slajder']===$image_before['slajder'],'Review photos and document samples intact');
+$image_data['version']=ais_pg_sync_landing(42)['version'];
+set_post_thumbnail(43,90);$count_before=$writes;
+rejects(function()use($image_data){ais_pg_sync_existing($image_data);},'изменилось');
+check($writes===$count_before,'Stale source rejected before writes');
+set_post_thumbnail(43,91);
+$role='shop';$image_data['version']=ais_pg_sync_product(13)['version'];
+$other_image=get_post_thumbnail_id(12);
+ais_pg_sync_existing($image_data,true);ais_pg_sync_existing($image_data);
+check(get_post_thumbnail_id(13)===191 && get_post_thumbnail_id(12)===$other_image,'Only selected product gets imported media ID');
+check($products[13]->values['status']==='publish' && $products[13]->values['downloads']===$before_product['downloads'],'Image update preserves publication and downloads');
+echo "PASS: explicit image synchronization on both sites, source/destination concurrency, other products, samples and reviews preserved\n";

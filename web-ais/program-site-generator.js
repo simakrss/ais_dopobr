@@ -170,6 +170,22 @@ function validateTemplateId(value) {
   return Number(value);
 }
 
+function validateImageSourceId(value) {
+  if (value === undefined || value === null || value === "" || value === 0 || value === "0") return 0;
+  if (!Number.isSafeInteger(Number(value)) || Number(value) < 1) fail("Выберите лендинг — источник изображения.");
+  return Number(value);
+}
+
+async function loadImageSource(value, call) {
+  const id = validateImageSourceId(value);
+  if (!id) return null;
+  const source = await call("edu", `/image-source/${id}`);
+  if (Number(source?.id) !== id || !Number.isSafeInteger(source.imageId) || source.imageId < 1
+    || !/^https:\/\/edu-plus\.ru\/wp-content\/uploads\/[^?#\r\n]+\.(?:jpe?g|png|webp)$/i.test(source.imageUrl || "")
+    || !/^[a-f0-9]{64}$/.test(source.version || "")) fail("Источник не содержит доступного изображения записи. Выберите другой лендинг.");
+  return {id, imageId: source.imageId, imageUrl: source.imageUrl, version: source.version, title: source.title};
+}
+
 // Match visible text, but edit only the date/time tokens at their original offsets.
 // Tags, attributes, entities, links and the prototype's formatting stay untouched.
 function updateWebinarSchedule(value, model, name = "") {
@@ -223,6 +239,8 @@ function updateWebinarSchedule(value, model, name = "") {
 async function loadPrototypeModel(program, templateId, call) {
   const model = normalizeProgram(program);
   const template = await call("edu", `/template/${validateTemplateId(templateId)}`);
+  const imageSource = await loadImageSource(program.siteImageSourceId, call);
+  if (imageSource) model.imageSource = imageSource;
   if (template.postType && template.postType !== model.postType && model.type !== "ДОП") fail("Выберите прототип соответствующего вида программы.");
   const fields = template.fields || {};
   // Image delivery is independent of the reviewed document/price payload, so adding
@@ -312,17 +330,18 @@ async function prepare(program, templateId, call, certificate, report = () => {}
   if (!Array.isArray(assets.images) || assets.images.length !== images.length || images.some((image, index) => assets.images[index]?.language !== image.language)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
   buildLandingFields(template, model, 1, assets.images);
   report("Создание черновика товара на zifra-plus.ru");
-  const product = await call("shop", "/prepare-product", {...model, hash, imageUrl: template.imageUrl || ""});
+  const product = await call("shop", "/prepare-product", {...model, hash, imageUrl: model.imageSource?.imageUrl || template.imageUrl || ""});
   const fields = buildLandingFields(template, model, product.id, assets.images);
   report("Создание лендинга с отзывами и образцами документов");
   const landing = await call("edu", "/prepare-landing", {
     key: model.key, hash, templateId: Number(templateId), templateModified: template.modified,
     title: model.name, type: model.type, slug: model.slug, date: model.date, time: model.time, fields, productId: product.id, certificateHash: certificate.hash,
-    certificatePages: assets.images.map(image => ({id: image.id, language: image.language}))
+    certificatePages: assets.images.map(image => ({id: image.id, language: image.language})),
+    ...(model.imageSource ? {imageSource: model.imageSource} : {})
   });
   return {
     ok: true, stage: product.status === "publish" && landing.status === "publish" && product.redirectEnabled === true ? "published" : "prepared",
-    product, landing, type: model.type, templateId: Number(templateId), hash, certificates: assets.images.map((image, index) => ({...image, ...(images[index].label ? {label: images[index].label} : {})})), certificateHash: certificate.hash,
+    product, landing, type: model.type, templateId: Number(templateId), imageSourceId: model.imageSource?.id || 0, hash, certificates: assets.images.map((image, index) => ({...image, ...(images[index].label ? {label: images[index].label} : {})})), certificateHash: certificate.hash,
     promoMessage: `${model.name}\n${model.dateLabel}\nПродолжительность: ${model.hours} ч. Стоимость: ${model.price} ₽.\nРегистрация: ${model.landingUrl}`,
     checklist: ["Проверьте все блоки лендинга, изображения и сохранённые отзывы из прототипа.", "Проверьте все страницы автоматически созданных образцов документов.", "После публикации проверьте оплату тестовым заказом вручную.", "Согласуйте лендинг, затем запускайте рекламу и обновляйте приказ о наборе."]
   };
@@ -419,8 +438,10 @@ async function inspectSite(program, call) {
     product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl}, warning: resolved.warning || ""};
 }
 
-async function previewSync(program, call, productId = 0) {
+async function previewSync(program, call, productId = 0, imageSourceId = 0) {
   const model = normalizeSyncProgram(program);
+  const imageSource = await loadImageSource(imageSourceId, call);
+  if (imageSource) model.imageSource = imageSource;
   const resolved = await resolveSite(program, call, productId);
   const publicLanding = {...resolved.landing};
   delete publicLanding.fields;
@@ -429,8 +450,8 @@ async function previewSync(program, call, productId = 0) {
   return {...resolved, landing: publicLanding, model, hash};
 }
 
-async function synchronize(program, call, productId, expectedHash) {
-  const plan = await previewSync(program, call, productId);
+async function synchronize(program, call, productId, expectedHash, imageSourceId = 0) {
+  const plan = await previewSync(program, call, productId, imageSourceId);
   if (!plan.product || !expectedHash || plan.hash !== expectedHash) fail("Данные программы или сайтов изменились. Обновите проверку перед синхронизацией.", 409);
   // Preflight both sites before the first write. Each write also rechecks its snapshot
   // under a lock on the actual post ID (several AIS variants can share one landing).
@@ -446,4 +467,4 @@ async function synchronize(program, call, productId, expectedHash) {
   return {ok: true, landing, product, syncedAt: new Date().toISOString()};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};

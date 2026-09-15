@@ -21,7 +21,8 @@ function preview(type = "ПРО", result = false) {
   const renderField = new Function("state", "escapeAttr", "escapeHtml", `${extract(source, "  function renderField(", "  function renderStudentModal(")} return renderField;`)({modal: {config: "programs"}}, escape, escape);
   const renderGenerator = new Function("configs", "renderField", "escapeAttr", `${extract(source, "  function renderProgramGeneratorFields(", "  function createProgramSiteProgress(")} return renderProgramGeneratorFields;`)({programs: {fields}}, renderField, escape);
   const program = {type, name: "Тестовая образовательная программа: актуальное название статьи как основной критерий конкурентоспособности автора", webinarDate: "2026-09-18", webinarTime: "18:00", webinarJoinUrl: "https://salutejazz.ru/example", siteSampleDate: "2026-09-15"};
-  let html = new Function("escapeHtml", "type", "program", "bilingual", `return ${markup};`)(escape, type, program, ["ПРО", "ДОП"].includes(type));
+  const renderPicker = new Function(`${extract(source, "  function renderProgramSiteImagePicker(", "  function bindProgramSiteImagePicker(")} return renderProgramSiteImagePicker;`)();
+  let html = new Function("escapeHtml", "type", "program", "bilingual", "renderProgramSiteImagePicker", `return ${markup};`)(escape, type, program, ["ПРО", "ДОП"].includes(type), renderPicker);
   html = html.replace("<details data-site-parameters>", "<details data-site-parameters open>")
     .replace('<div data-site-parameters-host></div>', `<div data-site-parameters-host>${renderGenerator(program).replace('data-site-generator-fields hidden', 'data-site-generator-fields')}</div>`)
     .replace('required disabled><option value="">Загрузка…</option>', 'required><option value="42">Тестовый лендинг-прототип образовательной программы</option>');

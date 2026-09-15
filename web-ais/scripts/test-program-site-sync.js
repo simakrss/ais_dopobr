@@ -107,7 +107,7 @@ if (process.argv.includes("--serve")) {
       let syncWrites=0, qaPhase='Проверка параметров', qaAttempts=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
         const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
-        if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url},{id:42,title:'Другой прототип',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url}]};
+        if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url,imageUrl:'https://edu-plus.ru/wp-content/uploads/db_logo.jpg'},{id:42,title:'Другой прототип',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url,imageUrl:'https://edu-plus.ru/wp-content/uploads/db_logo.jpg'}]};
         else if(url.endsWith('/resolve')) {
           if(body.landingCode==='fail-lookup') return {ok:false,json:async()=>({error:'Тест: сайт временно недоступен'})};
           const draft=state.data.collections.programs[0].sitePublication;
@@ -121,9 +121,9 @@ if (process.argv.includes("--serve")) {
           qaAttempts++; qaPhase='Подготовка изображения образца: страница 1 из 3';
           if(${process.env.AIS_QA_SITE_DELAY === '1'}) {await new Promise(resolve=>setTimeout(resolve,5000));qaPhase='Создание черновика товара на zifra-plus.ru';await new Promise(resolve=>setTimeout(resolve,7000));}
           if(${process.env.AIS_QA_SITE_FAILURE === '1'} && qaAttempts===1) return {ok:false,json:async()=>({error:'Тестовый отказ WooCommerce',stage:qaPhase})};
-          logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:url.endsWith('/publish')?'published':'prepared',type:'${uiProgram.type}',templateId:body.templateId,hash:'qa',landing,product:products[0],certificateHash:'qa',certificates:[{id:1,language:'ru'},{id:2,language:'page-2'},{id:3,language:'page-3'}]};
+          logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:url.endsWith('/publish')?'published':'prepared',type:'${uiProgram.type}',templateId:body.templateId,imageSourceId:Number(state.data.collections.programs[0].siteImageSourceId||0),hash:'qa',landing,product:products[0],certificateHash:'qa',certificates:[{id:1,language:'ru'},{id:2,language:'page-2'},{id:3,language:'page-3'}]};
         }
-        else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name},hash:body.productId?'qa-plan':''};
+        else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name,...(body.imageSourceId?{imageSource:{id:body.imageSourceId,title:'Другой прототип'}}:{})},hash:body.productId?'qa-plan':''};
         return {ok:true,json:async()=>result};};
       ${renderFieldSource}
       ${source}

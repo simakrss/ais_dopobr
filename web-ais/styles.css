@@ -31060,6 +31060,16 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-sync-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
 .program-site-sync-summary dd { margin: 0; }
 .program-site-fields textarea { font-family: Consolas, monospace; min-height: 80px; }
+.program-site-image-picker { min-width: 0; }
+.program-site-image-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: start; margin-top: 7px; }
+.program-site-image-controls { display: grid; gap: 7px; min-width: 0; }
+.program-site-image-controls p { margin: 0; }
+.program-site-image-layout [data-image-preview]:empty { display: none; }
+.program-site-image-layout img { width: 120px; height: 90px; object-fit: contain; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.program-site-notice { margin: 0; padding: 8px 10px; border: 1px solid #e4c899; border-radius: 6px; background: #fff8ed; color: #624313; }
+@media (max-width: 600px) {
+  .program-site-image-layout { grid-template-columns: minmax(0, 1fr); }
+}
 /* Compact only the creation wizard; the sync dialog and landing preview keep their layout. */
 .program-site-generator-dialog .modal-head { padding: 8px 12px; }
 .program-site-generator-dialog .modal-head .eyebrow { margin: 0 0 3px; }
