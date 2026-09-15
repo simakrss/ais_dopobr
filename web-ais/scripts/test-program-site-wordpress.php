@@ -9,7 +9,11 @@ file_put_contents($test_dir . '/wordpress/wp-admin/includes/image.php', '<?php /
 define('ABSPATH', $test_dir . '/wordpress/');
 file_put_contents($test_dir . '/ais-program-site.key', str_repeat('a',64));
 register_shutdown_function(function () use ($test_dir) {
-    foreach (glob($test_dir . '/ais-webinar-files/*/connection.txt') as $file) { unlink($file); rmdir(dirname($file)); }
+    $private_dirs = array();
+    foreach (array('txt', 'html') as $extension) foreach (glob($test_dir . '/ais-webinar-files/*/connection.' . $extension) as $file) {
+        $private_dirs[] = dirname($file); unlink($file);
+    }
+    foreach (array_unique($private_dirs) as $dir) rmdir($dir);
     foreach (glob($test_dir . '/ais-webinar-files/public-locks/*.lock') as $file) unlink($file);
     if (is_dir($test_dir . '/ais-webinar-files/public-locks')) rmdir($test_dir . '/ais-webinar-files/public-locks');
     foreach (glob($test_dir . '/wordpress/wp-content/uploads/dae-uploads/webinars/*.html') as $file) unlink($file);
@@ -104,6 +108,7 @@ class WC_Product_Download {
     function set_name($name) { $this->name = $name; }
     function get_file() { return $this->file; }
     function get_id() { return $this->id; }
+    function get_name() { return $this->name; }
     function is_allowed_filetype() {
         $types = $GLOBALS['test_filters']['woocommerce_downloadable_file_allowed_mime_types'][0](array('txt'=>'text/plain'));
         return isset($types[pathinfo($this->file, PATHINFO_EXTENSION)]);
@@ -163,7 +168,12 @@ function get_page_by_path($slug, $output, $type) { return $GLOBALS['test_code_co
 function get_permalink($id) { return home_url('/other_course/test/'); }
 function admin_url($path) { return home_url('/wp-admin/' . $path); }
 function add_query_arg($params, $url) { return $url . '?' . http_build_query($params); }
-function wp_update_post($data, $return_error = false) { $GLOBALS['test_updates'][] = $data; $GLOBALS['test_posts'][$data['ID']]['status'] = $data['post_status']; return $data['ID']; }
+function wp_update_post($data, $return_error = false) {
+    $GLOBALS['test_updates'][] = $data;
+    $GLOBALS['test_posts'][$data['ID']] = array_merge($GLOBALS['test_posts'][$data['ID']], $data);
+    if (isset($data['post_status'])) $GLOBALS['test_posts'][$data['ID']]['status'] = $data['post_status'];
+    return $data['ID'];
+}
 function is_wp_error($value) { return $value instanceof WP_Error; }
 class WP_Error { public $code; public $message; public $data; function __construct($code, $message, $data) { $this->code=$code; $this->message=$message; $this->data=$data; } }
 class MockWpDb {

@@ -28,6 +28,10 @@ function set_post_thumbnail($id,$image) {$GLOBALS['thumbnails'][$id]=$image;}
 function wp_get_attachment_image_url($id,$size) {return $id===90?'https://edu-plus.ru/wp-content/uploads/cover.jpg':($id===91?'https://edu-plus.ru/wp-content/uploads/other.jpg':false);}
 function get_attached_file($id) {return $GLOBALS['image_test_dir'].'/cover.jpg';}
 function get_post_field($key,$id) {return $GLOBALS['posts'][$id][$key] ?? '';}
+function get_page_by_path($slug,$output,$types) {
+    foreach ($GLOBALS['posts'] as $id=>$post) if (($post['post_name'] ?? '') === $slug && in_array($post['post_type'],(array)$types,true)) return (object) array('ID'=>$id);
+    return null;
+}
 function wp_get_attachment_metadata($id) {return array('width'=>1);}
 function get_permalink($id) { return home_url('/item/' . $id . '/'); }
 function admin_url($path) { return home_url('/wp-admin/' . $path); }
@@ -141,3 +145,20 @@ ais_pg_sync_existing($image_data,true);ais_pg_sync_existing($image_data);
 check(get_post_thumbnail_id(13)===191 && get_post_thumbnail_id(12)===$other_image,'Only selected product gets imported media ID');
 check($products[13]->values['status']==='publish' && $products[13]->values['downloads']===$before_product['downloads'],'Image update preserves publication and downloads');
 echo "PASS: explicit image synchronization on both sites, source/destination concurrency, other products, samples and reviews preserved\n";
+$role = 'edu';
+$rename = array('model'=>array_merge($model,array('slug'=>'new-promo-code')),'landingId'=>42,'productId'=>13,'version'=>ais_pg_sync_landing(42)['version']);
+$rename_before = serialize(array($posts,$fields)); $write_count = $writes;
+$posts[888] = array('ID'=>888,'post_type'=>'page','post_name'=>'new-promo-code');
+rejects(function () use ($rename) { ais_pg_sync_existing($rename,true); }, 'занят');
+unset($posts[888]);
+check($writes === $write_count && serialize(array($posts,$fields)) === $rename_before,'Occupied landing address blocks all writes');
+check(ais_pg_sync_existing($rename,true)['ok'] === true && $writes === $write_count,'Landing rename preflight is read-only');
+$renamed = ais_pg_sync_existing($rename);
+check($renamed['id'] === 42 && $renamed['slug'] === 'new-promo-code','Landing is renamed in place');
+check($posts[42]['post_status'] === 'publish' && $posts[42]['post_type'] === 'courses-pk','Landing type/publication state retained');
+check($fields[42]['blok_opisaniya_kursa'] === $image_before['blok_opisaniya_kursa'] && $fields[42]['slajder'] === $image_before['slajder'],'Rename preserves reviews and samples');
+$rename['version'] = ais_pg_sync_landing(42)['version']; $write_count = $writes;
+$posts[42]['post_name'] = 'concurrent-name';
+rejects(function () use ($rename) { ais_pg_sync_existing($rename); }, 'изменились');
+check($writes === $write_count,'Concurrent slug edit rejected even within the same modified timestamp');
+echo "PASS: in-place landing rename, occupied address, read-only preflight, unchanged content/status and concurrent slug protection\n";

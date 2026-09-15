@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.2
+ * Version: 1.7.3
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -75,6 +75,7 @@ function ais_pg_find($key) {
 }
 function ais_pg_result($id) {
     return array('id' => (int) $id, 'status' => get_post_status($id), 'url' => get_permalink($id),
+        'slug' => get_post_field('post_name', $id), 'postType' => get_post_type($id),
         'redirectEnabled' => get_post_meta($id, '_ais_landing_redirect', true) === '1',
         'editUrl' => admin_url('post.php?post=' . (int) $id . '&action=edit'),
         'previewUrl' => add_query_arg(array('p' => (int) $id, 'preview' => 'true', 'post_type' => get_post_type($id)), home_url('/')));
@@ -533,10 +534,10 @@ function ais_pg_download_target($id) {
     $type = ais_pg_program_type(array('type' => get_post_meta($id, '_ais_program_type', true) ?: 'ПРО'));
     return $type === 'ПРО' ? ais_pg_join_url(get_post_meta($id, '_ais_webinar_join_url', true)) : 'https://zifra-plus.ru/edu_info';
 }
-function ais_pg_product_redirect_rules($id, $enabled) {
-    $url = get_post_meta($id, '_ais_landing_url', true);
+function ais_pg_product_redirect_rules($id, $enabled, $overrides = array()) {
+    $url = $overrides['landingUrl'] ?? get_post_meta($id, '_ais_landing_url', true);
     if (!preg_match('~^https://edu-plus\.ru/(?:other_course|courses-pk|courses-pp)/[a-z0-9][a-z0-9_-]{1,79}/$~D', $url)) throw new RuntimeException('Не указан корректный адрес лендинга товара.');
-    $slug = get_post_field('post_name', $id);
+    $slug = $overrides['slug'] ?? get_post_field('post_name', $id);
     if (!preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Не указан код товара.');
     // PRO's wildcard converter rewrites every *, so regex repetitions use {0,}.
     // ID boundaries prevent 5112 matching 51120. Exact/drop never leaks order keys,
@@ -546,7 +547,7 @@ function ais_pg_product_redirect_rules($id, $enabled) {
     $specs = array(
         array('query', '^/[?]' . $skip . '(?=' . $params . 'post_type=product(?:&|$))(?=' . $params . 'p=' . (int) $id . '(?:&|$)).{0,}', $url, 301),
         array('product', '^/product/' . preg_quote($slug, '~') . '/?(?:[?]' . $skip . '.{0,})?', $url, 301),
-        array('download', '^/[?](?=' . $params . 'download_file=' . (int) $id . '(?:&|$)).{0,}', ais_pg_download_target($id), 302)
+        array('download', '^/[?](?=' . $params . 'download_file=' . (int) $id . '(?:&|$)).{0,}', $overrides['downloadUrl'] ?? ais_pg_download_target($id), 302)
     );
     return array_map(function ($spec) use ($id, $enabled) {
         return array('url_from' => $spec[1], 'url_to' => $spec[2], 'type' => $spec[3],
@@ -554,9 +555,9 @@ function ais_pg_product_redirect_rules($id, $enabled) {
             'status' => $enabled ? 'enabled' : 'disabled', 'position' => 5, 'tags' => 'AIS program ' . (int) $id . ' ' . $spec[0]);
     }, $specs);
 }
-function ais_pg_save_product_redirects($id, $enabled) {
+function ais_pg_save_product_redirects($id, $enabled, $overrides = array(), $check_only = false) {
     ais_pg_redirect_manager();
-    $rules = ais_pg_product_redirect_rules($id, $enabled);
+    $rules = ais_pg_product_redirect_rules($id, $enabled, $overrides);
     $existing = WF301_functions::get_redirects(false);
     $updates = array();
     // Preflight all rows. Never overwrite unrelated rules or ambiguous duplicates.
@@ -564,11 +565,12 @@ function ais_pg_save_product_redirects($id, $enabled) {
         $matches = array_values(array_filter($existing, function ($row) use ($rule) { return $row->tags === $rule['tags']; }));
         if (count($matches) > 1) throw new RuntimeException('Найдено несколько правил АИС для товара. Проверьте 301 Redirects PRO.');
         foreach ($existing as $row) {
-            if (stripslashes($row->url_from) === $rule['url_from'] && $row->tags !== $rule['tags']) throw new RuntimeException('Такой переход уже настроен вручную. Проверьте 301 Redirects PRO; существующее правило не изменено.');
+            if (in_array($rule['url_from'], array((string) $row->url_from, stripslashes($row->url_from)), true) && $row->tags !== $rule['tags']) throw new RuntimeException('Такой переход уже настроен вручную. Проверьте 301 Redirects PRO; существующее правило не изменено.');
         }
         if ($matches) $rule['redirect_id'] = (int) $matches[0]->id;
         $updates[] = $rule;
     }
+    if ($check_only) return $updates;
     $ids = array();
     foreach ($updates as $rule) {
         $rule_id = (int) WF301_functions::save_redirect_rule($rule);
@@ -730,9 +732,121 @@ function ais_pg_sync_landing($id) {
         if (!is_scalar($product_id) || !preg_match('/^[1-9]\d*$/D', (string) $product_id)) continue;
         $offers[] = array('index' => $index, 'productId' => (int) $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '');
     }
-    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_modified_gmt, $post->post_status, $post->post_content, $fields, get_post_thumbnail_id($id))));
+    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_name, $post->post_modified_gmt, $post->post_status, $post->post_content, $fields, get_post_thumbnail_id($id))));
     $image = function_exists('wp_get_attachment_image_url') ? wp_get_attachment_image_url(get_post_thumbnail_id($id), 'medium_large') : '';
     return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'previewImageUrl' => $image ?: '', 'fields' => $fields, 'offers' => $offers, 'version' => $version));
+}
+function ais_pg_webinar_file_locations($id, $extra_slug = '') {
+    $key = get_post_meta($id, '_ais_generator_key', true) ?: get_post_meta($id, '_ais_webinar_file_key', true);
+    if (!$key) $key = hash('sha256', 'ais-shop-product:' . (int) $id);
+    if (!preg_match('/^[a-f0-9]{64}$/D', $key)) throw new RuntimeException('Некорректный владелец файлов подключения.');
+    $uploads = wp_upload_dir(null, false);
+    if (!empty($uploads['error']) || !preg_match('~^https?://zifra-plus\.ru/wp-content/uploads/?$~D', $uploads['baseurl'] ?? '')) throw new RuntimeException('Не удалось определить папку файлов вебинаров.');
+    $dir = rtrim($uploads['basedir'], '/\\') . '/dae-uploads/webinars';
+    $slugs = get_post_meta($id, '_ais_webinar_slug_aliases', true) ?: array();
+    if (!is_array($slugs) || count($slugs) > 50) throw new RuntimeException('Проверьте список прежних файлов вебинара.');
+    foreach (array(get_post_field('post_name', $id), $extra_slug) as $slug) if ($slug) $slugs[] = $slug;
+    $known = array_filter(array(get_post_meta($id, '_ais_download_file', true), get_post_meta($id, '_ais_webinar_file', true)));
+    $product = wc_get_product($id);
+    $selected = array();
+    foreach ($product ? $product->get_downloads('edit') : array() as $index => $download) {
+        if (!is_object($download)) continue;
+        $file = $download->get_file();
+        $own = $download->get_id() === substr($key, 0, 32) || in_array($file, $known, true);
+        if (preg_match('~^https://zifra-plus\.ru/wp-content/uploads/dae-uploads/webinars/([a-z0-9][a-z0-9_-]{1,79})\.html$~D', $file, $match)) {
+            $path = $dir . '/' . $match[1] . '.html';
+            if (is_file($path) && !is_link($path) && filesize($path) <= 65536
+                && strpos((string) file_get_contents($path), '<!-- AIS webinar ' . $key . ' -->') !== false) $own = true;
+            if ($own) $slugs[] = $match[1];
+        }
+        if ($own) $selected[] = $index;
+    }
+    foreach ($known as $file) if (preg_match('~^https://zifra-plus\.ru/wp-content/uploads/dae-uploads/webinars/([a-z0-9][a-z0-9_-]{1,79})\.html$~D', $file, $match)) $slugs[] = $match[1];
+    $slugs = array_values(array_unique($slugs));
+    if (count($slugs) > 50) throw new RuntimeException('Слишком много прежних файлов вебинара.');
+    foreach ($slugs as $slug) if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Некорректное имя файла вебинара.');
+    $private_dir = dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files/' . $key;
+    $private = array();
+    foreach (array('txt', 'html') as $extension) {
+        $file = $private_dir . '/connection.' . $extension;
+        if (file_exists($file) || is_link($file)) $private[] = $file;
+    }
+    return array('key' => $key, 'dir' => $dir, 'slugs' => $slugs, 'private' => $private, 'downloadIndexes' => $selected);
+}
+function ais_pg_webinar_files_version($id) {
+    $state = array();
+    foreach (array('_ais_webinar_join_url', '_ais_webinar_file', '_ais_download_file', '_ais_webinar_file_key', '_ais_webinar_slug_aliases', '_ais_landing_url', '_ais_landing_redirect', '_ais_redirect_rule_ids') as $key) $state[$key] = get_post_meta($id, $key, true);
+    if ($state['_ais_webinar_file'] || $state['_ais_webinar_file_key']) {
+        $locations = ais_pg_webinar_file_locations($id);
+        $files = array_merge($locations['private'], array_map(function ($slug) use ($locations) { return $locations['dir'] . '/' . $slug . '.html'; }, $locations['slugs']));
+        foreach ($files as $file) $state['files'][$file] = is_file($file) && !is_link($file) && filesize($file) <= 65536 ? hash_file('sha256', $file) : 'missing-or-invalid';
+    }
+    return $state;
+}
+function ais_pg_sync_links_plan($data, $snapshot) {
+    $model = $data['model'];
+    if (empty($model['slug']) && empty($model['joinUrl'])) return null;
+    if (!empty($model['joinUrl']) && ($model['type'] !== 'ПРО' || !is_string($model['joinUrl']))) throw new RuntimeException('Ссылка SberJazz предназначена только для ПРО.');
+    $shop = ais_pg_role() === 'shop';
+    $id = (int) $data[$shop ? 'productId' : 'landingId'];
+    $slug = $model['slug'] ?? $snapshot['slug'];
+    ais_pg_slug($slug, $shop ? 'product' : get_post_type($id), $id);
+    if (!$shop) return array('slug' => $slug);
+    $url = $model['landingUrl'] ?? '';
+    if (!is_string($url) || !preg_match('~^https://edu-plus\.ru/(?:other_course|courses-pk|courses-pp)/[a-z0-9][a-z0-9_-]{1,79}/$~D', $url)) throw new RuntimeException('Не подтверждён новый адрес лендинга.');
+    $join = $model['type'] === 'ПРО' ? ais_pg_join_url($model['joinUrl'] ?? get_post_meta($id, '_ais_webinar_join_url', true)) : 'https://zifra-plus.ru/edu_info';
+    $enabled = get_post_status($id) === 'publish' && ($data['landingStatus'] ?? '') === 'publish';
+    $overrides = array('slug' => $slug, 'landingUrl' => $url, 'downloadUrl' => $join);
+    ais_pg_save_product_redirects($id, $enabled, $overrides, true);
+    $files = null;
+    if ($model['type'] === 'ПРО') {
+        $files = ais_pg_webinar_file_locations($id, $slug);
+        foreach (array_merge(array($files['dir']), array_map('dirname', $files['private'])) as $dir) {
+            if (is_link($dir) || is_link(dirname($dir))) throw new RuntimeException('Папка файла подключения является символической ссылкой. Файлы не изменены.');
+        }
+        foreach ($files['slugs'] as $alias) {
+            $file = $files['dir'] . '/' . $alias . '.html';
+            if (is_link($file) || (file_exists($file) && (!is_file($file) || filesize($file) > 65536
+                || strpos((string) file_get_contents($file), '<!-- AIS webinar ' . $files['key'] . ' -->') === false))) throw new RuntimeException('Файл подключения с таким именем создан не этой программой. Он не изменён; проверьте код лендинга.');
+        }
+        foreach ($files['private'] as $file) if (is_link($file) || !is_file($file) || filesize($file) > 65536) throw new RuntimeException('Прежний файл подключения недоступен для безопасного обновления.');
+    }
+    return array('slug' => $slug, 'landingUrl' => $url, 'joinUrl' => $join, 'enabled' => $enabled, 'overrides' => $overrides, 'files' => $files);
+}
+function ais_pg_sync_webinar_files($product, $plan, $name) {
+    $files = $plan['files'];
+    if (!$files) return;
+    foreach ($files['slugs'] as $slug) ais_pg_public_webinar_file($files['key'], $slug, $name, $plan['joinUrl']);
+    $url = 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/' . $plan['slug'] . '.html';
+    // Old private HTML/TXT copies remain usable for already issued links.
+    foreach ($files['private'] as $file) {
+        $content = substr($file, -5) === '.html' ? file_get_contents($files['dir'] . '/' . $plan['slug'] . '.html') : $name . "\r\n\r\nПодключение к вебинару:\r\n" . $plan['joinUrl'] . "\r\n";
+        $temp = tempnam(dirname($file), '.ais-sync-');
+        try {
+            if (!$temp || file_put_contents($temp, $content, LOCK_EX) !== strlen($content) || !chmod($temp, 0600) || !rename($temp, $file)) throw new RuntimeException('Не удалось обновить прежний файл подключения. Повторите синхронизацию.');
+            $temp = false;
+        } finally { if ($temp && is_file($temp)) unlink($temp); }
+    }
+    $downloads = $product->get_downloads('edit');
+    $indexes = $files['downloadIndexes'];
+    if (!$indexes) {
+        $index = substr($files['key'], 0, 32);
+        $download = new WC_Product_Download(); $download->set_id($index);
+        $downloads[$index] = $download; $indexes[] = $index;
+    }
+    $registry_class = 'Automattic\\WooCommerce\\Internal\\ProductDownloads\\ApprovedDirectories\\Register';
+    if (class_exists($registry_class)) wc_get_container()->get($registry_class)->add_approved_directory(dirname($url) . '/', true);
+    foreach ($indexes as $index) {
+        $download = clone $downloads[$index];
+        $download->set_name('Подключение к вебинару — ' . $name); $download->set_file($url);
+        if (method_exists($download, 'check_is_valid')) $download->check_is_valid(false);
+        $downloads[$index] = $download;
+    }
+    $product->set_downloads($downloads); $product->set_downloadable(true);
+    $product->update_meta_data('_ais_webinar_file_key', $files['key']);
+    $product->update_meta_data('_ais_webinar_slug_aliases', $files['slugs']);
+    $product->update_meta_data('_ais_webinar_join_url', $plan['joinUrl']);
+    $product->update_meta_data('_ais_download_file', $url); $product->update_meta_data('_ais_webinar_file', $url);
 }
 function ais_pg_sync_product($id) {
     if (!function_exists('wc_get_product')) throw new RuntimeException('WooCommerce недоступен.');
@@ -741,7 +855,9 @@ function ais_pg_sync_product($id) {
     $values = array('title' => $product->get_name(), 'price' => $product->get_price(), 'regularPrice' => $product->get_regular_price(),
         'salePrice' => $product->get_sale_price(), 'descriptionHtml' => $product->get_description(),
         'saleFrom' => (string) $product->get_date_on_sale_from(), 'saleTo' => (string) $product->get_date_on_sale_to(), 'imageId' => (int) get_post_thumbnail_id($id));
-    return array_merge(ais_pg_result($id), $values, array('version' => hash('sha256', wp_json_encode(array($values, $product->get_status(), (string) $product->get_date_modified())))));
+    $downloads = array();
+    foreach ($product->get_downloads('edit') as $download) $downloads[] = is_object($download) ? array($download->get_id(), $download->get_name(), $download->get_file()) : $download;
+    return array_merge(ais_pg_result($id), $values, array('version' => hash('sha256', wp_json_encode(array($values, $product->get_status(), $product->get_slug('edit'), (string) $product->get_date_modified(), $downloads, ais_pg_webinar_files_version($id))))));
 }
 function ais_pg_resolve_site($data) {
     if (ais_pg_role() !== 'edu') throw new RuntimeException('Поиск лендинга доступен только на edu-plus.ru.');
@@ -785,6 +901,7 @@ function ais_pg_sync_validate($data) {
         }
     }
     if (isset($model['imageSource']) && !ais_pg_image_url_valid($model['imageSource']['imageUrl'] ?? null)) throw new RuntimeException('Проверьте изображение записи.');
+    $snapshot['_linksPlan'] = ais_pg_sync_links_plan($data, $snapshot);
     return $snapshot;
 }
 function ais_pg_sync_existing($data, $check_only = false) {
@@ -796,12 +913,20 @@ function ais_pg_sync_existing($data, $check_only = false) {
         $snapshot = ais_pg_sync_validate($data);
         if ($check_only) return array('ok' => true);
         $model = $data['model'];
+        $links = $snapshot['_linksPlan'];
         $price = (string) $model['price'];
         $old = (float) $model['oldPrice'];
         if (ais_pg_role() === 'shop') {
             // Fetch and validate the selected image before changing product fields.
             $image_id = isset($model['imageSource']) ? ais_pg_product_image($model['imageSource']['imageUrl']) : null;
             $product = wc_get_product($id);
+            if ($links) {
+                ais_pg_sync_webinar_files($product, $links, sanitize_text_field($model['productName']));
+                $product->set_slug($links['slug']);
+                $product->update_meta_data('_ais_landing_url', $links['landingUrl']);
+                $product->update_meta_data('_ais_program_type', $model['type']);
+                $product->update_meta_data('_ais_landing_redirect', $links['enabled'] ? '1' : '0');
+            }
             $product->set_name(sanitize_text_field($model['productName']));
             $product->set_regular_price($old > (float) $price ? (string) $old : $price);
             $product->set_sale_price($old > (float) $price ? $price : '');
@@ -812,6 +937,17 @@ function ais_pg_sync_existing($data, $check_only = false) {
             if (!empty($model['descriptionHtml'])) $product->set_description(wp_kses_post($model['descriptionHtml']));
             if ($image_id !== null) $product->set_image_id($image_id);
             if (!$product->save()) throw new RuntimeException('Не удалось сохранить товар.');
+            if ($links) {
+                $saved_product = wc_get_product($id);
+                if ($saved_product->get_slug('edit') !== $links['slug']) throw new RuntimeException('Магазин не подтвердил новый адрес товара.');
+                if ($links['files']) {
+                    if (get_post_meta($id, '_ais_webinar_join_url', true) !== $links['joinUrl']) throw new RuntimeException('Магазин не подтвердил ссылку SberJazz.');
+                    $actual_downloads = array();
+                    foreach ($saved_product->get_downloads('edit') as $download) $actual_downloads[$download->get_id()] = $download->get_file();
+                    foreach ($product->get_downloads('edit') as $download) if (($actual_downloads[$download->get_id()] ?? null) !== $download->get_file()) throw new RuntimeException('Магазин не подтвердил сохранение файлов подключения. Повторите синхронизацию.');
+                }
+                ais_pg_save_product_redirects($id, $links['enabled'], $links['overrides']);
+            }
             if ($image_id !== null && (int) get_post_thumbnail_id($id) !== $image_id) throw new RuntimeException('Магазин не подтвердил изображение товара. Обновите проверку.');
             $actual = ais_pg_sync_product($id);
             if ($actual['title'] !== sanitize_text_field($model['productName']) || (float) $actual['price'] !== (float) $price
@@ -840,7 +976,9 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 update_field($field['key'], ais_pg_acf_value($field, $patch[$name], true), $id);
                 $written[$name] = $patch[$name];
             }
-            $result = wp_update_post(wp_slash(array('ID' => $id, 'post_title' => sanitize_text_field($model['name']))), true);
+            $post_patch = array('ID' => $id, 'post_title' => sanitize_text_field($model['name']));
+            if ($links) $post_patch['post_name'] = $links['slug'];
+            $result = wp_update_post(wp_slash($post_patch), true);
             if (is_wp_error($result)) throw new RuntimeException('Не удалось сохранить название лендинга.');
             if (isset($model['imageSource'])) {
                 $image = ais_pg_validate_image_source($model['imageSource']);
@@ -854,8 +992,9 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 if (($actual['fields'][$name] ?? null) != $value) throw new RuntimeException('Сайт не подтвердил поле ' . $name . '. Обновите проверку.');
             }
             if ($actual['title'] !== sanitize_text_field($model['name'])) throw new RuntimeException('Сайт не подтвердил название лендинга.');
+            if ($links && $actual['slug'] !== $links['slug']) throw new RuntimeException('Сайт не подтвердил новый адрес лендинга.');
         }
-        // Only an explicit image selection changes thumbnails; never publication or identity.
+        // Synchronization never publishes drafts or replaces post/download identities.
         return ais_pg_result($id);
     } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
 }
@@ -880,7 +1019,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.2', 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.3', 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

@@ -400,6 +400,8 @@ async function publish(program, templateId, expectedHash, call, certificate, rep
 // Synchronization is deliberately independent of generation: legacy courses need neither
 // a webinar meeting nor new sample documents just to change their price/name.
 function syncTarget(program) {
+  const remembered = Number(program.siteSync?.landing?.id || program.sitePublication?.landing?.id || 0);
+  if (Number.isSafeInteger(remembered) && remembered > 0) return {landingId: remembered};
   const code = text(program.landingCode, 200).replace(/^\/+|\/+$/g, "");
   if (/^[1-9]\d*$/.test(code)) return {landingId: Number(code)};
   if (/^[a-z0-9][a-z0-9_-]{1,79}$/.test(code)) return {slug: code};
@@ -423,7 +425,18 @@ function normalizeSyncProgram(program) {
   const price = Number(program.price), oldPrice = Number(program.oldPrice || 0), hours = Number(program.hours);
   if (![price, oldPrice].every(value => Number.isFinite(value) && value >= 0 && value <= 10000000)) fail("Проверьте стоимость и старую цену.");
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Проверьте количество часов.");
+  let promo = text(program.promoSite, 2000), slug = "";
+  // Older cards contain an ID-based URL: it identifies a page, not a new slug.
+  if (promo) {
+    let url;
+    try { url = new URL(promo); } catch { /* A bare landing code is also supported. */ }
+    const idUrl = url?.origin === SITES.edu && !url.username && !url.password
+      && /^[1-9]\d*$/.test(url.searchParams.get("p") || url.searchParams.get("page_id") || "");
+    if (!idUrl) slug = landingCodeFromPromoSite(promo);
+  }
   return {id, type, name, productName: text(program.siteProductName || name, 500), price, oldPrice, hours,
+    ...(slug ? {slug} : {}),
+    ...(type === "ПРО" && text(program.webinarJoinUrl, 2000) ? {joinUrl: normalizeJoinUrl(program.webinarJoinUrl)} : {}),
     duration: text(program.duration, 200), studyForm: text(program.studyForm, 300),
     descriptionHtml: "", speakerHtml: "",
     startLabel: text(program.siteStartLabel, 200)};
@@ -473,6 +486,16 @@ async function previewSync(program, call, productId = 0, imageSourceId = 0) {
   const imageSource = await loadImageSource(imageSourceId, call);
   if (imageSource) model.imageSource = imageSource;
   const resolved = await resolveSite(program, call, productId);
+  let currentSlug = resolved.landing.slug;
+  if (!currentSlug) { try { currentSlug = new URL(resolved.landing.url).pathname.split("/").filter(Boolean).at(-1); } catch {} }
+  // An unchanged promo address must not force a rename of a legacy shop product.
+  if (model.slug === currentSlug) delete model.slug;
+  if (model.slug || model.joinUrl) {
+    const postType = resolved.landing.postType || PROGRAM_TYPES[model.type].postType;
+    const base = postType === "other-course" ? "other_course" : postType;
+    if (!["other_course", "courses-pk", "courses-pp"].includes(base)) fail("Сайт не подтвердил раздел лендинга.", 502);
+    model.landingUrl = model.slug ? `${SITES.edu}/${base}/${model.slug}/` : resolved.landing.url;
+  }
   const publicLanding = {...resolved.landing};
   delete publicLanding.fields;
   const hash = resolved.product ? crypto.createHash("sha256").update(JSON.stringify({model, target: resolved.target,
@@ -485,7 +508,7 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   if (!plan.product || !expectedHash || plan.hash !== expectedHash) fail("Данные программы или сайтов изменились. Обновите проверку перед синхронизацией.", 409);
   // Preflight both sites before the first write. Each write also rechecks its snapshot
   // under a lock on the actual post ID (several AIS variants can share one landing).
-  const payload = {model: plan.model, landingId: plan.landing.id, productId: plan.product.id};
+  const payload = {model: plan.model, landingId: plan.landing.id, landingStatus: plan.landing.status, productId: plan.product.id};
   await call("edu", "/check-sync", {...payload, version: plan.landing.version});
   await call("shop", "/check-sync", {...payload, version: plan.product.version});
   let product;
@@ -494,7 +517,9 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   let landing;
   try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
   catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
-  return {ok: true, landing, product, syncedAt: new Date().toISOString()};
+  return {ok: true, landing, product, type: plan.model.type, syncedAt: new Date().toISOString(),
+    ...(plan.model.slug ? {landingCode: plan.model.slug} : {}),
+    ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};
 }
 
 module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
