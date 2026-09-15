@@ -31,7 +31,7 @@ function browserChecks() {
       const style = getComputedStyle(field);
       const button = field.parentElement.querySelector(".combo-clear").getBoundingClientRect();
       const contentRight = rect.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
-      check(button.left - contentRight >= 4, `текст под крестиком (зазор ${Math.round(button.left - contentRight)}px)`);
+      check(Math.abs(button.left - contentRight - 3) < 0.5, `зазор до крестика должен быть 3px (получено ${button.left - contentRight}px)`);
       check(field.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) > 30, "нет места для ввода");
       const overlay = field.parentElement.querySelector("[data-native-html-link-highlight]");
       if (overlay) {
@@ -79,8 +79,8 @@ function fixture() {
     ["Программа слушателя", "student-main-tab", "student-main-program-row"],
     ["Основное слушателя", "student-main-tab", "student-form-grid"],
     ["Документы слушателя", "student-documents-tab", "student-form-grid"],
-    ["Сотрудник", "", "contract-form-grid"],
-    ["Документы сотрудника", "contract-documents-tab", "contract-form-grid"],
+    ["Сотрудник", "", "form-grid contract-form-grid"],
+    ["Документы сотрудника", "contract-documents-tab", "form-grid contract-form-grid"],
     ["Выплаты сотрудника", "employee-payment-table", "employee-payment-basis-cell"],
     ["Общие расходы", "expense-grid editable-grid", "editable-grid-cell"],
     ["Расходы слушателя", "student-income-tab", "expense-grid editable-grid"],
@@ -121,8 +121,8 @@ if (process.argv.includes("--serve")) {
   server.on("close", () => clearTimeout(expiry));
 } else {
   const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
-  assert.match(css, /\.combo-input-wrap:has\(> \.combo-clear\) > input\s*\{[^}]*padding-right:\s*var\(--combo-clear-space,\s*40px\) !important;/);
-  assert.match(css, /\.employee-payment-basis-cell \.combo-input-wrap\s*\{\s*--combo-clear-space: 27px;/);
-  assert.match(css, /\.student-income-tab \.expense-grid \.combo-input-wrap\s*\{\s*--combo-clear-space: 25px;/);
+  assert.match(css, /\.combo-input-wrap:has\(> \.combo-clear\) > input\s*\{[^}]*padding-right:\s*var\(--combo-clear-space,\s*27px\) !important;/);
+  assert.match(css, /\.employee-payment-basis-cell \.combo-input-wrap\s*\{\s*--combo-clear-space: 23px;/);
+  assert.match(css, /\.student-income-tab \.expense-grid \.combo-input-wrap\s*\{\s*--combo-clear-space: 21px;/);
   console.log("Field clear spacing invariant and production-renderer browser fixture: OK");
 }

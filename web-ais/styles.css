@@ -3951,8 +3951,9 @@ button.mobile-registry-filters-toggle {
 .combo-input-wrap:has(> .combo-clear) > input {
   min-width: 0;
   /* Keep the native text/caret and link highlight outside the clear button.
+     Reserve 3px before it: 7px inset + 18px button + 3px gap - 1px input border.
      Compact form padding shorthands must not override this reserved space. */
-  padding-right: var(--combo-clear-space, 40px) !important;
+  padding-right: var(--combo-clear-space, 27px) !important;
 }
 
 .combo-clear {
@@ -14103,6 +14104,11 @@ body.card-window-moving {
   padding: 6px 40px 6px 8px;
 }
 
+.program-commission-source-panel .combo-input-wrap {
+  /* This standalone search uses the native 2px input border. */
+  --combo-clear-space: 26px;
+}
+
 .program-commission-set-usage {
   grid-column: 1 / -1;
   color: var(--muted);
@@ -16137,7 +16143,7 @@ body.card-window-moving {
 }
 
 .employee-payment-basis-cell .combo-input-wrap {
-  --combo-clear-space: 27px;
+  --combo-clear-space: 23px;
 }
 
 .employee-payment-basis-cell .combo-clear {
@@ -19303,6 +19309,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   width: 100%;
   min-height: 28px;
   padding: 3px 40px 3px 6px;
+}
+
+.student-document-recognition-field-value .combo-input-wrap {
+  /* OCR inputs also retain the native 2px border. */
+  --combo-clear-space: 26px;
 }
 
 .student-document-recognition-field-control .combo-field {
@@ -22752,7 +22763,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .student-income-tab .expense-grid .combo-input-wrap {
-  --combo-clear-space: 25px;
+  --combo-clear-space: 21px;
 }
 
 .student-income-tab .expense-grid .combo-clear {

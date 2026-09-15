@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.470",
+    version: "1.7.471",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.471",
+      releasedAt: "2026-09-15",
+      changes: [
+        "В полях с крестиком очистки зазор перед кнопкой уменьшен до 3 px: больше места для текста при сохранении защиты от перекрытия."
+      ]
+    },
     {
       version: "1.7.470",
       releasedAt: "2026-09-15",
