@@ -31097,6 +31097,7 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-generator-dialog .program-site-generator-fields { gap: 7px; }
 .program-site-generator-dialog [data-site-webinar-only] > p { margin: 0 0 5px; }
 .program-site-generator-dialog [data-site-parameters-host] { margin: 6px 0; }
+.program-site-generator-dialog .program-site-parameters-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
 .program-site-generator-dialog details > p { margin: 6px 0 0; }
 .program-site-generator-dialog .program-site-body label { gap: 3px; }
 .program-site-generator-dialog .program-site-prototype-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 7px 10px; min-width: 0; }

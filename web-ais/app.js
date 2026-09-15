@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.471",
+    version: "1.7.472",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.472",
+      releasedAt: "2026-09-15",
+      changes: [
+        "Кнопка «Сохранить параметры» генератора перенесена вправо и выделена фирменным фоном. После успешного сохранения блок параметров сворачивается; при ошибке остаётся открытым."
+      ]
+    },
     {
       version: "1.7.471",
       releasedAt: "2026-09-15",
@@ -33069,7 +33076,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <p><strong>${escapeHtml(program.name)}</strong></p>
         <p class="muted">Подготовьте черновики → проверьте в WordPress → опубликуйте. ${type === "ПРО" ? "Ссылку SberJazz укажите в параметрах ниже." : "SberJazz не требуется."} ${bilingual ? "Образцы сертификатов RU/EN" : type === "КПК" ? "Образцы удостоверения и всех страниц приложения" : "Образцы диплома и всех страниц приложения"} создаются автоматически по соответствующему шаблону конструктора документов. Отзывы и фотографии из прототипа сохраняются.</p>
         <p class="muted">Описание программы и сведения об авторе копируются из выбранного прототипа.</p>
-        <details data-site-parameters><summary>Параметры генерации</summary><div data-site-parameters-host></div><button class="ghost-button" type="button" data-site-save-parameters>Сохранить параметры</button></details>
+        <details data-site-parameters><summary>Параметры генерации</summary><div data-site-parameters-host></div><div class="program-site-parameters-actions"><button class="primary-button" type="button" data-site-save-parameters>Сохранить параметры</button></div></details>
         <div class="program-site-prototype-fields">
           <label><span>Поиск прототипа по названию</span><input type="search" data-site-search placeholder="Название существующей образовательной программы"></label>
           <label><span>Прототип с edu-plus.ru *</span><select data-site-template aria-label="Прототип лендинга" required disabled><option value="">Загрузка…</option></select></label>
@@ -33134,8 +33141,19 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.querySelector("[data-site-save-parameters]").addEventListener("click", async () => {
       if (busy) return;
       busy = true;
-      try { await saveParameters(); status.textContent = "Параметры программы сохранены."; }
-      catch (error) { status.textContent = error.message; }
+      // Keep form-associated fields enabled until their values are saved.
+      dialog.querySelector("[data-site-save-parameters]").disabled = true;
+      status.textContent = "Сохранение параметров…";
+      try {
+        await saveParameters();
+        dialog.querySelector("[data-site-parameters]").open = false;
+        dialog.querySelector("[data-site-parameters] > summary").focus();
+        status.textContent = "Параметры программы сохранены.";
+      }
+      catch (error) {
+        dialog.querySelector("[data-site-parameters]").open = true;
+        status.textContent = error.message;
+      }
       finally { setBusy(false); }
     });
     const storeResult = async (value) => {
