@@ -23,6 +23,10 @@
   box-sizing: border-box;
 }
 
+details > summary {
+  cursor: pointer;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .student-card-layout,
   .contract-card-layout,

@@ -75,6 +75,7 @@ function preview(type = "ПРО", result = false) {
 }
 async function checks() {
   const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+  assert.match(css, /(?:^|\n)details > summary\s*\{\s*cursor:\s*pointer;\s*\}/u, "All collapsible headings show a hand cursor, open or closed");
   assert.match(css, /\.program-site-generator-dialog \.program-site-fields\s*\{[^}]*padding:\s*0;[^}]*gap:\s*7px 10px;/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-body\s*\{[^}]*gap:\s*8px;[^}]*padding:\s*10px 12px;/);
   assert.match(css, /\.program-site-generator-dialog \.program-site-prototype-fields\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/);

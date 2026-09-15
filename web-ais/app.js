@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.480",
+    version: "1.7.481",
     releasedAt: "2026-09-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.481",
+      releasedAt: "2026-09-15",
+      changes: [
+        "При наведении на заголовки сворачиваемых блоков курсор отображается в виде руки. Правило действует во всех разделах системы."
+      ]
+    },
     {
       version: "1.7.480",
       releasedAt: "2026-09-15",
