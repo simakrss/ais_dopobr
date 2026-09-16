@@ -106,6 +106,8 @@ if (process.argv.includes("--serve")) {
       const saveRecordFormBeforeContinuation=async(form)=>{const values=Object.fromEntries(new FormData(form));logStep('save:'+values.landingCode);if(${process.env.AIS_QA_FAIL_CODE_SAVE === '1'} && values.landingCode==='${pg.landingCodeFromName(uiProgram.name)}') return '';Object.assign(state.data.collections.programs[0],values);document.getElementById('saved').textContent='Параметры сохранены: '+(state.data.collections.programs[0].siteDescription||'');return 'qa-program';};
       let syncWrites=0, qaPhase='Проверка параметров', qaAttempts=0;
       const fetch=async(url,options)=>{const body=options?.body?JSON.parse(options.body):{};let result;
+        if(${process.env.AIS_QA_SYNC_DELAY === '1'} && ['/templates','/preview-sync','/sync'].some(action=>url.endsWith(action))) await new Promise(resolve=>setTimeout(resolve,6000));
+        if(url.endsWith('/templates') && options?.method !== 'GET') return {ok:false,json:async()=>({error:'Недопустимая операция.'})};
         const products=${JSON.stringify(uiProducts)},landing=${JSON.stringify(uiLanding)};
         if(url.endsWith('/templates')) result={templates:[{id:3878,title:'Прототип курса',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url,imageUrl:'https://edu-plus.ru/wp-content/uploads/db_logo.jpg'},{id:42,title:'Другой прототип',postType:'${pg.PROGRAM_TYPES[uiProgram.type].postType}',url:landing.url,imageUrl:'https://edu-plus.ru/wp-content/uploads/db_logo.jpg'}]};
         else if(url.endsWith('/resolve')) {
@@ -123,7 +125,7 @@ if (process.argv.includes("--serve")) {
           if(${process.env.AIS_QA_SITE_FAILURE === '1'} && qaAttempts===1) return {ok:false,json:async()=>({error:'Тестовый отказ WooCommerce',stage:qaPhase})};
           logStep('site-write:'+state.data.collections.programs[0].landingCode);result={ok:true,stage:url.endsWith('/publish')?'published':'prepared',type:'${uiProgram.type}',templateId:body.templateId,imageSourceId:Number(state.data.collections.programs[0].siteImageSourceId||0),hash:'qa',landing,product:products[0],certificateHash:'qa',certificates:[{id:1,language:'ru'},{id:2,language:'page-2'},{id:3,language:'page-3'}]};
         }
-        else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],productName:state.data.collections.programs[0].name,...(body.imageSourceId?{imageSource:{id:body.imageSourceId,title:'Другой прототип'}}:{})},hash:body.productId?'qa-plan':''};
+        else result={ok:true,landing,products,product:products.find(item=>item.id===body.productId)||null,model:{...state.data.collections.programs[0],date:state.data.collections.programs[0].webinarDate,time:state.data.collections.programs[0].webinarTime,productName:state.data.collections.programs[0].name,...(body.imageSourceId?{imageSource:{id:body.imageSourceId,title:'Другой прототип'}}:{})},hash:body.productId?'qa-plan':''};
         return {ok:true,json:async()=>result};};
       ${renderFieldSource}
       ${source}

@@ -31396,3 +31396,4 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
   .program-site-generator-dialog .program-site-schedule-fields.is-non-webinar { grid-template-columns: minmax(0, 1fr); }
   .program-site-product-row { grid-template-columns: minmax(0, 1fr); }
 }
+.program-site-dialog [data-sync-catalog-retry][hidden] { display: none !important; }

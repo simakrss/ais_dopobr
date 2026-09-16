@@ -40025,7 +40025,7 @@ async function route(req, res) {
         return;
       }
       const body = await readJsonBody(req, 64 * 1024);
-      if (["prepare", "publish"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
+      if (["prepare", "publish", "sync"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
       // Use the saved authoritative program, never a client-supplied price or link.
       const shared = await readSharedApplicationStateDocument({ allowCache: false });
       if (shared.offline || shared.pendingCount || shared.syncPending) {
@@ -40042,7 +40042,7 @@ async function route(req, res) {
       }
       if (["resolve", "preview-sync", "sync"].includes(action)) {
         let result;
-        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash, body.imageSourceId);
+        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash, body.imageSourceId, label => progressJob?.report(label));
         else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId, body.imageSourceId);
         else {
           // Unsaved addresses are accepted only for this read-only lookup. All site
@@ -40059,6 +40059,7 @@ async function route(req, res) {
           }
           result = await programSiteGenerator.inspectSite(lookup, call);
         }
+        progressJob?.finish("completed");
         sendJson(res, 200, result);
         return;
       }

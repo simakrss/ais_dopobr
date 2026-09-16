@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.3
+ * Version: 1.7.4
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -732,7 +732,7 @@ function ais_pg_sync_landing($id) {
         if (!is_scalar($product_id) || !preg_match('/^[1-9]\d*$/D', (string) $product_id)) continue;
         $offers[] = array('index' => $index, 'productId' => (int) $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '');
     }
-    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_name, $post->post_modified_gmt, $post->post_status, $post->post_content, $fields, get_post_thumbnail_id($id))));
+    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_name, $post->post_modified_gmt, $post->post_status, $post->post_content, $post->post_excerpt ?? '', $fields, get_post_thumbnail_id($id))));
     $image = function_exists('wp_get_attachment_image_url') ? wp_get_attachment_image_url(get_post_thumbnail_id($id), 'medium_large') : '';
     return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'previewImageUrl' => $image ?: '', 'fields' => $fields, 'offers' => $offers, 'version' => $version));
 }
@@ -853,7 +853,7 @@ function ais_pg_sync_product($id) {
     $product = wc_get_product($id);
     if (!$product || !$product->is_type('simple') || !in_array($product->get_status(), array('draft', 'publish'), true)) throw new RuntimeException('Товар не найден, недоступен или не является простым товаром.');
     $values = array('title' => $product->get_name(), 'price' => $product->get_price(), 'regularPrice' => $product->get_regular_price(),
-        'salePrice' => $product->get_sale_price(), 'descriptionHtml' => $product->get_description(),
+        'salePrice' => $product->get_sale_price(), 'descriptionHtml' => $product->get_description(), 'shortDescriptionHtml' => $product->get_short_description(),
         'saleFrom' => (string) $product->get_date_on_sale_from(), 'saleTo' => (string) $product->get_date_on_sale_to(), 'imageId' => (int) get_post_thumbnail_id($id));
     $downloads = array();
     foreach ($product->get_downloads('edit') as $download) $downloads[] = is_object($download) ? array($download->get_id(), $download->get_name(), $download->get_file()) : $download;
@@ -887,6 +887,12 @@ function ais_pg_sync_validate($data) {
         if (!isset($model[$key]) || !is_numeric($model[$key]) || $model[$key] < 0 || $model[$key] > ($key === 'hours' ? 10000 : 10000000)) throw new RuntimeException('Проверьте стоимость и часы программы.');
     }
     if ($model['hours'] <= 0) throw new RuntimeException('Количество часов должно быть положительным.');
+    if ($model['type'] === 'ПРО' && (!empty($model['date']) || !empty($model['time']))) {
+        if (!is_string($model['date'] ?? null) || !is_string($model['time'] ?? null)
+            || !preg_match('/^(20\d{2})-(\d{2})-(\d{2})$/D', $model['date'], $date)
+            || !checkdate((int) $date[2], (int) $date[3], (int) $date[1])
+            || !preg_match('/^([01]\d|2[0-3]):[0-5]\d$/D', $model['time'])) throw new RuntimeException('Проверьте дату и время вебинара.');
+    }
     $id = (int) ($data[ais_pg_role() === 'edu' ? 'landingId' : 'productId'] ?? 0);
     $snapshot = ais_pg_role() === 'edu' ? ais_pg_sync_landing($id) : ais_pg_sync_product($id);
     if (!is_string($data['version'] ?? null) || !hash_equals($snapshot['version'], $data['version'])) throw new RuntimeException('Данные на сайте изменились. Обновите проверку перед синхронизацией.');
@@ -935,6 +941,10 @@ function ais_pg_sync_existing($data, $check_only = false) {
             $product->set_date_on_sale_to(null);
             $product->set_price($price);
             if (!empty($model['descriptionHtml'])) $product->set_description(wp_kses_post($model['descriptionHtml']));
+            if ($model['type'] === 'ПРО' && !empty($model['date'])) {
+                $product->set_description(ais_pg_webinar_schedule($product->get_description('edit'), $model, 'post_content'));
+                $product->set_short_description(ais_pg_webinar_schedule($product->get_short_description('edit'), $model, 'post_excerpt'));
+            }
             if ($image_id !== null) $product->set_image_id($image_id);
             if (!$product->save()) throw new RuntimeException('Не удалось сохранить товар.');
             if ($links) {
@@ -968,6 +978,10 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 if (!empty($model[$source])) $patch[$destination] = wp_kses_post($model[$source]);
             }
             if (!empty($model['descriptionHtml']) && $model['type'] !== 'ПРО') $patch['opisanie_o_programme'] = wp_kses_post($model['descriptionHtml']);
+            foreach (array_merge($fields, $patch) as $name => $value) {
+                $updated = ais_pg_webinar_schedule($value, $model, $name);
+                if ($updated !== $value) $patch[$name] = $updated;
+            }
             $definitions = get_field_objects($id, false) ?: array();
             $written = array();
             foreach ($definitions as $field) {
@@ -977,6 +991,11 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 $written[$name] = $patch[$name];
             }
             $post_patch = array('ID' => $id, 'post_title' => sanitize_text_field($model['name']));
+            foreach (array('post_content', 'post_excerpt') as $name) {
+                $value = get_post_field($name, $id);
+                $updated = ais_pg_webinar_schedule($value, $model, $name);
+                if ($updated !== $value) $post_patch[$name] = $updated;
+            }
             if ($links) $post_patch['post_name'] = $links['slug'];
             $result = wp_update_post(wp_slash($post_patch), true);
             if (is_wp_error($result)) throw new RuntimeException('Не удалось сохранить название лендинга.');
@@ -1019,7 +1038,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.3', 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.4', 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

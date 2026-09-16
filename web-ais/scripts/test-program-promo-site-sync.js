@@ -42,7 +42,7 @@ async function integration(options={}) {
   let click; const saved=[]; const status={textContent:""};
   const ctx={Event,current,card,status,programId:"p",busy:false,plan:{hash:"h",product:{id:1}},promoParameters:program,
     state:{data:{collections:{programs:[current]}}},apply:{addEventListener:(name,fn)=>{click=fn;}},setBusy:()=>{},
-    imagePicker:{value:()=>0},ensureRecordLockForSave:async()=>true,
+    imagePicker:{value:()=>0},ensureRecordLockForSave:async()=>true,crypto:require("node:crypto"),progress:{start(){},phase(){},stop(){},watch(){},local(){}},
     programSiteRequest:async()=>{if(options.siteFailure)throw Error("Сбой синхронизации");return {ok:true,type:"ПРО",landing:{url:"https://example.test/"}};},
     persist:()=>saved.push(structuredClone(current)),flushSharedApplicationState:async()=>!options.flushFailure,
     refreshProgramSiteLinks:()=>{}

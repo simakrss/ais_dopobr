@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.490",
+    version: "1.7.491",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.491",
+      releasedAt: "2026-09-16",
+      changes: ["В синхронизации ПРО можно изменить дату и время вебинара. Исправлена загрузка изображений, добавлены индикаторы и таймеры проверки сайтов, сохранения и обновления."]
+    },
     {
       version: "1.7.490",
       releasedAt: "2026-09-16",
@@ -32984,9 +32989,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function programSiteRequest(action, body) {
+    const reading = ["templates", "health"].includes(action);
     const response = await fetch(photoApiUrl(`/api/program-sites/${action}`), {
-      method: "POST", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(180000),
-      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+      method: reading ? "GET" : "POST", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(180000),
+      ...(reading ? {} : {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Не удалось связаться с сайтами.");
@@ -33352,28 +33358,33 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!isAdminUser() || isDatabaseDemoMode() || document.querySelector("[data-program-site-dialog]")) return;
     if (isSettingsDraftSessionActive()) { alert("Сначала сохраните или отмените черновик настроек."); return; }
     const card = document.querySelector("#recordForm[data-config='programs']");
-    const programId = await saveRecordFormBeforeContinuation(card, {flush: true});
-    if (!programId) return;
+    let programId = card?.dataset.id;
+    if (!card || !programId) return;
     const program = state.data.collections.programs.find(item => item.id === programId);
     const webinar = String(program?.type || "").trim().toUpperCase() === "ПРО";
+    const progressMarkup = `<div class="program-site-progress" data-site-progress hidden><progress aria-label="Выполнение операции"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time title="Время выполнения" data-site-progress-time>0:00</time></div>`;
     const dialog = document.createElement("dialog");
     dialog.className = "modal program-site-dialog";
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Синхронизация программы с сайтами");
     dialog.innerHTML = `<header class="modal-head"><h2>Синхронизация с сайтами</h2><button type="button" class="icon-button" data-sync-close aria-label="Закрыть">×</button></header>
-      <div class="program-site-body">${webinar ? `<label><span>Ссылка подключения SberJazz</span><input data-sync-jazz type="url" value="${escapeAttr(program.webinarJoinUrl || "")}" placeholder="https://salutejazz.ru/calls/…"></label><p class="muted">Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле сохраняет прежнее подключение. <a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer">Создать ссылку ↗</a></p>` : ""}${renderProgramSiteImagePicker()}<div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
+      <div class="program-site-body">${progressMarkup}${webinar ? `<div class="form-grid program-site-fields"><label><span>Дата вебинара</span><input data-sync-date type="date" value="${escapeAttr(card.elements.webinarDate?.value ?? program.webinarDate ?? "")}"></label><label><span>Время (Москва)</span><input data-sync-time type="time" value="${escapeAttr(card.elements.webinarTime?.value ?? program.webinarTime ?? "")}"></label></div><label><span>Ссылка подключения SberJazz</span><input data-sync-jazz type="url" value="${escapeAttr(card.elements.webinarJoinUrl?.value ?? program.webinarJoinUrl ?? "")}" placeholder="https://salutejazz.ru/calls/…"></label><p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение. <a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer">Создать ссылку ↗</a></p>` : ""}${renderProgramSiteImagePicker()}<div data-sync-catalog-progress>${progressMarkup}</div><button type="button" class="ghost-button" data-sync-catalog-retry hidden>Повторить загрузку изображений</button><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
       <div class="program-site-actions"><button class="primary-button" type="button" data-sync-apply disabled>Обновить сайт и магазин</button><button class="ghost-button" type="button" data-sync-refresh>Обновить проверку</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.showModal();
     const status = dialog.querySelector("[data-sync-status]");
     const preview = dialog.querySelector("[data-sync-preview]");
     const apply = dialog.querySelector("[data-sync-apply]");
-    let plan = null, busy = false, promoParameters = null;
+    let plan = null, busy = false, promoParameters = null, catalogBusy = false, catalogReady = false;
+    const progress = createProgramSiteProgress(dialog);
+    const catalogProgress = createProgramSiteProgress(dialog.querySelector("[data-sync-catalog-progress]"));
     const jazzInput = dialog.querySelector("[data-sync-jazz]");
-    jazzInput?.addEventListener("input", () => {
+    const dateInput = dialog.querySelector("[data-sync-date]");
+    const timeInput = dialog.querySelector("[data-sync-time]");
+    [jazzInput, dateInput, timeInput].forEach(input => input?.addEventListener("input", () => {
       plan = null; apply.disabled = true;
-      status.textContent = "Ссылка изменена. Нажмите «Обновить проверку», затем подтвердите синхронизацию.";
-    });
+      status.textContent = "Параметры изменены. Нажмите «Обновить проверку», затем подтвердите синхронизацию.";
+    }));
     const imagePicker = bindProgramSiteImagePicker(dialog, {defaultLabel: "Не менять изображения", onChange: () => {
       plan = null; apply.disabled = true;
       void load(Number(preview.querySelector("[data-sync-product]")?.value || 0));
@@ -33381,22 +33392,33 @@ MAX - https://bizvmax.ru/zifra_plus
     const setBusy = value => {
       busy = value;
       dialog.querySelectorAll("button, select, input").forEach(control => { control.disabled = value; });
+      dialog.querySelector("[data-image-source]").disabled = value || !catalogReady;
+      dialog.querySelector("[data-sync-catalog-retry]").disabled = value || catalogBusy;
+      dialog.setAttribute("aria-busy", String(value));
       if (!value) apply.disabled = !plan?.hash;
     };
     const load = async productId => {
       if (busy) return;
       setBusy(true); plan = null;
+      progress.start("Сохранение параметров программы…");
+      let failed = false;
       status.textContent = "Проверка актуальных данных двух сайтов…";
       try {
         if (jazzInput) {
-          const input = card.elements.webinarJoinUrl;
-          if (!input) throw new Error("Поле SberJazz недоступно. Обновите карточку программы.");
-          if (input.value !== jazzInput.value) {
-            input.value = jazzInput.value;
-            input.dispatchEvent(new Event("input", {bubbles: true}));
+          if ((dateInput.value || timeInput.value) && (!dateInput.value || !timeInput.value || !dateInput.checkValidity() || !timeInput.checkValidity())) throw new Error("Укажите корректные дату и время вебинара (Москва).");
+          for (const [key, source] of [["webinarDate", dateInput], ["webinarTime", timeInput], ["webinarJoinUrl", jazzInput]]) {
+            const input = card.elements[key];
+            if (!input) throw new Error("Параметры вебинара недоступны. Обновите карточку программы.");
+            if (input.value !== source.value) {
+              input.value = source.value;
+              input.dispatchEvent(new Event("input", {bubbles: true}));
+            }
           }
-          if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Не удалось сохранить ссылку SberJazz в общей базе. Повторите проверку.");
         }
+        const savedId = await saveRecordFormBeforeContinuation(card, {flush: true});
+        if (!savedId) throw new Error("Не удалось сохранить параметры программы в общей базе. Повторите проверку.");
+        programId = savedId;
+        progress.phase("Проверка актуальных данных edu-plus.ru и zifra-plus.ru…");
         const promoSource = {...state.data.collections.programs.find(item => item.id === programId)};
         plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value())});
         promoParameters = {...promoSource, type: plan.model.type, price: plan.model.price};
@@ -33406,6 +33428,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
           <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd>
           <dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Срок / форма</dt><dd>${escapeHtml(plan.model.duration || "без изменения")} / ${escapeHtml(plan.model.studyForm || "без изменения")}</dd>
+          ${plan.model.date ? `<dt>Дата и время вебинара</dt><dd>${escapeHtml(plan.model.date.split("-").reverse().join("."))} в ${escapeHtml(plan.model.time)} (Москва)</dd>` : ""}
           ${plan.model.slug ? `<dt>Адрес лендинга</dt><dd>${escapeHtml(plan.landing.url)} → ${escapeHtml(plan.model.landingUrl)}</dd><dt>Адрес товара</dt><dd>${escapeHtml(plan.product?.url || "—")} → https://zifra-plus.ru/product/${escapeHtml(plan.model.slug)}/</dd>` : ""}
           ${plan.model.joinUrl ? `<dt>Подключение SberJazz</dt><dd>${escapeHtml(plan.model.joinUrl)}</dd>` : ""}</dl>
           <p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название, изображение, адрес и общие сведения относятся ко всей странице, цена — только к выбранному товару и его блоку. " : ""}Описание, автор, отзывы и образцы документов сохраняются. ${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
@@ -33413,12 +33436,14 @@ MAX - https://bizvmax.ru/zifra_plus
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
         preview.insertAdjacentHTML("beforeend", '<p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p>');
         status.textContent = plan.hash ? "Проверьте выбранный товар и подтвердите обновление." : "Выберите товар, соответствующий этой программе.";
-      } catch (error) { status.textContent = error.message; }
-      finally { setBusy(false); }
+      } catch (error) { failed = true; status.textContent = error.message; }
+      finally { progress.stop(failed); setBusy(false); }
     };
     apply.addEventListener("click", async () => {
       if (busy || !plan?.hash) return;
       setBusy(true);
+      progress.start("Подготовка обновления сайта и магазина…");
+      let failed = false;
       status.textContent = "Обновление информации на сайте и в магазине…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Восстановите блокировку карточки и повторите проверку.");
@@ -33426,7 +33451,10 @@ MAX - https://bizvmax.ru/zifra_plus
         if (promoParameters?.type === "ПРО" && ["webinarDate", "webinarTime"].some(key => String(latest?.[key] || "") !== String(promoParameters[key] || ""))) {
           throw new Error("Дата или время вебинара изменились. Нажмите «Обновить проверку» перед синхронизацией.");
         }
-        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value())});
+        progress.phase("Обновление сайта, магазина и файлов подключения…");
+        const requestId = crypto.randomUUID();
+        progress.watch(requestId);
+        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value()), requestId});
         const current = state.data.collections.programs.find(item => item.id === programId);
         if (!current) throw new Error("Сайты обновлены, но программа больше не найдена в базе.");
         current.siteSync = result;
@@ -33445,6 +33473,7 @@ MAX - https://bizvmax.ru/zifra_plus
           if (input && input.value !== value) { input.value = value; input.dispatchEvent(new Event("input", {bubbles: true})); }
         }
         persist();
+        progress.local("Сохранение результатов и промосообщений в общей базе…");
         if (!await flushSharedApplicationState()) throw new Error("Сайты обновлены. Сведения об операции пока не сохранены в общей базе; дождитесь восстановления связи.");
         try {
           const snapshot = JSON.parse(card.dataset.initialSnapshot);
@@ -33452,13 +33481,38 @@ MAX - https://bizvmax.ru/zifra_plus
         } catch { /* Keep any unrelated unsaved edits. */ }
         status.textContent = "Информация о программе успешно обновлена на edu-plus.ru и zifra-plus.ru." + (Object.keys(savedFields).some(key => ["promoMessage1", "promoMessage2"].includes(key)) ? " Промосообщения актуализированы." : "");
         void refreshProgramSiteLinks();
-      } catch (error) { status.textContent = error.message; }
-      finally { plan = null; setBusy(false); }
+      } catch (error) { failed = true; status.textContent = error.message; }
+      finally { progress.stop(failed); plan = null; setBusy(false); }
     });
     dialog.querySelector("[data-sync-refresh]").addEventListener("click", () => { void load(Number(preview.querySelector("[data-sync-product]")?.value || 0)); });
-    void programSiteRequest("templates").then(payload => { if (dialog.isConnected) { imagePicker.setItems(payload.templates || []); if (busy) dialog.querySelector("[data-image-source]").disabled = true; } })
-      .catch(error => { if (dialog.isConnected) dialog.querySelector("[data-image-caption]").textContent = `Не удалось загрузить изображения: ${error.message}`; });
-    const close = () => { if (!busy) { dialog.close(); dialog.remove(); } };
+    const loadCatalog = async () => {
+      if (catalogBusy) return;
+      catalogBusy = true;
+      const retry = dialog.querySelector("[data-sync-catalog-retry]");
+      retry.hidden = true;
+      catalogProgress.start("Загрузка каталога изображений…");
+      let failed = false;
+      try {
+        const payload = await programSiteRequest("templates");
+        if (dialog.isConnected) { imagePicker.setItems(payload.templates || []); catalogReady = true; }
+      } catch (error) {
+        failed = true;
+        if (dialog.isConnected) {
+          dialog.querySelector("[data-image-caption]").textContent = `Не удалось загрузить изображения: ${error.message}`;
+          retry.hidden = false;
+        }
+      } finally {
+        catalogBusy = false;
+        if (dialog.isConnected) {
+          catalogProgress.stop(failed);
+          if (!failed) dialog.querySelector("[data-sync-catalog-progress] [data-site-progress]").hidden = true;
+          setBusy(busy);
+        }
+      }
+    };
+    dialog.querySelector("[data-sync-catalog-retry]").addEventListener("click", () => { void loadCatalog(); });
+    void loadCatalog();
+    const close = () => { if (!busy) { progress.dispose(); catalogProgress.dispose(); dialog.close(); dialog.remove(); } };
     dialog.querySelector("[data-sync-close]").addEventListener("click", close);
     dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
     dialog.addEventListener("keydown", event => { if (event.key === "Escape") event.stopPropagation(); });

@@ -425,6 +425,14 @@ function normalizeSyncProgram(program) {
   const price = Number(program.price), oldPrice = Number(program.oldPrice || 0), hours = Number(program.hours);
   if (![price, oldPrice].every(value => Number.isFinite(value) && value >= 0 && value <= 10000000)) fail("Проверьте стоимость и старую цену.");
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Проверьте количество часов.");
+  const schedule = {};
+  if (type === "ПРО" && (program.webinarDate || program.webinarTime)) {
+    const date = String(program.webinarDate || "").trim(), time = String(program.webinarTime || "").trim();
+    const parsed = new Date(`${date}T12:00:00Z`);
+    if (!/^20\d{2}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date
+      || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) fail("Укажите корректные дату и время вебинара (Москва).");
+    Object.assign(schedule, {date, time});
+  }
   let promo = text(program.promoSite, 2000), slug = "";
   // Older cards contain an ID-based URL: it identifies a page, not a new slug.
   if (promo) {
@@ -435,6 +443,7 @@ function normalizeSyncProgram(program) {
     if (!idUrl) slug = landingCodeFromPromoSite(promo);
   }
   return {id, type, name, productName: text(program.siteProductName || name, 500), price, oldPrice, hours,
+    ...schedule,
     ...(slug ? {slug} : {}),
     ...(type === "ПРО" && text(program.webinarJoinUrl, 2000) ? {joinUrl: normalizeJoinUrl(program.webinarJoinUrl)} : {}),
     duration: text(program.duration, 200), studyForm: text(program.studyForm, 300),
@@ -503,18 +512,23 @@ async function previewSync(program, call, productId = 0, imageSourceId = 0) {
   return {...resolved, landing: publicLanding, model, hash};
 }
 
-async function synchronize(program, call, productId, expectedHash, imageSourceId = 0) {
+async function synchronize(program, call, productId, expectedHash, imageSourceId = 0, report = () => {}) {
+  report("Повторная проверка данных программы и двух сайтов");
   const plan = await previewSync(program, call, productId, imageSourceId);
   if (!plan.product || !expectedHash || plan.hash !== expectedHash) fail("Данные программы или сайтов изменились. Обновите проверку перед синхронизацией.", 409);
   // Preflight both sites before the first write. Each write also rechecks its snapshot
   // under a lock on the actual post ID (several AIS variants can share one landing).
   const payload = {model: plan.model, landingId: plan.landing.id, landingStatus: plan.landing.status, productId: plan.product.id};
+  report("Проверка возможности обновления лендинга");
   await call("edu", "/check-sync", {...payload, version: plan.landing.version});
+  report("Проверка возможности обновления магазина");
   await call("shop", "/check-sync", {...payload, version: plan.product.version});
   let product;
+  report("Обновление товара, изображения и файлов подключения на zifra-plus.ru");
   try { product = await call("shop", "/sync-existing", {...payload, version: plan.product.version}); }
   catch (error) { fail(`Не подтверждено обновление магазина. Лендинг не изменялся. Обновите проверку и повторите синхронизацию. ${error.message}`, 409); }
   let landing;
+  report("Обновление лендинга на edu-plus.ru");
   try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
   catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
   return {ok: true, landing, product, type: plan.model.type, syncedAt: new Date().toISOString(),

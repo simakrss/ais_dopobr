@@ -56,7 +56,7 @@ async function main() {
   const syncEnd=app.indexOf("  function renderProgramGeneratorFields(",syncStart);
   const source=app.slice(syncStart,syncEnd);
   assert.match(source,/data-sync-jazz/); assert.match(source,/if \(jazzInput\) \{[\s\S]*?saveRecordFormBeforeContinuation/);
-  assert.match(source,/jazzInput\?\.addEventListener\("input", \(\) => \{\s*plan = null; apply.disabled = true;/);
+  assert.match(source,/\[jazzInput, dateInput, timeInput\]\.forEach\(input => input\?\.addEventListener\("input", \(\) => \{\s*plan = null; apply.disabled = true;/);
   const saveStart=source.indexOf("        current.siteSync = result;");
   const saveEnd=source.indexOf('        status.textContent = "Информация о программе успешно',saveStart);
   assert.ok(saveStart>0&&saveEnd>saveStart);
@@ -66,7 +66,7 @@ async function main() {
   for(const item of baseline) card.elements[item.name]={value:item.value,dispatchEvent:event=>events.push(event)};
   card.elements.name.value="unsaved-name";
   let persisted;
-  const context={current,result,card,Event,promoParameters:program,getProgramPromoSyncFields:()=>({}),persist:()=>{persisted=structuredClone(current);},flushSharedApplicationState:async()=>true};
+  const context={current,result,card,Event,promoParameters:program,getProgramPromoSyncFields:()=>({}),persist:()=>{persisted=structuredClone(current);},flushSharedApplicationState:async()=>true,progress:{local(){}}};
   vm.createContext(context);
   await vm.runInContext(`(async()=>{${source.slice(saveStart,saveEnd)}})()`,context);
   assert.equal(persisted.gradeReportUrl,join); assert.equal(persisted.landingCode,"new_code");
