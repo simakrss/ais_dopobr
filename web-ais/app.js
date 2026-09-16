@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.487",
+    version: "1.7.488",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.488",
+      releasedAt: "2026-09-16",
+      changes: [
+        "В контекстное меню слушателя добавлены копирование промосообщения для ПРО, ППП, КПК и ДОП и переход в карточку программы любого типа. Напоминания о вебинаре остаются доступны только для ПРО."
+      ]
+    },
     {
       version: "1.7.487",
       releasedAt: "2026-09-16",
@@ -40174,7 +40181,7 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
-  function getWebinarProgramForStudent(student, programs = state.data.collections.programs || []) {
+  function getStudentContextProgram(student, programs = state.data.collections.programs || []) {
     if (!student) return null;
     const programId = String(student.programId || "").trim();
     const name = normalizeProgramName(student.program);
@@ -40182,8 +40189,49 @@ MAX - https://bizvmax.ru/zifra_plus
       ? programs.filter((program) => String(program.id) === programId)
       : programs.filter((program) => name && normalizeProgramName(program.name) === name);
     if (!programId && !matches.length) matches = programs.filter((program) => name && normalizeProgramName(program.shortName) === name);
-    if (matches.length !== 1 || String(matches[0].type || "").trim().toUpperCase() !== "ПРО") return null;
-    return matches[0];
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function getWebinarProgramForStudent(student, programs = state.data.collections.programs || []) {
+    const program = getStudentContextProgram(student, programs);
+    return String(program?.type || "").trim().toUpperCase() === "ПРО" ? program : null;
+  }
+
+  function getStudentProgramPromoMessage(program) {
+    if (!["ПРО", "ППП", "КПК", "ДОП"].includes(String(program?.type || "").trim().toUpperCase())) return "";
+    return [program.promoMessage1, program.promoMessage2].map((value) => String(value || "")).find((value) => value.trim()) || "";
+  }
+
+  function getStudentProgramMenuActions(program) {
+    if (!program) return [];
+    const type = String(program.type || "").trim().toUpperCase();
+    return [
+      ...(["ПРО", "ППП", "КПК", "ДОП"].includes(type) ? [{
+        action: "copy-promo", label: "Копировать промосообщение",
+        disabled: !getStudentProgramPromoMessage(program),
+        title: getStudentProgramPromoMessage(program) ? "Копировать текст из карточки программы" : "В программе не заполнены промосообщения"
+      }] : []),
+      { action: "open-program", label: "Перейти к программе", disabled: !canAccessView("programs"), title: canAccessView("programs") ? "Открыть карточку программы в АИС" : "Нет доступа к разделу «Программы»" },
+      ...(type === "ПРО" ? [
+        { action: "students", label: "Напоминание слушателям вебинара…" },
+        { action: "teacher", label: "Напоминание преподавателю вебинара…" }
+      ] : [])
+    ];
+  }
+
+  async function performStudentProgramMenuAction(programId, action, opener = null) {
+    const program = (state.data.collections.programs || []).find((item) => String(item.id) === String(programId));
+    if (!program) { alert("Программа больше не найдена. Обновите список слушателей."); return; }
+    if (action === "copy-promo") {
+      const message = getStudentProgramPromoMessage(program);
+      if (!message) { alert("В программе не заполнено промосообщение."); return; }
+      await copyTextToClipboard(message);
+    } else if (action === "open-program") {
+      if (!canAccessView("programs")) { alert("Нет доступа к разделу «Программы»."); return; }
+      await openProgramCardById(program.id);
+    } else if (["students", "teacher"].includes(action)) {
+      openWebinarMessageComposer(program.id, action, opener);
+    }
   }
 
   function getWebinarMessageContext(programId, audience = "students", teacherId = "", collections = state.data.collections) {
@@ -40325,7 +40373,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const row = event.target.closest?.("[data-webinar-student-id]");
       if (!row) return;
       const student = (state.data.collections.students || []).find((item) => String(item.id) === row.dataset.webinarStudentId);
-      const program = getWebinarProgramForStudent(student);
+      const program = getStudentContextProgram(student);
       if (!program) return;
       event.preventDefault();
       event.stopPropagation();
@@ -40338,34 +40386,38 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showWebinarMessageMenu(row, programId, x, y) {
+    const program = (state.data.collections.programs || []).find((item) => String(item.id) === String(programId));
+    const actions = getStudentProgramMenuActions(program);
+    if (!actions.length) return;
     hideFieldCopyPopup();
     const menu = document.createElement("div");
     menu.className = "field-copy-popup webinar-message-menu";
     menu.dataset.fieldCopyPopup = "";
     menu.setAttribute("role", "menu");
-    menu.setAttribute("aria-label", "Сообщения вебинара");
+    menu.setAttribute("aria-label", "Действия с программой слушателя");
     menu.fieldCopyPopupReturnTarget = row.querySelector("button") || row;
-    menu.innerHTML = `<button type="button" role="menuitem" data-webinar-audience="students">Напоминание слушателям вебинара…</button>
-      <button type="button" role="menuitem" data-webinar-audience="teacher">Напоминание преподавателю вебинара…</button>`;
+    menu.innerHTML = actions.map((item) => `<button type="button" role="menuitem" data-student-program-action="${escapeAttr(item.action)}" ${item.disabled ? "disabled" : ""} ${item.title ? `title="${escapeAttr(item.title)}"` : ""}>${escapeHtml(item.label)}</button>`).join("");
     document.body.appendChild(menu);
     const rect = row.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(x || rect.left, window.innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(y || rect.bottom, window.innerHeight - menu.offsetHeight - 8))}px`;
-    const items = [...menu.querySelectorAll("button")];
-    items.forEach((button) => button.addEventListener("click", () => {
-      hideFieldCopyPopup();
-      openWebinarMessageComposer(programId, button.dataset.webinarAudience, menu.fieldCopyPopupReturnTarget);
+    const items = [...menu.querySelectorAll("button:not(:disabled)")];
+    items.forEach((button) => button.addEventListener("click", async () => {
+      hideFieldCopyPopup({ restoreFocus: true });
+      try { await performStudentProgramMenuAction(programId, button.dataset.studentProgramAction, menu.fieldCopyPopupReturnTarget); }
+      catch (error) { alert(error.message || "Не удалось выполнить действие с программой."); }
     }));
     menu.addEventListener("keydown", (event) => {
       if (event.key === "Escape") { event.preventDefault(); hideFieldCopyPopup({ restoreFocus: true }); }
-      if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      if (["ArrowDown", "ArrowUp"].includes(event.key) && items.length) {
         event.preventDefault();
         const index = items.indexOf(document.activeElement);
         items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
       }
     });
     document.addEventListener("pointerdown", handleFieldCopyPopupOutside, { once: true });
-    items[0].focus({ preventScroll: true });
+    if (items.length) items[0].focus({ preventScroll: true });
+    else { menu.tabIndex = -1; menu.focus({ preventScroll: true }); }
   }
 
   function openWebinarMessageComposer(programId, audience, opener = null) {

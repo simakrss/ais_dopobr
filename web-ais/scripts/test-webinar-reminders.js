@@ -11,6 +11,7 @@ const constants = source.slice(source.indexOf("  const WEBINAR_MESSAGE_FIELDS"),
 const names = [
   "normalizeWebinarMessageTemplates", "renderWebinarMessageSettings", "getWebinarTemplateError", "saveWebinarMessageSettings",
   "getWebinarProgramForStudent", "getWebinarMessageContext", "renderWebinarMessage", "deliverWebinarMessages",
+  "getStudentContextProgram", "getStudentProgramPromoMessage", "getStudentProgramMenuActions", "performStudentProgramMenuAction",
   "getWebinarTeacherOptions", "getSelectedWebinarRecipients",
   "bindWebinarMessageActions", "showWebinarMessageMenu", "openWebinarMessageComposer",
   "hideFieldCopyPopup", "handleFieldCopyPopupOutside", "getStudentCommunicationAddressee",
@@ -27,9 +28,12 @@ function fixtureData() {
     dictionaries: {},
     collections: {
       programs: [
-        { id: "pro", type: "ПРО", name: "Он-лайн семинар: Тестовый вебинар", shortName: "Тест ПРО", webinarDate: "2026-08-04", webinarTime: "18:00", webinarJoinUrl: "https://example.test/join?token=test", teachers: "Иванова Елена Владимировна" },
+        { id: "pro", type: "ПРО", name: "Он-лайн семинар: Тестовый вебинар", shortName: "Тест ПРО", webinarDate: "2026-08-04", webinarTime: "18:00", webinarJoinUrl: "https://example.test/join?token=test", teachers: "Иванова Елена Владимировна", promoMessage1: "Приглашаем на вебинар!\nhttps://example.test/webinar", promoMessage2: "Второе ПРО" },
         { id: "other", type: "ПРО", name: "Другой вебинар" },
-        { id: "kpk", type: "КПК", name: "Курс повышения квалификации" }
+        { id: "kpk", type: "КПК", name: "Курс повышения квалификации", promoMessage1: " ", promoMessage2: "Второе промосообщение КПК" },
+        { id: "ppp", type: "ППП", name: "Переподготовка", promoMessage1: "Промосообщение ППП" },
+        { id: "dop", type: "ДОП", name: "Дополнительная программа" },
+        { id: "future", type: "ИНОЙ", name: "Другой тип программы" }
       ],
       students: [
         { id: "s1", program: "Он-лайн семинар: Тестовый вебинар", status: "На зачисление", name: "Анна Тестовая", email: "first@example.test" },
@@ -39,7 +43,10 @@ function fixtureData() {
         { id: "s5", program: "Тест ПРО", status: "Учится", name: "Не получатель", email: "excluded@example.test" },
         { id: "s6", program: "Другой вебинар", status: "На зачисление", name: "Другая программа", email: "other@example.test" },
         { id: "s7", program: "Курс повышения квалификации", status: "На зачисление", name: "КПК", email: "kpk@example.test" },
-        { id: "s8", program: "Тест ПРО", status: "Отчислен", name: "Архив", email: "archive@example.test" }
+        { id: "s8", program: "Тест ПРО", status: "Отчислен", name: "Архив", email: "archive@example.test" },
+        { id: "s9", programId: "ppp", status: "На зачисление", name: "Слушатель ППП" },
+        { id: "s10", programId: "dop", status: "На зачисление", name: "Слушатель ДОП" },
+        { id: "s11", programId: "future", status: "На зачисление", name: "Слушатель другого типа" }
       ],
       contracts: [
         { id: "t1", name: "Иванова Елена Владимировна", email: "teacher@example.test" },
@@ -61,6 +68,10 @@ function harness() {
     isChecked: value => value === true || value === "+",
     escapeHtml, escapeAttr: escapeHtml,
     alert: message => alerts.push(message),
+    canAccessView: () => true,
+    copied: [], openedPrograms: [],
+    copyTextToClipboard: async text => context.copied.push(text),
+    openProgramCardById: async id => context.openedPrograms.push(id),
     persistCalls: 0, renderCalls: 0, auditCalls: 0,
     persist: () => context.persistCalls++, render: () => context.renderCalls++, addAudit: () => context.auditCalls++, dictionaryTitle: key => key,
     setTimeout: (fn, delay) => { delays.push(delay); fn(); },
@@ -92,6 +103,36 @@ async function test() {
   assert.equal(c.persistCalls, 1); assert.equal(h.alerts.length, 1);
 
   const context = c.getWebinarMessageContext("pro");
+  for (const type of ["ПРО", "ППП", "КПК", "ДОП"]) {
+    const program = {id:type,type,name:type,promoMessage1:"Первое\nhttps://example.test/",promoMessage2:"Второе"};
+    assert.equal(c.getStudentContextProgram({programId:type},[program]),program);
+    assert.equal(c.getStudentProgramPromoMessage(program),program.promoMessage1);
+    const actions=c.getStudentProgramMenuActions(program);
+    assert.equal(actions[0].action,"copy-promo"); assert.equal(actions[0].disabled,false);
+    assert.equal(actions[1].action,"open-program");
+    assert.equal(actions.filter(item=>["students","teacher"].includes(item.action)).length,type==="ПРО"?2:0);
+    assert.equal(c.getStudentProgramPromoMessage({...program,promoMessage1:" \n"}),"Второе");
+    assert.equal(c.getStudentProgramMenuActions({...program,promoMessage1:"",promoMessage2:""})[0].disabled,true);
+  }
+  assert.equal(c.getStudentProgramMenuActions({id:"x",type:"ИНОЙ"}).length,1);
+  assert.equal(c.getStudentProgramMenuActions({id:"x",type:"ИНОЙ"})[0].action,"open-program");
+  assert.equal(c.getStudentContextProgram({program:"Повтор"},[{id:"1",name:"Повтор"},{id:"2",name:"Повтор"}]),null);
+  assert.equal(c.getStudentContextProgram({programId:"missing",program:"Курс повышения квалификации"}),null);
+  assert.equal(c.getStudentContextProgram({program:"Курс повышения квалификации"}).id,"kpk");
+  await c.performStudentProgramMenuAction("pro","copy-promo");
+  await c.performStudentProgramMenuAction("kpk","copy-promo");
+  assert.deepEqual(c.copied,["Приглашаем на вебинар!\nhttps://example.test/webinar","Второе промосообщение КПК"]);
+  await c.performStudentProgramMenuAction("dop","copy-promo"); assert.equal(c.copied.length,2);
+  assert.match(h.alerts.at(-1),/не заполнено/u);
+  await c.performStudentProgramMenuAction("kpk","open-program");
+  await c.performStudentProgramMenuAction("future","open-program");
+  assert.deepEqual(c.openedPrograms,["kpk","future"]);
+  c.canAccessView=()=>false;
+  assert.equal(c.getStudentProgramMenuActions({id:"x",type:"ИНОЙ"})[0].disabled,true);
+  await c.performStudentProgramMenuAction("ppp","open-program"); assert.equal(c.openedPrograms.length,2);
+  assert.match(h.alerts.at(-1),/Нет доступа/u); c.canAccessView=()=>true;
+  await c.performStudentProgramMenuAction("missing","open-program"); assert.match(h.alerts.at(-1),/не найдена/u);
+  assert.equal(c.getStudentProgramMenuActions(null).length,0);
   const teacherOptions = c.getWebinarTeacherOptions();
   assert.equal(teacherOptions.length, 2, "Duplicate contracts must produce one teacher option");
   assert.equal(c.state.data.collections.contracts.length, 3, "Deduplication must not alter employee records");
@@ -213,7 +254,8 @@ function serveFixture() {
   const styles = fs.readFileSync(path.join(root, "styles.css"));
   const html = `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка сообщений вебинара</title><link rel="stylesheet" href="/styles.css"><body>
   <main style="max-width:1000px;margin:24px auto;padding:12px"><h1>Слушатели — изолированный тест</h1><p>Правый щелчок по слушателю. Настоящие письма не отправляются.</p>
-  <table><tbody><tr data-webinar-student-id="s1"><td><button type="button">Анна Тестовая — ПРО</button></td><td>На зачисление</td></tr><tr data-webinar-student-id="s7"><td><button type="button">Слушатель КПК</button></td></tr></tbody></table>
+  <table><tbody><tr data-webinar-student-id="s1"><td><button type="button">Анна Тестовая — ПРО</button></td><td>На зачисление</td></tr><tr data-webinar-student-id="s7"><td><button type="button">Слушатель КПК</button></td></tr><tr data-webinar-student-id="s9"><td><button type="button">Слушатель ППП</button></td></tr><tr data-webinar-student-id="s10"><td><button type="button">Слушатель ДОП</button></td></tr><tr data-webinar-student-id="s11"><td><button type="button">Слушатель другого типа</button></td></tr></tbody></table>
+  <p id="testProgramActionLog" role="status"></p>
   <button type="button" id="settings">Настройки сообщений</button><div id="settingsRoot"></div><p id="testMailLog" role="status">Тестовых отправок: 0</p>
   </main><script>
   const state={data:${JSON.stringify(fixtureData())}};
@@ -222,6 +264,8 @@ function serveFixture() {
   const escapeHtml=${escapeHtml.toString()}; const escapeAttr=escapeHtml;
   const dictionaryTitle=String; const addAudit=()=>{}; const persist=()=>{}; const render=()=>{};
   const canAccessView=()=>true;const isDatabaseDemoMode=()=>false;const isSettingsDraftSessionActive=()=>false;
+  const copyTextToClipboard=async text=>{document.getElementById('testProgramActionLog').textContent='Скопировано: '+text;};
+  const openProgramCardById=async id=>{document.getElementById('testProgramActionLog').textContent='Открыта карточка программы: '+id;};
   let sharedStateChangeGeneration=0;const flushSharedApplicationStateThroughGeneration=async()=>true;
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const initializeFieldControlHistory=()=>{};const isFieldEditHistoryControl=control=>!control.disabled;
