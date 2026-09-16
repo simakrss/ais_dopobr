@@ -31233,8 +31233,12 @@ button.icon-button.form-cancel-button {
 .document-workflow-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .document-workflow-actions button { flex: 0 1 auto; max-width: 100%; min-height: 32px; padding: 5px 10px; white-space: normal; }
 .document-workflow-programs { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line, #d6e1de); min-width: 0; font-size: 13px; }
-.document-workflow-programs ul { max-height: 360px; overflow: auto; padding: 0; margin: 6px 0 0; list-style: none; }
-.document-workflow-programs li { padding: 4px 0; line-height: 1.35; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-bottom: 1px solid #edf2f0; }
+.document-workflow-programs ul { height: var(--workflow-program-list-height, max(120px, calc(100dvh - 340px))); min-height: 120px; overflow: auto; padding: 0; margin: 6px 0 0; list-style: none; scrollbar-gutter: stable; }
+.document-workflow-programs li { padding: 0; line-height: 1.35; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-bottom: 1px solid #edf2f0; }
+.document-workflow-program-link { display: block; width: 100%; min-width: 0; padding: 5px 4px; border: 0; border-radius: 4px; background: transparent; color: var(--teal, #0b807a); font: inherit; line-height: 1.35; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.document-workflow-program-link:hover:not(:disabled) { background: #e9f5f3; text-decoration: underline; }
+.document-workflow-program-link:focus-visible { outline: 2px solid var(--teal, #0b807a); outline-offset: -2px; background: #e9f5f3; }
+.document-workflow-program-link:disabled { cursor: default; color: inherit; }
 .document-workflow-programs li span { display: inline-block; min-width: 34px; font-size: 11px; color: #0b807a; }
 .document-workflow-programs [role="alert"] { color: #aa3434; overflow-wrap: anywhere; }
 @media (max-width: 480px) {

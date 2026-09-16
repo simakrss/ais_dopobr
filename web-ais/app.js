@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.488",
+    version: "1.7.489",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.489",
+      releasedAt: "2026-09-16",
+      changes: [
+        "В «Документообороте» список программ занимает доступную высоту окна. Щелчок по программе открывает её карточку, сохраняя параметры формируемого документа."
+      ]
+    },
     {
       version: "1.7.488",
       releasedAt: "2026-09-16",
@@ -14381,6 +14388,7 @@ MAX - https://bizvmax.ru/zifra_plus
     mainRegistryViewportFitFrame = window.requestAnimationFrame(() => {
       mainRegistryViewportFitFrame = 0;
       fitMainRegistryTablesToViewport();
+      fitDocumentWorkflowProgramsToViewport();
     });
   }
 
@@ -24037,11 +24045,29 @@ MAX - https://bizvmax.ru/zifra_plus
             </form>
             <div class="document-workflow-programs">
               <strong>Программы в документе: ${programs.length}</strong>
-              ${error ? `<p role="alert">Ошибка формулы: ${escapeHtml(error)}. Исправьте её в конструкторе.</p>` : !programs.length ? '<p>Нет программ, соответствующих условиям формулы.</p>' : `<ul>${programs.map((program) => `<li title="${escapeAttr(program.name)}"><span>${escapeHtml(program.type)}</span> ${escapeHtml(program.name)}</li>`).join("")}</ul>`}
+              ${error ? `<p role="alert">Ошибка формулы: ${escapeHtml(error)}. Исправьте её в конструкторе.</p>` : !programs.length ? '<p>Нет программ, соответствующих условиям формулы.</p>' : `<ul data-workflow-program-list aria-label="Программы в документе">${programs.map((program) => `<li title="${escapeAttr(program.name)}"><button class="document-workflow-program-link" type="button" data-workflow-program="${escapeAttr(program.id || "")}" title="${escapeAttr(canAccessView("programs") ? `Открыть программу: ${program.name}` : "Нет доступа к разделу «Программы»")}" ${program.id && canAccessView("programs") ? "" : "disabled"}><span>${escapeHtml(program.type)}</span> ${escapeHtml(program.name)}</button></li>`).join("")}</ul>`}
             </div>
           </div>
         </div>
       </section>`;
+  }
+
+  function fitDocumentWorkflowProgramsToViewport() {
+    const list = document.querySelector("[data-workflow-program-list]");
+    if (!list) return;
+    const viewport = window.visualViewport;
+    const viewportHeight = Number(viewport?.height) || window.innerHeight || document.documentElement.clientHeight;
+    const viewportBottom = (Number(viewport?.offsetTop) || 0) + viewportHeight;
+    // Use document coordinates so resizing an already scrolled narrow page cannot grow the list indefinitely.
+    const listTop = list.getBoundingClientRect().top + (window.scrollY || 0);
+    const panel = list.closest(".document-workflow-panel");
+    const content = list.closest(".content");
+    const panelStyle = panel ? window.getComputedStyle(panel) : null;
+    const contentStyle = content ? window.getComputedStyle(content) : null;
+    const bottomSpace = (Number.parseFloat(panelStyle?.paddingBottom) || 0)
+      + (Number.parseFloat(panelStyle?.borderBottomWidth) || 0)
+      + (Number.parseFloat(contentStyle?.paddingBottom) || 12);
+    list.style.setProperty("--workflow-program-list-height", `${Math.max(120, Math.floor(viewportBottom - listTop - bottomSpace))}px`);
   }
 
   function bindDocumentWorkflowEvents() {
@@ -24061,6 +24087,20 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     form.addEventListener("change", saveDraft);
+    document.querySelector(".document-workflow-hint")?.addEventListener("toggle", scheduleMainRegistryTableViewportFit);
+    document.querySelectorAll("[data-workflow-program]").forEach((button) => button.addEventListener("click", async () => {
+      if (button.disabled || !canAccessView("programs")) return;
+      const id = button.dataset.workflowProgram;
+      if (!(state.data.collections.programs || []).some((program) => String(program.id) === id)) {
+        alert("Программа больше не найдена. Обновите раздел.");
+        return;
+      }
+      saveDraft();
+      button.disabled = true;
+      try { await openProgramCardById(id); }
+      catch (error) { alert(error.message || "Не удалось открыть программу."); }
+      finally { if (button.isConnected) button.disabled = !canAccessView("programs"); }
+    }));
     const refreshDefaultOrderNumber = () => {
       saveDraft();
       const template = getWorkflowDocuments().find((item) => item.id === form.dataset.documentId);

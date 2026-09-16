@@ -130,6 +130,7 @@ const context = {
   window: {AIS_DOCUMENT_WORKFLOW: workflow}, state: {data: {collections: {programs, commissionSets: []}}},
   getDocumentTemplates: () => workflow.definitions.map(d => ({...d, generationFormat: "pdf"})),
   getProgramRows: () => programs, resolveProgramCommissionRecord: p => ({...p, commissionChair: p.commissionChair}),
+  canAccessView: () => true,
   todayIso: () => "2026-09-09", escapeHtml: identity, escapeAttr: identity,
   normalizeContractTemplateDocumentFields: identity, getDocumentEmailPropertiesFromInspection: () => ({subject: {}, message: {}, templateValues: {}}),
   mergeDocumentTemplateFieldsFromInspection: () => [], normalizeDocumentEmailTemplateValues: identity,
