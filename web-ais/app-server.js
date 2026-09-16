@@ -58,6 +58,8 @@ async function promoteCodexTrainingEndDateAssets() {
 }
 
 const SERVER_CODE_ROOT = __dirname;
+const localUpdate = require("./local-update.js");
+let localUpdateActiveRequests = 0;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
 const programSiteProgress = require("./program-site-progress.js").createProgressStore();
@@ -7258,7 +7260,7 @@ function startSharedApplicationStateMirror() {
   if (process.env.AIS_SHARED_STATE_LOCAL_ONLY === "1") return Promise.resolve(null);
   const initialRefresh = refreshSharedApplicationStateMirror();
   const timer = setInterval(() => {
-    refreshSharedApplicationStateMirror().catch(() => {});
+    if (!localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase)) refreshSharedApplicationStateMirror().catch(() => {});
   }, SHARED_STATE_MIRROR_INTERVAL_MS);
   timer.unref?.();
   return initialRefresh;
@@ -26479,6 +26481,7 @@ function maybeRunTrainingEndNotificationJob(options = {}) {
 function startTrainingEndNotificationScheduler() {
   if (trainingEndNotificationSchedulerTimer) return;
   const run = () => {
+    if (localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase)) return;
     maybeRunTrainingEndNotificationJob({ source: "scheduler" }).catch((error) => {
       console.warn(`Плановое уведомление об окончании обучения не отправлено: ${error.message}`);
     });
@@ -26518,6 +26521,7 @@ function maybeRunAutomaticContractExpiration() {
 function startAutomaticContractExpirationScheduler() {
   if (automaticContractExpirationSchedulerTimer) return;
   const run = () => {
+    if (localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase)) return;
     maybeRunAutomaticContractExpiration().catch((error) => {
       console.warn(`Не удалось проверить сроки договоров сотрудников: ${error.message}`);
     });
@@ -39618,6 +39622,7 @@ async function handleServerEmail(req, res, authUser) {
 const PUBLIC_STATIC_PATHS = new Set([
   "/app.js",
   "/auth-bootstrap.js",
+  "/local-update-client.js",
   "/data/max-messenger-icon.png",
   "/data/program-payment-registry.js",
   "/data/program-registry.js",
@@ -40358,7 +40363,25 @@ if (isMainThread && require.main === module) {
         startAutomaticContractExpirationScheduler();
         startTrainingEndNotificationScheduler();
         const server = http.createServer((req, res) => {
-          route(req, res).catch((error) => sendError(res, 500, error.message));
+          const pathname = new URL(req.url,"http://localhost").pathname;
+          if (pathname === "/api/local-update/runtime") {
+            if (!requestHasConfiguredGatewaySecret(req)) {sendError(res,404,"Not found");return;}
+            const jobs=[...studentImportJobs.values(),...studentExportJobs.values(),...studentDocumentRecognitionJobs.values()]
+              .filter(job=>["running","queued","pending"].includes(job.status)).length;
+            sendJson(res,200,{activeRequests:localUpdateActiveRequests,jobs:jobs+Number(Boolean(trainingEndNotificationJobPromise))+Number(Boolean(automaticContractExpirationCheckPromise))+Number(Boolean(sharedStateMirrorRefreshPromise))+Number(Boolean(sharedStateOfflineSyncPromise)),version:localUpdate.version(SERVER_CODE_ROOT)});return;
+          }
+          if (!["/api/health","/local-update-client.js"].includes(pathname) && localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase)) {
+            sendError(res,503,"Выполняется обновление системы. Дождитесь завершения.");return;
+          }
+          let routeFinished=false,responseFinished=false,counted=pathname!=="/api/health";
+          const finishRequest=()=>{if(counted&&routeFinished&&responseFinished){counted=false;localUpdateActiveRequests--;}};
+          if (counted) {
+            localUpdateActiveRequests++;
+            const finish=()=>{responseFinished=true;finishRequest();};
+            res.once("finish",finish);res.once("close",finish);
+          }
+          route(req, res).catch((error) => {if(!res.writableEnded)sendError(res,500,error.message);})
+            .finally(()=>{routeFinished=true;finishRequest();});
         });
         server.on("upgrade", (req, socket, head) => {
           proxyOnlyOfficeWebSocket(req, socket, head).catch(() => socket.destroy());

@@ -25,6 +25,7 @@ $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
+  "local-update.js",
   "document-workflow.js",
   "program-site-generator.js",
   "program-site-progress.js",
@@ -79,6 +80,9 @@ function Test-DeployablePath([string]$PathValue) {
     "program-site-progress.js",
     "program-site-certificates.js",
     "local-document-save-dialog.js",
+    "local-update.js",
+    "local-update-client.js",
+    "local-server.js",
     "gateway.php",
     "index.html",
     "partner-app.js",
@@ -586,3 +590,41 @@ $results = if ($ProgramSites) {
 } }
 
 $results | Format-Table -AutoSize
+
+# Publish immutable signed installation files first, and switch latest.json last.
+# Only the publishing workstation owns this private signing key. It never enters FTP.
+$updateSigningKey = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem'
+if (-not $ProgramSites -and -not $TunnelRuntime -and -not $ValidateProfile -and
+    (Test-Path -LiteralPath $updateSigningKey)) {
+  $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+  $nodePath = if ($nodeCommand) { $nodeCommand.Source } else {
+    Join-Path $env:USERPROFILE '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
+  }
+  & $nodePath (Join-Path $PSScriptRoot 'build-local-update.js')
+  if ($LASTEXITCODE -ne 0) { throw 'Не удалось подготовить подписанный пакет локального обновления.' }
+  $envelope = Get-Content -LiteralPath (Join-Path $appRoot 'updates/latest.json') -Raw | ConvertFrom-Json
+  $release = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json
+  $updateResults = foreach ($file in $release.files) {
+    if ([string]$file.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Некорректный файл подписанного пакета.' }
+    $relative = "updates/files/$($file.sha256).bin"
+    Publish-FileTarget $relative "$remoteRoot/$relative" 'signed update payload'
+  }
+  $updateResults += Publish-FileTarget 'updates/latest.json' "$remoteRoot/updates/latest.json" 'signed update manifest'
+  if ([string]$release.version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'Некорректная версия пакета.' }
+  $bootstrapRelative = "updates/install-$($release.version).zip"
+  $bootstrapPath = Join-Path $appRoot $bootstrapRelative
+  if (-not (Test-Path -LiteralPath $bootstrapPath)) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $bootstrapTemp = "$bootstrapPath.$([Guid]::NewGuid().ToString('N')).tmp"
+    $archive = [IO.Compression.ZipFile]::Open($bootstrapTemp, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+      foreach ($file in $release.files) {
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $appRoot $file.path), $file.path, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+      }
+      [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $appRoot 'updates/latest.json'), 'update-manifest.json', [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    } finally { $archive.Dispose() }
+    Move-Item -LiteralPath $bootstrapTemp -Destination $bootstrapPath
+  }
+  $updateResults += Publish-FileTarget $bootstrapRelative "$remoteRoot/$bootstrapRelative" 'first-time local update package'
+  $updateResults | Format-Table -AutoSize
+}

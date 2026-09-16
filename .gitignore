@@ -58,3 +58,4 @@ web-ais/storage/users.before-*.json
 # They remain on the protected local/WebDAV storage and are never published.
 web-ais/storage/document-templates/employee-contract-education.docx
 web-ais/storage/document-templates/employee-contract-general.docx
+/web-ais/updates/

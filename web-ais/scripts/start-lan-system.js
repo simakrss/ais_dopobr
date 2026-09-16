@@ -59,6 +59,7 @@ let shutdownPromise = null;
 let launcherMutexProcess = null;
 let launcherMutexReleaseRequested = false;
 let launcherFallbackLockDescriptor = null;
+let localUpdater = null;
 
 class ShutdownRequestedError extends Error {
   constructor(message) {
@@ -1119,6 +1120,32 @@ async function main() {
     AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret(),
     AIS_TUNNEL_ONLY: "1"
   };
+  // The gateway remains available for update progress while the application restarts.
+  const updaterModule = require("../local-update.js");
+  const updateHooks = {
+    async idle() {
+      try {
+        const response = await fetch("http://127.0.0.1:19081/api/local-update/runtime", {
+          headers:{"x-ais-gateway-token":commonEnvironment.AIS_GATEWAY_SHARED_SECRET},signal:AbortSignal.timeout(5000)
+        });
+        const activity = response.ok ? await response.json() : null;
+        return activity && activity.activeRequests === 0 && activity.jobs === 0;
+      } catch { return false; }
+    },
+    async restart() {
+      await waitForActiveServerOperations();
+      for (const definition of serverDefinitions) {
+        const child=managedChildren.get(definition.key);
+        if(child && !await stopManagedChild(child)) throw new Error("Не удалось остановить службу для обновления.");
+        if(child)managedChildren.delete(definition.key);
+        status[`${definition.key}Pid`]=await startTrackedServer(definition,commonEnvironment);
+        if(!await isAisServiceHealthyWithRetry(definition.port,commonEnvironment))throw new Error("Новая версия не прошла проверку запуска.");
+      }
+      writeStatus(status);
+    }
+  };
+  localUpdater = updaterModule.createUpdater(appRoot, updateHooks);
+  await localUpdater.recover();
   const previousStatus = readLauncherStatus();
   if (previousStatus && processExists(Number(previousStatus.launcherPid))) {
     if (await existingSystemRuntimeMatches(previousStatus, commonEnvironment)) {
@@ -1205,7 +1232,7 @@ async function main() {
   }
 
   setInterval(async () => {
-    if (shuttingDown || monitorBusy) return;
+    if (shuttingDown || monitorBusy || localUpdater?.maintenance()) return;
     monitorBusy = true;
     try {
       await ensureServers(commonEnvironment, status);
@@ -1216,6 +1243,17 @@ async function main() {
       }
     } finally {
       monitorBusy = false;
+    }
+  }, 5000);
+  setInterval(async () => {
+    if(shuttingDown || monitorBusy)return;
+    await localUpdater.check();
+    if(localUpdater.didUpdate()) {
+      try {
+        delete require.cache[require.resolve("../local-update.js")];
+        const replacement=require("../local-update.js").createUpdater(appRoot,updateHooks);
+        localUpdater.dispose();localUpdater=replacement;
+      } catch(error) {console.error("Не удалось перезагрузить модуль обновлений: "+error.message);}
     }
   }, 5000);
 }

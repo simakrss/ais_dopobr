@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.491",
+    version: "1.7.492",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.492",
+      releasedAt: "2026-09-16",
+      changes: ["Локальные копии проверяют подписанные обновления через сайт каждые 5 минут. Перед установкой показываются предупреждение, блокировка и индикатор; открытые карточки и выполняющиеся операции не прерываются. Настройки и данные не заменяются."]
+    },
     {
       version: "1.7.491",
       releasedAt: "2026-09-16",
@@ -7345,6 +7350,11 @@ MAX - https://bizvmax.ru/zifra_plus
   };
   let sharedStateBaseData = null;
   let sharedStatePendingPatch = sharedStateRecovery.pendingPatch;
+  window.addEventListener("ais-local-update-readiness", event => {
+    event.detail.busy ||= Boolean(state.modal || state.adminSettingsDirty || recordFormSavePending
+      || sharedStateDirty || sharedStateSaveRunning || sharedStatePendingCount || sharedStateConflict
+      || isSettingsDraftSessionActive());
+  });
   let recordLocks = new Map();
   let recordLocksPollRunning = false;
   let activeRecordLock = null;

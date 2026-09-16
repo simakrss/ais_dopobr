@@ -1,5 +1,6 @@
 const http = require("http");
 const crypto = require("crypto");
+const localUpdate = require("./local-update.js");
 
 const port = Number(process.env.PORT || 8081);
 const host = process.env.HOST || "127.0.0.1";
@@ -505,6 +506,24 @@ const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS" && accessContext.trustedRemoteService) {
     send(res, 204, "", "text/plain; charset=utf-8", getRemoteServiceCorsHeaders(accessContext.origin));
     return;
+  }
+  if (url.pathname === "/api/local-update/status" && !accessContext.trustedRemoteService) {
+    if (req.method === "GET") {send(res,200,JSON.stringify({protocol:1,...localUpdate.readStatus(__dirname)}),"application/json; charset=utf-8");return;}
+    if (req.method !== "POST" || !req.headers.origin || !isSameRequestOrigin(req,req.headers.origin)
+      || !String(req.headers["content-type"]||"").startsWith("application/json")) {send(res,403,"Forbidden");return;}
+    let body="";
+    req.on("data",chunk=>{body+=chunk;if(body.length>1024)req.destroy();});
+    req.on("end",()=>{
+      try {const data=JSON.parse(body);localUpdate.writeLease(__dirname,data.id,data.ready,data.release===true);send(res,200,JSON.stringify({protocol:1,...localUpdate.readStatus(__dirname)}),"application/json; charset=utf-8");}
+      catch {send(res,400,"Invalid update status request");}
+    });
+    return;
+  }
+  if (localUpdate.BLOCKING.has(localUpdate.readStatus(__dirname).phase) && !["/api/health","/api/local-update/runtime","/local-update-client.js"].includes(url.pathname)) {
+    if(req.method === "GET" && ["/","/index.html"].includes(url.pathname)) {
+      send(res,503,'<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Обновление АИС</title><body style="background:#edf4ef;font:16px Segoe UI;padding:32px"><h1>Обновление системы</h1><p>Дождитесь завершения. Страница откроется автоматически.</p><script src="local-update-client.js?v=maintenance" defer></script></body></html>',"text/html; charset=utf-8",{"Retry-After":"5"});return;
+    }
+    send(res,503,JSON.stringify({error:"Выполняется обновление локальной системы. Дождитесь завершения."}),"application/json; charset=utf-8",{"Retry-After":"5"});return;
   }
   if (
     ["GET", "HEAD"].includes(String(req.method || "GET").toUpperCase())
