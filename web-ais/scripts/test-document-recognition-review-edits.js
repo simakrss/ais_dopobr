@@ -165,7 +165,7 @@ function serveFixture() {
   const server=require("node:http").createServer((req,res)=>{
     if(req.url==="/styles.css"){res.setHeader("Content-Type","text/css");return res.end(fs.readFileSync(path.join(root,"styles.css")));}
     if(req.url==="/fixture.js"){res.setHeader("Content-Type","text/javascript");return res.end(script);}
-    res.setHeader("Content-Type","text/html; charset=utf-8");res.end('<!doctype html><html lang="ru"><title>Проверка исправлений OCR</title><link rel="stylesheet" href="styles.css"><body style="padding:24px"><h2>Тестовая карточка — без рабочей базы</h2><p>Адрес: <span id="card-address"></span></p><button id="open">Открыть распознавание</button><script src="fixture.js"></script></body></html>');
+    res.setHeader("Content-Type","text/html; charset=utf-8");res.end('<!doctype html><html lang="ru"><title>Проверка исправлений OCR</title><link rel="stylesheet" href="styles.css"><body style="padding:24px"><h2>Тестовая карточка — без рабочей базы</h2><form id="recordForm" data-config="students" data-id="fixture"><p>Адрес: <span id="card-address"></span></p></form><button id="open">Открыть распознавание</button><script src="fixture.js"></script></body></html>');
   });
   server.listen(0,"127.0.0.1",()=>console.log(`OCR review UI fixture: http://127.0.0.1:${server.address().port}/`));
 }
