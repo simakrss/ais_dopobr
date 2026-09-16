@@ -210,7 +210,7 @@ async function main() {
   assert.strictEqual(isSourceCompatible(contentBasedFields[0]), true, "The UI must not discard content-backed fields due to a misleading filename");
   assert.match(
     clientSource,
-    /value\.fields\.slice\(0, 40\)\.filter\(isStudentDocumentRecognitionFieldSourceCompatible\)/u
+    /value\.fields\.slice\(0, 40\)\.filter\(\(field\) => field\?\.userCorrected === true \|\| isStudentDocumentRecognitionFieldSourceCompatible\(field\)\)/u
   );
   const displayFieldsStart = clientSource.indexOf("  function getDocumentRecognitionDisplayFields");
   const displayFieldsEnd = clientSource.indexOf("\n\n  function storeStudentDocumentRecognitionResult", displayFieldsStart);

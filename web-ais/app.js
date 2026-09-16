@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.493",
+    version: "1.7.494",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.494",
+      releasedAt: "2026-09-16",
+      changes: ["Исправленные поля распознавания сохраняются для повторного открытия. Ручная правка адреса и других полей отмечает их для переноса в карточку. Предпросмотр переключается на документ выбранного поля, в том числе СНИЛС."]
+    },
     {
       version: "1.7.493",
       releasedAt: "2026-09-16",
@@ -53614,7 +53619,7 @@ MAX - https://bizvmax.ru/zifra_plus
       })).filter((file) => file.relativeName || file.fileName)
       : [];
     const fields = Array.isArray(value.fields)
-      ? value.fields.slice(0, 40).filter(isStudentDocumentRecognitionFieldSourceCompatible).map((field) => {
+      ? value.fields.slice(0, 40).filter((field) => field?.userCorrected === true || isStudentDocumentRecognitionFieldSourceCompatible(field)).map((field) => {
         const normalizedField = { ...field };
         const preview = keepPreviews
           ? normalizeStudentDocumentRecognitionPreview(field?.preview)
@@ -53929,6 +53934,7 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.className = "modal-backdrop student-document-recognition-backdrop";
     backdrop.dataset.studentDocumentRecognitionDialog = "";
     backdrop.dataset.documentRecognitionEntity = isContract ? "contract" : "student";
+    backdrop.dataset.documentRecognitionRecordId = String(state.modal?.id || "");
     backdrop.dataset.recognitionDirty = "false";
     let closed = false;
     let timerId = 0;
@@ -54341,7 +54347,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const conflict = Boolean(!recognitionMissing && currentValue && !sameValue);
     const confidence = Math.round((Number(field.confidence) || 0) * 100);
     const confidenceTone = confidence >= 85 ? "high" : confidence >= 65 ? "medium" : "low";
-    const selected = !currentValue && confidence >= 60;
+    const selected = typeof field.selected === "boolean" ? field.selected : !currentValue && confidence >= 60;
     const alternatives = Array.isArray(field.alternatives) ? field.alternatives : [];
     const listId = !listControl && alternatives.length ? `ocr-options-${key}-${Math.random().toString(36).slice(2)}` : "";
     const status = recognitionMissing
@@ -54491,10 +54497,9 @@ MAX - https://bizvmax.ru/zifra_plus
         || (Array.isArray(file?.pagePreviews) && file.pagePreviews.length > 0)
       );
     }
-    if (contentType) {
-      return contentType.startsWith("image/") || contentType === "application/pdf";
-    }
-    return /\.(?:jpe?g|png|pdf)$/i.test(fileName);
+    // Mail/WebDAV may label a recognized PDF or scan as application/octet-stream.
+    return contentType.startsWith("image/") || contentType === "application/pdf"
+      || /\.(?:jpe?g|png|pdf|tiff?|bmp|gif|webp)$/i.test(fileName);
   }
 
   function isStudentRecognitionRegionSourceFile(file) {
@@ -54758,6 +54763,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = getDocumentRecognitionDisplayFields(dialog, recognizedFields);
     const recognitionFiles = getStudentDocumentRecognitionPreviewFiles(payload);
     const previewPayload = { ...payload, files: recognitionFiles };
+    dialog.studentDocumentRecognitionPayload = previewPayload;
+    dialog.studentDocumentRecognitionFields = fields;
     const photoCandidates = Array.isArray(payload.photoCandidates)
       ? payload.photoCandidates.map(normalizeStudentDocumentRecognitionPhotoCandidate).filter(Boolean)
       : [];
@@ -54912,6 +54919,8 @@ MAX - https://bizvmax.ru/zifra_plus
       </aside>
       <footer class="modal-actions">
         <button class="ghost-button" data-action="close-student-document-recognition" type="button">Закрыть</button>
+        <span class="muted" data-ocr-edits-status role="status" aria-live="polite"></span>
+        <button class="ghost-button" data-action="save-student-document-recognition-edits" type="button" title="Сохранить все исправления для повторного открытия, не меняя поля карточки">Сохранить исправления</button>
         <button class="primary-button" data-action="apply-student-document-recognition" type="button" ${fields.length || photoCandidates.length ? "" : "disabled"}>Применить выбранное</button>
       </footer>
     `);
@@ -54929,6 +54938,8 @@ MAX - https://bizvmax.ru/zifra_plus
         "input[name='ocr-student-photo-candidate']"
       ].join(","))) {
         dialog.dataset.recognitionDirty = "true";
+        const status = modal.querySelector("[data-ocr-edits-status]");
+        if (status) status.textContent = "Есть исправления";
       }
     };
     modal.addEventListener("input", markRecognitionChanges);
@@ -54942,6 +54953,20 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", dialog.closeStudentDocumentRecognitionDialog);
     modal.querySelector("[data-action='apply-student-document-recognition']")
       ?.addEventListener("click", (event) => applyStudentDocumentRecognition(dialog, event.currentTarget));
+    modal.querySelector("[data-action='save-student-document-recognition-edits']")
+      ?.addEventListener("click", async () => {
+        try {
+          const recordForm = document.getElementById("recordForm");
+          if (!recordForm) throw new Error("Карточка закрыта.");
+          if (!await ensureRecordLockForSave(recordForm)) return;
+          saveStudentDocumentRecognitionEdits(dialog);
+          dialog.dataset.recognitionDirty = "false";
+          const status = modal.querySelector("[data-ocr-edits-status]");
+          if (status) status.textContent = "Исправления сохранены";
+        } catch (error) {
+          alert(`Не удалось сохранить исправления: ${error.message}`);
+        }
+      });
     const photoGroup = modal.querySelector("[data-ocr-photo-group]");
     photoGroup?.addEventListener("change", async (event) => {
       const photoEnabled = event.target.closest("[data-ocr-photo-enabled]");
@@ -55098,19 +55123,16 @@ MAX - https://bizvmax.ru/zifra_plus
         sync();
       });
     });
-    modal.addEventListener("change", (event) => {
-      if (event.target.matches("[data-ocr-field-enabled], [data-ocr-field-value]")) sync();
-    });
-    modal.addEventListener("input", (event) => {
+    const selectEditedField = (event) => {
       if (event.target.matches("[data-ocr-field-value]")) {
         const row = event.target.closest("[data-ocr-recognition-field]");
-        if (row?.classList.contains("is-recognition-missing")) {
-          const checkbox = row.querySelector("[data-ocr-field-enabled]");
-          if (checkbox) checkbox.checked = Boolean(String(event.target.value || "").trim());
-        }
-        sync();
+        const checkbox = row?.querySelector("[data-ocr-field-enabled]");
+        if (checkbox) checkbox.checked = Boolean(String(event.target.value || "").trim());
       }
-    });
+      if (event.target.matches("[data-ocr-field-enabled], [data-ocr-field-value]")) sync();
+    };
+    modal.addEventListener("change", selectEditedField);
+    modal.addEventListener("input", selectEditedField);
     sync();
   }
 
@@ -55349,16 +55371,18 @@ MAX - https://bizvmax.ru/zifra_plus
   function storeStudentDocumentRecognitionTargetedField(dialog, payload, field) {
     const key = String(field?.key || "");
     if (!key) return;
-    const nextFields = (Array.isArray(payload.fields) ? payload.fields : [])
+    const latestPayload = dialog.studentDocumentRecognitionPayload || payload;
+    const nextFields = (Array.isArray(latestPayload.fields) ? latestPayload.fields : [])
       .filter((item) => String(item?.key || "") !== key);
     nextFields.push({ ...field });
     payload.fields = nextFields;
+    dialog.studentDocumentRecognitionPayload = { ...latestPayload, fields: nextFields };
     const isContract = isContractDocumentRecognitionDialog(dialog);
     const normalizeResult = isContract
       ? normalizeContractDocumentRecognitionResult
       : normalizeStudentDocumentRecognitionResult;
-    const storedResult = normalizeResult({ ...payload, fields: nextFields });
-    const cachedResult = normalizeResult({ ...payload, fields: nextFields }, { keepPreviews: true });
+    const storedResult = normalizeResult({ ...latestPayload, fields: nextFields });
+    const cachedResult = normalizeResult({ ...latestPayload, fields: nextFields }, { keepPreviews: true });
     const currentDraft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
     if (storedResult) {
       state.modal.draft = {
@@ -55844,11 +55868,19 @@ MAX - https://bizvmax.ru/zifra_plus
         preserveView
         && activeInput
         && !popup.hidden
+        && activeFilePosition === recommendedFilePosition
+        && activePage === fieldPreview.page
+        && (showingFullPage || activeField?.key === key)
+        && (recommendedFilePosition >= 0 || activeField?.sourceFile === field.sourceFile)
         && image.hasAttribute("src")
         && view.baseWidth > 0
         && view.baseHeight > 0
       );
-      if (!preserveCurrentView) previewLoadSequence += 1;
+      if (!preserveCurrentView) {
+        previewLoadSequence += 1;
+        previewLoadController?.abort();
+        previewLoadController = null;
+      }
       activeInput = input;
       activeField = field;
       activeFieldPreview = fieldPreview;
@@ -57219,6 +57251,67 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
+  function collectStudentDocumentRecognitionEdits(dialog) {
+    const payload = dialog.studentDocumentRecognitionPayload || {};
+    const fieldsByKey = new Map((dialog.studentDocumentRecognitionFields || payload.fields || [])
+      .map((field) => [String(field.key), field]));
+    dialog.querySelectorAll("[data-ocr-recognition-field]").forEach((row) => {
+      const key = String(row.dataset.ocrRecognitionField || "");
+      const input = row.querySelector("[data-ocr-field-value]");
+      if (!key || !input) return;
+      const previous = fieldsByKey.get(key) || { key };
+      let value = String(input.value || "").trim();
+      if (getStudentDocumentRecognitionDateInputFormat(key)) {
+        value = normalizeStudentDocumentRecognitionDate(value) || value;
+      }
+      fieldsByKey.set(key, {
+        ...previous,
+        value,
+        selected: Boolean(row.querySelector("[data-ocr-field-enabled]")?.checked),
+        userCorrected: previous.userCorrected === true || value !== String(previous.value || "").trim(),
+        recognitionMissing: !value
+      });
+    });
+    return { ...payload, fields: [...fieldsByKey.values()] };
+  }
+
+  function saveStudentDocumentRecognitionEdits(dialog) {
+    const isContract = isContractDocumentRecognitionDialog(dialog);
+    const collection = isContract ? "contracts" : "students";
+    const recordId = String(state.modal?.id || "");
+    if (!state.modal || state.modal.readOnly || state.modal.config !== collection
+      || String(dialog.dataset.documentRecognitionRecordId || "") !== recordId) {
+      throw new Error("Карточка закрыта, изменена или доступна только для чтения.");
+    }
+    const normalizeResult = isContract ? normalizeContractDocumentRecognitionResult : normalizeStudentDocumentRecognitionResult;
+    const editedPayload = collectStudentDocumentRecognitionEdits(dialog);
+    const storedResult = normalizeResult(editedPayload);
+    const cachedResult = normalizeResult(editedPayload, { keepPreviews: true });
+    if (!storedResult || !cachedResult) throw new Error("Результат распознавания отсутствует.");
+    const currentDraft = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    state.modal.draft = { ...currentDraft, documentRecognitionResult: storedResult };
+    state.modal.hasDraftChanges = true;
+    dialog.studentDocumentRecognitionPayload = cachedResult;
+    // Preserve the field objects used by the preview and targeted-recognition handlers.
+    (dialog.studentDocumentRecognitionFields || []).forEach((field) => {
+      const saved = cachedResult.fields.find((item) => item.key === field.key);
+      if (saved) Object.assign(field, saved);
+    });
+    const cacheKey = isContract ? "contractDocumentRecognitionPreviewCache" : "studentDocumentRecognitionPreviewCache";
+    state[cacheKey] = { [isContract ? "contractId" : "studentId"]: recordId, recognizedAt: cachedResult.recognizedAt, result: cachedResult };
+    const records = state.data.collections[collection] || [];
+    const index = records.findIndex((record) => String(record.id || "") === recordId);
+    if (index >= 0) {
+      // Save only OCR review data, never unrelated or unconfirmed card fields.
+      records[index] = { ...records[index], documentRecognitionResult: storedResult };
+      addAudit("Исправлены результаты распознавания", isContract ? "Сотрудники" : "Слушатели", "Сохранены значения и выбор полей", {
+        entityType: collection, entityId: recordId, entityLabel: currentDraft.name || recordId, source: "ocr-review"
+      });
+      persist();
+    }
+    return storedResult;
+  }
+
   async function applyStudentDocumentRecognition(dialog, applyButton = null) {
     const isContract = isContractDocumentRecognitionDialog(dialog);
     const updates = {};
@@ -57286,6 +57379,9 @@ MAX - https://bizvmax.ru/zifra_plus
       applyButton.setAttribute("aria-busy", "true");
     }
     try {
+      const recordForm = document.getElementById("recordForm");
+      if (!recordForm) throw new Error("Карточка закрыта.");
+      if (!await ensureRecordLockForSave(recordForm)) return;
       if (photoCandidate) {
         const photoAlreadyUpdated = (
           selectedPhotoIndex === dialog.studentDocumentCommittedPhotoCandidateIndex
@@ -57311,7 +57407,8 @@ MAX - https://bizvmax.ru/zifra_plus
         updates.photoData = "";
         updateKeys.push("photoPath", "photoUrl", "photoData");
       }
-    state.modal.draft = { ...currentDraft, ...updates };
+    const correctedResult = saveStudentDocumentRecognitionEdits(dialog);
+    state.modal.draft = { ...currentDraft, ...updates, documentRecognitionResult: correctedResult };
     state.modal.hasDraftChanges = true;
     if (isContract) {
       const contractDocumentKeys = contractDocumentRecognitionFieldGroups
@@ -57349,7 +57446,7 @@ MAX - https://bizvmax.ru/zifra_plus
       firstVisibleField?.focus({ preventScroll: true });
     });
     } catch (error) {
-      alert(`Не удалось сохранить фото: ${error.message}`);
+      alert(`Не удалось применить распознанные данные: ${error.message}`);
     } finally {
       if (applyButton?.isConnected) {
         applyButton.disabled = false;
