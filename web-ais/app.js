@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.489",
+    version: "1.7.490",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.490",
+      releasedAt: "2026-09-16",
+      changes: ["После успешной синхронизации программы с сайтами в обоих промосообщениях обновляются цена, дата и время вебинара. Остальной текст, ссылки и оформление сохраняются."]
+    },
     {
       version: "1.7.489",
       releasedAt: "2026-09-16",
@@ -33258,6 +33263,91 @@ MAX - https://bizvmax.ru/zifra_plus
     }, value: () => selected};
   }
 
+  function updateProgramPromoText(value, program = {}) {
+    if (typeof value !== "string" || !value.trim()) return value;
+    const months = "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split(" ");
+    const weekdays = "воскресенье понедельник вторник среда четверг пятница суббота".split(" ");
+    const webinar = String(program.type || "").trim().toUpperCase() === "ПРО";
+    const dateValue = String(program.webinarDate || "").trim();
+    const ruDate = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/u.exec(dateValue);
+    const iso = ruDate ? `${ruDate[3]}-${ruDate[2].padStart(2, "0")}-${ruDate[1].padStart(2, "0")}` : dateValue;
+    const date = /^\d{4}-\d{2}-\d{2}$/u.test(iso) ? new Date(`${iso}T12:00:00Z`) : null;
+    const validDate = webinar && date && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso;
+    const [year, month, day] = validDate ? iso.split("-") : [];
+    const time = webinar && /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(String(program.webinarTime || "")) ? program.webinarTime.split(":") : null;
+    // Match visible text at its original offsets; never rewrite URLs, tags, attributes or embedded code.
+    const shadow = value.replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>|<[^>]*>|&(?:nbsp|#160|#x0*a0|#32|#x20);|https?:\/\/[^\s<>"']+|www\.[^\s<>"']+/giu, match => " ".repeat(match.length));
+    const edits = [];
+    const add = (match, token, replacement, offset = 0) => {
+      const range = match.indices.groups[token];
+      if (range && replacement !== undefined) edits.push({start: offset + range[0], end: offset + range[1], replacement});
+    };
+    const price = Number(program.price);
+    if (program.price !== "" && program.price != null && Number.isFinite(price) && price >= 0) {
+      const money = /(?<![\p{L}\d])(?<label>цена|стоимость)\s*(?:(?:участия|обучения|программы|курса|вебинара|семинара|мероприятия)\s*)?(?:с\s+уч[её]том\s+скидки\s*)?[:—–=\-]?\s*(?<amount>\d+(?:[ \u00a0\u202f]+\d{3})*(?:[.,]\d{1,2})?|бесплатно)(?!\d|[ \u00a0\u202f]*%)/gidu;
+      for (const match of shadow.matchAll(money)) {
+        if (/(?:старая|прежняя|полная|обычная|без\s+скидки)\s*$/iu.test(shadow.slice(Math.max(0, match.index - 35), match.index))) continue;
+        const amount = match.groups.amount;
+        const grouped = /[ \u00a0\u202f]/u.test(amount);
+        const number = price.toLocaleString("ru-RU", {useGrouping: grouped, maximumFractionDigits: 2}).replace(/\u00a0/gu, " ");
+        const replacement = /бесплатно/iu.test(amount) ? (price === 0 ? amount : `${number} руб.`) : number;
+        const [start, end] = match.indices.groups.amount;
+        if (/[<&]/u.test(value.slice(start, end)) && !/бесплатно/iu.test(amount)) {
+          const parts = [...amount.matchAll(/\d+(?:[.,]\d{1,2})?/gu)];
+          const next = number.split(" ");
+          parts.forEach((part, index) => edits.push({start: start + part.index, end: start + part.index + part[0].length,
+            replacement: index === parts.length - 1 ? next.slice(index).join(" ") : (next[index] || "")}));
+        } else add(match, "amount", replacement);
+      }
+    }
+    if (webinar && (validDate || time)) {
+      const dates = new RegExp(`(?<![\\p{L}\\d])(?:(?<isoYear>20\\d{2})\\s*-\\s*(?<isoMonth>0?[1-9]|1[0-2])\\s*-\\s*(?<isoDay>0?[1-9]|[12]\\d|3[01])|(?<day>0?[1-9]|[12]\\d|3[01])\\s*(?:[./-]|\\s+)\\s*(?<month>${months.join("|")}|0?[1-9]|1[0-2])\\s*(?:[./-]|\\s+)\\s*(?<year>20\\d{2}))(?!\\d)`, "gidu");
+      const timeAfterDate = /^\s*(?:года|год|г\.)?\s*(?:\((?<weekday>воскресенье|понедельник|вторник|среда|четверг|пятница|суббота)\))?\s*(?:[,—–-]\s*)?(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)/idu;
+      for (const match of shadow.matchAll(dates)) {
+        const g = match.groups, end = match.index + match[0].length;
+        const oldMonth = g.isoMonth || (/^\d+$/u.test(g.month) ? g.month : months.indexOf(g.month.toLowerCase()) + 1);
+        const oldIso = `${g.isoYear || g.year}-${String(oldMonth).padStart(2, "0")}-${(g.isoDay || g.day).padStart(2, "0")}`;
+        const oldDate = new Date(`${oldIso}T12:00:00Z`);
+        if (!Number.isFinite(oldDate.getTime()) || oldDate.toISOString().slice(0, 10) !== oldIso) continue;
+        const before = shadow.slice(Math.max(0, match.index - 120), match.index);
+        if (!/(?:дата(?:\s+и\s+время)?|расписание(?:\s+трансляции)?|(?:начало|дата)\s+(?:вебинара|семинара|мероприятия|проведения)|состоится|пройд[её]т|вебинар|семинар)\s*[:—–-]?\s*$/iu.test(before)) continue;
+        if (validDate) {
+          add(match, "isoYear", year); add(match, "isoMonth", month); add(match, "isoDay", day);
+          add(match, "year", year); add(match, "day", g.day?.length === 2 ? day : String(Number(day)));
+          let label = months[Number(month) - 1];
+          if (g.month && !/^\d+$/u.test(g.month)) {
+            if (g.month === g.month.toUpperCase()) label = label.toUpperCase();
+            else if (g.month[0] === g.month[0].toUpperCase()) label = label[0].toUpperCase() + label.slice(1);
+          } else label = g.month?.length === 2 ? month : String(Number(month));
+          add(match, "month", label);
+        }
+        const when = shadow.slice(end).match(timeAfterDate);
+        if (when && time) { add(when, "hour", time[0], end); add(when, "minute", time[1], end); }
+        if (when && validDate) add(when, "weekday", weekdays[date.getUTCDay()], end);
+      }
+      if (time) {
+        const times = /(?:время\s*(?:начала|трансляции|вебинара|мероприятия)?|начало\s*(?:трансляции|вебинара)?)\s*[:—–-]?\s*(?:в\s*)?(?<hour>[01]?\d|2[0-3])\s*[:.]\s*(?<minute>[0-5]\d)(?!\d)/gidu;
+        for (const match of shadow.matchAll(times)) { add(match, "hour", time[0]); add(match, "minute", time[1]); }
+      }
+    }
+    let updated = value, boundary = value.length;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) {
+      if (edit.end > boundary) continue;
+      updated = updated.slice(0, edit.start) + edit.replacement + updated.slice(edit.end);
+      boundary = edit.start;
+    }
+    return updated;
+  }
+
+  function getProgramPromoSyncFields(current, parameters) {
+    const fields = {};
+    for (const key of ["promoMessage1", "promoMessage2"]) {
+      const value = updateProgramPromoText(current[key], parameters);
+      if (value !== current[key]) fields[key] = value;
+    }
+    return fields;
+  }
+
   async function openProgramSiteSync() {
     if (!isAdminUser() || isDatabaseDemoMode() || document.querySelector("[data-program-site-dialog]")) return;
     if (isSettingsDraftSessionActive()) { alert("Сначала сохраните или отмените черновик настроек."); return; }
@@ -33278,7 +33368,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const status = dialog.querySelector("[data-sync-status]");
     const preview = dialog.querySelector("[data-sync-preview]");
     const apply = dialog.querySelector("[data-sync-apply]");
-    let plan = null, busy = false;
+    let plan = null, busy = false, promoParameters = null;
     const jazzInput = dialog.querySelector("[data-sync-jazz]");
     jazzInput?.addEventListener("input", () => {
       plan = null; apply.disabled = true;
@@ -33307,7 +33397,9 @@ MAX - https://bizvmax.ru/zifra_plus
           }
           if (!await saveRecordFormBeforeContinuation(card, {flush: true})) throw new Error("Не удалось сохранить ссылку SberJazz в общей базе. Повторите проверку.");
         }
+        const promoSource = {...state.data.collections.programs.find(item => item.id === programId)};
         plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value())});
+        promoParameters = {...promoSource, type: plan.model.type, price: plan.model.price};
         preview.innerHTML = `<div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div>
           <label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label>
           <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
@@ -33319,6 +33411,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название, изображение, адрес и общие сведения относятся ко всей странице, цена — только к выбранному товару и его блоку. " : ""}Описание, автор, отзывы и образцы документов сохраняются. ${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
           ${plan.product?.status === "draft" ? `<p class="program-site-notice">Товар — черновик: регистрация для посетителей откроется после публикации страницы и товара. Синхронизация не публикует их.</p>` : ""}`;
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
+        preview.insertAdjacentHTML("beforeend", '<p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p>');
         status.textContent = plan.hash ? "Проверьте выбранный товар и подтвердите обновление." : "Выберите товар, соответствующий этой программе.";
       } catch (error) { status.textContent = error.message; }
       finally { setBusy(false); }
@@ -33329,16 +33422,25 @@ MAX - https://bizvmax.ru/zifra_plus
       status.textContent = "Обновление информации на сайте и в магазине…";
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Восстановите блокировку карточки и повторите проверку.");
+        const latest = state.data.collections.programs.find(item => item.id === programId);
+        if (promoParameters?.type === "ПРО" && ["webinarDate", "webinarTime"].some(key => String(latest?.[key] || "") !== String(promoParameters[key] || ""))) {
+          throw new Error("Дата или время вебинара изменились. Нажмите «Обновить проверку» перед синхронизацией.");
+        }
         const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value())});
         const current = state.data.collections.programs.find(item => item.id === programId);
         if (!current) throw new Error("Сайты обновлены, но программа больше не найдена в базе.");
         current.siteSync = result;
-        const savedFields = {};
+        const savedFields = getProgramPromoSyncFields(current, promoParameters);
         if (result.landingCode) savedFields.landingCode = result.landingCode;
         if (current.type === "ПРО" && result.type === "ПРО" && result.gradeReportUrl) savedFields.gradeReportUrl = result.gradeReportUrl;
         if (result.landing?.url) current.landingUrl = result.landing.url;
         for (const [key, value] of Object.entries(savedFields)) {
           current[key] = value;
+          if (["promoMessage1", "promoMessage2"].includes(key)) {
+            current[`${key}Touched`] = true;
+            const editor = card.querySelector?.(`[data-program-promo-field="${key}"]`);
+            if (editor) editor.innerHTML = renderCommunicationTemplateLinks(value);
+          }
           const input = card.elements[key];
           if (input && input.value !== value) { input.value = value; input.dispatchEvent(new Event("input", {bubbles: true})); }
         }
@@ -33348,7 +33450,7 @@ MAX - https://bizvmax.ru/zifra_plus
           const snapshot = JSON.parse(card.dataset.initialSnapshot);
           if (Array.isArray(snapshot)) card.dataset.initialSnapshot = JSON.stringify(snapshot.map(item => Object.hasOwn(savedFields, item.name) && card.elements[item.name]?.value === savedFields[item.name] ? {...item, value: savedFields[item.name]} : item));
         } catch { /* Keep any unrelated unsaved edits. */ }
-        status.textContent = "Информация о программе успешно обновлена на edu-plus.ru и zifra-plus.ru.";
+        status.textContent = "Информация о программе успешно обновлена на edu-plus.ru и zifra-plus.ru." + (Object.keys(savedFields).some(key => ["promoMessage1", "promoMessage2"].includes(key)) ? " Промосообщения актуализированы." : "");
         void refreshProgramSiteLinks();
       } catch (error) { status.textContent = error.message; }
       finally { plan = null; setBusy(false); }

@@ -66,7 +66,7 @@ async function main() {
   for(const item of baseline) card.elements[item.name]={value:item.value,dispatchEvent:event=>events.push(event)};
   card.elements.name.value="unsaved-name";
   let persisted;
-  const context={current,result,card,Event,persist:()=>{persisted=structuredClone(current);},flushSharedApplicationState:async()=>true};
+  const context={current,result,card,Event,promoParameters:program,getProgramPromoSyncFields:()=>({}),persist:()=>{persisted=structuredClone(current);},flushSharedApplicationState:async()=>true};
   vm.createContext(context);
   await vm.runInContext(`(async()=>{${source.slice(saveStart,saveEnd)}})()`,context);
   assert.equal(persisted.gradeReportUrl,join); assert.equal(persisted.landingCode,"new_code");
