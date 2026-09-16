@@ -196,10 +196,17 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.486",
-    releasedAt: "2026-09-15"
+    version: "1.7.487",
+    releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.487",
+      releasedAt: "2026-09-16",
+      changes: [
+        "В напоминаниях вебинара убраны повторы преподавателей по ФИО и email. Слушателей можно исключать из текущей рассылки флажками. Контекстное меню темы и текста письма позволяет редактировать общий шаблон поверх предпросмотра, сохраняя выбор получателей."
+      ]
+    },
     {
       version: "1.7.486",
       releasedAt: "2026-09-15",
@@ -14005,7 +14012,11 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const webinarComposer = document.querySelector("[data-webinar-message-composer]");
     if (webinarComposer) {
-      webinarComposer.closeWebinarMessageComposer?.();
+      const unsavedDialog = document.querySelector("[data-unsaved-changes-dialog]");
+      const formulaDialog = document.querySelector("[data-card-field-formula-dialog]");
+      if (unsavedDialog) unsavedDialog.cancelUnsavedChangesDialog?.();
+      else if (formulaDialog) formulaDialog.closeCardFieldFormulaDialog?.();
+      else webinarComposer.closeWebinarMessageComposer?.();
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
@@ -40240,13 +40251,38 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
+  function getWebinarTeacherOptions(contracts = state.data.collections.contracts || []) {
+    const byPersonAndEmail = new Map();
+    const sorted = [...contracts].sort((a, b) => (
+      String(b.contractDate || "").localeCompare(String(a.contractDate || ""))
+      || String(a.id || "").localeCompare(String(b.id || ""))
+    ));
+    for (const teacher of sorted) {
+      const name = normalizeProgramName(teacher.name).replace(/ё/gu, "е");
+      const email = String(teacher.email || "").trim().toLowerCase();
+      const key = JSON.stringify([name || teacher.id, email]);
+      if (!byPersonAndEmail.has(key)) byPersonAndEmail.set(key, teacher);
+    }
+    return [...byPersonAndEmail.values()].sort((a, b) => (
+      String(a.name || "").localeCompare(String(b.name || ""), "ru")
+      || String(a.email || "").localeCompare(String(b.email || ""))
+    ));
+  }
+
+  function getSelectedWebinarRecipients(context, excludedEmails = []) {
+    const excluded = new Set([...excludedEmails].map((email) => String(email).trim().toLowerCase()));
+    return context.recipients.filter((item) => context.audience !== "students" || !excluded.has(item.email.trim().toLowerCase()));
+  }
+
   async function deliverWebinarMessages(context, content, options = {}) {
     if (context.errors.length) throw new Error(context.errors.join("\n"));
     if (!String(content.subject || "").trim() || !String(content.message || "").trim()) throw new Error("Заполните тему и текст письма.");
     if (content.subject.length > 200 || new TextEncoder().encode(content.message).length > 100000) throw new Error("Сократите тему до 200 символов или текст до 100 КБ.");
+    const recipients = getSelectedWebinarRecipients(context, options.excludedEmails);
+    if (!recipients.length) throw new Error("Выберите хотя бы одного получателя.");
     const results = [];
     let stopped = "";
-    for (const recipient of context.recipients) {
+    for (const recipient of recipients) {
       // send-mail.php permits 20 requests/minute. Keep room for other mail actions.
       if (results.length && !options.shouldStop?.()) await new Promise((resolve) => setTimeout(resolve, 3500));
       if (options.shouldStop?.()) { stopped = "Отправка остановлена пользователем."; break; }
@@ -40257,7 +40293,7 @@ MAX - https://bizvmax.ru/zifra_plus
         stopped = "Данные программы или получателей изменились. Обновите предпросмотр перед новой отправкой.";
         break;
       }
-      options.onProgress?.(results.length, context.recipients.length, recipient);
+      options.onProgress?.(results.length, recipients.length, recipient);
       let sent;
       try {
         sent = await sendServerEmail({
@@ -40278,7 +40314,7 @@ MAX - https://bizvmax.ru/zifra_plus
         break;
       }
     }
-    return { results, stopped, sent: results.filter((item) => item.status === "sent").length, remaining: context.recipients.length - results.length };
+    return { results, stopped, total: recipients.length, sent: results.filter((item) => item.status === "sent").length, remaining: recipients.length - results.length };
   }
 
   function bindWebinarMessageActions() {
@@ -40337,12 +40373,13 @@ MAX - https://bizvmax.ru/zifra_plus
     let context;
     try { context = getWebinarMessageContext(programId, audience); }
     catch (error) { alert(error.message); return; }
-    const teachers = [...(state.data.collections.contracts || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ru"));
+    const teachers = getWebinarTeacherOptions();
     const teacherNames = String(context.program.teachers || "").split(/[\n;]+/u).map(normalizeProgramName).filter(Boolean);
     const suggested = teachers.filter((item) => teacherNames.includes(normalizeProgramName(item.name)));
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop custom-record-email-backdrop";
     backdrop.dataset.webinarMessageComposer = "";
+    backdrop.dataset.webinarMessageAudience = audience;
     backdrop.innerHTML = `<section class="modal custom-record-email-dialog webinar-message-dialog" role="dialog" aria-modal="true" aria-labelledby="webinarMessageTitle">
       <header class="modal-head custom-record-email-head"><div><p class="eyebrow">Вебинар · ПРО</p><h2 id="webinarMessageTitle">${audience === "teacher" ? "Напоминание преподавателю" : "Напоминание слушателям"}</h2><p>${escapeHtml(context.program.name)}</p></div><button class="icon-button" type="button" data-webinar-close aria-label="Закрыть">×</button></header>
       <form class="custom-record-email-form"><div class="custom-record-email-body">
@@ -40362,30 +40399,54 @@ MAX - https://bizvmax.ru/zifra_plus
     let sending = false;
     let attempted = false;
     let stopRequested = false;
+    let previewErrors = [];
+    const excludedEmails = new Set();
+    const updateRecipientSelection = () => {
+      const selected = getSelectedWebinarRecipients(context, excludedEmails);
+      backdrop.querySelectorAll("[data-webinar-selected-count]").forEach((item) => { item.textContent = String(selected.length); });
+      backdrop.querySelectorAll("[data-webinar-recipient]").forEach((input) => {
+        input.checked = !excludedEmails.has(input.dataset.webinarRecipient);
+      });
+      const selectAll = backdrop.querySelector("[data-webinar-select-all]");
+      if (selectAll) {
+        selectAll.checked = Boolean(selected.length && selected.length === context.recipients.length);
+        selectAll.indeterminate = selected.length > 0 && selected.length < context.recipients.length;
+        selectAll.disabled = sending || attempted || !context.recipients.length;
+      }
+      sendButton.disabled = sending || attempted || previewErrors.length > 0 || !selected.length;
+      sendButton.textContent = `Отправить (${selected.length})`;
+    };
     const close = () => {
       if (sending) { status.textContent = "Дождитесь завершения отправки или нажмите «Остановить»."; return; }
       backdrop.remove();
       opener?.focus?.({ preventScroll: true });
     };
-    const updatePreview = () => {
+    const updatePreview = ({ field = "" } = {}) => {
       if (sending || attempted) return;
       try { context = getWebinarMessageContext(programId, audience, form.elements.teacherId?.value || ""); }
       catch (error) { status.textContent = error.message; sendButton.disabled = true; return; }
       const template = normalizeWebinarMessageTemplates(state.data.dictionaries.webinarMessageTemplates).find((item) => item.id === audience);
       const templateError = getWebinarTemplateError(template.subject, template.message);
-      form.elements.subject.value = renderWebinarMessage(template.subject, context.fields);
-      form.elements.message.value = renderWebinarMessage(template.message, context.fields);
-      const errors = [...context.errors, ...(templateError ? [templateError] : [])];
+      if (!field || field === "subject") form.elements.subject.value = renderWebinarMessage(template.subject, context.fields);
+      if (!field || field === "message") form.elements.message.value = renderWebinarMessage(template.message, context.fields);
+      previewErrors = [...context.errors, ...(templateError ? [templateError] : [])];
       backdrop.querySelector("[data-webinar-preview-summary]").innerHTML = `
         <p><strong>${escapeHtml(context.fields.ДатаВебинара || "Дата не задана")} · ${escapeHtml(context.fields.ВремяВебинара || "Время не задано")} мск</strong>${context.fields.СсылкаПодключения ? ` · <a href="${escapeAttr(context.fields.СсылкаПодключения)}" target="_blank" rel="noopener noreferrer">Подключение к вебинару ↗</a>` : ""}</p>
-        <p>Зарегистрировано со статусом «На зачисление»: <strong>${context.registrations.length}</strong>. Получателей писем: <strong>${context.recipients.length}</strong>.</p>
-        <details class="webinar-message-recipients"><summary>Получатели (${context.recipients.length})${context.skipped.length ? ` · без отдельного письма: ${context.skipped.length}` : ""}</summary><ul>${context.recipients.map((item) => `<li>${escapeHtml(item.name)} — ${escapeHtml(item.email)}</li>`).join("")}${context.skipped.map((item) => `<li class="muted">${escapeHtml(item.name)} — ${escapeHtml(item.email || "Email отсутствует")}: ${escapeHtml(item.reason)}</li>`).join("")}</ul></details>
-        ${errors.length ? `<p class="advertising-inline-message is-error" role="alert">${errors.map(escapeHtml).join("<br>")}</p>` : ""}`;
-      sendButton.disabled = errors.length > 0 || !context.recipients.length;
-      sendButton.textContent = `Отправить (${context.recipients.length})`;
+        <p>Зарегистрировано со статусом «На зачисление»: <strong>${context.registrations.length}</strong>. Получателей писем: <strong data-webinar-selected-count></strong> из ${context.recipients.length}.</p>
+        <details class="webinar-message-recipients" ${audience === "students" ? "open" : ""}><summary>Получатели: <span data-webinar-selected-count></span> из ${context.recipients.length}${context.skipped.length ? ` · без отдельного письма: ${context.skipped.length}` : ""}</summary>
+          ${audience === "students" ? `<label class="webinar-recipient-choice webinar-recipient-select-all"><input type="checkbox" data-webinar-select-all>Выбрать всех</label><p class="muted">Снимите флажок, чтобы исключить адрес из этой рассылки. Записи слушателей и число регистраций не изменятся. Одинаковые email получают одно письмо.</p>` : ""}
+          <ul>${context.recipients.map((item) => `<li>${audience === "students" ? `<label class="webinar-recipient-choice"><input type="checkbox" data-webinar-recipient="${escapeAttr(item.email.toLowerCase())}" aria-label="${escapeAttr(`Отправить: ${item.name} — ${item.email}`)}"><span>${escapeHtml(item.name)} — ${escapeHtml(item.email)}</span></label>` : `${escapeHtml(item.name)} — ${escapeHtml(item.email)}`}</li>`).join("")}${context.skipped.map((item) => `<li class="muted">${escapeHtml(item.name)} — ${escapeHtml(item.email || "Email отсутствует")}: ${escapeHtml(item.reason)}</li>`).join("")}</ul>
+        </details>
+        ${previewErrors.length ? `<p class="advertising-inline-message is-error" role="alert">${previewErrors.map(escapeHtml).join("<br>")}</p>` : ""}`;
+      updateRecipientSelection();
       status.textContent = "Просмотр перед отправкой";
     };
     backdrop.closeWebinarMessageComposer = close;
+    backdrop.refreshWebinarFormulaField = (field) => {
+      if (sending || attempted || !["subject", "message"].includes(field)) return;
+      updatePreview({ field });
+      form.elements[field].dispatchEvent(new Event("input", { bubbles: true }));
+    };
     backdrop.querySelectorAll("[data-webinar-close]").forEach((button) => button.addEventListener("click", close));
     backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
     backdrop.addEventListener("keydown", (event) => {
@@ -40397,6 +40458,31 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     form.elements.teacherId?.addEventListener("change", updatePreview);
+    [form.elements.subject, form.elements.message].forEach((control) => {
+      control.addEventListener("contextmenu", (event) => {
+        event.preventDefault(); event.stopPropagation();
+        showFieldCopyPopup(control, event.clientX, event.clientY);
+      });
+      control.addEventListener("keydown", (event) => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        event.preventDefault(); event.stopPropagation();
+        showFieldCopyPopup(control, 0, 0);
+      });
+    });
+    form.addEventListener("change", (event) => {
+      if (sending || attempted || audience !== "students") return;
+      const input = event.target;
+      if (input.matches("[data-webinar-select-all]")) {
+        context.recipients.forEach((item) => {
+          const email = item.email.toLowerCase();
+          if (input.checked) excludedEmails.delete(email); else excludedEmails.add(email);
+        });
+      } else if (input.matches("[data-webinar-recipient]")) {
+        if (input.checked) excludedEmails.delete(input.dataset.webinarRecipient);
+        else excludedEmails.add(input.dataset.webinarRecipient);
+      } else return;
+      updateRecipientSelection();
+    });
     refreshButton.addEventListener("click", updatePreview);
     stopButton.addEventListener("click", () => { stopRequested = true; stopButton.disabled = true; status.textContent = "Остановка после текущего письма…"; });
     form.addEventListener("submit", async (event) => {
@@ -40409,13 +40495,14 @@ MAX - https://bizvmax.ru/zifra_plus
       form.setAttribute("aria-busy", "true");
       try {
         const result = await deliverWebinarMessages(context, content, {
+          excludedEmails: [...excludedEmails],
           shouldStop: () => stopRequested,
           onProgress: (done, total, recipient) => {
             attempted = true;
             status.textContent = `Отправка ${done + 1} из ${total}: ${recipient.email}`;
           }
         });
-        status.textContent = `Отправлено: ${result.sent} из ${context.recipients.length}. Не начато: ${result.remaining}. ${result.stopped}`;
+        status.textContent = `Отправлено: ${result.sent} из ${result.total}. Не начато: ${result.remaining}. ${result.stopped}`;
         backdrop.querySelector("[data-webinar-send-results]").innerHTML = `<ul class="webinar-message-results">${result.results.map((item) => `<li>${escapeHtml(item.name)} — ${escapeHtml(item.email)}: <strong>${item.status === "sent" ? "отправлено" : item.status === "unknown" ? "результат неизвестен" : "не отправлено"}</strong></li>`).join("")}</ul>`;
       } catch (error) { status.textContent = error.message || "Не удалось выполнить отправку."; }
       finally {
@@ -40425,7 +40512,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!attempted) {
           form.querySelectorAll("input, textarea, select").forEach((control) => { control.disabled = false; });
           refreshButton.disabled = false;
-          sendButton.disabled = context.errors.length > 0 || !context.recipients.length;
+          updateRecipientSelection();
         }
       }
     });
@@ -42551,7 +42638,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function closeTopmostWindowByEscape() {
     const webinarComposer = document.querySelector("[data-webinar-message-composer]");
     if (webinarComposer) {
-      if (document.querySelector("[data-field-copy-popup]")) hideFieldCopyPopup({ restoreFocus: true });
+      if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
+      else if (document.querySelector("[data-field-copy-popup]")) hideFieldCopyPopup({ restoreFocus: true });
+      else if (document.querySelector("[data-card-field-formula-dialog]")) document.querySelector("[data-card-field-formula-dialog]").closeCardFieldFormulaDialog?.();
       else webinarComposer.closeWebinarMessageComposer?.();
       return true;
     }
@@ -47164,6 +47253,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const popupY = keyboardOpen && controlRect ? controlRect.bottom + 4 : requestedY;
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
+    if (control?.closest?.("[data-webinar-message-composer], .webinar-formula-backdrop")) popup.classList.add("webinar-field-popup");
     popup.dataset.fieldCopyPopup = "";
     popup.setAttribute("role", "menu");
     popup.setAttribute("aria-label", String(options.menuLabel || "Действия с полем"));
@@ -47401,6 +47491,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getCardFieldFormulaBinding(control) {
+    const webinar = control?.closest?.("[data-webinar-message-composer]");
+    if (webinar && ["students", "teacher"].includes(webinar.dataset?.webinarMessageAudience)
+      && ["subject", "message"].includes(control.name) && !control.disabled) return {
+      kind: "webinar", key: webinar.dataset.webinarMessageAudience, field: control.name,
+      label: `${control.name === "message" ? "Текст письма" : "Тема письма"} — ${webinar.dataset.webinarMessageAudience === "teacher" ? "преподавателю вебинара" : "слушателям вебинара"}`,
+      dictionary: "webinarMessageTemplates"
+    };
     const form = control?.closest?.("#recordForm");
     const config = form?.dataset?.config;
     if (!["students", "contracts"].includes(config)) return null;
@@ -47424,6 +47521,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getCardFieldFormula(binding) {
+    if (binding.kind === "webinar") return normalizeWebinarMessageTemplates(state.data.dictionaries.webinarMessageTemplates)
+      .find((item) => item.id === binding.key)?.[binding.field] || "";
     if (binding.kind === "number") return normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
       .find((item) => item.key === binding.key)?.template || "";
     if (binding.kind === "field") return getCommunicationTemplateFieldDefinitions()
@@ -47435,7 +47534,10 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function setCardFieldFormula(binding, formula) {
     // Merge just the selected formula into the latest state, never an old settings snapshot.
-    if (binding.kind === "number") {
+    if (binding.kind === "webinar") {
+      state.data.dictionaries.webinarMessageTemplates = normalizeWebinarMessageTemplates(state.data.dictionaries.webinarMessageTemplates)
+        .map((item) => item.id === binding.key ? { ...item, [binding.field]: formula } : item);
+    } else if (binding.kind === "number") {
       state.data.dictionaries.dataFormulas = normalizeDataFormulaTemplates(state.data.dictionaries.dataFormulas)
         .map((item) => item.key === binding.key ? { ...item, template: formula } : item);
     } else if (binding.kind === "field") {
@@ -47523,6 +47625,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function validateCardFieldFormula(binding, formula) {
+    if (binding.kind === "webinar") return binding.field === "subject"
+      ? getWebinarTemplateError(formula, "Текст") : getWebinarTemplateError("Тема", formula);
     if (formula.length > 30000) return "Формула слишком длинная (максимум 30 000 символов).";
     if (binding.kind === "number") {
       if (!formula.trim()) return "Укажите формулу номера.";
@@ -47554,21 +47658,24 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Сначала сохраните или отмените открытый черновик настроек.");
       return false;
     }
-    const card = control.closest("#recordForm");
+    const isWebinar = binding.kind === "webinar";
+    const card = control.closest(isWebinar ? "[data-webinar-message-composer]" : "#recordForm");
     let baseline = getCardFieldFormula(binding);
     const dialog = document.createElement("div");
-    dialog.className = "modal-backdrop settings-list-dialog-backdrop card-field-formula-backdrop";
+    dialog.className = `modal-backdrop settings-list-dialog-backdrop card-field-formula-backdrop${isWebinar ? " webinar-formula-backdrop" : ""}`;
     dialog.dataset.cardFieldFormulaDialog = "";
     const isNumber = binding.kind === "number";
     dialog.innerHTML = `
       <section class="modal card-field-formula-dialog" role="dialog" aria-modal="true" aria-label="Редактирование формулы: ${escapeAttr(binding.label)}">
-        <header class="modal-head"><div><p class="eyebrow">${isNumber ? "Конструктор формул данных" : "Шаблоны типовых сообщений"}</p><h2>${escapeHtml(binding.label)}</h2></div><button type="button" class="icon-button" data-close-card-formula aria-label="Закрыть">×</button></header>
+        <header class="modal-head"><div><p class="eyebrow">${isNumber ? "Конструктор формул данных" : isWebinar ? "Сообщения вебинаров (ПРО)" : "Шаблоны типовых сообщений"}</p><h2>${escapeHtml(binding.label)}</h2></div><button type="button" class="icon-button" data-close-card-formula aria-label="Закрыть">×</button></header>
         <div class="card-field-formula-body">
-          <p class="muted">Формула общая для всех карточек. После сохранения текущее поле пересчитается, его ручной текст будет заменён. Остальные введённые данные останутся в карточке.</p>
+          <p class="muted">${isWebinar ? "Шаблон общий для всех вебинаров. После сохранения текущее поле письма пересчитается, его ручной текст будет заменён. Выбор получателей и другое поле письма сохранятся." : "Формула общая для всех карточек. После сохранения текущее поле пересчитается, его ручной текст будет заменён. Остальные введённые данные останутся в карточке."}</p>
           ${isNumber ? renderDataFormulaDictionary(state.data.dictionaries.dataFormulas) : `
             <form data-card-message-formula>
+              ${isWebinar ? `<label><span>Формула / шаблон сообщения</span><textarea name="formula" data-webinar-formula-editor aria-label="Формула поля" rows="10" maxlength="${binding.field === "subject" ? 200 : 100000}">${escapeHtml(baseline)}</textarea></label>
+                <details class="card-formula-available-fields"><summary>Доступные поля — нажмите для вставки</summary><div class="communication-template-field-list">${WEBINAR_MESSAGE_FIELDS.map((name) => `<button type="button" class="communication-template-token" data-webinar-formula-token="${escapeAttr(`{${name}}`)}">${escapeHtml(`{${name}}`)}</button>`).join("")}</div></details>` : `
               <label><span>Формула / шаблон сообщения</span><div class="communication-template-editor communication-template-formula-editor" contenteditable="true" data-formula-editor role="textbox" aria-label="Формула поля" aria-multiline="true">${renderCommunicationTemplateFormulaEditorContent(baseline)}</div><input type="hidden" name="formula" value="${escapeAttr(baseline)}"></label>
-              <details class="card-formula-available-fields"><summary>Доступные поля — перетащите в формулу</summary><div class="communication-template-field-list">${getCommunicationTemplateFieldDefinitions().map((field) => renderCommunicationTemplateFieldToken(field, "Перетащите в формулу; правый щелчок — настройки поля")).join("")}</div></details>
+              <details class="card-formula-available-fields"><summary>Доступные поля — перетащите в формулу</summary><div class="communication-template-field-list">${getCommunicationTemplateFieldDefinitions().map((field) => renderCommunicationTemplateFieldToken(field, "Перетащите в формулу; правый щелчок — настройки поля")).join("")}</div></details>`}
               <div class="data-formula-actions"><button type="submit" class="primary-button">Сохранить и обновить</button><button type="button" class="ghost-button" data-close-card-formula>Отмена</button></div>
             </form>`}
           <p class="card-formula-save-status" role="status" aria-live="polite"></p>
@@ -47584,13 +47691,21 @@ MAX - https://bizvmax.ru/zifra_plus
       form.querySelector("[type='submit']").title = "Сохранить общую формулу и пересчитать поле карточки";
       form.dataset.activeFormulaIndex = String(index);
       bindDataFormulaConstructor(dialog);
-    } else bindCommunicationTemplateFieldDialogFields(dialog);
-    const editor = form.querySelector("[contenteditable='true']");
+    } else if (!isWebinar) bindCommunicationTemplateFieldDialogFields(dialog);
+    const editor = form.querySelector(isWebinar ? "[data-webinar-formula-editor]" : "[contenteditable='true']");
+    const readFormula = () => isWebinar ? String(editor.value || "") : serializeCommunicationTemplateEditor(editor);
+    if (isWebinar) dialog.querySelectorAll("[data-webinar-formula-token]").forEach((button) => {
+      button.addEventListener("click", () => {
+        editor.setRangeText(button.dataset.webinarFormulaToken, editor.selectionStart, editor.selectionEnd, "end");
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        editor.focus();
+      });
+    });
     const status = dialog.querySelector("[role='status']");
     let saving = false;
     const close = async () => {
       if (saving) return false;
-      if (serializeCommunicationTemplateEditor(editor) !== baseline) {
+      if (readFormula() !== baseline) {
         const decision = await chooseUnsavedChangesAction({title: "Формула не сохранена", message: "Сохранить формулу и пересчитать поле перед закрытием?"});
         if (decision === "cancel") return false;
         if (decision === "save") { form.requestSubmit(); return false; }
@@ -47619,7 +47734,7 @@ MAX - https://bizvmax.ru/zifra_plus
       event.stopPropagation();
       if (saving) return;
       if (!canAccessView("settings") || isDatabaseDemoMode()) { status.textContent = "Нет прав на сохранение формулы."; return; }
-      const formula = serializeCommunicationTemplateEditor(editor);
+      const formula = readFormula();
       const error = validateCardFieldFormula(binding, formula);
       if (error) { status.textContent = error; return; }
       if (getCardFieldFormula(binding) !== baseline && getCardFieldFormula(binding) !== formula) {
@@ -47636,10 +47751,11 @@ MAX - https://bizvmax.ru/zifra_plus
         persist();
         const generation = sharedStateChangeGeneration;
         if (isNumber && state.modal) state.modal.autoFormulaFields = unique([...(state.modal.autoFormulaFields || []), binding.field]);
-        refreshCardFormulaValues(card, {forceField: binding.field});
+        if (isWebinar) card?.refreshWebinarFormulaField?.(binding.field);
+        else refreshCardFormulaValues(card, {forceField: binding.field});
         const saved = await flushSharedApplicationStateThroughGeneration(generation);
         status.textContent = saved
-          ? "Формула сохранена. Поле обновлено; данные карточки сохраняются её кнопкой «Сохранить»."
+          ? (isWebinar ? "Шаблон сохранён в настройках. Поле письма обновлено, выбор получателей сохранён." : "Формула сохранена. Поле обновлено; данные карточки сохраняются её кнопкой «Сохранить».")
           : "Поле обновлено локально, но общая база ещё не подтвердила сохранение. Проверьте соединение и повторите сохранение.";
       } catch (failure) {
         status.textContent = `Не удалось завершить сохранение: ${failure.message}`;

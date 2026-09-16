@@ -25334,7 +25334,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .webinar-message-template :is(input, textarea),
-.webinar-message-dialog :is(input, textarea, select) {
+.webinar-message-dialog :is(input:not([type="checkbox"]), textarea, select),
+.webinar-formula-backdrop textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -25385,6 +25386,46 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .webinar-message-footer [hidden] {
   display: none;
+}
+
+.webinar-message-dialog .webinar-recipient-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.webinar-message-dialog .webinar-recipient-choice input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--teal);
+}
+
+.webinar-recipient-select-all {
+  margin-top: 8px;
+}
+
+.webinar-formula-backdrop {
+  z-index: 13000;
+}
+
+.field-copy-popup.webinar-field-popup {
+  z-index: 13100 !important;
+}
+
+.webinar-formula-backdrop ~ .unsaved-changes-dialog-backdrop {
+  z-index: 13200;
+}
+
+.webinar-formula-backdrop textarea {
+  min-height: 160px;
+  max-height: 42vh;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .student-mailbox-backdrop {

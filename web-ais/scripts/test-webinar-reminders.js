@@ -11,8 +11,11 @@ const constants = source.slice(source.indexOf("  const WEBINAR_MESSAGE_FIELDS"),
 const names = [
   "normalizeWebinarMessageTemplates", "renderWebinarMessageSettings", "getWebinarTemplateError", "saveWebinarMessageSettings",
   "getWebinarProgramForStudent", "getWebinarMessageContext", "renderWebinarMessage", "deliverWebinarMessages",
+  "getWebinarTeacherOptions", "getSelectedWebinarRecipients",
   "bindWebinarMessageActions", "showWebinarMessageMenu", "openWebinarMessageComposer",
-  "hideFieldCopyPopup", "handleFieldCopyPopupOutside", "getStudentCommunicationAddressee"
+  "hideFieldCopyPopup", "handleFieldCopyPopupOutside", "getStudentCommunicationAddressee",
+  "getCardFieldFormulaBinding", "getCardFieldFormula", "setCardFieldFormula", "validateCardFieldFormula", "openCardFieldFormulaSettings",
+  "showFieldCopyPopup", "renderCommunicationActionIcon", "chooseUnsavedChangesAction"
 ];
 const production = constants + names.map((name) => {
   assert.ok(functions.has(name), name); return functions.get(name);
@@ -40,6 +43,7 @@ function fixtureData() {
       ],
       contracts: [
         { id: "t1", name: "Иванова Елена Владимировна", email: "teacher@example.test" },
+        { id: "t1-copy", name: "Иванова Елена Владимировна", email: "teacher@example.test" },
         { id: "t2", name: "Петров Иван Сергеевич", email: "" }
       ]
     }
@@ -88,6 +92,30 @@ async function test() {
   assert.equal(c.persistCalls, 1); assert.equal(h.alerts.length, 1);
 
   const context = c.getWebinarMessageContext("pro");
+  const teacherOptions = c.getWebinarTeacherOptions();
+  assert.equal(teacherOptions.length, 2, "Duplicate contracts must produce one teacher option");
+  assert.equal(c.state.data.collections.contracts.length, 3, "Deduplication must not alter employee records");
+  const people = c.getWebinarTeacherOptions([
+    {id:"old",name:"Семёнова Елена Сергеевна",email:"Person@example.test",contractDate:"2025-01-01"},
+    {id:"new",name:" Семенова  Елена Сергеевна ",email:"person@example.test ",contractDate:"2026-01-01"},
+    {id:"other-email",name:"Семёнова Елена Сергеевна",email:"other@example.test"},
+    {id:"other-person",name:"Иванова Елена Сергеевна",email:"person@example.test"}
+  ]);
+  assert.equal(people.length, 3);
+  assert.ok(people.some(item=>item.id==="new")); assert.ok(!people.some(item=>item.id==="old"));
+  const composer = {dataset:{webinarMessageAudience:"students"}};
+  const control = {name:"message",disabled:false,closest:selector=>selector==="[data-webinar-message-composer]"?composer:null};
+  const binding = c.getCardFieldFormulaBinding(control);
+  assert.equal(binding.kind,"webinar"); assert.equal(binding.key,"students");
+  const oldSubject = c.state.data.dictionaries.webinarMessageTemplates[0].subject;
+  const oldTeacher = JSON.stringify(c.state.data.dictionaries.webinarMessageTemplates[1]);
+  c.setCardFieldFormula(binding,"Приглашение {ДатаВебинара}: {СсылкаПодключения}");
+  assert.equal(c.getCardFieldFormula(binding),"Приглашение {ДатаВебинара}: {СсылкаПодключения}");
+  assert.equal(c.state.data.dictionaries.webinarMessageTemplates[0].subject,oldSubject);
+  assert.equal(JSON.stringify(c.state.data.dictionaries.webinarMessageTemplates[1]),oldTeacher);
+  assert.equal(c.validateCardFieldFormula(binding,c.getCardFieldFormula(binding)),"");
+  assert.match(c.validateCardFieldFormula(binding,"{НеверноеПоле}"),/Неизвестные/u);
+  control.disabled=true; assert.equal(c.getCardFieldFormulaBinding(control),null);
   assert.equal(context.registrations.length, 4, "Count all enrolled-pending registrations, not the filtered/selected table rows");
   assert.equal(context.recipients.length, 2);
   assert.equal(context.skipped.length, 2);
@@ -123,6 +151,16 @@ async function test() {
   const ru = harness(); ru.c.state.data.collections.programs[0].webinarDate = "4.08.2026";
   assert.equal(ru.c.getWebinarMessageContext("pro").fields.ДатаВебинара, "04.08.2026");
   const content = {subject:"Вебинар",message:rendered};
+  const selectedHarness = harness(); const selectionContext=selectedHarness.c.getWebinarMessageContext("pro");
+  const excluded=[" FIRST@EXAMPLE.TEST "];
+  assert.equal(selectedHarness.c.getSelectedWebinarRecipients(selectionContext,excluded).length,1);
+  assert.equal(selectionContext.fields.КоличествоРегистраций,"4");
+  const selectedResult=await selectedHarness.c.deliverWebinarMessages(selectionContext,content,{excludedEmails:excluded});
+  assert.equal(selectedResult.total,1); assert.equal(selectedResult.sent,1); assert.equal(selectedResult.remaining,0);
+  assert.deepEqual(selectedHarness.calls.map(call=>call.email),["second@example.test"]);
+  assert.equal(selectedHarness.delays.length,0);
+  await assert.rejects(selectedHarness.c.deliverWebinarMessages(selectionContext,content,{excludedEmails:["first@example.test","second@example.test"]}),/Выберите/u);
+  assert.equal(selectedHarness.calls.length,1,"No requests when all recipients are excluded");
   const success = await c.deliverWebinarMessages(context, content);
   assert.equal(success.sent, 2); assert.equal(success.remaining, 0);
   assert.deepEqual(h.delays, [3500]);
@@ -183,11 +221,18 @@ function serveFixture() {
   const isChecked=value=>value===true||value==='+';
   const escapeHtml=${escapeHtml.toString()}; const escapeAttr=escapeHtml;
   const dictionaryTitle=String; const addAudit=()=>{}; const persist=()=>{}; const render=()=>{};
+  const canAccessView=()=>true;const isDatabaseDemoMode=()=>false;const isSettingsDraftSessionActive=()=>false;
+  let sharedStateChangeGeneration=0;const flushSharedApplicationStateThroughGeneration=async()=>true;
+  const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+  const initializeFieldControlHistory=()=>{};const isFieldEditHistoryControl=control=>!control.disabled;
+  const canUndoFieldControl=()=>false;const canRedoFieldControl=()=>false;const canPasteControlValue=()=>false;
+  let lastKnownClipboardText='';const readFieldClipboardText=async()=>'';
+  const hideStudentDocumentRecognitionFieldMenu=()=>{};
   let calls=0;
   const sendServerEmail=async args=>{calls++;document.getElementById('testMailLog').textContent='Тестовых отправок: '+calls+'; получатель: '+args.email;return true;};
   ${production}
   bindWebinarMessageActions();
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'){const popup=document.querySelector('[data-field-copy-popup]');if(popup)hideFieldCopyPopup();else document.querySelector('[data-webinar-message-composer]')?.closeWebinarMessageComposer();}});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented){const popup=document.querySelector('[data-field-copy-popup]');const formula=document.querySelector('[data-card-field-formula-dialog]');if(popup)hideFieldCopyPopup();else if(formula)formula.closeCardFieldFormulaDialog();else document.querySelector('[data-webinar-message-composer]')?.closeWebinarMessageComposer();}});
   document.getElementById('settings').addEventListener('click',()=>{const root=document.getElementById('settingsRoot');root.innerHTML=renderWebinarMessageSettings(state.data.dictionaries.webinarMessageTemplates);root.querySelector('form').addEventListener('submit',saveWebinarMessageSettings);});
   </script></body></html>`;
   http.createServer((req,res)=>{
