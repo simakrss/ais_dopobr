@@ -4345,6 +4345,67 @@ body.sidebar-collapsed .sidebar-toggle {
   min-width: 520px;
 }
 
+.student-list-group-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.data-table .student-list-group > td {
+  background: #e5f1ed;
+  vertical-align: middle;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.data-table .student-list-subgroup > td {
+  background: #f3f8f6;
+}
+
+.student-list-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-list-subgroup .student-list-group-toggle {
+  padding-left: 18px;
+  font-weight: 500;
+}
+
+.student-list-group-arrow {
+  flex: 0 0 12px;
+}
+
+.student-list-group-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.student-list-group-count {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.student-list-group-toggle:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .data-table th,
 .data-table td {
   padding: 7px 9px;

@@ -26,7 +26,7 @@ const rows = [
   { id: "2", name: "Тестовая Любовь Александровна", status: "На зачисление", program: "Организация образовательного процесса вуза на основе современных технологий", applicationDate: "02.09.2026", phone: "+79531732760", balance: "12 345,67 ₽", endDate: "02.11.2026", daysUntilEnd: 53 }
 ];
 const context = {
-  state: { view: "students", lastEditedRow: {}, sort: {}, tableSettings: {} },
+  state: { view: "students", lastEditedRow: {}, sort: {}, tableSettings: {}, data: { collections: { programs: [] } } },
   getTableFields: c => c.fields, getSelected: () => [], renderTableValueFilterChips: () => "",
   getTablePagination: (_id, count) => ({ start: 0, end: count }), renderTablePagination: () => "",
   getRecordLock: () => null, recordLockEntityType: id => id, isStudentTrainingDeadlinePassed: () => false,
@@ -38,7 +38,7 @@ const context = {
   EMPLOYEE_PAYMENT_TABLE_CONFIG_ID: "employee", ISSUED_DOCUMENT_TABLE_CONFIG_ID: "issued"
 };
 vm.createContext(context);
-for (const name of ["isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "getColumnWidth", "getRegistryColumnPercentages", "columnStyleAttr", "columnDataAttrs", "renderTable", "applyColumnWidthToDom", "getTableCellTooltipTarget"]) {
+for (const name of ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram", "getStudentListGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries", "renderStudentGroupRow", "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "getColumnWidth", "getRegistryColumnPercentages", "columnStyleAttr", "columnDataAttrs", "renderTable", "applyColumnWidthToDom", "getTableCellTooltipTarget"]) {
   vm.runInContext(extract(name), context);
 }
 for (const [field, value] of [[{ type: "date" }, "10.09.2026"], [{ type: "number" }, "12 345,67 ₽"], [{ key: "phone" }, "+7 (900) 123-45-67"], [{ key: "daysUntilEnd" }, "53"], [{ key: "uid" }, "0012345678"], [{ key: "balance" }, "−1 234,56 ₽"]]) {

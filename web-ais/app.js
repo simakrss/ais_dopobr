@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.492",
+    version: "1.7.493",
     releasedAt: "2026-09-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.493",
+      releasedAt: "2026-09-16",
+      changes: ["Слушатели объединены в сворачиваемые группы ПРО и остальных программ; внутри ПРО — по названию программы. Флажок группы выбирает всех её слушателей с учётом фильтров, включая другие страницы."]
+    },
     {
       version: "1.7.492",
       releasedAt: "2026-09-16",
@@ -23192,6 +23197,104 @@ MAX - https://bizvmax.ru/zifra_plus
     return values;
   }
 
+  function getStudentListGroups(rows, programs = state.data.collections.programs || []) {
+    const pro = { key: "pro", label: "ПРО — прочие программы, вебинары, мастер-классы", rows: [], children: [] };
+    const other = { key: "other", label: "Остальные программы — КПК, ППП, ДОП", rows: [] };
+    const unknown = { key: "unknown", label: "Другие виды / вид программы не определён", rows: [] };
+    const programGroups = new Map();
+    rows.forEach((row) => {
+      const program = getStudentContextProgram(row, programs);
+      const type = normalizeEducationProgramType(program?.type || row.educationType);
+      if (type !== "ПРО") {
+        (["КПК", "ППП", "ДОП"].includes(type) ? other : unknown).rows.push(row);
+        return;
+      }
+      pro.rows.push(row);
+      const label = String(program?.name || row.program || "Программа не указана").trim();
+      // Prefer stable registry IDs; do not merge distinct programs with identical titles.
+      const identity = String(program?.id || row.programId || "").trim();
+      const key = identity ? `pro:id:${identity}` : `pro:name:${normalizeProgramName(label)}`;
+      if (!programGroups.has(key)) programGroups.set(key, { key, label, rows: [], level: 1 });
+      programGroups.get(key).rows.push(row);
+    });
+    pro.children = [...programGroups.values()].sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
+    return [pro, other, unknown].filter((group) => group.rows.length);
+  }
+
+  function getStudentCollapsedGroups() {
+    const saved = state.tableSettings.students?.collapsedGroups;
+    return new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === "string") : []);
+  }
+
+  function getExpandedStudentGroupRows(groups, collapsed) {
+    return groups.flatMap((group) => collapsed.has(group.key)
+      ? []
+      : group.children ? getExpandedStudentGroupRows(group.children, collapsed) : group.rows);
+  }
+
+  function getStudentGroupPageEntries(groups, collapsed, pageRows) {
+    const pageIds = new Set(pageRows.map((row) => String(row.id)));
+    const visit = (items) => items.flatMap((group) => {
+      const isCollapsed = collapsed.has(group.key);
+      const children = isCollapsed ? [] : group.children
+        ? visit(group.children)
+        : group.rows.filter((row) => pageIds.has(String(row.id))).map((row) => ({ row }));
+      // Keep collapsed headings available even when their students are outside this page.
+      return isCollapsed || children.length ? [{ group, collapsed: isCollapsed }, ...children] : [];
+    });
+    return visit(groups);
+  }
+
+  function renderStudentGroupRow(entry, fieldCount, selected) {
+    const { group, collapsed } = entry;
+    const selectedIds = new Set(selected);
+    const selectedCount = group.rows.filter((row) => selectedIds.has(String(row.id).trim())).length;
+    const checked = selectedCount === group.rows.length;
+    const mixed = selectedCount > 0 && !checked;
+    return `<tr class="student-list-group${group.level ? " student-list-subgroup" : ""}">
+      <td class="select-col"><input type="checkbox" data-action="select-student-group" data-student-group="${escapeAttr(group.key)}" ${checked ? "checked" : ""} data-indeterminate="${mixed}" aria-label="${escapeAttr(`Выбрать всех: ${group.label}`)}" title="Все слушатели группы с учётом фильтров, включая другие страницы"></td>
+      <td colspan="${fieldCount}"><button class="student-list-group-toggle" data-action="toggle-student-group" data-student-group="${escapeAttr(group.key)}" type="button" aria-expanded="${!collapsed}">
+        <span class="student-list-group-arrow" aria-hidden="true">${collapsed ? "▸" : "▾"}</span>
+        <span class="student-list-group-label">${escapeHtml(group.label)}</span>
+        <span class="student-list-group-count">${group.rows.length}${selectedCount ? ` · выбрано ${selectedCount}` : ""}</span>
+      </button></td>
+    </tr>`;
+  }
+
+  function toggleStudentListGroup(key) {
+    const collapsed = getStudentCollapsedGroups();
+    if (collapsed.has(key)) collapsed.delete(key);
+    else collapsed.add(key);
+    state.tableSettings.students = { ...state.tableSettings.students, collapsedGroups: [...collapsed] };
+    persistTableSettings();
+    state.tablePages.students = 1;
+    render();
+  }
+
+  function selectStudentListGroup(key, checked) {
+    const groups = getStudentListGroups(getVisibleRows(configs.students));
+    const group = groups.flatMap((item) => [item, ...(item.children || [])]).find((item) => item.key === key);
+    if (!group) return;
+    const selected = new Set(getSelected("students"));
+    group.rows.forEach((row) => {
+      const id = String(row.id || "").trim();
+      if (checked) selected.add(id);
+      else selected.delete(id);
+    });
+    setSelected("students", [...selected]);
+    render();
+  }
+
+  function bindStudentListGroups() {
+    document.querySelectorAll("[data-action='toggle-student-group']").forEach((button) => {
+      button.addEventListener("click", () => toggleStudentListGroup(button.dataset.studentGroup));
+    });
+    document.querySelectorAll("[data-action='select-student-group']").forEach((checkbox) => {
+      checkbox.indeterminate = checkbox.dataset.indeterminate === "true";
+      checkbox.addEventListener("change", () => selectStudentListGroup(checkbox.dataset.studentGroup, checkbox.checked));
+    });
+  }
+
   function getTablePageSize(configId) {
     const saved = Number(state.tableSettings[configId]?.pageSize);
     return TABLE_PAGE_SIZE_OPTIONS.includes(saved) ? saved : DEFAULT_TABLE_PAGE_SIZE;
@@ -23216,7 +23319,17 @@ MAX - https://bizvmax.ru/zifra_plus
   function setTablePageForRow(configId, id) {
     const config = configs[configId];
     if (!config || !id) return;
-    const rows = getVisibleRows(config);
+    let rows = getVisibleRows(config);
+    if (configId === "students") {
+      const groups = getStudentListGroups(rows);
+      const collapsed = getStudentCollapsedGroups();
+      groups.flatMap((group) => [group, ...(group.children || [])]).forEach((group) => {
+        if (group.rows.some((row) => String(row.id) === String(id))) collapsed.delete(group.key);
+      });
+      state.tableSettings.students = { ...state.tableSettings.students, collapsedGroups: [...collapsed] };
+      persistTableSettings();
+      rows = getExpandedStudentGroupRows(groups, collapsed);
+    }
     const rowIndex = rows.findIndex((row) => String(row.id || "") === String(id));
     if (rowIndex < 0) return;
     state.tablePages[configId] = Math.floor(rowIndex / getTablePageSize(configId)) + 1;
@@ -23274,8 +23387,14 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="empty-state"><strong>Записей нет</strong><span>Измените фильтр или добавьте новую запись.</span></div>
       `;
     }
-    const pagination = getTablePagination(configId, rows.length);
-    const pageRows = rows.slice(pagination.start, pagination.end);
+    const studentGroups = configId === "students" ? getStudentListGroups(rows) : null;
+    const collapsedGroups = studentGroups ? getStudentCollapsedGroups() : null;
+    const expandedRows = studentGroups ? getExpandedStudentGroupRows(studentGroups, collapsedGroups) : rows;
+    const pagination = getTablePagination(configId, expandedRows.length);
+    const pageRows = expandedRows.slice(pagination.start, pagination.end);
+    const tableEntries = studentGroups
+      ? getStudentGroupPageEntries(studentGroups, collapsedGroups, pageRows)
+      : pageRows.map((row) => ({ row }));
     const columnMinWidths = new Map(fields.map((fieldItem) => [
       fieldItem.key,
       pageRows.reduce((minimum, row) => Math.max(minimum, getSingleLineTableColumnMinWidth(
@@ -23291,6 +23410,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : "Выбрать строки текущей страницы";
     return `
       ${valueFilterChips}
+      ${studentGroups ? `<div class="student-list-group-summary">Найдено слушателей: ${rows.length}. В развёрнутых группах: ${expandedRows.length}. Выбор группы учитывает фильтры и все страницы.</div>` : ""}
       <div class="table-wrap">
         <table class="data-table" data-table-value-filter-config="${escapeAttr(configId)}">
           <thead>
@@ -23312,7 +23432,9 @@ MAX - https://bizvmax.ru/zifra_plus
             </tr>
           </thead>
           <tbody>
-            ${pageRows.map((row) => {
+            ${tableEntries.map((entry) => {
+              if (entry.group) return renderStudentGroupRow(entry, fields.length, selected);
+              const row = entry.row;
               const recordLock = getRecordLock(recordLockEntityType(configId), row.id);
               const programHoursSummary = configId === "programs"
                 ? getProgramTrainingPlanHoursSummary(row)
@@ -23384,7 +23506,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </tbody>
         </table>
       </div>
-      ${renderTablePagination(configId, rows.length, pagination)}
+      ${renderTablePagination(configId, expandedRows.length, pagination)}
     `;
   }
 
@@ -44418,6 +44540,8 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='toggle-row-selection']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => toggleRowSelection(checkbox.dataset.config, checkbox.dataset.id, checkbox.checked));
     });
+
+    bindStudentListGroups();
 
     document.querySelectorAll("[data-action='toggle-all-selection']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => toggleAllSelection(checkbox.dataset.config, checkbox.checked));
