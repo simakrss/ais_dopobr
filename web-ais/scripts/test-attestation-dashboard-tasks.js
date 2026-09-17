@@ -59,7 +59,7 @@ async function cancelGeneratedDocumentPreview(token){calls.push({action:'preview
 const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "normalizeEmployeeActPersonName", "hasStudentEducationDocumentIssued",
   "isExplicitUncheckedEventState", "normalizeEventState", "getStudentAttestationDocumentUnavailableReason",
   "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "getPendingAttestationRows",
-  "getAttestationChairRecipient", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
+  "getAttestationChairRecipient", "getAttestationTaskEmailRecipient", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
   "withAttestationStudentLock", "executeAttestationTask", "previewAttestationTask", "renderAttestationDashboardTile", "openAttestationTaskStudentCard"];
 function harness() {
   const c=vm.createContext({window:{setInterval:()=>1,clearInterval:()=>{}}, console});
@@ -114,6 +114,33 @@ async function main() {
   c=harness();result={};c.prepareAttestationProtocolEmailRequest=async()=>{c.state.data.collections.contracts.forEach(p=>p.email="new@example.test");return {subject:"Тема",message:"Текст"};};
   await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/изменились данные или адрес/);
   assert.equal(c.calls.some(x=>x.action==="send"),false,"Recheck the chair after loading Word properties");
+  for (const commissionSetId of ["", "deleted-commission"]) {
+    c=harness();c.state.data.collections.programs.find(p=>p.id==="kpk").commissionSetId=commissionSetId;
+    const learner=c.state.data.collections.students.find(s=>s.id==="two");learner.email="learner@example.test";
+    const sheetDefinition=c.getAttestationTaskDefinitions()[0];
+    assert.equal(c.getAttestationTaskProblem(learner,sheetDefinition),"");
+    const recipient=c.getAttestationTaskEmailRecipient(learner,sheetDefinition);
+    assert.equal(recipient.error,"");assert.equal(recipient.email,"");assert.match(recipient.skipReason,/КПК/);
+    assert.ok(c.getAttestationTaskEmailRecipient(learner,c.getAttestationTaskDefinitions()[1]).error,"Protocol still requires a commission");
+    result={};await c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},result);
+    assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(result.emailed,undefined);
+    assert.equal(result.blob,undefined);assert.match(result.message,/письмо не отправляется/);
+    assert.equal(c.calls.some(x=>x.action==="send"),false,"Never substitute learner email when KPK has no commission");
+    assert.equal(c.calls.find(x=>x.action==="generate").options.storageRequest.autoSaveLocal,true);
+    assert.equal(c.calls.find(x=>x.action==="event").key,"examSheetPrepared");
+    await c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},{});
+    assert.equal(c.calls.filter(x=>x.action==="send").length,1,"Mixed batch sends only the document with a chair");
+    assert.equal(c.calls.find(x=>x.action==="send").request.email,"chair@example.test");
+  }
+  c=harness();c.state.data.collections.programs.find(p=>p.id==="ppp").commissionSetId="";
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},{}),/комиссия/);
+  assert.equal(c.calls.some(x=>x.action==="generate"||x.action==="send"),false,"PPP protocol requirements are preserved");
+  c=harness();c.state.data.collections.contracts=[];
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},{}),/Email председателя/);
+  assert.equal(c.calls.some(x=>x.action==="send"),false,"An assigned chair's invalid email is not silently ignored");
+  c=harness();c.state.data.collections.programs.find(p=>p.id==="kpk").commissionSetId="";c.saveFails=true;
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},{}),/Сохранение/);
+  assert.equal(c.calls.some(x=>x.action==="event"||x.action==="send"),false);
   for(const flag of ["saveFails","cancelled","lockFails"]){
     c=harness();c[flag]=true;result={};
     try{await c.executeAttestationTask(itemFor(c),{sendEmail:true},result);}catch(e){assert.match(e.message,/Сохранение|занята/);}
@@ -196,7 +223,8 @@ main().then(()=>{
     const frdoDeadlineLabel='До ближайшего срока: 28 дн.',frdoDaysIndicatorLabel='Осталось дней: 28';
     return \`${source.slice(start,end)}\`;
   }`;
-  const script=setup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+dashboardFixture+`
+  const fixtureSetup=setup+(process.argv.includes("--kpk-no-commission")?"state.data.collections.programs.find(p=>p.id==='kpk').commissionSetId='';":"");
+  const script=fixtureSetup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+dashboardFixture+`
     render=function(){document.querySelector('#tiles').innerHTML=renderFixtureDocumentTasks();document.querySelector('[data-action="open-attestation-tasks"]').onclick=openAttestationTasksDialog;};render();
     var realSend=sendServerEmail;sendServerEmail=async function(request){const result=await realSend(request);document.querySelector('#calls').textContent=calls.map(c=>c.action+(c.kind?' '+c.kind:'')).join(', ');sendFails=false;document.querySelector('#failure').checked=false;return result;};
     document.querySelector('#failure').onchange=e=>{sendFails=e.target.checked;};
