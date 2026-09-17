@@ -38,7 +38,7 @@ const context = {
   EMPLOYEE_PAYMENT_TABLE_CONFIG_ID: "employee", ISSUED_DOCUMENT_TABLE_CONFIG_ID: "issued"
 };
 vm.createContext(context);
-for (const name of ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram", "getStudentListGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries", "renderStudentGroupRow", "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "getColumnWidth", "getRegistryColumnPercentages", "columnStyleAttr", "columnDataAttrs", "renderTable", "applyColumnWidthToDom", "getTableCellTooltipTarget"]) {
+for (const name of ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram", "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries", "renderStudentGroupRow", "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "getColumnWidth", "getRegistryColumnPercentages", "columnStyleAttr", "columnDataAttrs", "renderTable", "applyColumnWidthToDom", "getTableCellTooltipTarget"]) {
   vm.runInContext(extract(name), context);
 }
 for (const [field, value] of [[{ type: "date" }, "10.09.2026"], [{ type: "number" }, "12 345,67 ₽"], [{ key: "phone" }, "+7 (900) 123-45-67"], [{ key: "daysUntilEnd" }, "53"], [{ key: "uid" }, "0012345678"], [{ key: "balance" }, "−1 234,56 ₽"]]) {

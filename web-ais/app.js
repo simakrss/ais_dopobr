@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.494",
-    releasedAt: "2026-09-16"
+    version: "1.7.495",
+    releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.495",
+      releasedAt: "2026-09-17",
+      changes: ["Пункт «Копировать промосообщение» открывает окно с редактированием, сохранением в программе и отдельной кнопкой копирования. Список слушателей без ПРО отображается без группировки с учётом текущих фильтров."]
+    },
     {
       version: "1.7.494",
       releasedAt: "2026-09-16",
@@ -7363,7 +7368,7 @@ MAX - https://bizvmax.ru/zifra_plus
   window.addEventListener("ais-local-update-readiness", event => {
     event.detail.busy ||= Boolean(state.modal || state.adminSettingsDirty || recordFormSavePending
       || sharedStateDirty || sharedStateSaveRunning || sharedStatePendingCount || sharedStateConflict
-      || isSettingsDraftSessionActive());
+      || isSettingsDraftSessionActive() || document.querySelector("[data-student-program-promo-dialog]"));
   });
   let recordLocks = new Map();
   let recordLocksPollRunning = false;
@@ -11307,10 +11312,12 @@ MAX - https://bizvmax.ru/zifra_plus
       || state.adminSettingsDirty
       || isSettingsDraftSessionActive()
       || document.visibilityState !== "visible"
+      || document.querySelector("[data-student-program-promo-dialog]")
     ) return;
     sharedStatePollRunning = true;
     try {
       const metadata = await requestSharedApplicationState("metadata=1");
+      if (document.querySelector("[data-student-program-promo-dialog]")) return;
       if (!metadata.exists) return;
       sharedStateOffline = Boolean(metadata.offline);
       sharedStatePendingCount = Math.max(0, Number(metadata.pendingCount) || 0);
@@ -14051,6 +14058,14 @@ MAX - https://bizvmax.ru/zifra_plus
       aisHistoryNavigationCloseModalRequested = false;
       aisHistoryNavigationDiscardApproved = false;
       // Keep the live form intact; the next Back should still reach the previous screen.
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    const promoDialog = document.querySelector("[data-student-program-promo-dialog]");
+    if (promoDialog) {
+      const unsavedDialog = document.querySelector("[data-unsaved-changes-dialog]");
+      if (unsavedDialog) unsavedDialog.cancelUnsavedChangesDialog?.();
+      else promoDialog.closeStudentProgramPromoDialog?.();
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
@@ -23325,8 +23340,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const config = configs[configId];
     if (!config || !id) return;
     let rows = getVisibleRows(config);
-    if (configId === "students") {
-      const groups = getStudentListGroups(rows);
+    const groups = configId === "students" ? getStudentTableGroups(rows) : null;
+    if (groups) {
       const collapsed = getStudentCollapsedGroups();
       groups.flatMap((group) => [group, ...(group.children || [])]).forEach((group) => {
         if (group.rows.some((row) => String(row.id) === String(id))) collapsed.delete(group.key);
@@ -23392,7 +23407,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="empty-state"><strong>Записей нет</strong><span>Измените фильтр или добавьте новую запись.</span></div>
       `;
     }
-    const studentGroups = configId === "students" ? getStudentListGroups(rows) : null;
+    const studentGroups = configId === "students" ? getStudentTableGroups(rows) : null;
     const collapsedGroups = studentGroups ? getStudentCollapsedGroups() : null;
     const expandedRows = studentGroups ? getExpandedStudentGroupRows(studentGroups, collapsedGroups) : rows;
     const pagination = getTablePagination(configId, expandedRows.length);
@@ -40535,6 +40550,149 @@ MAX - https://bizvmax.ru/zifra_plus
     return [program.promoMessage1, program.promoMessage2].map((value) => String(value || "")).find((value) => value.trim()) || "";
   }
 
+  function getStudentTableGroups(rows) {
+    const groups = getStudentListGroups(rows);
+    return groups.some((group) => group.key === "pro") ? groups : null;
+  }
+
+  function getStudentProgramPromoField(program) {
+    return String(program?.promoMessage1 || "").trim() || !String(program?.promoMessage2 || "").trim()
+      ? "promoMessage1" : "promoMessage2";
+  }
+
+  async function saveStudentProgramPromoMessage(programId, field, value, baseline) {
+    if (!canAccessView("programs") || isDatabaseDemoMode()) throw new Error("Сохранение программы недоступно.");
+    if (!["promoMessage1", "promoMessage2"].includes(field)) throw new Error("Неизвестное поле промосообщения.");
+    if (!sharedStateReady || isSettingsDraftSessionActive()) throw new Error("Дождитесь подключения к общей базе и закройте черновик настроек.");
+    if (sharedStatePollRunning) throw new Error("Обновляется общая база. Повторите сохранение через несколько секунд.");
+    if (state.modal?.config === "programs" && String(state.modal.id) === String(programId)) {
+      throw new Error("Сначала сохраните и закройте открытую карточку этой программы.");
+    }
+    const entityType = recordLockEntityType("programs");
+    const entityId = String(programId);
+    const reuseActiveLock = activeRecordLock?.key === recordLockKey(entityType, entityId);
+    const lockRequest = (action) => requestSharedRecordLocks({ method: "POST", body: { action, entityType, entityId, clientId: recordLockClientId } });
+    // A short independent lock must not release the listener card's active lock.
+    try { await lockRequest("acquire"); }
+    catch (error) {
+      if (error.status === 423) throw new Error("Программа занята другим пользователем. Повторите сохранение позже.");
+      throw error;
+    }
+    let lockError = null;
+    const heartbeat = window.setInterval(() => { lockRequest("renew").catch((error) => { lockError = error; }); }, 20000);
+    try {
+      if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) throw new Error("Не удалось завершить предыдущую запись общей базы. Текст остаётся в окне.");
+      const payload = await requestSharedApplicationState("flush=1");
+      if (!payload.exists || !payload.data || payload.writable === false || payload.offline || payload.syncPending || Number(payload.pendingCount) > 0) {
+        throw new Error("Общая база ещё недоступна для записи. Текст остаётся в окне; повторите сохранение.");
+      }
+      const current = (payload.data.collections?.programs || []).find((item) => String(item.id) === entityId);
+      if (!current) throw new Error("Программа больше не найдена.");
+      if (String(current[field] || "") !== baseline && String(current[field] || "") !== value) {
+        throw new Error("Это промосообщение уже изменено другим пользователем. Скопируйте свой текст и заново откройте окно для сравнения. Чужие изменения не перезаписаны.");
+      }
+      if (lockError) throw lockError;
+      await lockRequest("renew");
+      // Do not replace local changes made while the snapshot was being requested.
+      if (sharedStateDirty || sharedStateSaveRunning) throw new Error("Выполняется другая запись. Дождитесь её завершения и повторите сохранение.");
+      applySharedApplicationState(payload, { renderAfter: false });
+      const program = state.data.collections.programs.find((item) => String(item.id) === entityId);
+      program[field] = value;
+      program[`${field}Touched`] = true;
+      addAudit("Изменено промосообщение", program.name, field === "promoMessage1" ? "Промосообщение 1" : "Промосообщение 2");
+      persist({ scheduleSharedSave: false });
+      if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) {
+        throw new Error("Сохранение в общей базе не подтверждено. Текст остаётся в окне и в локальном черновике; восстановите связь и повторите сохранение.");
+      }
+      return value;
+    } catch (error) {
+      if (error.status === 423) throw new Error("Программа занята другим пользователем. Текст остаётся в окне; повторите сохранение позже.");
+      throw error;
+    } finally {
+      window.clearInterval(heartbeat);
+      if (!reuseActiveLock) await lockRequest("release").catch(() => {});
+    }
+  }
+
+  function openStudentProgramPromoDialog(program, opener = null) {
+    if (document.querySelector("[data-student-program-promo-dialog]")) return;
+    const field = getStudentProgramPromoField(program);
+    let baseline = String(program[field] || "");
+    let busy = false;
+    let closing = false;
+    const canSave = canAccessView("programs") && !isDatabaseDemoMode();
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop custom-record-email-backdrop student-program-promo-backdrop";
+    backdrop.dataset.studentProgramPromoDialog = "";
+    backdrop.innerHTML = `<section class="modal custom-record-email-dialog student-program-promo-dialog" role="dialog" aria-modal="true" aria-labelledby="studentProgramPromoTitle">
+      <header class="modal-head custom-record-email-head"><div><p class="eyebrow">Программа</p><h2 id="studentProgramPromoTitle">Промосообщение</h2><p>${escapeHtml(program.name || "")}</p></div><button class="icon-button" type="button" data-promo-close aria-label="Закрыть">×</button></header>
+      <form class="custom-record-email-form"><div class="custom-record-email-body">
+        ${renderProgramPromoMessageEditor({ key: field, label: field === "promoMessage1" ? "Промосообщение 1" : "Промосообщение 2 (первое пустое)" }, program)}
+        <p class="muted">«Сохранить в программе» обновляет это промосообщение для всех слушателей программы. Копирование не сохраняет изменения.${canSave ? "" : " Сохранение программы недоступно; можно отредактировать и скопировать текст."}</p>
+      </div><footer class="custom-record-email-footer"><span data-promo-status role="status" aria-live="polite"></span><button class="ghost-button" type="button" data-promo-copy>Копировать</button><button class="primary-button" type="submit" ${canSave ? "" : "disabled"}>Сохранить в программе</button><button class="icon-button" type="button" data-promo-close aria-label="Закрыть">×</button></footer></form>
+    </section>`;
+    const form = backdrop.querySelector("form");
+    const editor = backdrop.querySelector("[data-program-promo-editor]");
+    const status = backdrop.querySelector("[data-promo-status]");
+    const saveButton = form.querySelector("[type='submit']");
+    const value = () => { syncProgramPromoEditor(editor); return form.elements[field].value; };
+    let savedEditorValue = value();
+    const beforeUnload = (event) => {
+      if (!busy && value() === savedEditorValue) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    const save = async () => {
+      if (busy || !canSave) return false;
+      busy = true;
+      saveButton.disabled = true;
+      editor.contentEditable = "false";
+      form.setAttribute("aria-busy", "true");
+      status.textContent = "Сохранение в программе…";
+      try {
+        baseline = await saveStudentProgramPromoMessage(program.id, field, value(), baseline);
+        savedEditorValue = baseline;
+        status.textContent = "Промосообщение сохранено в программе.";
+        return true;
+      } catch (error) { status.textContent = error.message; return false; }
+      finally { busy = false; saveButton.disabled = !canSave; editor.contentEditable = "true"; form.removeAttribute("aria-busy"); }
+    };
+    const close = async () => {
+      if (busy || closing) return;
+      closing = true;
+      try {
+        if (value() !== savedEditorValue) {
+          const decision = await chooseUnsavedChangesAction({ message: "Сохранить изменённое промосообщение в программе?" });
+          if (decision === "cancel" || (decision === "save" && !await save())) return;
+        }
+        hideFieldCopyPopup();
+        window.removeEventListener("beforeunload", beforeUnload);
+        backdrop.remove();
+        opener?.focus?.({ preventScroll: true });
+      } finally { closing = false; }
+    };
+    backdrop.closeStudentProgramPromoDialog = close;
+    backdrop.querySelectorAll("[data-promo-close]").forEach((button) => button.addEventListener("click", close));
+    form.addEventListener("submit", (event) => { event.preventDefault(); save(); });
+    backdrop.querySelector("[data-promo-copy]").addEventListener("click", async () => {
+      try { await copyTextToClipboard(value()); status.textContent = "Промосообщение скопировано."; }
+      catch (error) { status.textContent = `Не удалось скопировать: ${error.message}`; }
+    });
+    backdrop.addEventListener("pointerdown", (event) => { if (event.target === backdrop) close(); });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...backdrop.querySelectorAll('button:not(:disabled), [contenteditable="true"]')].filter((item) => item.getClientRects().length);
+      const first = controls[0]; const last = controls[controls.length - 1];
+      if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault(); (event.shiftKey ? last : first)?.focus();
+      }
+    });
+    document.body.appendChild(backdrop);
+    bindProgramPromoEditors(backdrop);
+    editor.focus({ preventScroll: true });
+  }
+
   function getStudentProgramMenuActions(program) {
     if (!program) return [];
     const type = String(program.type || "").trim().toUpperCase();
@@ -40542,7 +40700,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(["ПРО", "ППП", "КПК", "ДОП"].includes(type) ? [{
         action: "copy-promo", label: "Копировать промосообщение",
         disabled: !getStudentProgramPromoMessage(program),
-        title: getStudentProgramPromoMessage(program) ? "Копировать текст из карточки программы" : "В программе не заполнены промосообщения"
+        title: getStudentProgramPromoMessage(program) ? "Открыть промосообщение для редактирования, сохранения и копирования" : "В программе не заполнены промосообщения"
       }] : []),
       { action: "open-program", label: "Перейти к программе", disabled: !canAccessView("programs"), title: canAccessView("programs") ? "Открыть карточку программы в АИС" : "Нет доступа к разделу «Программы»" },
       ...(type === "ПРО" ? [
@@ -40558,7 +40716,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (action === "copy-promo") {
       const message = getStudentProgramPromoMessage(program);
       if (!message) { alert("В программе не заполнено промосообщение."); return; }
-      await copyTextToClipboard(message);
+      openStudentProgramPromoDialog(program, opener);
     } else if (action === "open-program") {
       if (!canAccessView("programs")) { alert("Нет доступа к разделу «Программы»."); return; }
       await openProgramCardById(program.id);
@@ -43021,6 +43179,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const promoDialog = document.querySelector("[data-student-program-promo-dialog]");
+    if (promoDialog) {
+      if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
+      else if (document.querySelector("[data-field-copy-popup]")) hideFieldCopyPopup({ restoreFocus: true });
+      else promoDialog.closeStudentProgramPromoDialog?.();
+      return true;
+    }
     const webinarComposer = document.querySelector("[data-webinar-message-composer]");
     if (webinarComposer) {
       if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
@@ -47640,7 +47805,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const popupY = keyboardOpen && controlRect ? controlRect.bottom + 4 : requestedY;
     const popup = document.createElement("div");
     popup.className = "field-copy-popup";
-    if (control?.closest?.("[data-webinar-message-composer], .webinar-formula-backdrop")) popup.classList.add("webinar-field-popup");
+    if (control?.closest?.("[data-webinar-message-composer], .webinar-formula-backdrop, [data-student-program-promo-dialog]")) popup.classList.add("webinar-field-popup");
     popup.dataset.fieldCopyPopup = "";
     popup.setAttribute("role", "menu");
     popup.setAttribute("aria-label", String(options.menuLabel || "Действия с полем"));

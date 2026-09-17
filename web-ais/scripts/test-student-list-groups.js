@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const names = ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram",
-  "getStudentListGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
+  "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
   "renderStudentGroupRow", "toggleStudentListGroup", "selectStudentListGroup", "bindStudentListGroups",
   "getTablePageSize", "getTablePagination", "getCurrentTablePageRows", "setTablePageForRow", "renderTablePagination",
   "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "renderTable",
@@ -109,6 +109,28 @@ assert.equal(context.getStudentCollapsedGroups().has("pro:id:z"), false, "Return
 context.toggleStudentListGroup("pro:id:a");
 context.setTablePageForRow("students", "s56");
 assert.equal(context.state.tablePages.students, 1, "Page position counts only expanded students");
+
+// Current filters, not the whole registry, determine whether to group.
+context.filter = "61";
+const collapsedBefore = JSON.stringify(context.state.tableSettings.students.collapsedGroups);
+html = context.renderTable(context.configs.students, context.getVisibleRows(), "students");
+assert.doesNotMatch(html, /student-list-group|toggle-student-group/);
+assert.match(html, /data-webinar-student-id="s60"/);
+context.setTablePageForRow("students", "s60");
+assert.equal(JSON.stringify(context.state.tableSettings.students.collapsedGroups), collapsedBefore);
+assert.equal(context.getStudentTableGroups([]), null);
+const savedRows = context.rows;
+context.rows = Array.from({length: 65}, (_, i) => ({id:`k${i}`,name:`КПК ${i}`,programId:"k"}));
+context.filter = "";
+context.setTablePageForRow("students", "k64");
+assert.equal(context.state.tablePages.students, 2);
+html = context.renderTable(context.configs.students, context.rows, "students");
+assert.doesNotMatch(html, /student-list-group/);
+assert.match(html, /data-webinar-student-id="k64"/);
+context.toggleAllSelection("students", true);
+assert.equal(context.getSelected("students").length, 65);
+context.toggleAllSelection("students", false);
+context.rows = savedRows;
 
 const special = context.getStudentListGroups([
   { id: "r1", program: "Язык" },

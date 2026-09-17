@@ -25360,6 +25360,28 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   background: #fff;
 }
 
+.student-program-promo-dialog .custom-record-email-footer {
+  flex-wrap: wrap;
+}
+
+.student-program-promo-dialog [data-promo-status] {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.student-program-promo-dialog .program-promo-message-editor {
+  height: clamp(140px, 42vh, 440px);
+  font: inherit;
+  font-weight: 400;
+}
+
+.student-program-promo-dialog .custom-record-email-head > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .custom-record-email-footer button {
   display: inline-flex;
   align-items: center;

@@ -69,7 +69,8 @@ function harness() {
     escapeHtml, escapeAttr: escapeHtml,
     alert: message => alerts.push(message),
     canAccessView: () => true,
-    copied: [], openedPrograms: [],
+    copied: [], openedPrograms: [], promoDialogs: [],
+    openStudentProgramPromoDialog: program => context.promoDialogs.push(program.id),
     copyTextToClipboard: async text => context.copied.push(text),
     openProgramCardById: async id => context.openedPrograms.push(id),
     persistCalls: 0, renderCalls: 0, auditCalls: 0,
@@ -121,8 +122,9 @@ async function test() {
   assert.equal(c.getStudentContextProgram({program:"Курс повышения квалификации"}).id,"kpk");
   await c.performStudentProgramMenuAction("pro","copy-promo");
   await c.performStudentProgramMenuAction("kpk","copy-promo");
-  assert.deepEqual(c.copied,["Приглашаем на вебинар!\nhttps://example.test/webinar","Второе промосообщение КПК"]);
-  await c.performStudentProgramMenuAction("dop","copy-promo"); assert.equal(c.copied.length,2);
+  assert.deepEqual(c.promoDialogs,["pro","kpk"]);
+  assert.equal(c.copied.length,0,"Opening the promo action must not copy automatically");
+  await c.performStudentProgramMenuAction("dop","copy-promo"); assert.equal(c.promoDialogs.length,2);
   assert.match(h.alerts.at(-1),/не заполнено/u);
   await c.performStudentProgramMenuAction("kpk","open-program");
   await c.performStudentProgramMenuAction("future","open-program");
