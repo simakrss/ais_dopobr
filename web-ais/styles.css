@@ -31543,7 +31543,7 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
 @media (max-width: 600px) {
   .program-site-image-layout { grid-template-columns: minmax(0, 1fr); }
 }
-/* Compact only the creation wizard; the sync dialog and landing preview keep their layout. */
+/* Compact creation wizard; the landing preview keeps its independent layout. */
 .program-site-generator-dialog .modal-head { padding: 8px 12px; }
 .program-site-generator-dialog .modal-head .eyebrow { margin: 0 0 3px; }
 .program-site-generator-dialog .program-site-body { gap: 8px; padding: 10px 12px; line-height: 1.35; }
@@ -31585,3 +31585,42 @@ dialog.program-site-dialog::backdrop { background: #122a3280; }
   .program-site-product-row { grid-template-columns: minmax(0, 1fr); }
 }
 .program-site-dialog [data-sync-catalog-retry][hidden] { display: none !important; }
+/* Keep sync controls and the change review compact without affecting the creation wizard. */
+.program-site-sync-dialog .modal-head { padding: 8px 12px; }
+.program-site-sync-dialog .program-site-body { gap: 7px; padding: 10px 12px; line-height: 1.3; }
+.program-site-sync-dialog .program-site-body label { gap: 3px; }
+.program-site-sync-dialog .program-site-fields { padding: 0; gap: 6px 10px; }
+.program-site-sync-dialog .program-site-sync-webinar { grid-template-columns: 145px 120px minmax(0, 1fr); align-items: end; }
+.program-site-sync-jazz { display: flex; align-items: end; gap: 6px; min-width: 0; }
+.program-site-sync-jazz > label { flex: 1; }
+.program-site-sync-jazz > a { flex: 0 0 auto; white-space: nowrap; text-decoration: none; }
+.program-site-sync-dialog .program-site-body input:not([type="checkbox"]),
+.program-site-sync-dialog .program-site-body select { min-height: 32px; padding: 5px 8px; }
+.program-site-sync-dialog .program-site-body .primary-button,
+.program-site-sync-dialog .program-site-body .ghost-button { min-height: 32px; max-width: 100%; padding: 5px 10px; }
+.program-site-sync-dialog .program-site-actions { gap: 6px; }
+.program-site-sync-product-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: end; }
+.program-site-sync-dialog [data-sync-preview] { display: grid; gap: 7px; min-width: 0; }
+.program-site-sync-dialog [data-sync-preview]:empty,
+.program-site-sync-dialog [data-sync-status]:empty,
+.program-site-sync-dialog [data-sync-catalog-progress]:has(> [hidden]) { display: none; }
+.program-site-sync-dialog [data-sync-preview] p { margin: 0; }
+.program-site-sync-dialog .program-site-sync-summary { gap: 3px 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; }
+.program-site-sync-dialog .program-site-sync-summary dt { color: var(--muted); }
+.program-site-sync-dialog .program-site-sync-summary dd { min-width: 0; overflow-wrap: anywhere; }
+.program-site-sync-dialog .program-site-sync-help summary { width: fit-content; color: var(--teal); }
+.program-site-sync-dialog .program-site-sync-help p { margin: 5px 0 0; }
+.program-site-sync-dialog .program-site-notice { padding: 6px 8px; }
+.program-site-sync-dialog .program-site-progress { gap: 5px 8px; padding: 7px 8px; }
+.program-site-sync-dialog .program-site-image-layout { gap: 5px 10px; }
+.program-site-sync-dialog .program-site-image-controls { margin-top: 5px; }
+@media (max-width: 640px) {
+  .program-site-sync-dialog .program-site-sync-webinar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .program-site-sync-jazz { grid-column: 1 / -1; }
+  .program-site-sync-product-row { grid-template-columns: minmax(0, 1fr); }
+  .program-site-sync-product-row > .program-site-actions { justify-content: flex-end; }
+}
+@media (max-width: 420px) {
+  .program-site-sync-dialog .program-site-sync-summary { grid-template-columns: minmax(0, 1fr); }
+  .program-site-sync-dialog .program-site-sync-summary dt:not(:first-child) { margin-top: 4px; }
+}

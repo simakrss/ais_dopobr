@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.504",
+    version: "1.7.505",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.505",
+      releasedAt: "2026-09-17",
+      changes: ["Уплотнена форма синхронизации с сайтом: дата, время и ссылка вебинара собраны в одну строку, ссылки на сайт и товар расположены рядом с выбором товара. Сокращены отступы, пояснения свёрнуты; список изменений и важные предупреждения остаются видимыми. На узких экранах поля перестраиваются без горизонтальной прокрутки."]
+    },
     {
       version: "1.7.504",
       releasedAt: "2026-09-17",
@@ -34169,11 +34174,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const webinar = String(program?.type || "").trim().toUpperCase() === "ПРО";
     const progressMarkup = `<div class="program-site-progress" data-site-progress hidden><progress aria-label="Выполнение операции"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time title="Время выполнения" data-site-progress-time>0:00</time></div>`;
     const dialog = document.createElement("dialog");
-    dialog.className = "modal program-site-dialog";
+    dialog.className = "modal program-site-dialog program-site-sync-dialog";
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Синхронизация программы с сайтами");
     dialog.innerHTML = `<header class="modal-head"><h2>Синхронизация с сайтами</h2><button type="button" class="icon-button" data-sync-close aria-label="Закрыть">×</button></header>
-      <div class="program-site-body">${progressMarkup}${webinar ? `<div class="form-grid program-site-fields"><label><span>Дата вебинара</span><input data-sync-date type="date" value="${escapeAttr(card.elements.webinarDate?.value ?? program.webinarDate ?? "")}"></label><label><span>Время (Москва)</span><input data-sync-time type="time" value="${escapeAttr(card.elements.webinarTime?.value ?? program.webinarTime ?? "")}"></label></div><label><span>Ссылка подключения SberJazz</span><input data-sync-jazz type="url" value="${escapeAttr(card.elements.webinarJoinUrl?.value ?? program.webinarJoinUrl ?? "")}" placeholder="https://salutejazz.ru/calls/…"></label><p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение. <a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer">Создать ссылку ↗</a></p>` : ""}${renderProgramSiteImagePicker()}<div data-sync-catalog-progress>${progressMarkup}</div><button type="button" class="ghost-button" data-sync-catalog-retry hidden>Повторить загрузку изображений</button><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
+      <div class="program-site-body">${progressMarkup}${webinar ? `<div class="form-grid program-site-fields program-site-sync-webinar"><label><span>Дата вебинара</span><input data-sync-date type="date" value="${escapeAttr(card.elements.webinarDate?.value ?? program.webinarDate ?? "")}"></label><label><span>Время (Москва)</span><input data-sync-time type="time" value="${escapeAttr(card.elements.webinarTime?.value ?? program.webinarTime ?? "")}"></label><div class="program-site-sync-jazz"><label><span>Ссылка подключения SberJazz</span><input data-sync-jazz type="url" value="${escapeAttr(card.elements.webinarJoinUrl?.value ?? program.webinarJoinUrl ?? "")}" placeholder="https://salutejazz.ru/calls/…" title="Пустое поле сохраняет прежнее подключение"></label><a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" class="ghost-button compact-button" title="Создать ссылку SberJazz">Создать ↗</a></div></div>` : ""}${renderProgramSiteImagePicker()}<div data-sync-catalog-progress>${progressMarkup}</div><button type="button" class="ghost-button" data-sync-catalog-retry hidden>Повторить загрузку изображений</button><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
       <div class="program-site-actions"><button class="primary-button" type="button" data-sync-apply disabled>Обновить сайт и магазин</button><button class="ghost-button" type="button" data-sync-refresh>Обновить проверку</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.showModal();
@@ -34227,8 +34232,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const promoSource = {...state.data.collections.programs.find(item => item.id === programId)};
         plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value())});
         promoParameters = {...promoSource, type: plan.model.type, price: plan.model.price};
-        preview.innerHTML = `<div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div>
-          <label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label>
+        preview.innerHTML = `<div class="program-site-sync-product-row"><label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label><div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div></div>
           <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
           <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd>
@@ -34236,10 +34240,12 @@ MAX - https://bizvmax.ru/zifra_plus
           ${plan.model.date ? `<dt>Дата и время вебинара</dt><dd>${escapeHtml(plan.model.date.split("-").reverse().join("."))} в ${escapeHtml(plan.model.time)} (Москва)</dd>` : ""}
           ${plan.model.slug ? `<dt>Адрес лендинга</dt><dd>${escapeHtml(plan.landing.url)} → ${escapeHtml(plan.model.landingUrl)}</dd><dt>Адрес товара</dt><dd>${escapeHtml(plan.product?.url || "—")} → https://zifra-plus.ru/product/${escapeHtml(plan.model.slug)}/</dd>` : ""}
           ${plan.model.joinUrl ? `<dt>Подключение SberJazz</dt><dd>${escapeHtml(plan.model.joinUrl)}</dd>` : ""}</dl>
-          <p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}${plan.landing.offers.length > 1 ? "Лендинг общий для нескольких вариантов: название, изображение, адрес и общие сведения относятся ко всей странице, цена — только к выбранному товару и его блоку. " : ""}Описание, автор, отзывы и образцы документов сохраняются. ${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
+          ${plan.landing.offers.length > 1 ? '<p class="program-site-notice">Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице.</p>' : ""}
+          <details class="program-site-sync-help"><summary>Что обновится</summary><p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}Описание, автор, отзывы и образцы документов сохраняются. ${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
+          ${webinar ? '<p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение.</p>' : ""}
+          <p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p></details>
           ${plan.product?.status === "draft" ? `<p class="program-site-notice">Товар — черновик: регистрация для посетителей откроется после публикации страницы и товара. Синхронизация не публикует их.</p>` : ""}`;
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
-        preview.insertAdjacentHTML("beforeend", '<p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p>');
         status.textContent = plan.hash ? "Проверьте выбранный товар и подтвердите обновление." : "Выберите товар, соответствующий этой программе.";
       } catch (error) { failed = true; status.textContent = error.message; }
       finally { progress.stop(failed); setBusy(false); }
