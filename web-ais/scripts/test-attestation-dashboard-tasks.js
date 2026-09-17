@@ -58,7 +58,7 @@ async function cancelGeneratedDocumentPreview(token){calls.push({action:'preview
 `;
 const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "normalizeEmployeeActPersonName", "hasStudentEducationDocumentIssued",
   "isExplicitUncheckedEventState", "normalizeEventState", "getStudentAttestationDocumentUnavailableReason",
-  "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "getPendingAttestationRows",
+  "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "isAttestationProtocolAwaitingSignature", "getPendingAttestationRows",
   "getAttestationChairRecipient", "getAttestationTaskEmailRecipient", "getAttestationTaskEmailPlan", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
   "withAttestationStudentLock", "executeAttestationTask", "previewAttestationTask", "renderAttestationDashboardTile", "openAttestationTaskStudentCard"];
 function harness() {
@@ -72,7 +72,8 @@ function itemFor(c,id="one",kind="studentGradeSheet") {
 }
 async function main() {
   let c=harness();
-  assert.match(c.renderAttestationDashboardTile(), /<strong>4<\/strong>/);
+  assert.match(c.renderAttestationDashboardTile(), /<strong>5<\/strong>/);
+  assert.match(c.renderAttestationDashboardTile(), /Ожидают подписи: 1/);
   const visibility=harness();
   visibility.state.data.collections.students=[];
   assert.equal(visibility.renderAttestationDashboardTile(), "", "No tasks: do not render the tile");
@@ -81,8 +82,8 @@ async function main() {
   visibility.state.data.collections.students=[c.state.data.collections.students.find(student=>student.id==='signed')];
   assert.match(visibility.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A single protocol makes the tile visible");
   const completed=harness();
-  completed.state.data.collections.students.forEach(student=>{student.event_examSheetPrepared_state='checked';student.event_macro_protocol_state='checked';});
-  assert.equal(completed.renderAttestationDashboardTile(), "", "The tile disappears when all pending documents are marked generated");
+  completed.state.data.collections.students.forEach(student=>{student.event_examSheetPrepared_state='checked';student.event_macro_protocol_state='checked';student.event_signedProtocol_state='checked';});
+  assert.equal(completed.renderAttestationDashboardTile(), "", "The tile disappears only when documents are generated and protocols are signed");
   completed.state.data.collections.students.find(student=>student.id==='two').event_examSheetPrepared_state='unchecked';
   assert.match(completed.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A newly pending document restores the tile");
   const tileStart=source.indexOf('      <div class="dashboard-document-tasks '),tileEnd=source.indexOf('      <section class="panel">',tileStart);
@@ -102,7 +103,7 @@ async function main() {
   const css=fs.readFileSync(path.join(root,'styles.css'),'utf8');
   assert.match(css,/\.dashboard-document-tasks\.without-attestation\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css,/\.dashboard-document-tasks\[hidden\]\s*\{\s*display: none !important/);
-  assert.equal(c.getPendingAttestationRows().length,3);
+  assert.equal(c.getPendingAttestationRows().length,4);
   assert.equal(c.getPendingAttestationRows().reduce((sum,row)=>sum+row.documents.length,0),4);
   assert.equal(c.getPendingAttestationRows().some(row=>['not-issued','previous-education','only-date'].includes(row.record.id)),false,"Only issued education documents, not earlier education or date alone");
   const registrationOnly={id:'registration-only',name:'Регистрационный номер',programId:'ppp',registrationNo:' 99 ',diplomaBlankNo:'  '};
@@ -118,6 +119,45 @@ async function main() {
   const definition=c.getAttestationTaskDefinitions()[1];
   assert.equal(c.isAttestationTaskCompleted({event_custom_label:"Сформирован протокол итоговой аттестации",event_custom_state:"checked"},definition),true);
   assert.equal(c.isAttestationTaskCompleted({event_macro_protocol_state:"unchecked",event_macro_protocol_date:"2026-01-01"},definition),false);
+  const signatures=harness(), pending=signatures.state.data.collections.students.find(student=>student.id==='done');
+  signatures.state.data.collections.students=[pending];
+  let pendingRows=signatures.getPendingAttestationRows();
+  assert.equal(pendingRows.length,1);assert.equal(pendingRows[0].documents.length,0,"Signature-only rows never enter the generation queue");
+  assert.equal(pendingRows[0].awaitingSignature,true);
+  assert.match(signatures.renderAttestationDashboardTile(),/<strong>1<\/strong>/);
+  assert.match(signatures.renderAttestationDashboardTile(),/К формированию: 0\. Ожидают подписи: 1/);
+  assert.equal(signatures.getAttestationTaskEmailPlan(pendingRows.flatMap(row=>row.documents),true).emailItems.length,0,"Waiting for a signature must not trigger email");
+  pending.event_examSheetPrepared_state='unchecked';
+  pendingRows=signatures.getPendingAttestationRows();
+  assert.equal(pendingRows[0].documents.length,1);assert.equal(pendingRows[0].documents[0].kind,'studentGradeSheet');
+  assert.match(signatures.renderAttestationDashboardTile(),/<strong>2<\/strong>/,"One grade sheet plus one outstanding signature are separate tasks");
+  pending.event_examSheetPrepared_state='checked';
+  pending.event_signedProtocol_state='unchecked';pending.event_signedProtocol_date='2026-09-17';
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),true,"An explicit unchecked signature overrides an old date");
+  for(const signedState of ['checked','dated']){
+    pending.event_signedProtocol_state=signedState;
+    assert.equal(signatures.renderAttestationDashboardTile(),'','The signed checkbox clears signature-only tasks');
+  }
+  delete pending.event_signedProtocol_state;
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),false,"Legacy dated signed events are recognized");
+  delete pending.event_signedProtocol_date;
+  pending.event_macro_protocol_state='unchecked';
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),false,"Unchecked generated checkbox overrides its old date");
+  pending.event_macro_protocol_state='checked';
+  for(const programId of ['ppp','kpk','dop','pro']){
+    pending.programId=programId;
+    assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),true,"Track an existing unsigned protocol regardless of the generation type filter");
+  }
+  pending.diplomaBlankNo='';
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),false,"No issued education document: no signature task");
+  pending.registrationNo='17/2026';
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(pending),true,"A registration number also confirms issuance");
+  const legacy={registrationNo:'1',event_legacyMade_label:'Сформирован протокол итоговой аттестации',event_legacyMade_state:'checked',event_legacySigned_label:'Подписан протокол итоговой аттестации',event_legacySigned_state:'unchecked'};
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(legacy),true,"Recognize custom event keys by record labels");
+  legacy.event_legacySigned_state='checked';
+  assert.equal(signatures.isAttestationProtocolAwaitingSignature(legacy),false);
+  const signatureBefore=JSON.stringify(legacy);signatures.isAttestationProtocolAwaitingSignature(legacy);
+  assert.equal(JSON.stringify(legacy),signatureBefore,"Reading signature status never edits events");
   c=harness();let result={};let item=itemFor(c);
   await c.executeAttestationTask(item,{sendEmail:true,previewEach:false},result);
   assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(result.emailed,undefined);assert.equal(result.blob,undefined);
@@ -249,6 +289,9 @@ async function main() {
   assert.match(dialogSource,/row.documents.find\(\(definition\) => definition.kind === "studentAttestationProtocol"\)/,"Keep the protocol chair visible even when grade sheet is the first column");
   assert.match(dialogSource,/Отправить протоколы председателям комиссий/);
   assert.match(dialogSource,/Только сохранение в папки слушателей, без отправки писем/);
+  assert.match(dialogSource,/row.awaitingSignature \? getAttestationChairRecipient\(row.record\)/,"Signature-only rows still show the chair");
+  assert.match(dialogSource,/if \(!row.documents.some[\s\S]*signatureStatus \|\| "—"/,"A signature-only cell has no generation control");
+  assert.match(dialogSource,/awaitingSignature: isAttestationProtocolAwaitingSignature\(record\)/,"Refresh signature state after closing the student card");
   assert.doesNotMatch(dialogSource,/Ведомости КПК без комиссии/);
   assert.match(extract("executeAttestationTask"),/const sendEmail = options.sendEmail && item.definition.kind === "studentAttestationProtocol"/);
   assert.match(dialogSource,/data-task-student/);assert.match(dialogSource,/input\.indeterminate = checkedCount > 0/);
@@ -270,14 +313,15 @@ main().then(()=>{
     const frdoDeadlineLabel='До ближайшего срока: 28 дн.',frdoDaysIndicatorLabel='Осталось дней: 28';
     return \`${source.slice(start,end)}\`;
   }`;
-  const fixtureSetup=setup+(process.argv.includes("--kpk-no-commission")?"state.data.collections.programs.find(p=>p.id==='kpk').commissionSetId='';":"");
+  const fixtureSetup=setup+(process.argv.includes("--kpk-no-commission")?"state.data.collections.programs.find(p=>p.id==='kpk').commissionSetId='';":"")
+    +(process.argv.includes("--signatures-only")?"state.data.collections.students=state.data.collections.students.filter(s=>s.id==='done');":"");
   const script=fixtureSetup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+dashboardFixture+`
     render=function(){document.querySelector('#tiles').innerHTML=renderFixtureDocumentTasks();document.querySelector('[data-action="open-attestation-tasks"]')?.addEventListener('click',openAttestationTasksDialog);};render();
     var realSend=sendServerEmail;sendServerEmail=async function(request){const result=await realSend(request);document.querySelector('#calls').textContent=calls.map(c=>c.action+(c.kind?' '+c.kind:'')).join(', ');sendFails=false;document.querySelector('#failure').checked=false;return result;};
     document.querySelector('#failure').onchange=e=>{sendFails=e.target.checked;};
     document.querySelector('#issued').onchange=e=>{state.data.collections.students[0].diplomaBlankNo=e.target.checked?'ТЕСТ-1':'';render();};
     document.querySelector('#narrow').onclick=()=>{const host=document.querySelector('#tiles');host.style.maxWidth=host.style.maxWidth?'':'900px';};
-    async function openStudentCardById(id){state.modal={config:'students',id};const card=document.createElement('div');card.dataset.fixtureCard='';card.className='modal-backdrop';card.innerHTML='<section class="modal" style="padding:24px"><h2>Карточка: '+escapeHtml(state.data.collections.students.find(s=>s.id===id).name)+'</h2><p>Тестовая карточка без записи в базу</p><button data-fixture-card-close class="primary-button">Закрыть карточку</button></section>';document.body.appendChild(card);card.querySelector('button').onclick=()=>{state.modal=null;card.remove();};}
+    async function openStudentCardById(id){state.modal={config:'students',id};const record=state.data.collections.students.find(s=>s.id===id);const card=document.createElement('div');card.dataset.fixtureCard='';card.className='modal-backdrop';card.innerHTML='<section class="modal" style="padding:24px"><h2>Карточка: '+escapeHtml(record.name)+'</h2><p>Тестовая карточка без записи в базу</p><label><input type="checkbox" data-fixture-signed '+(record.event_signedProtocol_state==='checked'?'checked':'')+'>Подписан протокол итоговой аттестации</label><button data-fixture-card-close class="primary-button">Закрыть карточку</button></section>';document.body.appendChild(card);card.querySelector('[data-fixture-signed]').onchange=e=>{record.event_signedProtocol_state=e.target.checked?'checked':'unchecked';};card.querySelector('button').onclick=()=>{state.modal=null;card.remove();};}
     document.addEventListener('keydown',e=>{if(e.key==='Escape'){const card=document.querySelector('[data-fixture-card]');if(card){state.modal=null;card.remove();}else document.querySelector('[data-attestation-tasks]:not([hidden])')?.closeAttestationTasks();}});
   `;
   const http=require("node:http");const server=http.createServer((req,res)=>{

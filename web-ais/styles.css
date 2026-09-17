@@ -3208,6 +3208,9 @@ html.is-database-demo-mode .contract-photo-path-field {
 .dashboard-attestation-tile > .eyebrow { font-size: 10px; line-height: 1.2; margin: 0; }
 .dashboard-attestation-tile > strong { font-size: 30px; line-height: 1; color: var(--teal); }
 .dashboard-attestation-tile > small { font-size: 11px; line-height: 1.25; }
+.dashboard-attestation-tile.has-pending-signatures > strong { font-size: 26px; }
+.dashboard-attestation-tile.has-pending-signatures > small { line-height: 1.15; }
+.attestation-signature-count { color: #875609; font-weight: 600; }
 .attestation-tasks-backdrop { z-index: 1900; }
 .attestation-tasks-backdrop[hidden] { display: none !important; }
 .modal.attestation-tasks-dialog {
@@ -3240,6 +3243,7 @@ html.is-database-demo-mode .contract-photo-path-field {
 .attestation-task-student-link:disabled { cursor: default; opacity: .6; }
 .attestation-task-student-link:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .attestation-task-error { color: #a22b25; }
+.attestation-task-table td .attestation-task-awaiting-signature { display: inline-block; margin-top: 4px; padding: 3px 7px; color: #78500e; background: #fff5db; border: 1px solid #e8d49d; border-radius: 5px; font-weight: 600; }
 .attestation-task-confirmation { padding: 10px 12px; background: var(--panel); border: 1px solid var(--teal); border-radius: 7px; max-height: 230px; overflow: auto; }
 .attestation-task-confirmation[hidden] { display: none; }
 .attestation-task-confirmation h3, .attestation-task-confirmation p { margin: 0 0 8px; }

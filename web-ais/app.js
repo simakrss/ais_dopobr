@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.506",
-    releasedAt: "2026-09-17"
+    version: "1.7.507",
+    releasedAt: "2026-09-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.507",
+      releasedAt: "2026-09-18",
+      changes: ["Плитка «Ведомости и протоколы» учитывает ожидание подписи: документ об образовании выдан, событие «Сформирован протокол» отмечено, «Подписан протокол» не отмечено. В списке показаны статус и председатель, доступна карточка слушателя; повторная генерация таких протоколов не предлагается. Плитка скрывается только при отсутствии задач формирования и подписания."]
+    },
     {
       version: "1.7.506",
       releasedAt: "2026-09-17",
@@ -18516,14 +18521,21 @@ MAX - https://bizvmax.ru/zifra_plus
       Boolean(normalizeEventState(record[`event_${key}_state`], record[`event_${key}_date`])));
   }
 
+  function isAttestationProtocolAwaitingSignature(record) {
+    if (!hasStudentEducationDocumentIssued(record)) return false;
+    const protocol = getAttestationTaskDefinitions().find((definition) => definition.kind === "studentAttestationProtocol");
+    const signed = { eventKey: "attestationProtocolSigned", eventPattern: /подписан.*протокол|протокол.*подписан/iu };
+    return isAttestationTaskCompleted(record, protocol) && !isAttestationTaskCompleted(record, signed);
+  }
+
   function getPendingAttestationRows() {
     const definitions = getAttestationTaskDefinitions();
     return (state.data.collections.students || []).filter(hasStudentEducationDocumentIssued).map((record) => {
       const program = getStudentContextProgram(record);
       const type = String(program?.type || "").trim().toUpperCase();
       const documents = definitions.filter((definition) => definition.types.includes(type) && !isAttestationTaskCompleted(record, definition));
-      return { record, program, type, documents };
-    }).filter((row) => row.documents.length)
+      return { record, program, type, documents, awaitingSignature: isAttestationProtocolAwaitingSignature(record) };
+    }).filter((row) => row.documents.length || row.awaitingSignature)
       .sort((a, b) => String(a.record.name || "").localeCompare(String(b.record.name || ""), "ru"));
   }
 
@@ -18731,9 +18743,9 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.className = "modal-backdrop attestation-tasks-backdrop";
     backdrop.dataset.attestationTasks = "";
     backdrop.innerHTML = `<section class="modal attestation-tasks-dialog" role="dialog" aria-modal="true" aria-labelledby="attestationTasksTitle">
-      <header class="modal-head"><div><p class="eyebrow">По неотмеченным событиям слушателей</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
+      <header class="modal-head"><div><p class="eyebrow">Формирование документов и контроль подписания</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
       <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить протоколы председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
-      <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы — ППП. Ведомости только сохраняются; председателям отправляются только протоколы. Просмотр ничего не сохраняет и не отправляет.</p>
+      <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы к формированию — ППП. Также показаны сформированные, но ещё не подписанные протоколы. Отметку «Подписан» можно установить в карточке слушателя. Председателям отправляются только протоколы; просмотр ничего не сохраняет и не отправляет.</p>
       <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th><label title="Выбрать всех слушателей"><input type="checkbox" data-task-all aria-label="Все слушатели"></label></th><th>Слушатель / программа</th><th>Ведомость экзаменов</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
       <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
       <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
@@ -18747,7 +18759,7 @@ MAX - https://bizvmax.ru/zifra_plus
       session.rows.forEach((old) => {
         if (!ids.has(String(old.record.id)) && old.documents.some((definition) => session.results.has(keyOf(old.record.id, definition.kind)))) {
           const record = state.data.collections.students.find((item) => String(item.id) === String(old.record.id));
-          if (record) rows.push({ ...old, record });
+          if (record) rows.push({ ...old, record, awaitingSignature: isAttestationProtocolAwaitingSignature(record) });
         } else if (ids.has(String(old.record.id))) {
           const row = rows.find((item) => String(item.record.id) === String(old.record.id));
           old.documents.forEach((definition) => { if (session.results.has(keyOf(old.record.id, definition.kind)) && !row.documents.some((item) => item.kind === definition.kind)) row.documents.push(definition); });
@@ -18759,18 +18771,21 @@ MAX - https://bizvmax.ru/zifra_plus
       const locked = session.running || session.busy;
       const selectableKeys = new Set();
       $("[data-task-rows]").innerHTML = session.rows.length ? session.rows.map((row) => {
-        const recipient = getAttestationTaskEmailRecipient(row.record, row.documents.find((definition) => definition.kind === "studentAttestationProtocol") || row.documents[0]);
+        const recipient = row.awaitingSignature ? getAttestationChairRecipient(row.record)
+          : getAttestationTaskEmailRecipient(row.record, row.documents.find((definition) => definition.kind === "studentAttestationProtocol") || row.documents[0]);
         const cells = definitions.map((definition) => {
           const key = keyOf(row.record.id, definition.kind), result = session.results.get(key);
-          if (!row.documents.some((item) => item.kind === definition.kind)) return "<td>—</td>";
+          const signatureStatus = definition.kind === "studentAttestationProtocol" && row.awaitingSignature
+            ? '<small class="attestation-task-awaiting-signature">Ожидается подпись</small>' : "";
+          if (!row.documents.some((item) => item.kind === definition.kind)) return `<td>${signatureStatus || "—"}</td>`;
           const problem = result?.saved ? "" : getAttestationTaskProblem(row.record, definition);
           const completed = Boolean(result?.saved && result.eventSaved && !result.error);
           if (!problem && !completed) selectableKeys.add(key);
           const label = `${definition.title}: ${row.record.name || "Без ФИО"}`;
-          return `<td><div class="attestation-task-cell"><input type="checkbox" data-task-key="${escapeAttr(key)}" aria-label="${escapeAttr(`Выбрать документ — ${label}`)}" ${session.selected.has(key) && !completed ? "checked" : ""} ${locked || problem || completed ? "disabled" : ""}><button class="primary-button" type="button" data-task-generate-one="${escapeAttr(key)}" aria-label="${escapeAttr(`${result?.saved ? "Повторить действие" : "Генерировать"} — ${label}`)}" ${locked || problem || completed || isDatabaseDemoMode() ? "disabled" : ""}>${completed ? "Готово" : result?.saved ? "Повторить" : "Генерировать"}</button><button class="ghost-button" type="button" data-task-preview="${escapeAttr(key)}" aria-label="${escapeAttr(`Просмотр — ${label}`)}" ${locked || problem ? "disabled" : ""}>Просмотр</button></div><small class="${result?.error || problem ? "attestation-task-error" : "muted"}">${escapeHtml(result?.error || problem || result?.message || "Ожидает генерации")}</small></td>`;
+          return `<td><div class="attestation-task-cell"><input type="checkbox" data-task-key="${escapeAttr(key)}" aria-label="${escapeAttr(`Выбрать документ — ${label}`)}" ${session.selected.has(key) && !completed ? "checked" : ""} ${locked || problem || completed ? "disabled" : ""}><button class="primary-button" type="button" data-task-generate-one="${escapeAttr(key)}" aria-label="${escapeAttr(`${result?.saved ? "Повторить действие" : "Генерировать"} — ${label}`)}" ${locked || problem || completed || isDatabaseDemoMode() ? "disabled" : ""}>${completed ? "Готово" : result?.saved ? "Повторить" : "Генерировать"}</button><button class="ghost-button" type="button" data-task-preview="${escapeAttr(key)}" aria-label="${escapeAttr(`Просмотр — ${label}`)}" ${locked || problem ? "disabled" : ""}>Просмотр</button></div><small class="${result?.error || problem ? "attestation-task-error" : "muted"}">${escapeHtml(result?.error || problem || result?.message || "Ожидает генерации")}</small>${signatureStatus}</td>`;
         }).join("");
         return `<tr><td><input type="checkbox" data-task-student="${escapeAttr(row.record.id)}" aria-label="${escapeAttr(`Выбрать слушателя — ${row.record.name || "Без ФИО"}`)}"></td><td><button class="attestation-task-student-link" data-task-open-student="${escapeAttr(row.record.id)}" type="button" title="Открыть карточку слушателя" ${locked ? "disabled" : ""}>${escapeHtml(row.record.name || "Без ФИО")}</button><small>${escapeHtml(getStudentContextProgram(row.record)?.name || row.record.program || "")}</small><small>${escapeHtml(row.type)} · ${escapeHtml(row.record.status || "Статус не указан")}</small></td>${cells}<td>${escapeHtml(recipient.name || "—")}<small class="${recipient.error ? "attestation-task-error" : ""}">${escapeHtml(recipient.error || recipient.email)}</small></td></tr>`;
-      }).join("") : '<tr><td colspan="5">Нет ведомостей и протоколов, ожидающих формирования.</td></tr>';
+      }).join("") : '<tr><td colspan="5">Нет документов к формированию и протоколов, ожидающих подписи.</td></tr>';
       const selectable = [...backdrop.querySelectorAll("[data-task-key]")].filter((input) => selectableKeys.has(input.dataset.taskKey));
       const selected = selectable.filter((input) => input.checked).length;
       const studentInputs = [...backdrop.querySelectorAll("[data-task-student]")];
@@ -18782,7 +18797,8 @@ MAX - https://bizvmax.ru/zifra_plus
         input.indeterminate = checkedCount > 0 && checkedCount < documents.length;
       });
       const selectedStudents = studentInputs.filter((input) => input.checked || input.indeterminate).length;
-      $("[data-task-selected]").textContent = `Выбрано слушателей: ${selectedStudents} из ${session.rows.length} · Документов: ${selected}`;
+      const awaitingSignatures = session.rows.filter((row) => row.awaitingSignature).length;
+      $("[data-task-selected]").textContent = `Выбрано слушателей: ${selectedStudents} из ${session.rows.length} · Документов: ${selected}${awaitingSignatures ? ` · Ожидают подписи: ${awaitingSignatures}` : ""}`;
       $("[data-task-all]").disabled = locked || !selectable.length;
       $("[data-task-all]").checked = selected > 0 && selected === selectable.length;
       $("[data-task-all]").indeterminate = selected > 0 && selected < selectable.length;
@@ -18913,10 +18929,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = getPendingAttestationRows();
     const count = (kind) => rows.reduce((sum, row) => sum + Number(row.documents.some((item) => item.kind === kind)), 0);
     const sheets = count("studentGradeSheet"), protocols = count("studentAttestationProtocol");
-    if (sheets + protocols === 0) return "";
-    return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-attestation-tasks" title="Сформировать ведомости и протоколы по выданным документам об образовании, ещё не отмеченные в событиях слушателей">
-      <span class="eyebrow">Ведомости и протоколы</span><strong>${sheets + protocols}</strong>
-      <small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}</small>
+    const awaitingSignatures = rows.filter((row) => row.awaitingSignature).length;
+    if (sheets + protocols + awaitingSignatures === 0) return "";
+    return `<button type="button" class="panel dashboard-attestation-tile${awaitingSignatures ? " has-pending-signatures" : ""}" data-action="open-attestation-tasks" title="К формированию: ${sheets + protocols}. Ожидают подписи: ${awaitingSignatures}. Только по выданным документам об образовании">
+      <span class="eyebrow">Ведомости и протоколы</span><strong>${sheets + protocols + awaitingSignatures}</strong>
+      <small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}${awaitingSignatures ? `<br><span class="attestation-signature-count">Ожидают подписи: ${awaitingSignatures}</span>` : ""}</small>
     </button>`;
   }
 
