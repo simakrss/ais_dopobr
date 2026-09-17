@@ -21125,9 +21125,9 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .education-document-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: stretch;
   gap: 4px;
   justify-content: flex-start;
   width: 100%;
@@ -21148,7 +21148,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 }
 
 .education-document-open-button:first-child {
-  flex: 1 1 168px;
+  white-space: normal;
 }
 
 .education-document-open-button:last-child {

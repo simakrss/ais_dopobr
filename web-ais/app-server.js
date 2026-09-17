@@ -5428,7 +5428,7 @@ function prepareWorkflowDocumentValues(kind, workflow, sourceValues = {}) {
   return { values, tableFields, kind };
 }
 
-function applyWorkflowTableRows(xml, fieldName, value, fieldPositionMap) {
+function applyWorkflowTableRows(xml, fieldName, value, fieldPositionMap, emptyMessage = "Нет программ по условиям отбора") {
   const rows = String(value ?? "").split(/[\u000b\r\n]+/u).filter((row) => row.trim()).map((row) => row.split("\t"));
   const source = String(xml || "");
   const matches = [...source.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
@@ -5438,7 +5438,7 @@ function applyWorkflowTableRows(xml, fieldName, value, fieldPositionMap) {
     const fieldIndex = cells.findIndex((cell) => paragraphHasDocumentField(cell.xml, fieldName, fieldPositionMap));
     if (fieldIndex < 0) continue;
     result += source.slice(cursor, match.index);
-    result += (rows.length ? rows : [["Нет программ по условиям отбора"]]).map((row, rowIndex) => {
+    result += (rows.length ? rows : [[emptyMessage]]).map((row, rowIndex) => {
       const nextCells = cells.map((cell, cellIndex) => {
         const content = cellIndex === fieldIndex - 1 ? (rows.length ? String(rowIndex + 1) : "") : (row[cellIndex - fieldIndex] ?? "");
         return buildWordTableCellValueXml(cell.xml.replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, ""), content);
@@ -5529,6 +5529,10 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
     xml = applyEducationCostDiscountStatement(xml, fieldValues?.["Скидка"]);
     xml = applyExpulsionOrderConditionalBlocks(xml, fieldValues, indexedFieldPositionMap);
     xml = applyEducationTrainingPlanTableRows(xml, fieldValues, indexedFieldPositionMap);
+    if (Object.prototype.hasOwnProperty.call(fieldValues || {}, "Перечень дисциплин")) {
+      // Assistant's grade-sheet field spans cached table rows, not one text run.
+      xml = applyWorkflowTableRows(xml, "Перечень дисциплин", fieldValues["Перечень дисциплин"], indexedFieldPositionMap, "");
+    }
     xml = applyEmployeeActPaymentTableRows(xml, fieldValues, indexedFieldPositionMap);
     replacements.forEach(({ marker, value, renderAsParagraphs }) => {
       xml = renderAsParagraphs

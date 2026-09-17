@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.495",
+    version: "1.7.496",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.496",
+      releasedAt: "2026-09-17",
+      changes: ["В списке сотрудников добавлена сумма «К зачислению» с настраиваемой ставкой подоходного налога 13%. На вкладке «Итоги» слушателя добавлены ведомость и протокол с формулами Ассистента, проверкой вида программы и комиссии и сохранением в папку документов слушателя."]
+    },
     {
       version: "1.7.495",
       releasedAt: "2026-09-17",
@@ -4981,6 +4986,8 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "trainingReduction", label: "Карточка слушателя. Сокращение обучения" },
     { value: "education", label: "Карточка слушателя. Документ об образовании" },
     { value: "postalEnvelope", label: "Карточка слушателя. Почтовый конверт" },
+    { value: "studentGradeSheet", label: "Карточка слушателя. Ведомость" },
+    { value: "studentAttestationProtocol", label: "Карточка слушателя. Протокол" },
     { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
     { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
     { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" },
@@ -5223,6 +5230,134 @@ MAX - https://bizvmax.ru/zifra_plus
       "Индекс": `=СЖПРОБЕЛЫ(ПСТР([Адрес места жительства];1;ПОИСК(",";[Адрес места жительства])-1))`
     }
   };
+  const studentAttestationDocumentTemplateDefinitions = [
+    {
+      "id": "document-studentGradeSheet",
+      "title": "Ведомость",
+      "documentKind": "studentGradeSheet",
+      "templateUrl": "АИС Допобразование/Документы/Зачетно-экзаменационная ведомость (ДПП)_с подписью.docx",
+      "templatePath": "",
+      "fileName": "Зачетно-экзаменационная ведомость (ДПП)_с подписью.docx",
+      "fileNameTemplate": "Ведомость_#ФИО#",
+      "saveFolderTemplate": "#Папка документов слушателя#",
+      "generationFormat": "pdf",
+      "useCustomDocumentProperties": "1",
+      "markers": [
+        "ФИО",
+        "Номер группы",
+        "Перечень дисциплин",
+        "Прогр обуч факт",
+        "Дата начала обучения",
+        "Дата окончания обучения",
+        "uid",
+        "ПутьСохр"
+      ],
+      "fieldPositions": {
+        "ФИО": 3,
+        "Номер группы": 4,
+        "Перечень дисциплин": 6,
+        "Прогр обуч факт": 7,
+        "Дата начала обучения": 8,
+        "Дата окончания обучения": 9,
+        "uid": 10,
+        "ПутьСохр": 11
+      },
+      "formulas": {
+        "ФИО": "=[ФИО]",
+        "Номер группы": "=[Номер группы]",
+        "Перечень дисциплин": "=ПолучитьSQLзапрос(\"[Источник]\nSELECT Дисциплины, iif([Аттестация]='Зачет','Зачтено',iif([Аттестация]='Экзамен','![Оценка ИА]',[Аттестация])) FROM [Учебные планы$] WHERE [Наименование программы]=[Прогр обуч факт]\n\"\n;;СИМВОЛ(9);;СИМВОЛ(11) )",
+        "Прогр обуч факт": "=[Прогр обуч факт]",
+        "Дата начала обучения": "=ТЕКСТ(ПСТР([Дата начала обучения];1;10);\"ДД.ММ.ГГГГ\")",
+        "Дата окончания обучения": "=ТЕКСТ(ПСТР([Дата окончания обучения];1;10);\"ДД.ММ.ГГГГ\")",
+        "uid": "=[uid]",
+        "ПутьСохр": "=ПутьДокумента(1) & [Фото]"
+      }
+    },
+    {
+      "id": "document-studentAttestationProtocol",
+      "title": "Протокол",
+      "documentKind": "studentAttestationProtocol",
+      "templateUrl": "АИС Допобразование/Документы/Протокол итоговой аттестации (с подписями).docx",
+      "templatePath": "",
+      "fileName": "Протокол итоговой аттестации (с подписями).docx",
+      "fileNameTemplate": "Протокол_#Номер протокола#_#ФИО#",
+      "saveFolderTemplate": "#Папка документов слушателя#",
+      "generationFormat": "pdf",
+      "useCustomDocumentProperties": "1",
+      "markers": [
+        "Номер протокола",
+        "Дата протокола",
+        "Председатель",
+        "Член1",
+        "Член2",
+        "Секретарь",
+        "ФИО",
+        "Программа",
+        "Форма аттестации",
+        "Оценка",
+        "ФИОдат",
+        "Квалификация",
+        "ФИОрод",
+        "Председатель_ФИО",
+        "Член2_ФИО",
+        "Член1_ФИО",
+        "Секретарь_ФИО",
+        "ИО",
+        "Email",
+        "ПутьСохр",
+        "Ссылка",
+        "ИОФ"
+      ],
+      "fieldPositions": {
+        "Номер протокола": 1,
+        "Дата протокола": 2,
+        "Председатель": 3,
+        "Член1": 5,
+        "Член2": 6,
+        "Секретарь": 7,
+        "ФИО": 8,
+        "Программа": 9,
+        "Форма аттестации": 10,
+        "Оценка": 11,
+        "ФИОдат": 12,
+        "Квалификация": 13,
+        "ФИОрод": 19,
+        "Председатель_ФИО": 24,
+        "Член2_ФИО": 32,
+        "Член1_ФИО": 33,
+        "Секретарь_ФИО": 34,
+        "ИО": 35,
+        "Email": 36,
+        "ПутьСохр": 37,
+        "Ссылка": 38,
+        "ИОФ": 39
+      },
+      "formulas": {
+        "Номер протокола": "=[Номер протокола]",
+        "Дата протокола": "=[Дата приказа Отчисл Док Обр]",
+        "Председатель": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT Председатель FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "Член1": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT Член1 FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "Член2": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT Член2 FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "Секретарь": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT Секретарь FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "ФИО": "=[ФИО]",
+        "Программа": "=[Прогр обуч факт]",
+        "Форма аттестации": "=\"итогового междисциплинарного экзамена\"",
+        "Оценка": "=ЕСЛИ(ИЛИ([Оценка ИА]=\"-\";[Оценка ИА]=\"\");\"зачтено\";[Оценка ИА])",
+        "ФИОдат": "=ЕСЛИ([ФИО_несклон]=\"+\";СКЛОНЕНИЕ_ФИО([ФИО];;\"И\";;\"Ф\") & \" \" & СКЛОНЕНИЕ_ФИО([ФИО];;\"Д\";;\"ИО\");СКЛОНЕНИЕ_ФИО([ФИО];;\"Д\";;\"ФИО\"))",
+        "Квалификация": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT Квалификация FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "ФИОрод": "=ЕСЛИ([ФИО_несклон]=\"+\";СКЛОНЕНИЕ_ФИО([ФИО];;\"И\";;\"Ф\") & \" \" & СКЛОНЕНИЕ_ФИО([ФИО];;\"Р\";;\"ИО\");СКЛОНЕНИЕ_ФИО([ФИО];;\"Р\";;\"ФИО\"))",
+        "Председатель_ФИО": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT 'СКЛОНЕНИЕ_ФИО(\"' & mid(Председатель,1,instr(Председатель,',')-1) & '\"; \"И\"; \"ФИ.О.\")' FROM [Реестр программ$]\nWHERE [Наименование программы]='#Программа#'\n\")",
+        "Член2_ФИО": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT 'СКЛОНЕНИЕ_ФИО(\"' & mid(Член2,1,instr(Член2,',')-1) & '\"; \"И\"; \"ФИ.О.\")' FROM [Реестр программ$]\nWHERE [Наименование программы]='#Программа#'\n\")",
+        "Член1_ФИО": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT 'СКЛОНЕНИЕ_ФИО(\"' & mid(Член1,1,instr(Член1,',')-1) & '\"; \"И\"; \"ФИ.О.\")' FROM [Реестр программ$]\nWHERE [Наименование программы]='#Программа#'\n\")",
+        "Секретарь_ФИО": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT 'СКЛОНЕНИЕ_ФИО(\"' & mid(Секретарь,1,instr(Секретарь,',')-1) & '\"; \"И\"; \"ФИ.О.\")' FROM [Реестр программ$]\nWHERE [Наименование программы]='#Программа#'\n\")",
+        "ИО": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT 'СКЛОНЕНИЕ_ФИО(\"' & mid(Председатель,1,instr(Председатель,',')-1) & '\"; \"И\"; \"ИО\")' FROM [Реестр программ$]\nWHERE [Наименование программы]='#Программа#'\n\")",
+        "Email": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT TOP 1 Email FROM [Реестр договоров$]\nWHERE ФИО=left('#Председатель#',instr('#Председатель#',',')-1)\n\")",
+        "ПутьСохр": "=ПутьДокумента(1) & [Фото]",
+        "Ссылка": "=ПолучитьSQLзапрос(\"[Источник данных]\nSELECT [Ссылка на отчет по оценкам] FROM [Реестр программ$]\nWHERE [Наименование программы]=[Прогр обуч факт]\n\")",
+        "ИОФ": "=СКЛОНЕНИЕ_ФИО([ФИО]; \"И\";\"ИОФ\")"
+      }
+    }
+  ];
   const orderDocumentTemplateDefinitions = [
     {
       id: "document-enrollment-order",
@@ -5405,6 +5540,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...employeeContractDocumentTemplates.map(createEmployeeContractDocumentTemplate),
       createEmployeeActDocumentTemplate(),
       ...educationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
+      ...studentAttestationDocumentTemplateDefinitions.map(createEducationDocumentTemplate),
       createEducationDocumentTemplate(studyCertificateDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length),
       createEducationDocumentTemplate(postalEnvelopeDocumentTemplateDefinition, educationDocumentTemplateDefinitions.length + 1),
       ...orderDocumentTemplateDefinitions.map((definition, index) => (
@@ -5578,6 +5714,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   ];
   const paymentSettingDefaults = [
+    { key: "incomeTaxRate", marker: "СтавкаПодохНалога", label: "Ставка подоходного налога", type: "number", unit: "%", value: "13" },
     {
       key: "authorRate",
       marker: "АвторскаяСтавка",
@@ -6147,6 +6284,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("subject", "Предмет договора", "textarea", false, null, { wide: true, rows: 3 }),
         field("paymentTerms", "Сумма / условия оплаты", "textarea", false, null, { wide: true, rows: 3 }),
         field("accountingRecorded", "Договор передан в бухгалтерию", "checkbox"),
+        field("netAmount", "К зачислению", "number", false, null, { readOnly: true }),
         field("amount", "Выплата", "number", false, null, { readOnly: true }),
         field("paid", "Услуги", "number", false, null, { readOnly: true }),
         field("agencyAmount", "Агентские", "number", false, null, { readOnly: true }),
@@ -6173,7 +6311,7 @@ MAX - https://bizvmax.ru/zifra_plus
           field(`message${index + 1}`, `Сообщение ${index + 1}`, "textarea", false, null, { wide: true, rows: 4 })
         ))
       ],
-      table: ["name", "contractNo", "type", "amount", "paid", "agencyAmount", "balance", "endDate"]
+      table: ["name", "contractNo", "type", "netAmount", "amount", "paid", "agencyAmount", "balance", "endDate"]
     },
     programs: {
       title: "Реестр программ",
@@ -8244,6 +8382,25 @@ MAX - https://bizvmax.ru/zifra_plus
     return Math.round(Math.max(0, number) / 10) * 10;
   }
 
+  function normalizePaymentConstantNumber(key, value) {
+    if (key !== "incomeTaxRate") return normalizePaymentRateValue(value);
+    if (value === null || value === undefined || String(value).trim() === "") return 13;
+    const number = Number(String(value).replace(",", "."));
+    return Number.isFinite(number) && number >= 0 && number <= 100 ? Math.round(number * 100) / 100 : 13;
+  }
+
+  function isPaymentConstantNumberValid(key, value) {
+    return key === "incomeTaxRate"
+      ? Number.isFinite(value) && value >= 0 && value <= 100
+      : isPaymentRateValueValid(value);
+  }
+
+  function getEmployeeNetPayment(amount, settings = state.data?.dictionaries?.paymentSettings) {
+    const rate = normalizePaymentConstantNumber("incomeTaxRate", (settings || []).find((item) => item?.key === "incomeTaxRate")?.value);
+    const gross = Number(String(amount ?? 0).replace(",", "."));
+    return Number.isFinite(gross) ? Math.round(gross * (100 - rate)) / 100 : 0;
+  }
+
   function isPaymentRateValueValid(value) {
     return Number.isFinite(value)
       && value >= 0
@@ -8259,7 +8416,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ...setting,
         label: String(savedSetting?.label || setting.label),
         value: setting.type === "number"
-          ? String(normalizePaymentRateValue(sourceValue))
+          ? String(normalizePaymentConstantNumber(setting.key, sourceValue))
           : String(sourceValue || "")
       };
     });
@@ -8338,6 +8495,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getPaymentConstantInputAttributes(setting, value = setting?.value) {
+    if (setting?.key === "incomeTaxRate") return 'min="0" max="100" step="0.01"';
     if (getPaymentConstantUnit(setting) === "%") return 'min="0" step="10"';
     return `data-money-input data-money-nonnegative step="${MONEY_INPUT_STEP}"`;
   }
@@ -13604,13 +13762,14 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${days} дн.`;
     }
     if (configId === "inventory" && key === "balance" && !Number.isNaN(Number(value))) return pieces(value);
-    if (["amount", "price", "oldPrice", "paid", "agencyAmount", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
+    if (["amount", "netAmount", "price", "oldPrice", "paid", "agencyAmount", "balance", "contractAmount", "paidAmount"].includes(key) && !Number.isNaN(Number(value))) return money(value);
     if (key.toLowerCase().includes("date") || key.endsWith("At") || key === "paid") return dateRu(value);
     return String(value);
   }
 
   function getTableCellValue(config, row, key) {
     const collection = typeof config === "string" ? configs[config]?.collection : config?.collection;
+    if (collection === "contracts" && key === "netAmount") return getEmployeeNetPayment(row?.amount);
     if (collection === "students" && key === "daysUntilEnd") {
       return calculateDaysUntilDate(row?.extendedEndDate || row?.endDate);
     }
@@ -23573,10 +23732,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const baseKeys = config.table || [];
     const settings = state.tableSettings[configId] || {};
     const savedOrder = Array.isArray(settings.order) ? settings.order : [];
-    return [
+    const keys = [
       ...savedOrder.filter((key) => baseKeys.includes(key)),
       ...baseKeys.filter((key) => !savedOrder.includes(key))
     ];
+    if (configId === "contracts" && !savedOrder.includes("netAmount") && keys.includes("amount") && keys.includes("netAmount")) {
+      keys.splice(keys.indexOf("netAmount"), 1);
+      keys.splice(keys.indexOf("amount"), 0, "netAmount");
+    }
+    return keys;
   }
 
   function getColumnWidth(configId, key) {
@@ -26042,23 +26206,24 @@ MAX - https://bizvmax.ru/zifra_plus
       const label = String(field("label")?.value || "").trim() || marker;
       const rawValue = String(field("value")?.value || "").trim().replace(",", ".");
       const value = Number(rawValue);
+      const key = String(field("key")?.value || makeId("payment-constant")).trim();
       if (!isValidPaymentConstantMarker(marker)) {
         return { error: `Некорректное имя константы «${marker || "(пусто)"}». Используйте буквы, цифры и знак подчеркивания.`, input: field("marker") };
       }
       if (markers.has(normalizedMarker)) {
         return { error: `Константа [${marker}] указана несколько раз.`, input: field("marker") };
       }
-      if (!isPaymentRateValueValid(value)) {
-        return { error: `Значение константы [${marker}] должно быть неотрицательным и кратным 10.`, input: field("value") };
+      if (!rawValue || !isPaymentConstantNumberValid(key, value)) {
+        return { error: key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : `Значение константы [${marker}] должно быть неотрицательным и кратным 10.`, input: field("value") };
       }
       markers.add(normalizedMarker);
       const custom = row.dataset.paymentConstantCustom === "true";
       settings.push({
-        key: String(field("key")?.value || makeId("payment-constant")).trim(),
+        key,
         marker,
         label,
         type: "number",
-        value: String(normalizePaymentRateValue(value)),
+        value: String(normalizePaymentConstantNumber(key, value)),
         ...(custom ? { custom: true } : {})
       });
     }
@@ -35082,6 +35247,53 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getStudentAttestationDocumentUnavailableReason(record, documentKind) {
+    if (!["studentGradeSheet", "studentAttestationProtocol"].includes(documentKind)) return "";
+    const program = getStudentContextProgram(record);
+    if (documentKind === "studentGradeSheet") {
+      return ["КПК", "ППП", "ДОП"].includes(String(program?.type || "").trim().toUpperCase())
+        ? "" : "Ведомость доступна только для программ КПК, ППП и ДОП.";
+    }
+    return program && getProgramCommissionSetById(program.commissionSetId)
+      ? "" : "Для формирования протокола выберите комиссию в карточке программы обучения.";
+  }
+
+  function formatStudentGradeSheetDisciplines(record) {
+    return getEducationDocumentTrainingPlanRows(record).map((row) => {
+      const discipline = String(row.discipline || row.code || "").trim();
+      if (!discipline) return "";
+      const attestation = String(row.attestation || "").trim();
+      const normalized = attestation.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+      const grade = normalized === "зачет" ? "Зачтено"
+        : normalized === "экзамен" ? String(record?.finalGrade || "").trim() : attestation;
+      return [discipline, grade].map((value) => value.replace(/[\t\r\n\u000b]+/g, " ")).join("\t");
+    }).filter(Boolean).join("\n");
+  }
+
+  function prepareStudentAttestationDocumentRecord(record, documentKind) {
+    if (!["studentGradeSheet", "studentAttestationProtocol"].includes(documentKind)) return record;
+    const program = resolveProgramCommissionRecord(getStudentContextProgram(record) || {});
+    const values = { ...(record?.workflowSourceValues || {}) };
+    values["Номер группы"] = String(record?.group || "").trim();
+    values.uid = String(record?.uid ?? "").trim();
+    values["Перечень дисциплин"] = formatStudentGradeSheetDisciplines(record);
+    if (documentKind === "studentAttestationProtocol") {
+      const members = { "Председатель": "commissionChair", "Член1": "commissionMember1", "Член2": "commissionMember2", "Секретарь": "secretary" };
+      Object.entries(members).forEach(([name, key]) => {
+        values[name] = String(program[key] || "").trim();
+        values[`${name}_ФИО`] = formatEmployeeContractShortName(values[name].split(",")[0].trim());
+      });
+      const chairName = values["Председатель"].split(",")[0].trim();
+      const chair = splitFullName(chairName);
+      values["ИО"] = [chair.firstName, chair.patronymic].filter(Boolean).join(" ");
+      values["Email"] = chairName ? String((state.data.collections.contracts || [])
+        .find((employee) => normalizeEmployeeActPersonName(employee.name) === normalizeEmployeeActPersonName(chairName))?.email || "").trim() : "";
+      values["Квалификация"] = String(record?.qualification || program.qualification || "").trim();
+      values["Ссылка"] = String(program.gradeReportUrl || "").trim();
+    }
+    return { ...record, attestationDocumentKind: documentKind, workflowSourceValues: values };
+  }
+
   function renderEducationDocumentActions(record) {
     const educationDocumentTitle = getEducationDocumentButtonTitle(record);
     const postalEnvelopeTitle = buildStudentDocumentGenerationTooltip(
@@ -35098,6 +35310,12 @@ MAX - https://bizvmax.ru/zifra_plus
           ${renderOrdersSdoIcon("mail")}
           <span>Конверт</span>
         </button>
+        ${studentAttestationDocumentTemplateDefinitions.map((definition) => {
+          const unavailable = getStudentAttestationDocumentUnavailableReason(record, definition.documentKind);
+          return `<button class="ghost-button student-document-generate-button education-document-open-button" data-action="open-student-attestation-document" data-document-context-kind="${definition.documentKind}" type="button" title="${escapeAttr(unavailable || `Сформировать документ «${definition.title}» и сохранить в папку документов слушателя`)}" ${unavailable ? "disabled" : ""}>
+            ${renderOrdersSdoIcon("documentText")}<span>${definition.title}</span>
+          </button>`;
+        }).join("")}
       </div>
     `;
   }
@@ -44909,6 +45127,12 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
     document.querySelector("[data-action='open-student-postal-envelope-document']")?.addEventListener("click", openStudentPostalEnvelopeDocument);
+    document.querySelectorAll("[data-action='open-student-attestation-document']").forEach((button) => {
+      button.addEventListener("click", (event) => openStudentCardBoundDocument(
+        event, button.dataset.documentContextKind,
+        "Добавьте шаблон документа в конструкторе документов.", "Не удалось сформировать документ"
+      ));
+    });
     document.querySelector("[data-action='open-student-study-certificate-document']")?.addEventListener("click", openStudentStudyCertificateDocument);
     document.querySelector("[data-action='open-student-enrollment-order-document']")?.addEventListener("click", openStudentEnrollmentOrderDocument);
     document.querySelector("[data-action='open-student-expulsion-order-document']")?.addEventListener("click", openStudentExpulsionOrderDocument);
@@ -49660,8 +49884,8 @@ MAX - https://bizvmax.ru/zifra_plus
         form.elements.marker.focus();
         return;
       }
-      if (!isPaymentRateValueValid(value)) {
-        alert("Значение должно быть неотрицательным и кратным 10.");
+      if (!String(form.elements.value.value || "").trim() || !isPaymentConstantNumberValid(currentSetting?.key, value)) {
+        alert(currentSetting?.key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : "Значение должно быть неотрицательным и кратным 10.");
         form.elements.value.focus();
         return;
       }
@@ -49678,7 +49902,7 @@ MAX - https://bizvmax.ru/zifra_plus
         marker: nextMarker,
         label,
         type: "number",
-        value: String(normalizePaymentRateValue(value)),
+        value: String(normalizePaymentConstantNumber(currentSetting?.key, value)),
         ...((currentSetting?.custom || create) ? { custom: true } : {})
       };
       const nextSettings = currentSetting
@@ -69459,6 +69683,17 @@ MAX - https://bizvmax.ru/zifra_plus
         { key: "mailingAddress", label: "Адрес с почтовым индексом" },
         { key: "phone", label: "Телефон" }
       ],
+      studentGradeSheet: [
+        ...common,
+        { key: "startDate", label: "Дата начала обучения" },
+        { key: "endDate", label: "Дата окончания обучения" },
+        { key: "program", label: "Учебный план программы", value: formatStudentGradeSheetDisciplines(record) }
+      ],
+      studentAttestationProtocol: [
+        ...common,
+        { key: "protocolNo", label: "Номер протокола" },
+        { key: "expulsionDate", label: "Дата протокола (дата приказа об отчислении)", value: record?.expulsionDate || record?.expulsionOrderDate }
+      ],
       enrollmentOrder: [
         ...common,
         { key: "startDate", label: "Дата начала обучения" },
@@ -69487,7 +69722,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (programType === "ППП" || programType === "КПК") {
       requiredFields.push({ key: "finalGrade", label: "Оценка ИА" });
     }
-    if (programType === "ППП") {
+    if (programType === "ППП" && documentKind !== "studentGradeSheet") {
       const program = findProgramByName(record?.program);
       requiredFields.push(
         { key: "protocolNo", label: "Номер протокола" },
@@ -71357,6 +71592,11 @@ MAX - https://bizvmax.ru/zifra_plus
     errorTitle,
     options = {}
   ) {
+    if (["studentGradeSheet", "studentAttestationProtocol"].includes(documentTemplate.documentKind)) {
+      const unavailable = getStudentAttestationDocumentUnavailableReason(record, documentTemplate.documentKind);
+      if (unavailable) { alert(unavailable); return; }
+      record = prepareStudentAttestationDocumentRecord(record, documentTemplate.documentKind);
+    }
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
     const fallbackTemplatePath = documentTemplate.fallbackTemplatePath || "";
@@ -71379,7 +71619,10 @@ MAX - https://bizvmax.ru/zifra_plus
     let documentProcessingOrigin = "";
     try {
       const fieldValues = options.fieldValues || evaluateContractTemplateFields(record, documentTemplate.fields);
-      const sourceValues = options.sourceValues || collectContractTemplateSourceValues(record);
+      const sourceValues = options.sourceValues || {
+        ...collectContractTemplateSourceValues(record),
+        ...(record.attestationDocumentKind ? record.workflowSourceValues : {})
+      };
       const fileNameValues = { ...sourceValues, ...fieldValues, ...window.AIS_DOCUMENT_WORKFLOW.getGenerationDateValues() };
       const outputFormat = normalizeDocumentGenerationFormat(documentTemplate.generationFormat);
       const fileName = ensureGeneratedDocumentFileName(
@@ -71405,6 +71648,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fieldValues,
         sourceValues,
         documentKind: documentTemplate.documentKind,
+        ...(record.attestationDocumentKind ? { skipPhoto: true } : {}),
         ...(options.workflow ? { workflow: { ...options.workflow, fileNameTemplate } } : {}),
         useCustomDocumentProperties,
         preferLocalTemplate: getEffectiveLocalDocumentsMode(),
@@ -72904,6 +73148,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
     const formula = String(field.formula || "").trim();
     if (isGetSqlQueryFormula(formula)) {
+      if (record?.attestationDocumentKind && Object.prototype.hasOwnProperty.call(record.workflowSourceValues || {}, fieldName)) {
+        return record.workflowSourceValues[fieldName];
+      }
       return field.name === "УчебныйПлан" ? formatEducationDocumentTrainingPlan(record) : "";
     }
     if (fieldName === "ФИО_ENG" && /ТРАНСЛИТЕРАЦИЯ/i.test(formula)) {
