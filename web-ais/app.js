@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.505",
+    version: "1.7.506",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.506",
+      releasedAt: "2026-09-17",
+      changes: ["Исправлено письмо председателю комиссии: пустые импортированные формулы больше не затирают имя и отчество, Email и ссылку из программы. СКЛОНЕНИЕ_ФИО вычисляется перед подстановкой в письмо; поддерживаются ИОФ, ИО, инициалы и обе сигнатуры Ассистента. Порядок ИОФ и инициалы согласованы с генерацией документов; сохранённые настройки не меняются."]
+    },
     {
       version: "1.7.505",
       releasedAt: "2026-09-17",
@@ -73713,6 +73718,12 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const defaultField = contractTemplateFieldDefaults.find((item) => item.name === field.name);
     const formula = String(field.formula || "").trim();
+    // Imported SQL-backed fields may have an empty formula in the constructor.
+    // Keep the current commission's scoped values; never replace them with "".
+    if (record?.attestationDocumentKind && !formula
+      && Object.prototype.hasOwnProperty.call(record.workflowSourceValues || {}, fieldName)) {
+      return record.workflowSourceValues[fieldName];
+    }
     if (isGetSqlQueryFormula(formula)) {
       if (record?.attestationDocumentKind && Object.prototype.hasOwnProperty.call(record.workflowSourceValues || {}, fieldName)) {
         return record.workflowSourceValues[fieldName];
@@ -73767,6 +73778,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function evaluateContractFormulaFallback(formula, record, values, evaluateByName = null) {
+    const fioValue = resolveContractTemplateFioFormulaValue(formula, record, values, evaluateByName);
+    if (fioValue !== null) return fioValue;
     let result = String(formula || "").replace(/^=\s*/, "");
     const directField = /^\(?\s*\[([^\]]+)\]\s*\)?$/.exec(result.trim());
     if (directField) return getContractTemplateSourceValue(directField[1], record);
@@ -73780,6 +73793,84 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     result = result.replace(/\[([^\]]+)\]/g, (match, fieldName) => getContractTemplateSourceValue(fieldName, record));
     return result.replace(/ПутьДокумента\(1\)\s*&\s*/gi, "").trim();
+  }
+
+  function resolveContractTemplateFioFormulaValue(formula, record, values, evaluateByName = null) {
+    const match = /^=?\s*СКЛОНЕНИЕ_ФИО\s*\(([\s\S]*)\)\s*$/iu.exec(String(formula || "").trim());
+    if (!match) return null;
+    // Only literals, source references and document-field references are allowed.
+    // Parse before substitution, so quotes/semicolons in a name remain plain data.
+    const args = [];
+    let offset = 0;
+    const token = /\s*("(?:[^"]|"")*"|'(?:[^']|'')*'|\[[^\]]+\]|#[^#]+#)?\s*(;|$)/y;
+    while (offset <= match[1].length) {
+      token.lastIndex = offset;
+      const part = token.exec(match[1]);
+      if (!part) return null;
+      args.push(part[1] || "");
+      offset = token.lastIndex;
+      if (!part[2]) break;
+    }
+    if (args.length < 1 || args.length > 5) return null;
+    const sourceValue = name => String(getContractTemplateRawSourceValue(String(name).trim(), record) ?? "");
+    const fieldValue = name => String((typeof evaluateByName === "function" ? evaluateByName(String(name).trim()) : values?.[String(name).trim()]) ?? "");
+    const value = (index) => {
+      const arg = args[index] || "";
+      if (arg.startsWith('"') || arg.startsWith("'")) {
+        return arg.slice(1, -1).split(arg[0] + arg[0]).join(arg[0])
+          .replace(/#([^#]+)#/g, (_, name) => fieldValue(name))
+          .replace(/\[([^\]]+)\]/g, (_, name) => sourceValue(name));
+      }
+      if (arg.startsWith("[")) return sourceValue(arg.slice(1, -1));
+      if (arg.startsWith("#")) return fieldValue(arg.slice(1, -1));
+      return "";
+    };
+    const extended = args.length >= 5;
+    const grammaticalCase = value(extended ? 2 : 1).toUpperCase() || "Р";
+    const mode = value(extended ? 4 : 2).toUpperCase().replace(/\s+/g, "") || "ФИО";
+    if (!["И", "Р", "Д"].includes(grammaticalCase)) return null;
+    const name = value(0), parts = splitFullName(name);
+    const gender = inferStudentGender(name) || normalizeFioGender(record?.gender) || "Мужской";
+    const preserveSurname = isChecked(record?.noDeclension);
+    const inflect = (text, role) => grammaticalCase === "И" || (role === "surname" && preserveSurname) ? text
+      : grammaticalCase === "Р" ? inflectRussianNamePart(text, gender, role)
+        : String(text).split("-").map(part => inflectContractNamePartDative(part, gender, role)).join("-");
+    const surname = inflect(parts.surname, "surname"), firstName = inflect(parts.firstName, "firstName"), patronymic = inflect(parts.patronymic, "patronymic");
+    const initials = [firstName, patronymic].filter(Boolean).map(part => `${part[0]}.`).join("");
+    if (mode === "Ф") return surname;
+    if (mode === "И") return firstName;
+    if (mode === "О") return patronymic;
+    if (mode === "ИО") return [firstName, patronymic].filter(Boolean).join(" ");
+    if (mode === "ИОФ") return [firstName, patronymic, surname].filter(Boolean).join(" ");
+    if (mode === "ФИ.О.") return [surname, initials].filter(Boolean).join(" ");
+    if (mode === "И.О.Ф") return [initials, surname].filter(Boolean).join(" ");
+    if (mode === "И.О.") return initials;
+    return [surname, firstName, patronymic].filter(Boolean).join(" ");
+  }
+
+  function inflectContractNamePartDative(value, gender, role) {
+    if (!value) return "";
+    if (gender === "Женский") {
+      if (role === "surname" && /(?:ая|ова|ева|ёва|ина|ына)$/iu.test(value)) return value.replace(/(?:ая|а)$/iu, "ой");
+      if (role === "surname" && /яя$/iu.test(value)) return value.replace(/яя$/iu, "ей");
+      if (role === "firstName" && /^любовь$/iu.test(value)) return matchNameLetterCase(value, "Любови");
+      if (role === "firstName" && /ь$/iu.test(value)) return value.replace(/ь$/iu, "и");
+      if (/ия$/iu.test(value)) return value.replace(/ия$/iu, "ии");
+      if (/[ая]$/iu.test(value)) return value.replace(/[ая]$/iu, "е");
+      return value;
+    }
+    if (role === "patronymic" && /ич$/iu.test(value)) return `${value}у`;
+    if (role === "firstName") {
+      const irregular = {павел: "Павлу", лев: "Льву", пётр: "Петру", илья: "Илье"}[value.toLowerCase()];
+      if (irregular) return matchNameLetterCase(value, irregular);
+      if (/ия$/iu.test(value)) return value.replace(/ия$/iu, "ии");
+      if (/[ая]$/iu.test(value)) return value.replace(/[ая]$/iu, "е");
+    }
+    if (/(ский|цкий)$/iu.test(value)) return value.replace(/ий$/iu, "ому");
+    if (/(ый|ой)$/iu.test(value)) return value.replace(/[ыо]й$/iu, "ому");
+    if (/ий$/iu.test(value)) return value.replace(/ий$/iu, "ию");
+    if (/[йь]$/iu.test(value)) return value.replace(/[йь]$/iu, "ю");
+    return /[бвгджзклмнпрстфхцчшщ]$/iu.test(value) ? `${value}у` : value;
   }
 
   function isGetSqlQueryFormula(value) {

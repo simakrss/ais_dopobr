@@ -4371,7 +4371,7 @@ function inflectFio(name, grammaticalCase = "Р", mode = "ФИО", preserveSurna
   const gender = inferGenderFromFio(name, genderHint);
   const parts = splitFullName(name);
   const normalizedCase = String(grammaticalCase || "Р").toUpperCase();
-  const normalizedMode = String(mode || "ФИО").toUpperCase();
+  const normalizedMode = String(mode || "ФИО").toUpperCase().replace(/\s+/g, "");
   const inflectPart = normalizedCase === "Д"
     ? inflectRussianNamePartDative
     : inflectRussianNamePart;
@@ -4385,7 +4385,14 @@ function inflectFio(name, grammaticalCase = "Р", mode = "ФИО", preserveSurna
     ? parts.patronymic
     : inflectPart(parts.patronymic, gender, "patronymic");
   if (normalizedMode === "Ф") return surname;
+  if (normalizedMode === "И") return firstName;
+  if (normalizedMode === "О") return patronymic;
   if (normalizedMode === "ИО") return [firstName, patronymic].filter(Boolean).join(" ");
+  if (normalizedMode === "ИОФ") return [firstName, patronymic, surname].filter(Boolean).join(" ");
+  const initials = [firstName, patronymic].filter(Boolean).map(part => `${part[0]}.`).join("");
+  if (normalizedMode === "ФИ.О.") return [surname, initials].filter(Boolean).join(" ");
+  if (normalizedMode === "И.О.Ф") return [initials, surname].filter(Boolean).join(" ");
+  if (normalizedMode === "И.О.") return initials;
   return [surname, firstName, patronymic].filter(Boolean).join(" ");
 }
 

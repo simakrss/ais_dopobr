@@ -81,6 +81,7 @@ for (const def of defs) {
   const scoped = c.prepareStudentAttestationDocumentRecord(student, def.documentKind);
   for (const field of fields.filter((f) => c.isGetSqlQueryFormula(f.formula))) {
     assert.equal(c.evaluateContractTemplateField(field, scoped, {}), scoped.workflowSourceValues[field.name], `Frontend SQL source: ${field.name}`);
+    assert.equal(c.evaluateContractTemplateField({...field, formula:""}, scoped, {}), scoped.workflowSourceValues[field.name], `Blank imported SQL field retains the scoped source: ${field.name}`);
   }
   assert.equal(def.saveFolderTemplate, "#Папка документов слушателя#");
   assert.equal(def.generationFormat, "pdf");
