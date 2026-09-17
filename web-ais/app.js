@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.496",
+    version: "1.7.497",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.497",
+      releasedAt: "2026-09-17",
+      changes: ["На рабочем столе рядом с ФРДО добавлена плитка ведомостей КПК/ППП и протоколов ППП по неотмеченным событиям слушателей. Доступны выбор документов, предварительный просмотр, автоматическое сохранение в папки слушателей и отправка председателям комиссий с подтверждением и индикатором процесса. Ошибки отправки можно повторить без повторной генерации."]
+    },
     {
       version: "1.7.496",
       releasedAt: "2026-09-17",
@@ -6858,6 +6863,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { key: "recommendationRequested", label: "Запрошена рекомендация учебного центра" },
     { key: "partnerInviteSent", label: "Отправлено приглашение в партнерскую программу" },
     { key: "examSheetPrepared", label: "Сформирована зачетно-экзаменационная ведомость" },
+    { key: "attestationProtocolPrepared", label: "Сформирован протокол итоговой аттестации", includeTypes: ["ППП"] },
     { key: "personalCasePrinted", label: "Распечатано личное дело" },
     { key: "extensionDocsSent", label: "Отправлен комплект документов для продления обучения" },
     { key: "extensionDocsReceived", label: "Получен комплект документов для продления обучения" },
@@ -6966,7 +6972,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentEventTemplates() {
     const configured = normalizeConfiguredEventTemplates(state.data.meta.studentEventTemplates);
-    return configured.length ? configured : studentEventTemplates;
+    if (!configured.length) return studentEventTemplates;
+    return configured.some((event) => /сформирован.*протокол/i.test(event.label))
+      ? configured : [...configured, studentEventTemplates.find((event) => event.key === "attestationProtocolPrepared")];
   }
 
   function getContractEventTemplates() {
@@ -7506,7 +7514,7 @@ MAX - https://bizvmax.ru/zifra_plus
   window.addEventListener("ais-local-update-readiness", event => {
     event.detail.busy ||= Boolean(state.modal || state.adminSettingsDirty || recordFormSavePending
       || sharedStateDirty || sharedStateSaveRunning || sharedStatePendingCount || sharedStateConflict
-      || isSettingsDraftSessionActive() || document.querySelector("[data-student-program-promo-dialog]"));
+      || isSettingsDraftSessionActive() || document.querySelector("[data-student-program-promo-dialog], [data-attestation-tasks]"));
   });
   let recordLocks = new Map();
   let recordLocksPollRunning = false;
@@ -11470,12 +11478,12 @@ MAX - https://bizvmax.ru/zifra_plus
       || state.adminSettingsDirty
       || isSettingsDraftSessionActive()
       || document.visibilityState !== "visible"
-      || document.querySelector("[data-student-program-promo-dialog]")
+      || document.querySelector("[data-student-program-promo-dialog], [data-attestation-tasks]")
     ) return;
     sharedStatePollRunning = true;
     try {
       const metadata = await requestSharedApplicationState("metadata=1");
-      if (document.querySelector("[data-student-program-promo-dialog]")) return;
+      if (document.querySelector("[data-student-program-promo-dialog], [data-attestation-tasks]")) return;
       if (!metadata.exists) return;
       sharedStateOffline = Boolean(metadata.offline);
       sharedStatePendingCount = Math.max(0, Number(metadata.pendingCount) || 0);
@@ -14217,6 +14225,16 @@ MAX - https://bizvmax.ru/zifra_plus
       aisHistoryNavigationCloseModalRequested = false;
       aisHistoryNavigationDiscardApproved = false;
       // Keep the live form intact; the next Back should still reach the previous screen.
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
+    const attestationTasks = document.querySelector("[data-attestation-tasks]");
+    if (attestationTasks) {
+      const preview = document.querySelector("[data-generated-document-preview]");
+      const unsaved = document.querySelector("[data-unsaved-changes-dialog]");
+      if (unsaved) unsaved.cancelUnsavedChangesDialog?.();
+      else if (preview) preview.closeGeneratedDocumentPreview?.(false);
+      else attestationTasks.closeAttestationTasks?.();
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
@@ -18433,6 +18451,348 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function getAttestationTaskDefinitions() {
+    return [
+      { kind: "studentGradeSheet", title: "Ведомость", eventKey: "examSheetPrepared", eventPattern: /сформирован.*ведомост/i, types: ["КПК", "ППП"] },
+      { kind: "studentAttestationProtocol", title: "Протокол", eventKey: "attestationProtocolPrepared", eventPattern: /сформирован.*протокол/i, types: ["ППП"] }
+    ];
+  }
+
+  function getAttestationTaskEventKeys(record, definition) {
+    const events = [...getStudentEventTemplates(), ...Object.keys(record || {})
+      .filter((key) => /^event_.+_label$/.test(key))
+      .map((key) => ({ key: key.slice(6, -6), label: record[key] }))];
+    return unique([...events.filter((event) => event.key === definition.eventKey || definition.eventPattern.test(String(event.label || "")))
+      .map((event) => event.key), definition.eventKey]);
+  }
+
+  function isAttestationTaskCompleted(record, definition) {
+    return getAttestationTaskEventKeys(record, definition).some((key) =>
+      Boolean(normalizeEventState(record[`event_${key}_state`], record[`event_${key}_date`])));
+  }
+
+  function getPendingAttestationRows() {
+    const definitions = getAttestationTaskDefinitions();
+    return (state.data.collections.students || []).map((record) => {
+      const program = getStudentContextProgram(record);
+      const type = String(program?.type || "").trim().toUpperCase();
+      const documents = definitions.filter((definition) => definition.types.includes(type) && !isAttestationTaskCompleted(record, definition));
+      return { record, program, type, documents };
+    }).filter((row) => row.documents.length)
+      .sort((a, b) => String(a.record.name || "").localeCompare(String(b.record.name || ""), "ru"));
+  }
+
+  function getAttestationChairRecipient(record) {
+    const source = getStudentContextProgram(record);
+    if (!source || !getProgramCommissionSetById(source.commissionSetId)) return { name: "", email: "", error: "В программе не выбрана комиссия." };
+    const program = resolveProgramCommissionRecord(source);
+    const name = String(program.commissionChair || "").split(",")[0].trim();
+    if (!name) return { name, email: "", error: "Не указан председатель комиссии." };
+    const personKey = (value) => normalizeEmployeeActPersonName(value).replace(/ё/g, "е");
+    const emails = unique((state.data.collections.contracts || [])
+      .filter((person) => personKey(person.name) === personKey(name))
+      .map((person) => String(person.email || "").trim().toLowerCase()).filter(Boolean));
+    if (emails.length !== 1 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emails[0])) return {
+      name, email: "", error: emails.length > 1 ? "У председателя несколько адресов: уточните Email в карточке сотрудника." : "Не указан корректный Email председателя."
+    };
+    return { name, email: emails[0], error: "" };
+  }
+
+  function getAttestationTaskProblem(record, definition) {
+    const unavailable = getStudentAttestationDocumentUnavailableReason(record, definition.kind);
+    if (unavailable) return unavailable;
+    const template = getStudentCardDocumentTemplate(definition.kind);
+    if (!template) return "Не найден шаблон в конструкторе документов.";
+    const missing = getMissingStudentDocumentFields(record, template);
+    if (missing.length) return `Заполните: ${missing.map((item) => item.label).join(", ")}.`;
+    if (!getStudentYandexDocumentsFolder(record)) return "Не задана папка документов слушателя.";
+    return "";
+  }
+
+  function getAttestationTaskFingerprint(record, definition) {
+    const fields = ["id", "uid", "name", "programId", "program", "group", "startDate", "endDate", "expulsionDate", "expulsionOrderDate", "protocolNo", "finalGrade", "qualification", "noDeclension"];
+    const program = resolveProgramCommissionRecord(getStudentContextProgram(record) || {});
+    const template = getStudentCardDocumentTemplate(definition.kind);
+    return JSON.stringify({ record: fields.map((key) => record[key] ?? ""),
+      program: [program.id, program.name, program.type, program.commissionSetId, program.commissionChair, program.commissionMember1, program.commissionMember2, program.secretary, program.qualification],
+      plan: getEducationDocumentTrainingPlanRows(record),
+      template: template && [template.id, template.templateUrl, template.templatePath, template.fields, template.generationFormat, template.fileNameTemplate],
+      folder: getStudentYandexDocumentsFolder(record), local: getEffectiveLocalDocumentsMode() });
+  }
+
+  async function refreshAttestationTaskSnapshot() {
+    if (!sharedStateReady || isSettingsDraftSessionActive() || isDatabaseDemoMode()) throw new Error("Общая база недоступна для записи.");
+    if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) throw new Error("Не удалось завершить сохранение общей базы.");
+    const payload = await requestSharedApplicationState("flush=1");
+    if (!payload.exists || !payload.data || payload.writable === false || payload.offline || payload.syncPending || Number(payload.pendingCount) > 0) throw new Error("Общая база ещё синхронизируется. Повторите операцию позже.");
+    if (sharedStateDirty || sharedStateSaveRunning) throw new Error("Во время обновления данных началось другое сохранение. Повторите операцию.");
+    applySharedApplicationState(payload, { renderAfter: false });
+  }
+
+  async function withAttestationStudentLock(studentId, action) {
+    if (!canAccessView("students") || isDatabaseDemoMode()) throw new Error("Операции со слушателями недоступны.");
+    const entityType = recordLockEntityType("students"), entityId = String(studentId);
+    if (activeRecordLock?.key === recordLockKey(entityType, entityId)) throw new Error("Сначала сохраните и закройте карточку слушателя.");
+    const request = (operation) => requestSharedRecordLocks({ method: "POST", body: { action: operation, entityType, entityId, clientId: recordLockClientId } });
+    try { await request("acquire"); } catch (error) { throw new Error(error.status === 423 ? "Карточка занята другим пользователем." : error.message); }
+    let lockError = null;
+    const heartbeat = window.setInterval(() => { request("renew").catch((error) => { lockError = error; }); }, 20000);
+    const renew = async () => { if (lockError) throw new Error("Блокировка карточки потеряна. Повторите операцию после проверки данных."); await request("renew"); };
+    try { await refreshAttestationTaskSnapshot(); return await action(renew); }
+    finally { window.clearInterval(heartbeat); await request("release").catch(() => null); }
+  }
+
+  async function executeAttestationTask(item, options, result, onProgress = () => {}) {
+    return withAttestationStudentLock(item.studentId, async (renew) => {
+      let record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
+      if (!record) throw new Error("Слушатель больше не найден в базе.");
+      if (!result.saved && isAttestationTaskCompleted(record, item.definition)) return { ...result, skipped: true, message: "Уже отмечено другим пользователем." };
+      if (getAttestationTaskFingerprint(record, item.definition) !== item.fingerprint) throw new Error("Данные слушателя, программы или шаблона изменились. Обновите список и проверьте документ повторно.");
+      if (result.saved && result.fingerprint !== item.fingerprint) throw new Error("Данные изменились после сохранения документа. Старый файл не отправлен. Закройте список, проверьте документ и сформируйте его заново из карточки слушателя.");
+      const recipient = getAttestationChairRecipient(record);
+      if (options.sendEmail && (recipient.error || recipient.email !== item.email)) throw new Error(recipient.error || "Изменился адрес председателя. Требуется новое подтверждение отправки.");
+      const problem = getAttestationTaskProblem(record, item.definition);
+      if (!result.saved && problem) throw new Error(problem);
+      if (!result.saved) {
+        const template = { ...getStudentCardDocumentTemplate(item.definition.kind), saveFolderTemplate: studentDocumentsFolderTemplateMarker,
+          additionalSaveTargets: [], previewBeforeGeneration: options.previewEach, openAfterGeneration: false };
+        const local = getEffectiveLocalDocumentsMode();
+        const storageRequest = { studentFolder: getStudentYandexDocumentsFolder(record), studentName: record.name,
+          autoSaveLocal: local, saveToYandexDisk: !local, promptLocalSave: false, useBrowserDownloads: false, openAfterGeneration: false };
+        onProgress(`Формирование и сохранение: ${record.name} — ${item.definition.title}`);
+        const generated = await downloadStudentDocumentFromTemplate(template, record, null, "Не удалось сформировать документ", {
+          storageRequest, skipEmail: true, skipPreview: !options.previewEach, skipOpenAfterGeneration: true,
+          requireStorage: true, includeGeneratedBlob: true, quietErrors: true, quietEmail: true
+        });
+        if (generated?.cancelled) return { ...result, cancelled: true, message: "Предварительный просмотр отменён; сохранение и отправка не выполнялись." };
+        if (!generated?.storageResult?.localSaveResult?.saved && !generated?.storageResult?.yandexSaveResult?.saved) throw new Error("Сохранение в папку слушателя не подтверждено. Событие не отмечено, письмо не отправлено.");
+        Object.assign(result, { saved: true, fingerprint: item.fingerprint, blob: generated.blob, fileName: generated.fileName, outputFormat: generated.outputFormat, message: "Сохранён" });
+      }
+      if (!result.eventSaved) {
+        await renew();
+        const key = getAttestationTaskEventKeys(record, item.definition)[0];
+        markStudentEventsCompleted(record, key, "", { ensureVisible: true });
+        if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) throw new Error("Файл сохранён, но отметка события в общей базе не подтверждена. Повторите операцию для сохранения отметки.");
+        result.eventSaved = true;
+      }
+      if (options.sendEmail && !result.emailed) {
+        await renew();
+        await refreshAttestationTaskSnapshot();
+        record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
+        const current = getAttestationChairRecipient(record);
+        if (current.error || current.email !== item.email || !record || getAttestationTaskFingerprint(record, item.definition) !== item.fingerprint) throw new Error("Перед отправкой изменились данные или адрес председателя. Документ сохранён; обновите список и подтвердите отправку заново.");
+        if (!result.blob) throw new Error("Нет вложения для отправки. Откройте сохранённый документ из папки слушателя.");
+        onProgress(`Отправка: ${item.definition.title} — ${current.email}`);
+        const attachment = await createStudentDocumentEmailAttachment(result.blob, result.fileName, result.outputFormat);
+        const sent = await sendServerEmail({ email: current.email, subject: `${item.definition.title}: ${record.name}`,
+          message: `Добрый день!\n\nНаправляем документ «${item.definition.title}» по итогам обучения слушателя ${record.name} по программе «${getStudentContextProgram(record)?.name || record.program || ""}».\nДокумент приложен к письму.\n\nУчебный центр «Цифровизация Плюс»`,
+          attachment, recipientMode: "student", recipientLabel: "председателя комиссии", skipConfirmation: true, quiet: true,
+          entityType: "students", entityId: record.id, entityName: record.name, messageType: "Итоговые документы председателю комиссии" });
+        if (sent !== true) throw new Error("Документ сохранён, но отправка письма не подтверждена. Доступна повторная отправка без повторной генерации; при тайм-ауте сначала проверьте отправленные письма.");
+        result.emailed = true;
+      }
+      if (!options.sendEmail || result.emailed) delete result.blob;
+      result.message = result.emailed ? `Сохранён и отправлен: ${item.email}` : "Сохранён, событие отмечено";
+      delete result.error;
+      return result;
+    });
+  }
+
+  async function previewAttestationTask(record, definition) {
+    const problem = getAttestationTaskProblem(record, definition);
+    if (problem) throw new Error(problem);
+    const template = getStudentCardDocumentTemplate(definition.kind);
+    const draft = prepareStudentAttestationDocumentRecord(record, definition.kind);
+    const taskId = beginDocumentGeneration(`Просмотр: ${definition.title}`);
+    let token = "", origin = "";
+    try {
+      origin = await resolveDocumentProcessingOrigin("documentConversion");
+      const preview = await requestGeneratedDocumentPreview({ templateUrl: template.templateUrl, templatePath: template.templatePath,
+        fallbackTemplatePath: template.fallbackTemplatePath || "", fileName: `${definition.title}.pdf`,
+        fieldValues: evaluateContractTemplateFields(draft, template.fields),
+        sourceValues: { ...collectContractTemplateSourceValues(draft), ...draft.workflowSourceValues },
+        documentKind: definition.kind, useCustomDocumentProperties: isChecked(template.useCustomDocumentProperties),
+        preferLocalTemplate: getEffectiveLocalDocumentsMode(), outputFormat: "pdf", skipPhoto: true }, origin);
+      token = preview.previewToken;
+      await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: `${definition.title}.pdf`, outputFormat: "pdf", readOnly: true });
+    } finally {
+      if (token) await cancelGeneratedDocumentPreview(token, origin).catch(() => null);
+      endDocumentGeneration(taskId);
+    }
+  }
+
+  function openAttestationTasksDialog() {
+    if (document.querySelector("[data-attestation-tasks]")) return;
+    if (!canAccessView("students") || state.modal || isSettingsDraftSessionActive()) { alert("Сначала сохраните и закройте открытую карточку или настройки."); return; }
+    const definitions = getAttestationTaskDefinitions();
+    const session = { rows: getPendingAttestationRows(), results: new Map(), selected: new Set(), running: false, busy: false, stop: false };
+    const keyOf = (id, kind) => `${encodeURIComponent(String(id))}:${kind}`;
+    session.rows.forEach((row) => row.documents.forEach((definition) => {
+      if (!getAttestationTaskProblem(row.record, definition)) session.selected.add(keyOf(row.record.id, definition.kind));
+    }));
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop attestation-tasks-backdrop";
+    backdrop.dataset.attestationTasks = "";
+    backdrop.innerHTML = `<section class="modal attestation-tasks-dialog" role="dialog" aria-modal="true" aria-labelledby="attestationTasksTitle">
+      <header class="modal-head"><div><p class="eyebrow">По неотмеченным событиям слушателей</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
+      <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
+      <p class="muted">Ведомости — КПК и ППП, протоколы — ППП. Просмотр по кнопке в ячейке ничего не сохраняет и не отправляет.</p>
+      <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th>Слушатель / программа</th><th><label title="Выбрать все документы"><input type="checkbox" data-task-all aria-label="Все документы">Все</label></th><th>Ведомость</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
+      <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
+      <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
+      <footer class="modal-actions"><span data-task-selected></span><button class="ghost-button" data-task-stop type="button" hidden>Остановить после текущего документа</button><button class="primary-button" data-task-generate type="button">Генерировать</button></footer>
+    </section>`;
+    const $ = (selector) => backdrop.querySelector(selector);
+    const notice = (text) => { $("[data-task-notice]").textContent = text; };
+    const closeConfirmation = () => { $("[data-task-confirmation]").hidden = true; $("[data-task-confirmation]").innerHTML = ""; };
+    const refreshRows = () => {
+      const rows = getPendingAttestationRows(), ids = new Set(rows.map((row) => String(row.record.id)));
+      session.rows.forEach((old) => {
+        if (!ids.has(String(old.record.id)) && old.documents.some((definition) => session.results.has(keyOf(old.record.id, definition.kind)))) {
+          const record = state.data.collections.students.find((item) => String(item.id) === String(old.record.id));
+          if (record) rows.push({ ...old, record });
+        } else if (ids.has(String(old.record.id))) {
+          const row = rows.find((item) => String(item.record.id) === String(old.record.id));
+          old.documents.forEach((definition) => { if (session.results.has(keyOf(old.record.id, definition.kind)) && !row.documents.some((item) => item.kind === definition.kind)) row.documents.push(definition); });
+        }
+      });
+      session.rows = rows;
+    };
+    const paint = () => {
+      const locked = session.running || session.busy;
+      $("[data-task-rows]").innerHTML = session.rows.length ? session.rows.map((row) => {
+        const recipient = getAttestationChairRecipient(row.record);
+        const cells = definitions.map((definition) => {
+          const key = keyOf(row.record.id, definition.kind), result = session.results.get(key);
+          if (!row.documents.some((item) => item.kind === definition.kind)) return "<td>—</td>";
+          const problem = result?.saved ? "" : getAttestationTaskProblem(row.record, definition);
+          const completed = Boolean(result?.saved && result.eventSaved && !result.error);
+          return `<td><div class="attestation-task-cell"><label class="checkbox-line"><input type="checkbox" data-task-key="${escapeAttr(key)}" ${session.selected.has(key) && !completed ? "checked" : ""} ${locked || problem || completed ? "disabled" : ""}>${escapeHtml(result?.saved ? "Сохранён" : "Сформировать")}</label><button class="ghost-button" type="button" data-task-preview="${escapeAttr(key)}" ${locked || problem ? "disabled" : ""}>Просмотр</button></div><small class="${result?.error || problem ? "attestation-task-error" : "muted"}">${escapeHtml(result?.error || problem || result?.message || "Ожидает генерации")}</small></td>`;
+        }).join("");
+        return `<tr><td><strong>${escapeHtml(row.record.name || "Без ФИО")}</strong><small>${escapeHtml(getStudentContextProgram(row.record)?.name || row.record.program || "")}</small><small>${escapeHtml(row.type)} · ${escapeHtml(row.record.status || "Статус не указан")}</small></td><td>${row.documents.length}</td>${cells}<td>${escapeHtml(recipient.name || "—")}<small class="${recipient.error ? "attestation-task-error" : ""}">${escapeHtml(recipient.error || recipient.email)}</small></td></tr>`;
+      }).join("") : '<tr><td colspan="5">Нет ведомостей и протоколов, ожидающих формирования.</td></tr>';
+      const selectable = [...backdrop.querySelectorAll("[data-task-key]")].filter((input) => !input.disabled);
+      const selected = selectable.filter((input) => input.checked).length;
+      $("[data-task-selected]").textContent = `Слушателей: ${session.rows.length} · Выбрано документов: ${selected}`;
+      $("[data-task-all]").disabled = locked || !selectable.length;
+      $("[data-task-all]").checked = selected > 0 && selected === selectable.length;
+      $("[data-task-all]").indeterminate = selected > 0 && selected < selectable.length;
+      $("[data-task-generate]").disabled = locked || !selected || isDatabaseDemoMode();
+      $("[data-task-refresh]").disabled = locked;
+      $("[data-task-send]").disabled = locked;
+      $("[data-task-preview-each]").disabled = locked;
+      $("[data-task-stop]").hidden = !session.running;
+      backdrop.querySelectorAll("[data-task-key]").forEach((input) => input.addEventListener("change", () => {
+        input.checked ? session.selected.add(input.dataset.taskKey) : session.selected.delete(input.dataset.taskKey); closeConfirmation(); paint();
+      }));
+      backdrop.querySelectorAll("[data-task-preview]").forEach((button) => button.addEventListener("click", async () => {
+        if (session.running || session.busy) return;
+        const row = session.rows.find((item) => item.documents.some((definition) => keyOf(item.record.id, definition.kind) === button.dataset.taskPreview));
+        const definition = row.documents.find((item) => keyOf(row.record.id, item.kind) === button.dataset.taskPreview);
+        session.busy = true; paint(); notice("Подготовка предварительного просмотра…");
+        try { await previewAttestationTask(row.record, definition); notice("Просмотр закрыт. Сохранение, отметка события и отправка не выполнялись."); }
+        catch (error) { notice(error.message); }
+        finally { session.busy = false; paint(); }
+      }));
+    };
+    const confirmPanel = (title, html, label, action) => {
+      const panel = $("[data-task-confirmation]");
+      panel.innerHTML = `<h3>${escapeHtml(title)}</h3>${html}<div><button type="button" class="ghost-button" data-task-confirm-cancel>Отмена</button><button type="button" class="primary-button" data-task-confirm-accept>${escapeHtml(label)}</button></div>`;
+      panel.hidden = false;
+      panel.querySelector("[data-task-confirm-cancel]").onclick = closeConfirmation;
+      panel.querySelector("[data-task-confirm-accept]").onclick = () => { closeConfirmation(); action(); };
+      panel.querySelector("[data-task-confirm-accept]").focus({ preventScroll: true });
+    };
+    const beforeUnload = (event) => { if (session.running || session.busy || [...session.results.values()].some((result) => result.saved && result.error)) { event.preventDefault(); event.returnValue = ""; } };
+    const finishClose = () => {
+      window.removeEventListener("beforeunload", beforeUnload); backdrop.remove(); session.results.clear(); render();
+      document.querySelector("[data-action='open-attestation-tasks']")?.focus({ preventScroll: true });
+    };
+    backdrop.closeAttestationTasks = () => {
+      if (session.running) { session.stop = true; notice("Остановка после завершения текущего документа. Сохранённые файлы останутся в папках слушателей."); return; }
+      if (session.busy) return;
+      if (!$("[data-task-confirmation]").hidden) { closeConfirmation(); return; }
+      const pending = [...session.results.values()].filter((result) => result.saved && result.error).length;
+      if (pending) confirmPanel("Закрыть список с незавершёнными действиями?", `<p>Документов с ошибками после сохранения: ${pending}. Файлы находятся в папках слушателей. Повторная отправка без генерации доступна, пока это окно открыто. После закрытия при необходимости отправьте сохранённые файлы вручную.</p>`, "Закрыть список", finishClose);
+      else finishClose();
+    };
+    $("[data-task-close]").onclick = backdrop.closeAttestationTasks;
+    $("[data-task-stop]").onclick = () => { session.stop = true; notice("Остановка после текущего документа…"); };
+    $("[data-task-all]").onchange = (event) => { backdrop.querySelectorAll("[data-task-key]:not(:disabled)").forEach((input) => event.target.checked ? session.selected.add(input.dataset.taskKey) : session.selected.delete(input.dataset.taskKey)); closeConfirmation(); paint(); };
+    $("[data-task-send]").onchange = closeConfirmation;
+    $("[data-task-preview-each]").onchange = closeConfirmation;
+    $("[data-task-refresh]").onclick = async () => {
+      session.busy = true; closeConfirmation(); paint(); notice("Обновление общей базы…");
+      try { await refreshAttestationTaskSnapshot(); refreshRows(); notice("Список обновлён."); } catch (error) { notice(error.message); }
+      finally { session.busy = false; paint(); }
+    };
+    $("[data-task-generate]").onclick = async () => {
+      if (session.running || session.busy) return;
+      session.busy = true; closeConfirmation(); paint(); notice("Проверка данных и получателей…");
+      try {
+        await refreshAttestationTaskSnapshot(); refreshRows();
+        const options = { sendEmail: $("[data-task-send]").checked, previewEach: $("[data-task-preview-each]").checked };
+        const items = [];
+        session.rows.forEach((row) => row.documents.forEach((definition) => {
+          const key = keyOf(row.record.id, definition.kind), result = session.results.get(key);
+          if (!session.selected.has(key) || (result?.saved && result.eventSaved && !result.error)) return;
+          const recipient = getAttestationChairRecipient(row.record);
+          const problem = (!result?.saved && getAttestationTaskProblem(row.record, definition)) || (options.sendEmail && recipient.error);
+          if (problem) { session.results.set(key, { ...result, error: problem }); return; }
+          items.push({ key, studentId: String(row.record.id), name: row.record.name, definition, email: recipient.email,
+            fingerprint: getAttestationTaskFingerprint(row.record, definition) });
+        }));
+        if (!items.length) { notice("Нет выбранных документов, готовых к выполнению. Проверьте сообщения в таблице."); return; }
+        const recipients = unique(items.map((item) => item.email).filter(Boolean));
+        const generateCount = items.filter((item) => !session.results.get(item.key)?.saved).length;
+        const cachedCount = items.length - generateCount;
+        const confirmTitle = generateCount ? "Подтверждение генерации и сохранения" : "Подтверждение повторного действия";
+        const confirmLabel = generateCount ? (options.sendEmail ? "Генерировать и отправить" : "Генерировать и сохранить") : (options.sendEmail ? "Повторить отправку" : "Завершить сохранение отметок");
+        confirmPanel(confirmTitle, `<p>Выбрано документов: ${items.length}.</p>${generateCount ? `<p>Сформировать и сохранить в папки слушателей: ${generateCount}. Одноимённые файлы могут быть заменены.</p>` : ""}${cachedCount ? `<p>Уже сохранено: ${cachedCount}. Повторной генерации этих файлов не будет.</p>` : ""}${options.sendEmail ? `<p>На каждый документ будет отправлено отдельное письмо председателю комиссии с вложением. Получатели:</p><ul>${recipients.map((email) => `<li>${escapeHtml(email)} — документов: ${items.filter((item) => item.email === email).length}</li>`).join("")}</ul>` : "<p>Отправка писем выключена.</p>"}`, confirmLabel, async () => {
+          session.running = true; session.stop = false; paint();
+          const progress = $("[data-task-progress]"); progress.hidden = false; progress.max = items.length; progress.value = 0;
+          try {
+            for (const item of items) {
+              if (session.stop) break;
+              const result = session.results.get(item.key) || {};
+              session.results.set(item.key, result);
+              try { Object.assign(result, await executeAttestationTask(item, options, result, notice)); }
+              catch (error) { result.error = error.message; if (sharedStateDirty || sharedStateConflict) session.stop = true; }
+              if (!result.error) session.selected.delete(item.key);
+              progress.value += 1; paint();
+            }
+          } finally {
+            session.running = false; refreshRows(); paint();
+            notice(`${session.stop ? "Остановлено" : "Обработка завершена"}. Обработано: ${progress.value} из ${items.length}. Результаты и ошибки показаны в столбцах документов.`);
+          }
+        });
+        notice("Проверьте получателей и подтвердите действие. До подтверждения файлы не сохраняются и письма не отправляются.");
+      } catch (error) { notice(error.message); }
+      finally { session.busy = false; paint(); }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...backdrop.querySelectorAll("button:not(:disabled), input:not(:disabled), [tabindex='0']")]
+        .filter((control) => control.getClientRects().length && !control.closest("[hidden]"));
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    });
+    document.body.appendChild(backdrop); paint();
+    $("[data-task-close]").focus({ preventScroll: true });
+  }
+
+  function renderAttestationDashboardTile() {
+    const rows = getPendingAttestationRows();
+    const count = (kind) => rows.reduce((sum, row) => sum + Number(row.documents.some((item) => item.kind === kind)), 0);
+    const sheets = count("studentGradeSheet"), protocols = count("studentAttestationProtocol");
+    return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-attestation-tasks" title="Сформировать ведомости и протоколы, ещё не отмеченные в событиях слушателей">
+      <span class="eyebrow">Итоговые документы</span><strong>${sheets + protocols}</strong>
+      <span>Ведомости и протоколы</span><small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}</small>
+    </button>`;
+  }
+
   function renderDashboard() {
     const students = state.data.collections.students;
     const direct = sumBy(getAllDirectExpenses(), "amount");
@@ -18487,6 +18847,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"}">
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -18513,6 +18874,8 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
       ` : ""}
 
+      ${renderAttestationDashboardTile()}
+      </div>
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -43397,6 +43760,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const attestationTasks = document.querySelector("[data-attestation-tasks]");
+    if (attestationTasks) {
+      const preview = document.querySelector("[data-generated-document-preview]");
+      if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
+      else if (preview) preview.closeGeneratedDocumentPreview?.(false);
+      else attestationTasks.closeAttestationTasks?.();
+      return true;
+    }
     const promoDialog = document.querySelector("[data-student-program-promo-dialog]");
     if (promoDialog) {
       if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
@@ -43649,6 +44020,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindEvents() {
+    document.querySelector("[data-action='open-attestation-tasks']")?.addEventListener("click", openAttestationTasksDialog);
     bindDocumentWorkflowEvents();
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
@@ -71229,11 +71601,17 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       saveButton?.addEventListener("click", saveCurrentEditorChanges);
       backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.addEventListener("click", () => {
-        finish(true);
+        if (!options.readOnly) finish(true);
       });
+      if (options.readOnly) {
+        editButton.hidden = true;
+        continueButton.hidden = true;
+        if (description) description.textContent = "Только просмотр. Файл не сохраняется, письмо не отправляется.";
+        if (hint) hint.textContent = "Закройте просмотр, чтобы вернуться к списку.";
+      }
       document.body.appendChild(backdrop);
       requestAnimationFrame(() => {
-        backdrop.querySelector("[data-action='confirm-generated-document-preview']")?.focus({ preventScroll: true });
+        backdrop.querySelector(options.readOnly ? "[data-action='cancel-generated-document-preview']" : "[data-action='confirm-generated-document-preview']")?.focus({ preventScroll: true });
       });
     });
   }
@@ -71769,7 +72147,7 @@ MAX - https://bizvmax.ru/zifra_plus
         storageRequest,
         generatedBlob,
         {
-          suppressDownloadFallback: Boolean(
+          suppressDownloadFallback: options.requireStorage === true || Boolean(
             emailRequest && (storageRequest.autoSaveLocal || storageRequest.saveToYandexDisk)
           ),
           quietWarning: options.quietEmail === true
@@ -71843,13 +72221,15 @@ MAX - https://bizvmax.ru/zifra_plus
         storageResult,
         additionalSaveResult,
         outputFormat: responseDetails.outputFormat,
-        conversionFallback: responseDetails.conversionFallback
+        conversionFallback: responseDetails.conversionFallback,
+        ...(options.includeGeneratedBlob ? { blob: generatedBlob } : {})
       };
     } catch (error) {
       if (pendingPreviewToken) {
         await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
         pendingPreviewToken = "";
       }
+      if (options.quietErrors) throw error;
       alert(`${errorTitle}: ${error.message}`);
       return null;
     } finally {
@@ -71954,12 +72334,18 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     if (!validateStudentDocumentRequiredFields(record, documentTemplate)) return;
-    return downloadStudentDocumentFromTemplate(
+    const result = await downloadStudentDocumentFromTemplate(
       documentTemplate,
       record,
       button,
       errorTitle
     );
+    const definition = ["studentGradeSheet", "studentAttestationProtocol"].includes(documentKind)
+      ? getAttestationTaskDefinitions().find((item) => item.kind === documentKind) : null;
+    if (definition && !result?.cancelled && (result?.storageResult?.localSaveResult?.saved || result?.storageResult?.yandexSaveResult?.saved)) {
+      markStudentEventsCompleted(record, getAttestationTaskEventKeys(record, definition)[0], "", { ensureVisible: true });
+    }
+    return result;
   }
 
   function ensureStudentOrderNumber(record, fieldName, message) {
