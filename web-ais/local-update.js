@@ -107,6 +107,18 @@ function clientsReady(root, now = Date.now()) {
   }
   return true;
 }
+function requestImmediateUpdate(root, request) {
+  const state = readStatus(root);
+  if (request.ready !== true || !clientsReady(root)) throw Error("Сначала сохраните и закройте карточки во всех окнах системы.");
+  if (state.phase !== "warning" || !state.warningId || request.warningId !== state.warningId
+    || request.targetVersion !== state.targetVersion || Date.now() - Number(state.updatedAt || 0) > 15000) {
+    throw Error("Обратный отсчёт уже изменился. Дождитесь актуального состояния обновления.");
+  }
+  // A request applies only to this countdown, never to a future ready period.
+  atomicJson(path.join(runtimeDir(root), "immediate-request.json"), {
+    warningId: state.warningId, targetVersion: state.targetVersion, requestedAt: Date.now()
+  });
+}
 function replaceFile(target, bytes) {
   fs.mkdirSync(path.dirname(target), {recursive:true});
   const temp = target + `.ais-update-${crypto.randomUUID()}`;
@@ -181,7 +193,7 @@ function createUpdater(root, hooks, options={}) {
   const runningVersion=version(root);
   let running=false, disposed=false, maintenance=false, updated=false, nextCheck=Date.now()+15000;
   let state={phase:"idle",version:version(root),build:build(root),label:"Обновления проверяются автоматически"};
-  const report=patch=>{state={...state,...patch,updatedAt:Date.now()};atomicJson(path.join(dir,"status.json"),state);};
+  const report=patch=>{state={...state,...patch,canUpdateNow:(patch.phase||state.phase)==="warning",updatedAt:Date.now()};atomicJson(path.join(dir,"status.json"),state);};
   const heartbeat=setInterval(()=>{if(running)report({});},5000);heartbeat.unref?.();
   async function check() {
     if(running||disposed||Date.now()<nextCheck)return;
@@ -209,12 +221,14 @@ function createUpdater(root, hooks, options={}) {
         report({completed:++completed});
       }
       report({phase:"waiting",label:"Доступно обновление. Закройте карточки и завершите операции; затем установка начнётся автоматически."});
-      let readySince=0;
+      let readySince=0, warningId="";
       while(!disposed) {
         if(clientsReady(root) && await hooks.idle()) {
-          if(!readySince)readySince=Date.now();
-          report({phase:"warning",label:"Система будет временно заблокирована для обновления",seconds:Math.max(0,Math.ceil((warningMs-(Date.now()-readySince))/1000))});
-          if(Date.now()-readySince>=warningMs)break;
+          if(!readySince){readySince=Date.now();warningId=crypto.randomUUID();}
+          report({phase:"warning",warningId,label:"Система будет временно заблокирована для обновления",seconds:Math.max(0,Math.ceil((warningMs-(Date.now()-readySince))/1000))});
+          const immediate=readJson(path.join(dir,"immediate-request.json"));
+          if(Date.now()-readySince>=warningMs || (immediate?.warningId===warningId
+            && immediate.targetVersion===release.version && immediate.requestedAt>=readySince))break;
         } else {readySince=0;report({phase:"waiting",label:"Обновление ожидает закрытия карточек и завершения операций."});}
         await wait(pollMs);
       }
@@ -247,4 +261,4 @@ function createUpdater(root, hooks, options={}) {
   }
   return {check,recover,maintenance:()=>maintenance,didUpdate:()=>updated,dispose(){disposed=true;clearInterval(heartbeat);},checkNow(){nextCheck=0;return check();}};
 }
-module.exports={BASE,PUBLIC_KEY,FILES,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,restore,install,createUpdater};
+module.exports={BASE,PUBLIC_KEY,FILES,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,restore,install,createUpdater};

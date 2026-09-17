@@ -17,6 +17,15 @@ try{
   assert.equal(request("POST","/api/local-update/status",{id,ready:false},"https://attacker.test").status,403);
   assert.equal(request("POST","/api/local-update/status",{id,ready:false},"http://127.0.0.1:18881").status,200);
   assert.equal(up.clientsReady(root),false);
+  const warning={phase:"warning",canUpdateNow:true,warningId:crypto.randomUUID(),targetVersion:"1.0.1",updatedAt:Date.now()};
+  up.atomicJson(path.join(up.runtimeDir(root),"status.json"),warning);
+  const start={id,ready:true,updateNow:true,warningId:warning.warningId,targetVersion:warning.targetVersion};
+  assert.equal(request("POST","/api/local-update/status",start,"https://attacker.test").status,403);
+  assert.equal(request("POST","/api/local-update/status",{...start,ready:false},"http://127.0.0.1:18881").status,409);
+  assert.equal(request("POST","/api/local-update/status",{...start,warningId:"stale"},"http://127.0.0.1:18881").status,409);
+  const accepted=request("POST","/api/local-update/status",start,"http://127.0.0.1:18881");
+  assert.equal(accepted.status,200);assert.equal(JSON.parse(accepted.body).updateNowAccepted,true);
+  assert.equal(up.readJson(path.join(up.runtimeDir(root),"immediate-request.json")).warningId,warning.warningId);
   up.atomicJson(path.join(up.runtimeDir(root),"status.json"),{phase:"installing",updatedAt:Date.now(),label:"Updating"});
   for(const method of ["GET","POST","DELETE"])assert.equal(request(method,"/api/students/save").status,503);
   const maintenancePage=request("GET","/");assert.equal(maintenancePage.status,503);assert.match(maintenancePage.body,/local-update-client.js\?v=maintenance/);
@@ -28,5 +37,5 @@ try{
   const supervisor=fs.readFileSync(path.join(__dirname,"start-lan-system.js"),"utf8");
   assert.match(supervisor,/await localUpdater.recover\(\)/);assert.match(supervisor,/localUpdater\?\.maintenance\(\)/);
   assert.match(supervisor,/await isAisServiceHealthyWithRetry/);
-  console.log("PASS: same-origin leases, CSRF rejection, all-method maintenance gate, live progress endpoint, request-drain and supervised health checks");
+  console.log("PASS: same-origin leases and immediate-update requests, CSRF/stale/busy rejection, all-method maintenance gate, live progress endpoint, request-drain and supervised health checks");
 }finally{if(path.dirname(root)===os.tmpdir()&&path.basename(root).startsWith("ais-update-gateway-"))fs.rmSync(root,{recursive:true,force:true});}

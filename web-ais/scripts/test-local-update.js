@@ -41,6 +41,31 @@ async function main(){
   for(let i=0;i<100&&up.readStatus(blocked.root).phase!=="waiting";i++)await pause(5);
   assert.equal(up.readStatus(blocked.root).phase,"waiting");assert.equal(calls,0);assert.equal(up.version(blocked.root),"1.0.0");
   up.writeLease(blocked.root,client,true);await running;waiting.dispose();assert.equal(calls,1);
+  const immediate=fixture();let immediateRestarts=0,serverIdle=true;
+  const now=up.createUpdater(immediate.root,{idle:async()=>serverIdle,restart:async()=>{immediateRestarts++;}},{publicKey,fetcher:immediate.fetcher,pollMs:5,warningMs:60000,drainMs:5});
+  const nowRunning=now.checkNow();
+  async function phase(root,name){for(let i=0;i<400;i++){const value=up.readStatus(root);if(value.phase===name)return value;await pause(5);}throw Error("Expected phase "+name);}
+  try {
+    const warning=await phase(immediate.root,"warning");assert.equal(warning.canUpdateNow,true);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:false}),/Сначала/);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true,warningId:"stale"}),/отсчёт/);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true,targetVersion:"8.0.0"}),/отсчёт/);
+    const busyClient=crypto.randomUUID();up.writeLease(immediate.root,busyClient,false);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/Сначала/);
+    up.writeLease(immediate.root,busyClient,true);
+    up.requestImmediateUpdate(immediate.root,{...warning,ready:true});
+    // New activity invalidates the accepted shortcut, not the safety checks.
+    serverIdle=false;await phase(immediate.root,"waiting");serverIdle=true;
+    const renewed=await phase(immediate.root,"warning");assert.notEqual(renewed.warningId,warning.warningId);
+    await pause(25);assert.equal(immediateRestarts,0);assert.equal(up.version(immediate.root),"1.0.0");
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/отсчёт/);
+    up.requestImmediateUpdate(immediate.root,{...renewed,ready:true});
+    up.requestImmediateUpdate(immediate.root,{...renewed,ready:true});
+    await Promise.race([nowRunning,pause(2000).then(()=>{throw Error("Immediate update kept the 60-second countdown");})]);
+    assert.equal(immediateRestarts,1);assert.equal(up.version(immediate.root),"1.0.1");
+    assert.equal(up.readStatus(immediate.root).canUpdateNow,false);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...renewed,ready:true}),/отсчёт/);
+  } finally {now.dispose();await nowRunning;}
   const old=fixture("0.9.0"),older=up.createUpdater(old.root,{idle:async()=>true,restart:async()=>assert.fail("downgrade")},{publicKey,fetcher:old.fetcher});await older.checkNow();older.dispose();assert.equal(old.requests.length,1);
   const corrupt=fixture();corrupt.contents.set(corrupt.release.files[0].sha256,Buffer.from("WRONG"));
   const bad=up.createUpdater(corrupt.root,{idle:async()=>true,restart:async()=>assert.fail("corrupt")},{publicKey,fetcher:corrupt.fetcher});await bad.checkNow();bad.dispose();assert.equal(up.version(corrupt.root),"1.0.0");assert.match(up.readStatus(corrupt.root).label,/сумма/);
@@ -58,7 +83,7 @@ async function main(){
   // Files changed by an external folder sync; the old process still needs restarting.
   for(const file of shared.release.files)fs.writeFileSync(path.join(shared.root,file.path),shared.contents.get(file.sha256));
   await sharedUpdater.checkNow();sharedUpdater.dispose();assert.equal(sharedRestarts,1);
-  console.log("PASS: signed manifests, exact allowlist, downgrade prevention, download hashes, waiting for drafts, install/restart, backup/rollback, crash journal, settings untouched");
+  console.log("PASS: signed manifests, exact allowlist, downgrade prevention, download hashes, immediate update/countdown scope, waiting for drafts and operations, install/restart, backup/rollback, crash journal, settings untouched");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{
   for(const root of roots){if(path.dirname(root)===os.tmpdir()&&path.basename(root).startsWith("ais-update-test-"))fs.rmSync(root,{recursive:true,force:true});}

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.497",
+    version: "1.7.498",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.498",
+      releasedAt: "2026-09-17",
+      changes: ["В уведомление об обновлении добавлена кнопка «Обновить сейчас»: она пропускает обратный отсчёт, сохраняя проверки несохранённых карточек, других окон и выполняющихся операций."]
+    },
     {
       version: "1.7.497",
       releasedAt: "2026-09-17",

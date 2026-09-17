@@ -514,7 +514,17 @@ const server = http.createServer((req, res) => {
     let body="";
     req.on("data",chunk=>{body+=chunk;if(body.length>1024)req.destroy();});
     req.on("end",()=>{
-      try {const data=JSON.parse(body);localUpdate.writeLease(__dirname,data.id,data.ready,data.release===true);send(res,200,JSON.stringify({protocol:1,...localUpdate.readStatus(__dirname)}),"application/json; charset=utf-8");}
+      try {
+        const data=JSON.parse(body);
+        localUpdate.writeLease(__dirname,data.id,data.ready,data.release===true);
+        if(data.updateNow===true){
+          try {
+            if(data.release===true)throw Error("Окно системы уже закрывается.");
+            localUpdate.requestImmediateUpdate(__dirname,data);
+          } catch(error){send(res,409,JSON.stringify({error:error.message}),"application/json; charset=utf-8");return;}
+        }
+        send(res,200,JSON.stringify({protocol:1,...localUpdate.readStatus(__dirname),...(data.updateNow===true?{updateNowAccepted:true}:{})}),"application/json; charset=utf-8");
+      }
       catch {send(res,400,"Invalid update status request");}
     });
     return;
