@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.500",
+    version: "1.7.501",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.501",
+      releasedAt: "2026-09-17",
+      changes: ["В списке «Ведомости и протоколы» добавлены открытие карточки по ФИО с возвратом к сохранённому выбору, выбор слушателей целиком и кнопки генерации каждого документа отдельно. Одиночная и групповая генерация сохраняют проверки данных, предварительный просмотр и подтверждение отправки."]
+    },
     {
       version: "1.7.500",
       releasedAt: "2026-09-17",
@@ -14244,7 +14249,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const attestationTasks = document.querySelector("[data-attestation-tasks]");
-    if (attestationTasks) {
+    if (attestationTasks && !attestationTasks.hidden) {
       const preview = document.querySelector("[data-generated-document-preview]");
       const unsaved = document.querySelector("[data-unsaved-changes-dialog]");
       if (unsaved) unsaved.cancelUnsavedChangesDialog?.();
@@ -18468,7 +18473,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getAttestationTaskDefinitions() {
     return [
-      { kind: "studentGradeSheet", title: "Ведомость", eventKey: "examSheetPrepared", eventPattern: /сформирован.*ведомост/i, types: ["КПК", "ППП"] },
+      { kind: "studentGradeSheet", title: "Ведомость экзаменов", eventKey: "examSheetPrepared", eventPattern: /сформирован.*ведомост/i, types: ["КПК", "ППП"] },
       { kind: "studentAttestationProtocol", title: "Протокол", eventKey: "attestationProtocolPrepared", eventPattern: /сформирован.*протокол/i, types: ["ППП"] }
     ];
   }
@@ -18644,6 +18649,34 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  async function openAttestationTaskStudentCard(studentId, backdrop, session, onResume) {
+    if (session.running || session.busy) return;
+    session.busy = true;
+    backdrop.hidden = true;
+    let opening = true, finished = false, openingError = "";
+    const resume = () => {
+      if (finished || opening || state.modal) return;
+      finished = true;
+      observer.disconnect();
+      session.busy = false;
+      backdrop.hidden = false;
+      onResume(openingError);
+    };
+    // Keep selection and saved attachments for retries while the regular card
+    // owns its normal lock, navigation and unsaved-changes confirmation.
+    const observer = new MutationObserver(resume);
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      await openStudentCardById(studentId, session.rows.map((row) => String(row.record.id)));
+      if (!state.modal) openingError = "Карточка не открыта. Выбор слушателей сохранён.";
+    } catch (error) {
+      openingError = error.message;
+    } finally {
+      opening = false;
+      resume();
+    }
+  }
+
   function openAttestationTasksDialog() {
     if (document.querySelector("[data-attestation-tasks]")) return;
     if (!canAccessView("students") || state.modal || isSettingsDraftSessionActive()) { alert("Сначала сохраните и закройте открытую карточку или настройки."); return; }
@@ -18660,10 +18693,10 @@ MAX - https://bizvmax.ru/zifra_plus
       <header class="modal-head"><div><p class="eyebrow">По неотмеченным событиям слушателей</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
       <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
       <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы — ППП. Просмотр ничего не сохраняет и не отправляет.</p>
-      <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th>Слушатель / программа</th><th><label title="Выбрать все документы"><input type="checkbox" data-task-all aria-label="Все документы">Все</label></th><th>Ведомость</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
+      <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th><label title="Выбрать всех слушателей"><input type="checkbox" data-task-all aria-label="Все слушатели"></label></th><th>Слушатель / программа</th><th>Ведомость экзаменов</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
       <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
       <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
-      <footer class="modal-actions"><span data-task-selected></span><button class="ghost-button" data-task-stop type="button" hidden>Остановить после текущего документа</button><button class="primary-button" data-task-generate type="button">Генерировать</button></footer>
+      <footer class="modal-actions"><span data-task-selected></span><button class="ghost-button" data-task-stop type="button" hidden>Остановить после текущего документа</button><button class="primary-button" data-task-generate type="button">Генерировать выбранное</button></footer>
     </section>`;
     const $ = (selector) => backdrop.querySelector(selector);
     const notice = (text) => { $("[data-task-notice]").textContent = text; };
@@ -18683,6 +18716,7 @@ MAX - https://bizvmax.ru/zifra_plus
     };
     const paint = () => {
       const locked = session.running || session.busy;
+      const selectableKeys = new Set();
       $("[data-task-rows]").innerHTML = session.rows.length ? session.rows.map((row) => {
         const recipient = getAttestationChairRecipient(row.record);
         const cells = definitions.map((definition) => {
@@ -18690,13 +18724,24 @@ MAX - https://bizvmax.ru/zifra_plus
           if (!row.documents.some((item) => item.kind === definition.kind)) return "<td>—</td>";
           const problem = result?.saved ? "" : getAttestationTaskProblem(row.record, definition);
           const completed = Boolean(result?.saved && result.eventSaved && !result.error);
-          return `<td><div class="attestation-task-cell"><label class="checkbox-line"><input type="checkbox" data-task-key="${escapeAttr(key)}" ${session.selected.has(key) && !completed ? "checked" : ""} ${locked || problem || completed ? "disabled" : ""}>${escapeHtml(result?.saved ? "Сохранён" : "Сформировать")}</label><button class="ghost-button" type="button" data-task-preview="${escapeAttr(key)}" ${locked || problem ? "disabled" : ""}>Просмотр</button></div><small class="${result?.error || problem ? "attestation-task-error" : "muted"}">${escapeHtml(result?.error || problem || result?.message || "Ожидает генерации")}</small></td>`;
+          if (!problem && !completed) selectableKeys.add(key);
+          const label = `${definition.title}: ${row.record.name || "Без ФИО"}`;
+          return `<td><div class="attestation-task-cell"><input type="checkbox" data-task-key="${escapeAttr(key)}" aria-label="${escapeAttr(`Выбрать документ — ${label}`)}" ${session.selected.has(key) && !completed ? "checked" : ""} ${locked || problem || completed ? "disabled" : ""}><button class="primary-button" type="button" data-task-generate-one="${escapeAttr(key)}" aria-label="${escapeAttr(`${result?.saved ? "Повторить действие" : "Генерировать"} — ${label}`)}" ${locked || problem || completed || isDatabaseDemoMode() ? "disabled" : ""}>${completed ? "Готово" : result?.saved ? "Повторить" : "Генерировать"}</button><button class="ghost-button" type="button" data-task-preview="${escapeAttr(key)}" aria-label="${escapeAttr(`Просмотр — ${label}`)}" ${locked || problem ? "disabled" : ""}>Просмотр</button></div><small class="${result?.error || problem ? "attestation-task-error" : "muted"}">${escapeHtml(result?.error || problem || result?.message || "Ожидает генерации")}</small></td>`;
         }).join("");
-        return `<tr><td><strong>${escapeHtml(row.record.name || "Без ФИО")}</strong><small>${escapeHtml(getStudentContextProgram(row.record)?.name || row.record.program || "")}</small><small>${escapeHtml(row.type)} · ${escapeHtml(row.record.status || "Статус не указан")}</small></td><td>${row.documents.length}</td>${cells}<td>${escapeHtml(recipient.name || "—")}<small class="${recipient.error ? "attestation-task-error" : ""}">${escapeHtml(recipient.error || recipient.email)}</small></td></tr>`;
+        return `<tr><td><input type="checkbox" data-task-student="${escapeAttr(row.record.id)}" aria-label="${escapeAttr(`Выбрать слушателя — ${row.record.name || "Без ФИО"}`)}"></td><td><button class="attestation-task-student-link" data-task-open-student="${escapeAttr(row.record.id)}" type="button" title="Открыть карточку слушателя" ${locked ? "disabled" : ""}>${escapeHtml(row.record.name || "Без ФИО")}</button><small>${escapeHtml(getStudentContextProgram(row.record)?.name || row.record.program || "")}</small><small>${escapeHtml(row.type)} · ${escapeHtml(row.record.status || "Статус не указан")}</small></td>${cells}<td>${escapeHtml(recipient.name || "—")}<small class="${recipient.error ? "attestation-task-error" : ""}">${escapeHtml(recipient.error || recipient.email)}</small></td></tr>`;
       }).join("") : '<tr><td colspan="5">Нет ведомостей и протоколов, ожидающих формирования.</td></tr>';
-      const selectable = [...backdrop.querySelectorAll("[data-task-key]")].filter((input) => !input.disabled);
+      const selectable = [...backdrop.querySelectorAll("[data-task-key]")].filter((input) => selectableKeys.has(input.dataset.taskKey));
       const selected = selectable.filter((input) => input.checked).length;
-      $("[data-task-selected]").textContent = `Слушателей: ${session.rows.length} · Выбрано документов: ${selected}`;
+      const studentInputs = [...backdrop.querySelectorAll("[data-task-student]")];
+      studentInputs.forEach((input) => {
+        const documents = [...input.closest("tr").querySelectorAll("[data-task-key]")].filter((item) => selectableKeys.has(item.dataset.taskKey));
+        const checkedCount = documents.filter((item) => item.checked).length;
+        input.disabled = locked || !documents.length;
+        input.checked = checkedCount > 0 && checkedCount === documents.length;
+        input.indeterminate = checkedCount > 0 && checkedCount < documents.length;
+      });
+      const selectedStudents = studentInputs.filter((input) => input.checked || input.indeterminate).length;
+      $("[data-task-selected]").textContent = `Выбрано слушателей: ${selectedStudents} из ${session.rows.length} · Документов: ${selected}`;
       $("[data-task-all]").disabled = locked || !selectable.length;
       $("[data-task-all]").checked = selected > 0 && selected === selectable.length;
       $("[data-task-all]").indeterminate = selected > 0 && selected < selectable.length;
@@ -18707,6 +18752,19 @@ MAX - https://bizvmax.ru/zifra_plus
       $("[data-task-stop]").hidden = !session.running;
       backdrop.querySelectorAll("[data-task-key]").forEach((input) => input.addEventListener("change", () => {
         input.checked ? session.selected.add(input.dataset.taskKey) : session.selected.delete(input.dataset.taskKey); closeConfirmation(); paint();
+      }));
+      studentInputs.forEach((input) => input.addEventListener("change", () => {
+        input.closest("tr").querySelectorAll("[data-task-key]:not(:disabled)").forEach((item) => input.checked ? session.selected.add(item.dataset.taskKey) : session.selected.delete(item.dataset.taskKey));
+        closeConfirmation(); paint();
+      }));
+      backdrop.querySelectorAll("[data-task-generate-one]").forEach((button) => button.addEventListener("click", () => requestGeneration(button.dataset.taskGenerateOne)));
+      backdrop.querySelectorAll("[data-task-open-student]").forEach((button) => button.addEventListener("click", () => {
+        closeConfirmation();
+        openAttestationTaskStudentCard(button.dataset.taskOpenStudent, backdrop, session, (error) => {
+          refreshRows(); paint();
+          notice(error || "Карточка закрыта. Список обновлён; выбор и результаты сохранены.");
+          [...backdrop.querySelectorAll("[data-task-open-student]")].find((item) => item.dataset.taskOpenStudent === button.dataset.taskOpenStudent)?.focus({ preventScroll: true });
+        });
       }));
       backdrop.querySelectorAll("[data-task-preview]").forEach((button) => button.addEventListener("click", async () => {
         if (session.running || session.busy) return;
@@ -18749,8 +18807,9 @@ MAX - https://bizvmax.ru/zifra_plus
       try { await refreshAttestationTaskSnapshot(); refreshRows(); notice("Список обновлён."); } catch (error) { notice(error.message); }
       finally { session.busy = false; paint(); }
     };
-    $("[data-task-generate]").onclick = async () => {
-      if (session.running || session.busy) return;
+    const requestGeneration = async (onlyKey = "") => {
+      if (session.running || session.busy || isDatabaseDemoMode()) return;
+      const requestedKeys = new Set(onlyKey ? [onlyKey] : session.selected);
       session.busy = true; closeConfirmation(); paint(); notice("Проверка данных и получателей…");
       try {
         await refreshAttestationTaskSnapshot(); refreshRows();
@@ -18758,7 +18817,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const items = [];
         session.rows.forEach((row) => row.documents.forEach((definition) => {
           const key = keyOf(row.record.id, definition.kind), result = session.results.get(key);
-          if (!session.selected.has(key) || (result?.saved && result.eventSaved && !result.error)) return;
+          if (!requestedKeys.has(key) || (result?.saved && result.eventSaved && !result.error)) return;
           const recipient = getAttestationChairRecipient(row.record);
           const problem = (!result?.saved && getAttestationTaskProblem(row.record, definition)) || (options.sendEmail && recipient.error);
           if (problem) { session.results.set(key, { ...result, error: problem }); return; }
@@ -18793,6 +18852,7 @@ MAX - https://bizvmax.ru/zifra_plus
       } catch (error) { notice(error.message); }
       finally { session.busy = false; paint(); }
     };
+    $("[data-task-generate]").onclick = () => requestGeneration();
     window.addEventListener("beforeunload", beforeUnload);
     backdrop.addEventListener("keydown", (event) => {
       if (event.key !== "Tab") return;
@@ -43790,7 +43850,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function closeTopmostWindowByEscape() {
     const attestationTasks = document.querySelector("[data-attestation-tasks]");
-    if (attestationTasks) {
+    if (attestationTasks && !attestationTasks.hidden) {
       const preview = document.querySelector("[data-generated-document-preview]");
       if (document.querySelector("[data-unsaved-changes-dialog]")) document.querySelector("[data-unsaved-changes-dialog]").cancelUnsavedChangesDialog?.();
       else if (preview) preview.closeGeneratedDocumentPreview?.(false);

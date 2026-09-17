@@ -3207,6 +3207,7 @@ html.is-database-demo-mode .contract-photo-path-field {
 .dashboard-attestation-tile > strong { font-size: 30px; line-height: 1; color: var(--teal); }
 .dashboard-attestation-tile > small { font-size: 11px; line-height: 1.25; }
 .attestation-tasks-backdrop { z-index: 1900; }
+.attestation-tasks-backdrop[hidden] { display: none !important; }
 .modal.attestation-tasks-dialog {
   width: min(1280px, 96vw);
   max-width: 96vw;
@@ -3222,16 +3223,20 @@ html.is-database-demo-mode .contract-photo-path-field {
 .attestation-tasks-dialog [hidden] { display: none !important; }
 .attestation-tasks-toolbar > button { margin-left: auto; }
 .attestation-task-table-scroll { min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
-.attestation-task-table { width: 100%; min-width: 820px; table-layout: fixed; }
-.attestation-task-table th:first-child { width: 29%; }
-.attestation-task-table th:nth-child(2) { width: 10%; }
-.attestation-task-table th:nth-child(3), .attestation-task-table th:nth-child(4) { width: 18%; }
-.attestation-task-table th:last-child { width: 25%; }
+.attestation-task-table { width: 100%; min-width: 900px; table-layout: fixed; }
+.attestation-task-table th:first-child { width: 5%; }
+.attestation-task-table th:nth-child(2) { width: 29%; }
+.attestation-task-table th:nth-child(3), .attestation-task-table th:nth-child(4) { width: 22%; }
+.attestation-task-table th:last-child { width: 22%; }
 .attestation-task-table td, .attestation-task-table th { padding: 8px; vertical-align: top; overflow-wrap: anywhere; }
 .attestation-task-table thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .attestation-task-table td small { display: block; margin-top: 5px; line-height: 1.35; }
 .attestation-task-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .attestation-task-cell > button { font-size: 11px; min-height: 25px; padding: 3px 7px; }
+.attestation-task-cell > input { flex: 0 0 auto; margin: 0; }
+.attestation-task-student-link { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--teal); font: inherit; font-weight: 700; text-align: left; text-decoration: underline; overflow-wrap: anywhere; cursor: pointer; }
+.attestation-task-student-link:disabled { cursor: default; opacity: .6; }
+.attestation-task-student-link:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 .attestation-task-error { color: #a22b25; }
 .attestation-task-confirmation { padding: 10px 12px; background: var(--panel); border: 1px solid var(--teal); border-radius: 7px; max-height: 230px; overflow: auto; }
 .attestation-task-confirmation[hidden] { display: none; }

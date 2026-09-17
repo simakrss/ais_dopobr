@@ -60,7 +60,7 @@ const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCo
   "isExplicitUncheckedEventState", "normalizeEventState", "getStudentAttestationDocumentUnavailableReason",
   "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "getPendingAttestationRows",
   "getAttestationChairRecipient", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
-  "withAttestationStudentLock", "executeAttestationTask", "previewAttestationTask", "renderAttestationDashboardTile"];
+  "withAttestationStudentLock", "executeAttestationTask", "previewAttestationTask", "renderAttestationDashboardTile", "openAttestationTaskStudentCard"];
 function harness() {
   const c=vm.createContext({window:{setInterval:()=>1,clearInterval:()=>{}}, console});
   vm.runInContext(setup+names.map(extract).join("\n"),c);
@@ -158,6 +158,32 @@ async function main() {
       assert.equal(c.calls.some(x=>x.action==="event"),outcome==="saved","Card generation marks events only after confirmed storage");
     }
   }
+  c=harness();
+  let observerCallback, disconnected=false, resumed=0;
+  c.document={body:{}};
+  c.MutationObserver=class {constructor(callback){observerCallback=callback;} observe(){} disconnect(){disconnected=true;}};
+  c.openStudentCardById=async(id,ids)=>{assert.equal(id,"one");assert.ok(ids.includes("one"));c.state.modal={config:"students",id};};
+  const cardSession={rows:c.getPendingAttestationRows(),selected:new Set(["one:studentAttestationProtocol"]),results:new Map([["one:studentAttestationProtocol",{saved:true,blob:"cached"}]]),running:false,busy:false};
+  const backdrop={hidden:false};
+  await c.openAttestationTaskStudentCard("one",backdrop,cardSession,()=>resumed++);
+  assert.equal(backdrop.hidden,true);assert.equal(cardSession.busy,true);assert.equal(resumed,0);
+  observerCallback();assert.equal(resumed,0,"An open card keeps the task list suspended");
+  c.state.modal=null;observerCallback();
+  assert.equal(resumed,1);assert.equal(disconnected,true);assert.equal(backdrop.hidden,false);assert.equal(cardSession.busy,false);
+  assert.equal(cardSession.selected.size,1);assert.equal(cardSession.results.get("one:studentAttestationProtocol").blob,"cached","Returning from a card preserves saved attachments and selection");
+  observerCallback();assert.equal(resumed,1,"Resume exactly once");
+  c.openStudentCardById=async()=>{throw new Error("Test lock failure");};
+  let openingError="";await c.openAttestationTaskStudentCard("one",backdrop,cardSession,error=>{openingError=error;});
+  assert.equal(openingError,"Test lock failure");assert.equal(backdrop.hidden,false);assert.equal(cardSession.busy,false);
+  cardSession.running=true;openingError="";await c.openAttestationTaskStudentCard("one",backdrop,cardSession,()=>{throw new Error("Should not open during generation");});
+  assert.equal(backdrop.hidden,false);
+  const dialogSource=extract("openAttestationTasksDialog");
+  assert.match(dialogSource,/data-task-student/);assert.match(dialogSource,/input\.indeterminate = checkedCount > 0/);
+  assert.match(dialogSource,/const requestedKeys = new Set\(onlyKey \? \[onlyKey\] : session.selected\)/);
+  assert.match(dialogSource,/if \(!requestedKeys.has\(key\)/);
+  assert.match(dialogSource,/requestGeneration\(button.dataset.taskGenerateOne\)/);
+  assert.match(dialogSource,/openAttestationTaskStudentCard\(button.dataset.taskOpenStudent/);
+  assert.match(extract("closeTopmostWindowByEscape"),/attestationTasks && !attestationTasks.hidden/);
   console.log("Attestation dashboard: counts/legacy flags, eligibility, chair deduplication, fresh snapshots, locks, save-before-event-before-email, failures/retries, preview-only and no learner-email fallback: OK");
 }
 main().then(()=>{
@@ -176,7 +202,8 @@ main().then(()=>{
     document.querySelector('#failure').onchange=e=>{sendFails=e.target.checked;};
     document.querySelector('#issued').onchange=e=>{state.data.collections.students[0].diplomaBlankNo=e.target.checked?'ТЕСТ-1':'';render();};
     document.querySelector('#narrow').onclick=()=>{const host=document.querySelector('#tiles');host.style.maxWidth=host.style.maxWidth?'':'900px';};
-    document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelector('[data-attestation-tasks]')?.closeAttestationTasks();});
+    async function openStudentCardById(id){state.modal={config:'students',id};const card=document.createElement('div');card.dataset.fixtureCard='';card.className='modal-backdrop';card.innerHTML='<section class="modal" style="padding:24px"><h2>Карточка: '+escapeHtml(state.data.collections.students.find(s=>s.id===id).name)+'</h2><p>Тестовая карточка без записи в базу</p><button data-fixture-card-close class="primary-button">Закрыть карточку</button></section>';document.body.appendChild(card);card.querySelector('button').onclick=()=>{state.modal=null;card.remove();};}
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'){const card=document.querySelector('[data-fixture-card]');if(card){state.modal=null;card.remove();}else document.querySelector('[data-attestation-tasks]:not([hidden])')?.closeAttestationTasks();}});
   `;
   const http=require("node:http");const server=http.createServer((req,res)=>{
     if(req.url==="/styles.css"){res.setHeader("Content-Type","text/css");return res.end(fs.readFileSync(path.join(root,"styles.css")));}
