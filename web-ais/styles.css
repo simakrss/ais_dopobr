@@ -3168,20 +3168,33 @@ html.is-database-demo-mode .contract-photo-path-field {
 
 .dashboard-document-tasks.without-frdo { grid-template-columns: 200px; }
 .dashboard-document-tasks .dashboard-frdo-widget {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(75px, 0.8fr) 28px;
+  height: 100px;
+  padding: 8px 12px;
+  gap: 12px;
 }
-.dashboard-document-tasks .dashboard-frdo-widget-deadline { min-width: 0; }
+.dashboard-document-tasks .dashboard-frdo-widget-heading { grid-column: 1; grid-row: 1; }
+.dashboard-document-tasks .dashboard-frdo-widget-count { grid-column: 3; grid-row: 1; }
+.dashboard-document-tasks .dashboard-frdo-widget-deadline {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  justify-items: center;
+  text-align: center;
+}
+.dashboard-document-tasks .dashboard-frdo-widget-open { grid-column: 4; grid-row: 1; width: 28px; height: 28px; }
+.dashboard-document-tasks .dashboard-frdo-widget-heading > strong { font-size: 16px; line-height: 1.2; }
+.dashboard-document-tasks .dashboard-frdo-widget :is(small, .eyebrow) { font-size: 11px; line-height: 1.25; margin: 0; }
 .dashboard-attestation-tile {
   width: 200px;
-  aspect-ratio: 1;
+  height: 100px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 7px;
+  gap: 2px;
   margin: 0;
-  padding: 15px;
+  padding: 6px 10px;
   color: var(--text);
   background: var(--panel);
   border: 1px solid var(--line);
@@ -3190,8 +3203,9 @@ html.is-database-demo-mode .contract-photo-path-field {
   cursor: pointer;
 }
 .dashboard-attestation-tile:hover { border-color: var(--teal); }
-.dashboard-attestation-tile > strong { font-size: 38px; line-height: 1.1; color: var(--teal); }
-.dashboard-attestation-tile > small { font-size: 12px; line-height: 1.5; }
+.dashboard-attestation-tile > .eyebrow { font-size: 10px; line-height: 1.2; margin: 0; }
+.dashboard-attestation-tile > strong { font-size: 30px; line-height: 1; color: var(--teal); }
+.dashboard-attestation-tile > small { font-size: 11px; line-height: 1.25; }
 .attestation-tasks-backdrop { z-index: 1900; }
 .modal.attestation-tasks-dialog {
   width: min(1280px, 96vw);
@@ -3229,7 +3243,9 @@ html.is-database-demo-mode .contract-photo-path-field {
 .attestation-tasks-dialog > .modal-actions > span { margin-right: auto; }
 @media (max-width: 850px) {
   .dashboard-document-tasks { grid-template-columns: minmax(0, 1fr); }
-  .dashboard-document-tasks .dashboard-frdo-widget { grid-template-columns: minmax(0, 1fr) auto; }
+}
+@media (max-width: 720px) {
+  .dashboard-document-tasks .dashboard-frdo-widget { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px; height: auto; min-height: 100px; gap: 8px; }
 }
 
 .dashboard-frdo-widget {

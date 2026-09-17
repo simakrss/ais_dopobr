@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.498",
+    version: "1.7.499",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.499",
+      releasedAt: "2026-09-17",
+      changes: ["Высота плиток ФРДО и итоговых документов уменьшена вдвое, ближайший срок ФРДО размещён по центру общего ряда. Ведомости КПК/ППП и протоколы ППП показываются только при наличии номера бланка или регистрационного номера выданного документа об образовании."]
+    },
     {
       version: "1.7.498",
       releasedAt: "2026-09-17",
@@ -18478,7 +18483,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getPendingAttestationRows() {
     const definitions = getAttestationTaskDefinitions();
-    return (state.data.collections.students || []).map((record) => {
+    return (state.data.collections.students || []).filter(hasStudentEducationDocumentIssued).map((record) => {
       const program = getStudentContextProgram(record);
       const type = String(program?.type || "").trim().toUpperCase();
       const documents = definitions.filter((definition) => definition.types.includes(type) && !isAttestationTaskCompleted(record, definition));
@@ -18504,6 +18509,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAttestationTaskProblem(record, definition) {
+    if (!hasStudentEducationDocumentIssued(record)) return "Не заполнены номер бланка или регистрационный номер выданного документа об образовании.";
     const unavailable = getStudentAttestationDocumentUnavailableReason(record, definition.kind);
     if (unavailable) return unavailable;
     const template = getStudentCardDocumentTemplate(definition.kind);
@@ -18515,7 +18521,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAttestationTaskFingerprint(record, definition) {
-    const fields = ["id", "uid", "name", "programId", "program", "group", "startDate", "endDate", "expulsionDate", "expulsionOrderDate", "protocolNo", "finalGrade", "qualification", "noDeclension"];
+    const fields = ["id", "uid", "name", "programId", "program", "group", "startDate", "endDate", "expulsionDate", "expulsionOrderDate", "protocolNo", "finalGrade", "qualification", "noDeclension", "diplomaBlankNo", "registrationNo", "diplomaIssueDate"];
     const program = resolveProgramCommissionRecord(getStudentContextProgram(record) || {});
     const template = getStudentCardDocumentTemplate(definition.kind);
     return JSON.stringify({ record: fields.map((key) => record[key] ?? ""),
@@ -18641,7 +18647,7 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.innerHTML = `<section class="modal attestation-tasks-dialog" role="dialog" aria-modal="true" aria-labelledby="attestationTasksTitle">
       <header class="modal-head"><div><p class="eyebrow">По неотмеченным событиям слушателей</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
       <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
-      <p class="muted">Ведомости — КПК и ППП, протоколы — ППП. Просмотр по кнопке в ячейке ничего не сохраняет и не отправляет.</p>
+      <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы — ППП. Просмотр ничего не сохраняет и не отправляет.</p>
       <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th>Слушатель / программа</th><th><label title="Выбрать все документы"><input type="checkbox" data-task-all aria-label="Все документы">Все</label></th><th>Ведомость</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
       <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
       <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
@@ -18792,9 +18798,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = getPendingAttestationRows();
     const count = (kind) => rows.reduce((sum, row) => sum + Number(row.documents.some((item) => item.kind === kind)), 0);
     const sheets = count("studentGradeSheet"), protocols = count("studentAttestationProtocol");
-    return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-attestation-tasks" title="Сформировать ведомости и протоколы, ещё не отмеченные в событиях слушателей">
-      <span class="eyebrow">Итоговые документы</span><strong>${sheets + protocols}</strong>
-      <span>Ведомости и протоколы</span><small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}</small>
+    return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-attestation-tasks" title="Сформировать ведомости и протоколы по выданным документам об образовании, ещё не отмеченные в событиях слушателей">
+      <span class="eyebrow">Ведомости и протоколы</span><strong>${sheets + protocols}</strong>
+      <small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}</small>
     </button>`;
   }
 

@@ -17,6 +17,10 @@ var state={data:{meta:{},collections:{
  {id:'done',name:'Готовый',programId:'ppp',event_examSheetPrepared_state:'checked',event_macro_protocol_state:'dated',event_macro_protocol_date:'2026-09-17'},
  {id:'signed',name:'Подписанный',programId:'ppp',event_examSheetPrepared_state:'checked',event_signedProtocol_state:'checked'},
  {id:'other',name:'Прочий',programId:'dop'},{id:'webinar',name:'Вебинар',programId:'pro'},{id:'stale',name:'Удаленная программа',programId:'missing',program:'Переподготовка'}],trainingPlans:[]}}};
+state.data.collections.students.forEach(student=>{student.diplomaBlankNo='БЛАНК-'+student.id;});
+state.data.collections.students.push({id:'not-issued',name:'Без выдачи',programId:'ppp'},
+ {id:'previous-education',name:'Только предыдущее образование',programId:'kpk',educationDocumentNumber:'12345',educationDocumentDate:'2020-01-01'},
+ {id:'only-date',name:'Только дата',programId:'ppp',diplomaIssueDate:'2026-09-17'});
 var sharedStateReady=true,sharedStateDirty=false,sharedStateSaveRunning=false,sharedStateChangeGeneration=0,sharedStateConflict=false;
 var activeRecordLock=null,recordLockClientId='fixture',calls=[],sendFails=false,saveFails=false,cancelled=false,lockFails=false,denied=false,demo=false,local=true,changeRecipientDuringGeneration=false,failEventFlush=false,mutateSnapshot=null;
 var studentDocumentsFolderTemplateMarker='#Папка документов слушателя#';
@@ -51,7 +55,7 @@ function isChecked(value){return Boolean(value);}
 async function showGeneratedDocumentPreview(blob,options){calls.push({action:'preview-show',options});return false;}
 async function cancelGeneratedDocumentPreview(token){calls.push({action:'preview-cancel',token});}
 `;
-const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "normalizeEmployeeActPersonName",
+const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "normalizeEmployeeActPersonName", "hasStudentEducationDocumentIssued",
   "isExplicitUncheckedEventState", "normalizeEventState", "getStudentAttestationDocumentUnavailableReason",
   "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "getPendingAttestationRows",
   "getAttestationChairRecipient", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
@@ -69,6 +73,13 @@ async function main() {
   let c=harness();
   assert.equal(c.getPendingAttestationRows().length,3);
   assert.equal(c.getPendingAttestationRows().reduce((sum,row)=>sum+row.documents.length,0),4);
+  assert.equal(c.getPendingAttestationRows().some(row=>['not-issued','previous-education','only-date'].includes(row.record.id)),false,"Only issued education documents, not earlier education or date alone");
+  const registrationOnly={id:'registration-only',name:'Регистрационный номер',programId:'ppp',registrationNo:' 99 ',diplomaBlankNo:'  '};
+  c.state.data.collections.students.push(registrationOnly);
+  assert.equal(c.getPendingAttestationRows().find(row=>row.record.id==='registration-only').documents.length,2);
+  registrationOnly.registrationNo='  ';
+  assert.equal(c.getPendingAttestationRows().some(row=>row.record.id==='registration-only'),false);
+  assert.match(c.getAttestationTaskProblem(registrationOnly,c.getAttestationTaskDefinitions()[0]),/выданного документа/);
   assert.equal(c.getPendingAttestationRows().find(row=>row.record.id==="signed").documents[0].kind,"studentAttestationProtocol","Signing is not generation");
   assert.equal(c.getAttestationChairRecipient(c.state.data.collections.students[0]).email,"chair@example.test","Deduplicate contracts and normalize ё/е");
   c.state.data.collections.contracts.push({name:"Петров Петр Петрович",email:"different@example.test"});
@@ -112,6 +123,9 @@ async function main() {
   c=harness();item=itemFor(c);c.mutateSnapshot=data=>{data.collections.students[0].name="Чужая правка";};
   await assert.rejects(c.executeAttestationTask(item,{sendEmail:true},{}),/изменились/);
   assert.equal(c.calls.some(x=>x.action==="generate"||x.action==="send"),false);
+  c=harness();item=itemFor(c);c.mutateSnapshot=data=>{data.collections.students[0].diplomaBlankNo='';};
+  await assert.rejects(c.executeAttestationTask(item,{sendEmail:true},{}),/изменились/);
+  assert.equal(c.calls.some(x=>x.action==="generate"||x.action==="send"),false,"Recheck issuance when confirmed data changes");
   c=harness();c.failEventFlush=true;result={};
   await assert.rejects(c.executeAttestationTask(itemFor(c),{sendEmail:true},result),/отметка события/);
   assert.equal(result.saved,true);assert.equal(c.calls.some(x=>x.action==="send"),false);
@@ -136,14 +150,24 @@ async function main() {
 }
 main().then(()=>{
   if(!process.argv.includes("--serve"))return;
-  const script=setup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+`
-    render=function(){document.querySelector('#tiles').innerHTML='<div class="panel dashboard-frdo-widget"><strong>ФРДО</strong><span>Тестовая плитка</span></div>'+renderAttestationDashboardTile();document.querySelector('[data-action="open-attestation-tasks"]').onclick=openAttestationTasksDialog;};render();
+  const start=source.indexOf('      <div class="dashboard-document-tasks ');
+  const end=source.indexOf('      <section class="panel">',start);
+  assert.ok(start>0&&end>start);
+  const dashboardFixture=`function renderFixtureDocumentTasks(){
+    const pendingIssuedDocuments=Array(6).fill({}),frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0;
+    const frdoDeadlineLabel='До ближайшего срока: 28 дн.',frdoDaysIndicatorLabel='Осталось дней: 28';
+    return \`${source.slice(start,end)}\`;
+  }`;
+  const script=setup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+dashboardFixture+`
+    render=function(){document.querySelector('#tiles').innerHTML=renderFixtureDocumentTasks();document.querySelector('[data-action="open-attestation-tasks"]').onclick=openAttestationTasksDialog;};render();
     var realSend=sendServerEmail;sendServerEmail=async function(request){const result=await realSend(request);document.querySelector('#calls').textContent=calls.map(c=>c.action+(c.kind?' '+c.kind:'')).join(', ');sendFails=false;document.querySelector('#failure').checked=false;return result;};
     document.querySelector('#failure').onchange=e=>{sendFails=e.target.checked;};
+    document.querySelector('#issued').onchange=e=>{state.data.collections.students[0].diplomaBlankNo=e.target.checked?'ТЕСТ-1':'';render();};
+    document.querySelector('#narrow').onclick=()=>{const host=document.querySelector('#tiles');host.style.maxWidth=host.style.maxWidth?'':'900px';};
     document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelector('[data-attestation-tasks]')?.closeAttestationTasks();});
   `;
   const http=require("node:http");const server=http.createServer((req,res)=>{
     if(req.url==="/styles.css"){res.setHeader("Content-Type","text/css");return res.end(fs.readFileSync(path.join(root,"styles.css")));}
-    res.setHeader("Content-Type","text/html; charset=utf-8");res.end(`<!doctype html><html lang="ru"><title>Итоговые документы — тест</title><link rel="stylesheet" href="/styles.css"><body style="padding:20px"><h2>Вымышленные данные. Реальные письма не отправляются</h2><label><input id="failure" type="checkbox">Ошибка первой отправки</label><div id="tiles" class="dashboard-document-tasks"></div><pre id="calls"></pre><script>${script}</script></body></html>`);
+    res.setHeader("Content-Type","text/html; charset=utf-8");res.end(`<!doctype html><html lang="ru"><title>Итоговые документы — тест</title><link rel="stylesheet" href="/styles.css"><body style="padding:20px"><h2>Вымышленные данные. Реальные письма не отправляются</h2><label><input id="failure" type="checkbox">Ошибка первой отправки</label><label><input id="issued" type="checkbox" checked>Документ первого слушателя выдан</label><button id="narrow">Сузить рабочую область</button><div id="tiles" style="margin-top:16px"></div><pre id="calls"></pre><script>${script}</script></body></html>`);
   });server.listen(0,"127.0.0.1",()=>console.log('Attestation dashboard fixture: http://127.0.0.1:'+server.address().port+'/'));
 }).catch(error=>{console.error(error);process.exitCode=1;});
