@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.499",
+    version: "1.7.500",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.500",
+      releasedAt: "2026-09-17",
+      changes: ["Ведомость переименована в «Ведомость экзаменов». Протокол отправляется председателю комиссии, тема и текст письма загружаются из свойств Word-файла. При открытии импорта список заявок запрашивается автоматически с индикатором загрузки и защитой от повторных и устаревших запросов."]
+    },
     {
       version: "1.7.499",
       releasedAt: "2026-09-17",
@@ -5001,7 +5006,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "trainingReduction", label: "Карточка слушателя. Сокращение обучения" },
     { value: "education", label: "Карточка слушателя. Документ об образовании" },
     { value: "postalEnvelope", label: "Карточка слушателя. Почтовый конверт" },
-    { value: "studentGradeSheet", label: "Карточка слушателя. Ведомость" },
+    { value: "studentGradeSheet", label: "Карточка слушателя. Ведомость экзаменов" },
     { value: "studentAttestationProtocol", label: "Карточка слушателя. Протокол" },
     { value: "studyCertificate", label: "Карточка слушателя. Справка об обучении" },
     { value: "enrollmentOrder", label: "Карточка слушателя. Приказ на зачисление" },
@@ -5248,7 +5253,7 @@ MAX - https://bizvmax.ru/zifra_plus
   const studentAttestationDocumentTemplateDefinitions = [
     {
       "id": "document-studentGradeSheet",
-      "title": "Ведомость",
+      "title": "Ведомость экзаменов",
       "documentKind": "studentGradeSheet",
       "templateUrl": "АИС Допобразование/Документы/Зачетно-экзаменационная ведомость (ДПП)_с подписью.docx",
       "templatePath": "",
@@ -18590,13 +18595,20 @@ MAX - https://bizvmax.ru/zifra_plus
         await renew();
         await refreshAttestationTaskSnapshot();
         record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
+        const protocolEmail = item.definition.kind === "studentAttestationProtocol"
+          ? await prepareAttestationProtocolEmailRequest(record) : null;
+        if (protocolEmail) {
+          await renew();
+          await refreshAttestationTaskSnapshot();
+          record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
+        }
         const current = getAttestationChairRecipient(record);
         if (current.error || current.email !== item.email || !record || getAttestationTaskFingerprint(record, item.definition) !== item.fingerprint) throw new Error("Перед отправкой изменились данные или адрес председателя. Документ сохранён; обновите список и подтвердите отправку заново.");
         if (!result.blob) throw new Error("Нет вложения для отправки. Откройте сохранённый документ из папки слушателя.");
         onProgress(`Отправка: ${item.definition.title} — ${current.email}`);
         const attachment = await createStudentDocumentEmailAttachment(result.blob, result.fileName, result.outputFormat);
-        const sent = await sendServerEmail({ email: current.email, subject: `${item.definition.title}: ${record.name}`,
-          message: `Добрый день!\n\nНаправляем документ «${item.definition.title}» по итогам обучения слушателя ${record.name} по программе «${getStudentContextProgram(record)?.name || record.program || ""}».\nДокумент приложен к письму.\n\nУчебный центр «Цифровизация Плюс»`,
+        const sent = await sendServerEmail({ email: current.email, subject: protocolEmail?.subject || `${item.definition.title}: ${record.name}`,
+          message: protocolEmail?.message || `Добрый день!\n\nНаправляем документ «${item.definition.title}» по итогам обучения слушателя ${record.name} по программе «${getStudentContextProgram(record)?.name || record.program || ""}».\nДокумент приложен к письму.\n\nУчебный центр «Цифровизация Плюс»`,
           attachment, recipientMode: "student", recipientLabel: "председателя комиссии", skipConfirmation: true, quiet: true,
           entityType: "students", entityId: record.id, entityName: record.name, messageType: "Итоговые документы председателю комиссии" });
         if (sent !== true) throw new Error("Документ сохранён, но отправка письма не подтверждена. Доступна повторная отправка без повторной генерации; при тайм-ауте сначала проверьте отправленные письма.");
@@ -20518,6 +20530,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function openStudentApplicationsImport() {
+    if (state.studentApplicationsImport.open) return;
     const dates = getStudentApplicationsDefaultDates(30);
     state.tableOptions = null;
     state.studentApplicationsImport = {
@@ -20546,6 +20559,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     };
     refreshStudentApplicationsImportDialog();
+    return fetchStudentApplications();
   }
 
   function closeStudentApplicationsImport() {
@@ -22228,6 +22242,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function fetchStudentApplications(event) {
     event?.preventDefault();
+    const importState = state.studentApplicationsImport;
+    if (!importState.open || importState.loading || importState.importing) return;
     const form = event?.currentTarget || document.querySelector("[data-student-applications-import-form]");
     syncStudentApplicationsImportFilters(form);
     const filters = state.studentApplicationsImport.filters;
@@ -22266,6 +22282,7 @@ MAX - https://bizvmax.ru/zifra_plus
         })
       });
       const payload = await response.json().catch(() => ({}));
+      if (state.studentApplicationsImport !== importState || !importState.open) return;
       if (!response.ok) throw new Error(payload.error || "Не удалось получить заявки.");
       const rawRows = (Array.isArray(payload.rows) ? payload.rows : []).map((row, index) => ({
         ...row,
@@ -22279,6 +22296,7 @@ MAX - https://bizvmax.ru/zifra_plus
           await new Promise((resolve) => requestAnimationFrame(resolve));
         }
       }
+      if (state.studentApplicationsImport !== importState || !importState.open) return;
       state.studentApplicationsImport.rows = rows;
       state.studentApplicationsImport.importedLookup = importedLookup;
       state.studentApplicationsImport.page = 1;
@@ -22292,6 +22310,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ? payload.warnings.map(String).filter(Boolean)
         : [];
     } catch (error) {
+      if (state.studentApplicationsImport !== importState || !importState.open) return;
       state.studentApplicationsImport.rows = [];
       state.studentApplicationsImport.importedLookup = null;
       state.studentApplicationsImport.page = 1;
@@ -22301,8 +22320,8 @@ MAX - https://bizvmax.ru/zifra_plus
       state.studentApplicationsImport.error = error.message;
       state.studentApplicationsImport.warnings = [];
     } finally {
-      state.studentApplicationsImport.loading = false;
-      refreshStudentApplicationsImportDialog();
+      importState.loading = false;
+      if (state.studentApplicationsImport === importState && importState.open) refreshStudentApplicationsImportDialog();
     }
   }
 
@@ -27591,7 +27610,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <span>Получатель</span>
             <select name="emailDeliveryMode">
               <option value="off" ${deliveryMode === "off" ? "selected" : ""}>Не отправлять</option>
-              <option value="student" ${deliveryMode === "student" ? "selected" : ""}>Слушатель</option>
+              <option value="student" ${deliveryMode === "student" ? "selected" : ""}>${documentTemplate.documentKind === "studentAttestationProtocol" ? "Председатель комиссии" : "Слушатель"}</option>
               <option value="system" ${deliveryMode === "system" ? "selected" : ""}>Системный ящик</option>
             </select>
           </label>
@@ -35660,8 +35679,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const chairName = values["Председатель"].split(",")[0].trim();
       const chair = splitFullName(chairName);
       values["ИО"] = [chair.firstName, chair.patronymic].filter(Boolean).join(" ");
-      values["Email"] = chairName ? String((state.data.collections.contracts || [])
-        .find((employee) => normalizeEmployeeActPersonName(employee.name) === normalizeEmployeeActPersonName(chairName))?.email || "").trim() : "";
+      values["Email"] = getAttestationChairRecipient(record).email;
       values["Квалификация"] = String(record?.qualification || program.qualification || "").trim();
       values["Ссылка"] = String(program.gradeReportUrl || "").trim();
     }
@@ -69820,7 +69838,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const previewBeforeGeneration = Boolean(documentTemplate.previewBeforeGeneration);
     const openAfterGeneration = Boolean(documentTemplate.openAfterGeneration);
     const menuTitle = String(options.title || documentTemplate.title || "Документ").trim();
-    const recipientLabel = String(options.recipientLabel || "слушателю").trim();
+    const recipientLabel = String(options.recipientLabel || (documentTemplate.documentKind === "studentAttestationProtocol" ? "председателю" : "слушателю")).trim();
     const menu = document.createElement("div");
     menu.className = "student-tab-menu student-document-action-menu";
     menu.dataset.studentDocumentActionMenu = "";
@@ -71904,7 +71922,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const isEmployeeDocument = ["employeeContract", "employeeAct"].includes(
       String(documentTemplate?.documentKind || "").trim()
     );
-    const recipientRoleLabel = isEmployeeDocument ? "сотрудника" : "слушателя";
+    const isProtocol = documentTemplate.documentKind === "studentAttestationProtocol";
+    const recipientRoleLabel = isProtocol ? "председателя комиссии" : (isEmployeeDocument ? "сотрудника" : "слушателя");
+    const chairRecipient = isProtocol && recipientMode === "student" ? getAttestationChairRecipient(record) : null;
+    if (chairRecipient?.error) {
+      alert(chairRecipient.error);
+      return false;
+    }
     const values = {
       ...normalizeDocumentEmailTemplateValues(documentTemplate.emailTemplateValues),
       ...sourceValues,
@@ -71920,7 +71944,7 @@ MAX - https://bizvmax.ru/zifra_plus
       values
     ).trim();
     const { sendToSystemMailbox, recipient } = resolveServerEmailRecipient(
-      String(record.email || "").trim(),
+      isProtocol ? (chairRecipient?.email || "") : String(record.email || "").trim(),
       null,
       recipientMode
     );
@@ -71928,7 +71952,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert(sendToSystemMailbox
         ? "Укажите корректный системный почтовый ящик в админке."
         : `Укажите корректный Email ${recipientRoleLabel}.`);
-      if (!sendToSystemMailbox) {
+      if (!sendToSystemMailbox && !isProtocol) {
         document.querySelector("[name='email']")?.focus({ preventScroll: true });
       }
       return false;
@@ -71949,10 +71973,48 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     return {
       recipientMode,
+      recipient,
       subject,
       message,
       recipientDescription
     };
+  }
+
+  async function loadStudentProtocolEmailTemplate(documentTemplate) {
+    if (documentTemplate.documentKind !== "studentAttestationProtocol") return documentTemplate;
+    // Read the selected source in the current local/cloud mode. Do not replace
+    // saved constructor formulas or settings with a transient mail snapshot.
+    const inspection = await inspectDocumentTemplateSource({
+      templateUrl: documentTemplate.templateUrl,
+      templatePath: documentTemplate.templatePath,
+      fallbackTemplatePath: documentTemplate.fallbackTemplatePath
+    });
+    const properties = getDocumentEmailPropertiesFromInspection(inspection);
+    if (!properties.message.found || !properties.message.value.trim()) {
+      throw new Error("В свойствах файла протокола не заполнен «Шаблон» (текст письма). Обновите свойства файла и повторите отправку.");
+    }
+    return {
+      ...documentTemplate,
+      emailSubjectTemplate: properties.subject.found ? properties.subject.value : documentTemplate.emailSubjectTemplate,
+      emailMessageTemplate: properties.message.value,
+      emailTemplateValues: {
+        ...normalizeDocumentEmailTemplateValues(documentTemplate.emailTemplateValues),
+        ...normalizeDocumentEmailTemplateValues(properties.templateValues)
+      }
+    };
+  }
+
+  async function prepareAttestationProtocolEmailRequest(record) {
+    const template = await loadStudentProtocolEmailTemplate(getStudentCardDocumentTemplate("studentAttestationProtocol"));
+    const scopedRecord = prepareStudentAttestationDocumentRecord(record, "studentAttestationProtocol");
+    const request = prepareStudentDocumentEmailRequest(
+      { ...template, emailDeliveryMode: "student" }, scopedRecord,
+      evaluateContractTemplateFields(scopedRecord, template.fields),
+      { ...collectContractTemplateSourceValues(scopedRecord), ...scopedRecord.workflowSourceValues },
+      { skipConfirmation: true }
+    );
+    if (!request) throw new Error("Не удалось подготовить письмо председателю по свойствам файла протокола.");
+    return request;
   }
 
   async function createStudentDocumentEmailAttachment(blob, fileName, outputFormat) {
@@ -72007,6 +72069,11 @@ MAX - https://bizvmax.ru/zifra_plus
     let pendingPreviewToken = "";
     let documentProcessingOrigin = "";
     try {
+      if (!options.skipEmail && documentTemplate.documentKind === "studentAttestationProtocol"
+        && normalizeDocumentEmailDeliveryMode(documentTemplate.emailDeliveryMode, documentTemplate) !== "off") {
+        setDocumentGenerationStatus(generationTaskId, "Загрузка текста письма из свойств протокола");
+        documentTemplate = await loadStudentProtocolEmailTemplate(documentTemplate);
+      }
       const fieldValues = options.fieldValues || evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = options.sourceValues || {
         ...collectContractTemplateSourceValues(record),
@@ -72185,7 +72252,8 @@ MAX - https://bizvmax.ru/zifra_plus
         );
         setDocumentGenerationStatus(generationTaskId, `Отправка письма: ${emailRequest.recipientDescription}`);
         emailSent = await sendServerEmail({
-          email: String(record.email || "").trim(),
+          email: emailRequest.recipient,
+          recipientLabel: documentTemplate.documentKind === "studentAttestationProtocol" ? "председателя комиссии" : undefined,
           subject: emailRequest.subject,
           message: emailRequest.message,
           button,

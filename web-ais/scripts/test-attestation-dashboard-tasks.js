@@ -42,6 +42,7 @@ function applySharedApplicationState(payload){state.data=payload.data;}
 function markStudentEventsCompleted(record,key,date,options){calls.push({action:'event',key,options});const target=state.data.collections.students.find(s=>s.id===record.id);target['event_'+key+'_state']='dated';target['event_'+key+'_date']='2026-09-17';sharedStateDirty=true;sharedStateChangeGeneration++;}
 async function downloadStudentDocumentFromTemplate(template,record,button,title,options){calls.push({action:'generate',id:record.id,kind:template.documentKind,options});if(changeRecipientDuringGeneration)state.data.collections.contracts.forEach(p=>p.email='changed@example.test');return cancelled?{cancelled:true}:{generated:true,fileName:'Документ.pdf',outputFormat:'pdf',blob:'fixture-pdf',storageResult:saveFails?{}:(local?{localSaveResult:{saved:true}}:{yandexSaveResult:{saved:true}})};}
 async function createStudentDocumentEmailAttachment(blob,fileName){return {fileName,base64:'TEST'};}
+async function prepareAttestationProtocolEmailRequest(record){calls.push({action:'protocol-properties',id:record.id});return {subject:'Тема из свойств протокола',message:'Текст из свойств протокола: '+record.name,recipient:'chair@example.test'};}
 async function sendServerEmail(request){calls.push({action:'send',request});return !sendFails;}
 function escapeHtml(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function escapeAttr(value){return escapeHtml(value);}
@@ -102,6 +103,17 @@ async function main() {
   assert.equal(c.calls.find(x=>x.action==="event").key,"macro_protocol");
   assert.equal(c.calls.find(x=>x.action==="generate").options.storageRequest.saveToYandexDisk,true);
   assert.equal(c.calls.some(x=>x.action==="send"),false);
+  c=harness();result={};await c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result);
+  assert.equal(result.emailed,true);
+  assert.equal(c.calls.find(x=>x.action==="send").request.subject,"Тема из свойств протокола");
+  assert.match(c.calls.find(x=>x.action==="send").request.message,/Текст из свойств протокола/);
+  assert.equal(c.calls.find(x=>x.action==="send").request.email,"chair@example.test");
+  c=harness();result={};c.prepareAttestationProtocolEmailRequest=async()=>{throw new Error("Нет свойств протокола");};
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/Нет свойств/);
+  assert.equal(result.saved,true);assert.equal(c.calls.some(x=>x.action==="send"),false);
+  c=harness();result={};c.prepareAttestationProtocolEmailRequest=async()=>{c.state.data.collections.contracts.forEach(p=>p.email="new@example.test");return {subject:"Тема",message:"Текст"};};
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/изменились данные или адрес/);
+  assert.equal(c.calls.some(x=>x.action==="send"),false,"Recheck the chair after loading Word properties");
   for(const flag of ["saveFails","cancelled","lockFails"]){
     c=harness();c[flag]=true;result={};
     try{await c.executeAttestationTask(itemFor(c),{sendEmail:true},result);}catch(e){assert.match(e.message,/Сохранение|занята/);}

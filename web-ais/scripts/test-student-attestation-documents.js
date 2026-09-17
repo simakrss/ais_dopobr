@@ -29,12 +29,13 @@ const c = vm.createContext({ state, getEducationDocumentTrainingPlanRows: () => 
   getEducationDocumentButtonTitle: () => "Документ", buildStudentDocumentGenerationTooltip: () => "Конверт",
   escapeAttr: (value) => String(value).replace(/"/g, "&quot;"), escapeMultilineAttr: (value) => value,
   renderOrdersSdoIcon: () => "", studentAttestationDocumentTemplateDefinitions: defs,
-  contractTemplateFieldDefaults: []
+  contractTemplateFieldDefaults: [],
+  unique: (values) => [...new Set(values)]
 });
 vm.runInContext([
   "normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById",
   "applyProgramCommissionSetToProgram", "resolveProgramCommissionRecord", "normalizeEmployeeActPersonName",
-  "formatEmployeeContractShortName", "getStudentAttestationDocumentUnavailableReason",
+  "formatEmployeeContractShortName", "getStudentAttestationDocumentUnavailableReason", "getAttestationChairRecipient",
   "formatStudentGradeSheetDisciplines", "prepareStudentAttestationDocumentRecord", "renderEducationDocumentActions",
   "isGetSqlQueryFormula", "evaluateContractTemplateField", "getContractFormulaDocumentReferences",
   "normalizeContractTemplateField", "normalizeContractTemplateDocumentFields", "findContractTemplateFormulaCycle", "validateContractTemplateFormulaGraph"
@@ -55,7 +56,8 @@ state.data.collections.programs[0].type = "КПК";
 state.data.collections.programs[0].commissionSetId = "c";
 const html = c.renderEducationDocumentActions(student);
 assert.equal((html.match(/<button /g) || []).length, 4);
-assert.ok(html.indexOf(">Ведомость</span>") < html.indexOf(">Протокол</span>"));
+assert.ok(html.includes(">Ведомость экзаменов</span>"));
+assert.ok(html.indexOf(">Ведомость экзаменов</span>") < html.indexOf(">Протокол</span>"));
 const css = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
 assert.match(css, /\.education-document-actions\s*\{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) max-content;/);
 const prepared = c.prepareStudentAttestationDocumentRecord(student, "studentAttestationProtocol");
