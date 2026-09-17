@@ -3167,6 +3167,8 @@ html.is-database-demo-mode .contract-photo-path-field {
 }
 
 .dashboard-document-tasks.without-frdo { grid-template-columns: 200px; }
+.dashboard-document-tasks.without-attestation { grid-template-columns: minmax(0, 1fr); }
+.dashboard-document-tasks[hidden] { display: none !important; }
 .dashboard-document-tasks .dashboard-frdo-widget {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(75px, 0.8fr) 28px;
   height: 100px;

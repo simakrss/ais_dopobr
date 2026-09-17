@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.503",
+    version: "1.7.504",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.504",
+      releasedAt: "2026-09-17",
+      changes: ["Плитка «Ведомости и протоколы» скрывается, когда нет документов для генерации, и появляется при новых задачах. Без неё плитка ФРДО занимает всю строку; если обеих задач нет, пустая строка не отображается."]
+    },
     {
       version: "1.7.503",
       releasedAt: "2026-09-17",
@@ -18898,6 +18903,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = getPendingAttestationRows();
     const count = (kind) => rows.reduce((sum, row) => sum + Number(row.documents.some((item) => item.kind === kind)), 0);
     const sheets = count("studentGradeSheet"), protocols = count("studentAttestationProtocol");
+    if (sheets + protocols === 0) return "";
     return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-attestation-tasks" title="Сформировать ведомости и протоколы по выданным документам об образовании, ещё не отмеченные в событиях слушателей">
       <span class="eyebrow">Ведомости и протоколы</span><strong>${sheets + protocols}</strong>
       <small>Ведомости КПК / ППП: ${sheets}<br>Протоколы ППП: ${protocols}</small>
@@ -18925,6 +18931,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .sort((a, b) => new Date(a.endDate) - new Date(b.endDate))
       .slice(0, 5)
       .map((item) => ({ ...item, daysRemaining: calculateDaysUntilDate(item.endDate) }));
+    const attestationDashboardTile = renderAttestationDashboardTile();
     const pendingIssuedDocuments = getIssuedDocumentRows()
       .filter((row) => row.frdoKey === "pending");
     const pendingIssuedDocumentDays = pendingIssuedDocuments
@@ -18958,7 +18965,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"}">
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}" ${pendingIssuedDocuments.length || attestationDashboardTile ? "" : "hidden"}>
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -18985,7 +18992,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
       ` : ""}
 
-      ${renderAttestationDashboardTile()}
+      ${attestationDashboardTile}
       </div>
       <section class="panel">
         <div class="panel-head">

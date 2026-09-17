@@ -72,6 +72,36 @@ function itemFor(c,id="one",kind="studentGradeSheet") {
 }
 async function main() {
   let c=harness();
+  assert.match(c.renderAttestationDashboardTile(), /<strong>4<\/strong>/);
+  const visibility=harness();
+  visibility.state.data.collections.students=[];
+  assert.equal(visibility.renderAttestationDashboardTile(), "", "No tasks: do not render the tile");
+  visibility.state.data.collections.students=[c.state.data.collections.students.find(student=>student.id==='two')];
+  assert.match(visibility.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A single grade sheet makes the tile visible");
+  visibility.state.data.collections.students=[c.state.data.collections.students.find(student=>student.id==='signed')];
+  assert.match(visibility.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A single protocol makes the tile visible");
+  const completed=harness();
+  completed.state.data.collections.students.forEach(student=>{student.event_examSheetPrepared_state='checked';student.event_macro_protocol_state='checked';});
+  assert.equal(completed.renderAttestationDashboardTile(), "", "The tile disappears when all pending documents are marked generated");
+  completed.state.data.collections.students.find(student=>student.id==='two').event_examSheetPrepared_state='unchecked';
+  assert.match(completed.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A newly pending document restores the tile");
+  const tileStart=source.indexOf('      <div class="dashboard-document-tasks '),tileEnd=source.indexOf('      <section class="panel">',tileStart);
+  assert.ok(tileStart>0&&tileEnd>tileStart);
+  const renderTileRow=new Function('attestationDashboardTile','pendingIssuedDocuments',`
+    const frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0,frdoDeadlineLabel='',frdoDaysIndicatorLabel='',escapeHtml=value=>value;
+    return \`${source.slice(tileStart,tileEnd)}\`;
+  `);
+  const noTiles=renderTileRow('',[]);
+  assert.match(noTiles,/without-frdo without-attestation" hidden>/);
+  assert.doesNotMatch(noTiles,/<button/);
+  assert.match(renderTileRow('',[{}]),/without-attestation" >/);
+  assert.match(renderTileRow('',[{}]),/dashboard-frdo-widget/);
+  assert.doesNotMatch(renderTileRow('',[{}]),/open-attestation-tasks/);
+  assert.match(renderTileRow(c.renderAttestationDashboardTile(),[]),/without-frdo "/);
+  assert.doesNotMatch(renderTileRow(c.renderAttestationDashboardTile(),[]),/dashboard-frdo-widget|without-attestation|hidden/);
+  const css=fs.readFileSync(path.join(root,'styles.css'),'utf8');
+  assert.match(css,/\.dashboard-document-tasks\.without-attestation\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css,/\.dashboard-document-tasks\[hidden\]\s*\{\s*display: none !important/);
   assert.equal(c.getPendingAttestationRows().length,3);
   assert.equal(c.getPendingAttestationRows().reduce((sum,row)=>sum+row.documents.length,0),4);
   assert.equal(c.getPendingAttestationRows().some(row=>['not-issued','previous-education','only-date'].includes(row.record.id)),false,"Only issued education documents, not earlier education or date alone");
@@ -235,13 +265,14 @@ main().then(()=>{
   const end=source.indexOf('      <section class="panel">',start);
   assert.ok(start>0&&end>start);
   const dashboardFixture=`function renderFixtureDocumentTasks(){
+    const attestationDashboardTile=renderAttestationDashboardTile();
     const pendingIssuedDocuments=Array(6).fill({}),frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0;
     const frdoDeadlineLabel='До ближайшего срока: 28 дн.',frdoDaysIndicatorLabel='Осталось дней: 28';
     return \`${source.slice(start,end)}\`;
   }`;
   const fixtureSetup=setup+(process.argv.includes("--kpk-no-commission")?"state.data.collections.programs.find(p=>p.id==='kpk').commissionSetId='';":"");
   const script=fixtureSetup+names.map(extract).join("\n")+extract("openAttestationTasksDialog")+dashboardFixture+`
-    render=function(){document.querySelector('#tiles').innerHTML=renderFixtureDocumentTasks();document.querySelector('[data-action="open-attestation-tasks"]').onclick=openAttestationTasksDialog;};render();
+    render=function(){document.querySelector('#tiles').innerHTML=renderFixtureDocumentTasks();document.querySelector('[data-action="open-attestation-tasks"]')?.addEventListener('click',openAttestationTasksDialog);};render();
     var realSend=sendServerEmail;sendServerEmail=async function(request){const result=await realSend(request);document.querySelector('#calls').textContent=calls.map(c=>c.action+(c.kind?' '+c.kind:'')).join(', ');sendFails=false;document.querySelector('#failure').checked=false;return result;};
     document.querySelector('#failure').onchange=e=>{sendFails=e.target.checked;};
     document.querySelector('#issued').onchange=e=>{state.data.collections.students[0].diplomaBlankNo=e.target.checked?'ТЕСТ-1':'';render();};
