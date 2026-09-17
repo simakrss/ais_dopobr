@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.502",
+    version: "1.7.503",
     releasedAt: "2026-09-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.503",
+      releasedAt: "2026-09-17",
+      changes: ["Экзаменационные ведомости в списке итоговых документов только сохраняются в папки слушателей и не отправляются председателям независимо от вида программы и наличия комиссии. Отправка и счётчик писем оставлены только для протоколов, в подтверждении отдельно показаны ведомости без отправки."]
+    },
     {
       version: "1.7.502",
       releasedAt: "2026-09-17",
@@ -18536,13 +18541,17 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAttestationTaskEmailRecipient(record, definition) {
-    const program = getStudentContextProgram(record);
-    if (definition.kind === "studentGradeSheet"
-      && String(program?.type || "").trim().toUpperCase() === "КПК"
-      && !getProgramCommissionSetById(program.commissionSetId)) {
-      return { name: "", email: "", error: "", skipReason: "КПК: комиссия не назначена, письмо не отправляется." };
+    if (definition.kind === "studentGradeSheet") {
+      return { name: "", email: "", error: "", skipReason: "Экзаменационная ведомость: письмо председателю не отправляется." };
     }
     return getAttestationChairRecipient(record);
+  }
+
+  function getAttestationTaskEmailPlan(items, sendEmail) {
+    return {
+      emailItems: sendEmail ? items.filter((item) => item.definition.kind === "studentAttestationProtocol" && !item.skipEmailReason) : [],
+      saveOnlyCount: items.filter((item) => item.definition.kind === "studentGradeSheet").length
+    };
   }
 
   function getAttestationTaskFingerprint(record, definition) {
@@ -18586,7 +18595,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (getAttestationTaskFingerprint(record, item.definition) !== item.fingerprint) throw new Error("Данные слушателя, программы или шаблона изменились. Обновите список и проверьте документ повторно.");
       if (result.saved && result.fingerprint !== item.fingerprint) throw new Error("Данные изменились после сохранения документа. Старый файл не отправлен. Закройте список, проверьте документ и сформируйте его заново из карточки слушателя.");
       const recipient = getAttestationTaskEmailRecipient(record, item.definition);
-      const sendEmail = options.sendEmail && !recipient.skipReason;
+      const sendEmail = options.sendEmail && item.definition.kind === "studentAttestationProtocol" && !recipient.skipReason;
       if (sendEmail && (recipient.error || recipient.email !== item.email)) throw new Error(recipient.error || "Изменился адрес председателя. Требуется новое подтверждение отправки.");
       const problem = getAttestationTaskProblem(record, item.definition);
       if (!result.saved && problem) throw new Error(problem);
@@ -18708,8 +18717,8 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.dataset.attestationTasks = "";
     backdrop.innerHTML = `<section class="modal attestation-tasks-dialog" role="dialog" aria-modal="true" aria-labelledby="attestationTasksTitle">
       <header class="modal-head"><div><p class="eyebrow">По неотмеченным событиям слушателей</p><h2 id="attestationTasksTitle">Ведомости и протоколы</h2></div><button class="icon-button" data-task-close type="button" title="Закрыть">×</button></header>
-      <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
-      <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы — ППП. Просмотр ничего не сохраняет и не отправляет.</p>
+      <div class="attestation-tasks-toolbar"><label class="checkbox-line"><input type="checkbox" data-task-send checked>Отправить протоколы председателям комиссий</label><label class="checkbox-line"><input type="checkbox" data-task-preview-each>Просматривать каждый документ перед сохранением</label><button class="ghost-button" data-task-refresh type="button">Обновить список</button></div>
+      <p class="muted">Только по выданным документам об образовании: ведомости — КПК и ППП, протоколы — ППП. Ведомости только сохраняются; председателям отправляются только протоколы. Просмотр ничего не сохраняет и не отправляет.</p>
       <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th><label title="Выбрать всех слушателей"><input type="checkbox" data-task-all aria-label="Все слушатели"></label></th><th>Слушатель / программа</th><th>Ведомость экзаменов</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
       <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
       <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
@@ -18735,7 +18744,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const locked = session.running || session.busy;
       const selectableKeys = new Set();
       $("[data-task-rows]").innerHTML = session.rows.length ? session.rows.map((row) => {
-        const recipient = getAttestationTaskEmailRecipient(row.record, row.documents[0]);
+        const recipient = getAttestationTaskEmailRecipient(row.record, row.documents.find((definition) => definition.kind === "studentAttestationProtocol") || row.documents[0]);
         const cells = definitions.map((definition) => {
           const key = keyOf(row.record.id, definition.kind), result = session.results.get(key);
           if (!row.documents.some((item) => item.kind === definition.kind)) return "<td>—</td>";
@@ -18842,14 +18851,13 @@ MAX - https://bizvmax.ru/zifra_plus
             fingerprint: getAttestationTaskFingerprint(row.record, definition) });
         }));
         if (!items.length) { notice("Нет выбранных документов, готовых к выполнению. Проверьте сообщения в таблице."); return; }
-        const emailItems = options.sendEmail ? items.filter((item) => !item.skipEmailReason) : [];
-        const skippedEmailCount = options.sendEmail ? items.length - emailItems.length : 0;
+        const { emailItems, saveOnlyCount } = getAttestationTaskEmailPlan(items, options.sendEmail);
         const recipients = unique(emailItems.map((item) => item.email).filter(Boolean));
         const generateCount = items.filter((item) => !session.results.get(item.key)?.saved).length;
         const cachedCount = items.length - generateCount;
         const confirmTitle = generateCount ? "Подтверждение генерации и сохранения" : "Подтверждение повторного действия";
         const confirmLabel = generateCount ? (emailItems.length ? "Генерировать и отправить" : "Генерировать и сохранить") : (emailItems.length ? "Повторить отправку" : "Завершить сохранение отметок");
-        const emailSummary = `${emailItems.length ? `<p>Отправить председателям комиссий отдельных писем с вложениями: ${emailItems.length}. Получатели:</p><ul>${recipients.map((email) => `<li>${escapeHtml(email)} — документов: ${emailItems.filter((item) => item.email === email).length}</li>`).join("")}</ul>` : ""}${skippedEmailCount ? `<p>Ведомости КПК без комиссии: ${skippedEmailCount}. Они будут сохранены в папки слушателей без отправки писем.</p>` : ""}${!options.sendEmail ? "<p>Отправка писем выключена.</p>" : ""}`;
+        const emailSummary = `${emailItems.length ? `<p>Протоколов к отправке председателям комиссий: ${emailItems.length}. Каждый протокол будет отправлен отдельным письмом. Получатели:</p><ul>${recipients.map((email) => `<li>${escapeHtml(email)} — протоколов: ${emailItems.filter((item) => item.email === email).length}</li>`).join("")}</ul>` : ""}${saveOnlyCount ? `<p>Экзаменационные ведомости: ${saveOnlyCount}. Только сохранение в папки слушателей, без отправки писем.</p>` : ""}${!options.sendEmail ? "<p>Отправка протоколов по почте выключена.</p>" : ""}`;
         confirmPanel(confirmTitle, `<p>Выбрано документов: ${items.length}.</p>${generateCount ? `<p>Сформировать и сохранить в папки слушателей: ${generateCount}. Одноимённые файлы могут быть заменены.</p>` : ""}${cachedCount ? `<p>Уже сохранено: ${cachedCount}. Повторной генерации этих файлов не будет.</p>` : ""}${emailSummary}`, confirmLabel, async () => {
           session.running = true; session.stop = false; paint();
           const progress = $("[data-task-progress]"); progress.hidden = false; progress.max = items.length; progress.value = 0;

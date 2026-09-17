@@ -59,7 +59,7 @@ async function cancelGeneratedDocumentPreview(token){calls.push({action:'preview
 const names = ["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "normalizeEmployeeActPersonName", "hasStudentEducationDocumentIssued",
   "isExplicitUncheckedEventState", "normalizeEventState", "getStudentAttestationDocumentUnavailableReason",
   "getAttestationTaskDefinitions", "getAttestationTaskEventKeys", "isAttestationTaskCompleted", "getPendingAttestationRows",
-  "getAttestationChairRecipient", "getAttestationTaskEmailRecipient", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
+  "getAttestationChairRecipient", "getAttestationTaskEmailRecipient", "getAttestationTaskEmailPlan", "getAttestationTaskProblem", "getAttestationTaskFingerprint", "refreshAttestationTaskSnapshot",
   "withAttestationStudentLock", "executeAttestationTask", "previewAttestationTask", "renderAttestationDashboardTile", "openAttestationTaskStudentCard"];
 function harness() {
   const c=vm.createContext({window:{setInterval:()=>1,clearInterval:()=>{}}, console});
@@ -90,12 +90,10 @@ async function main() {
   assert.equal(c.isAttestationTaskCompleted({event_macro_protocol_state:"unchecked",event_macro_protocol_date:"2026-01-01"},definition),false);
   c=harness();let result={};let item=itemFor(c);
   await c.executeAttestationTask(item,{sendEmail:true,previewEach:false},result);
-  assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(result.emailed,true);assert.equal(result.blob,undefined);
-  assert.equal(c.calls.find(x=>x.action==="send").request.email,"chair@example.test");
-  assert.notEqual(c.calls.find(x=>x.action==="send").request.email,"learner@example.test");
+  assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(result.emailed,undefined);assert.equal(result.blob,undefined);
+  assert.equal(c.calls.some(x=>x.action==="send"),false,"PPP grade sheets must not be emailed even with a valid chair");
   assert.equal(c.calls.find(x=>x.action==="event").key,"examSheetPrepared");
   assert.ok(c.calls.findIndex(x=>x.action==="generate")<c.calls.findIndex(x=>x.action==="event"));
-  assert.ok(c.calls.findIndex(x=>x.action==="event")<c.calls.findIndex(x=>x.action==="send"));
   const options=c.calls.find(x=>x.action==="generate").options;
   assert.equal(options.skipEmail,true);assert.equal(options.requireStorage,true);assert.equal(options.storageRequest.promptLocalSave,false);assert.equal(options.storageRequest.autoSaveLocal,true);
   assert.equal(c.calls.filter(x=>x.action==="lock").at(-1).operation,"release");
@@ -108,24 +106,25 @@ async function main() {
   assert.equal(c.calls.find(x=>x.action==="send").request.subject,"Тема из свойств протокола");
   assert.match(c.calls.find(x=>x.action==="send").request.message,/Текст из свойств протокола/);
   assert.equal(c.calls.find(x=>x.action==="send").request.email,"chair@example.test");
+  assert.ok(c.calls.findIndex(x=>x.action==="event")<c.calls.findIndex(x=>x.action==="send"));
   c=harness();result={};c.prepareAttestationProtocolEmailRequest=async()=>{throw new Error("Нет свойств протокола");};
   await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/Нет свойств/);
   assert.equal(result.saved,true);assert.equal(c.calls.some(x=>x.action==="send"),false);
   c=harness();result={};c.prepareAttestationProtocolEmailRequest=async()=>{c.state.data.collections.contracts.forEach(p=>p.email="new@example.test");return {subject:"Тема",message:"Текст"};};
   await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/изменились данные или адрес/);
   assert.equal(c.calls.some(x=>x.action==="send"),false,"Recheck the chair after loading Word properties");
-  for (const commissionSetId of ["", "deleted-commission"]) {
+  for (const commissionSetId of ["", "deleted-commission", "c"]) {
     c=harness();c.state.data.collections.programs.find(p=>p.id==="kpk").commissionSetId=commissionSetId;
     const learner=c.state.data.collections.students.find(s=>s.id==="two");learner.email="learner@example.test";
     const sheetDefinition=c.getAttestationTaskDefinitions()[0];
     assert.equal(c.getAttestationTaskProblem(learner,sheetDefinition),"");
     const recipient=c.getAttestationTaskEmailRecipient(learner,sheetDefinition);
-    assert.equal(recipient.error,"");assert.equal(recipient.email,"");assert.match(recipient.skipReason,/КПК/);
-    assert.ok(c.getAttestationTaskEmailRecipient(learner,c.getAttestationTaskDefinitions()[1]).error,"Protocol still requires a commission");
+    assert.equal(recipient.error,"");assert.equal(recipient.email,"");assert.match(recipient.skipReason,/ведомость/);
+    if(commissionSetId!=="c")assert.ok(c.getAttestationTaskEmailRecipient(learner,c.getAttestationTaskDefinitions()[1]).error,"Protocol still requires a commission");
     result={};await c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},result);
     assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(result.emailed,undefined);
-    assert.equal(result.blob,undefined);assert.match(result.message,/письмо не отправляется/);
-    assert.equal(c.calls.some(x=>x.action==="send"),false,"Never substitute learner email when KPK has no commission");
+    assert.equal(result.blob,undefined);assert.match(result.message,/письмо председателю не отправляется/);
+    assert.equal(c.calls.some(x=>x.action==="send"),false,"Never send a KPK grade sheet, with or without a commission");
     assert.equal(c.calls.find(x=>x.action==="generate").options.storageRequest.autoSaveLocal,true);
     assert.equal(c.calls.find(x=>x.action==="event").key,"examSheetPrepared");
     await c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},{});
@@ -136,8 +135,10 @@ async function main() {
   await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},{}),/комиссия/);
   assert.equal(c.calls.some(x=>x.action==="generate"||x.action==="send"),false,"PPP protocol requirements are preserved");
   c=harness();c.state.data.collections.contracts=[];
-  await assert.rejects(c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},{}),/Email председателя/);
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},{}),/Email председателя/);
   assert.equal(c.calls.some(x=>x.action==="send"),false,"An assigned chair's invalid email is not silently ignored");
+  result={};await c.executeAttestationTask(itemFor(c,"one"),{sendEmail:true},result);
+  assert.equal(result.saved,true);assert.equal(c.calls.some(x=>x.action==="send"),false,"A chair email error must not block a grade sheet");
   c=harness();c.state.data.collections.programs.find(p=>p.id==="kpk").commissionSetId="";c.saveFails=true;
   await assert.rejects(c.executeAttestationTask(itemFor(c,"two"),{sendEmail:true},{}),/Сохранение/);
   assert.equal(c.calls.some(x=>x.action==="event"||x.action==="send"),false);
@@ -146,18 +147,18 @@ async function main() {
     try{await c.executeAttestationTask(itemFor(c),{sendEmail:true},result);}catch(e){assert.match(e.message,/Сохранение|занята/);}
     assert.equal(c.calls.some(x=>x.action==="event"||x.action==="send"),false,flag);
   }
-  c=harness();c.sendFails=true;result={};item=itemFor(c);
+  c=harness();c.sendFails=true;result={};item=itemFor(c,"one","studentAttestationProtocol");
   await assert.rejects(c.executeAttestationTask(item,{sendEmail:true},result),/отправка письма не подтверждена/);
   assert.equal(result.saved,true);assert.equal(result.eventSaved,true);assert.equal(c.isAttestationTaskCompleted(c.state.data.collections.students[0],item.definition),true);
   c.sendFails=false;await c.executeAttestationTask(item,{sendEmail:true},result);
   assert.equal(c.calls.filter(x=>x.action==="generate").length,1,"Retry email without regenerating a saved document");
-  c=harness();c.sendFails=true;result={};item=itemFor(c);
+  c=harness();c.sendFails=true;result={};item=itemFor(c,"one","studentAttestationProtocol");
   await assert.rejects(c.executeAttestationTask(item,{sendEmail:true},result));
   c.sendFails=false;c.state.data.collections.students[0].finalGrade="Хорошо";
-  await assert.rejects(c.executeAttestationTask(itemFor(c),{sendEmail:true},result),/Старый файл не отправлен/);
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/Старый файл не отправлен/);
   assert.equal(c.calls.filter(x=>x.action==="send").length,1,"A new confirmation cannot authorize an outdated cached attachment");
   c=harness();c.changeRecipientDuringGeneration=true;result={};
-  await assert.rejects(c.executeAttestationTask(itemFor(c),{sendEmail:true},result),/изменились данные или адрес/);
+  await assert.rejects(c.executeAttestationTask(itemFor(c,"one","studentAttestationProtocol"),{sendEmail:true},result),/изменились данные или адрес/);
   assert.equal(result.saved,true);assert.equal(c.calls.some(x=>x.action==="send"),false);
   c=harness();item=itemFor(c);c.mutateSnapshot=data=>{data.collections.students[0].name="Чужая правка";};
   await assert.rejects(c.executeAttestationTask(item,{sendEmail:true},{}),/изменились/);
@@ -205,6 +206,21 @@ async function main() {
   cardSession.running=true;openingError="";await c.openAttestationTaskStudentCard("one",backdrop,cardSession,()=>{throw new Error("Should not open during generation");});
   assert.equal(backdrop.hidden,false);
   const dialogSource=extract("openAttestationTasksDialog");
+  const gradeItem={definition:{kind:"studentGradeSheet"},email:"chair@example.test"};
+  const protocolItem={definition:{kind:"studentAttestationProtocol"},email:"chair@example.test"};
+  const fiveDocuments=[gradeItem,gradeItem,gradeItem,gradeItem,protocolItem];
+  const mailPlan=c.getAttestationTaskEmailPlan(fiveDocuments,true);
+  assert.equal(mailPlan.emailItems.length,1,"Five documents in the screenshot must produce only one protocol email");
+  assert.equal(mailPlan.emailItems[0],protocolItem);assert.equal(mailPlan.saveOnlyCount,4);
+  assert.equal(c.getAttestationTaskEmailPlan([gradeItem],true).emailItems.length,0,"Single-grade-sheet action never sends");
+  assert.equal(c.getAttestationTaskEmailPlan(fiveDocuments,false).emailItems.length,0);
+  assert.equal(c.getAttestationTaskEmailPlan([protocolItem,{...protocolItem,email:"other@example.test"}],true).emailItems.length,2);
+  assert.match(dialogSource,/getAttestationTaskEmailPlan\(items, options.sendEmail\)/);
+  assert.match(dialogSource,/row.documents.find\(\(definition\) => definition.kind === "studentAttestationProtocol"\)/,"Keep the protocol chair visible even when grade sheet is the first column");
+  assert.match(dialogSource,/Отправить протоколы председателям комиссий/);
+  assert.match(dialogSource,/Только сохранение в папки слушателей, без отправки писем/);
+  assert.doesNotMatch(dialogSource,/Ведомости КПК без комиссии/);
+  assert.match(extract("executeAttestationTask"),/const sendEmail = options.sendEmail && item.definition.kind === "studentAttestationProtocol"/);
   assert.match(dialogSource,/data-task-student/);assert.match(dialogSource,/input\.indeterminate = checkedCount > 0/);
   assert.match(dialogSource,/const requestedKeys = new Set\(onlyKey \? \[onlyKey\] : session.selected\)/);
   assert.match(dialogSource,/if \(!requestedKeys.has\(key\)/);
