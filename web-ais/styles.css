@@ -13821,7 +13821,7 @@ body.card-window-moving {
 
 .generated-document-email-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
   align-items: center;
 }
 
@@ -25714,7 +25714,7 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-email-actions {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
     gap: 6px;
   }
 

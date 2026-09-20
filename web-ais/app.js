@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.510",
+    version: "1.7.511",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.511",
+      releasedAt: "2026-09-20",
+      changes: ["В предварительный просмотр письма при формировании документов добавлена кнопка «Пропустить». Она продолжает сохранение документа без отправки письма и без установки отметок об отправке. Закрытие окна и прерывание формирования по-прежнему отменяют операцию."]
+    },
     {
       version: "1.7.510",
       releasedAt: "2026-09-20",
@@ -71996,9 +72001,10 @@ MAX - https://bizvmax.ru/zifra_plus
             </div>
           </div>
           <footer class="modal-actions generated-document-email-actions">
-            <small>Письмо будет отправлено вместе со сформированным документом только после подтверждения.</small>
+            <small>«Продолжить» — сохранить документ и отправить письмо. «Пропустить» — сохранить документ без отправки.</small>
             <button class="ghost-button" data-action="edit-generated-document-email" type="button">Редактировать</button>
             <button class="primary-button" data-action="apply-generated-document-email" type="button" hidden>Применить изменения</button>
+            <button class="ghost-button" data-action="skip-generated-document-email-preview" type="button" title="Продолжить сохранение документа без отправки письма">Пропустить</button>
             <button class="primary-button" data-action="confirm-generated-document-email-preview" type="button">Продолжить</button>
             <button class="icon-button form-cancel-button" data-action="cancel-generated-document-email-preview" type="button" title="Отмена" aria-label="Отмена">×</button>
           </footer>
@@ -72128,6 +72134,8 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       subjectInput?.addEventListener("input", markEmailEditorDirty);
       messageInput?.addEventListener("input", markEmailEditorDirty);
+      backdrop.querySelector("[data-action='skip-generated-document-email-preview']")
+        ?.addEventListener("click", () => finish({ skipEmail: true }));
       backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")
         ?.addEventListener("click", () => {
           const reviewedEmailRequest = readEditedEmailRequest();
@@ -72344,6 +72352,7 @@ MAX - https://bizvmax.ru/zifra_plus
         { skipConfirmation: options.skipEmailConfirmation === true || previewEnabled }
       );
       if (emailRequest === false) return;
+      let emailSkipped = false;
       const generationRequest = {
         templateUrl,
         templatePath,
@@ -72399,7 +72408,12 @@ MAX - https://bizvmax.ru/zifra_plus
               emailPreviewed: true
             };
           }
-          emailRequest = reviewedEmailRequest;
+          if (reviewedEmailRequest.skipEmail === true) {
+            emailSkipped = true;
+            emailRequest = null;
+          } else {
+            emailRequest = reviewedEmailRequest;
+          }
         }
       }
       throwIfDocumentGenerationCancelled(generationTaskId);
@@ -72548,10 +72562,13 @@ MAX - https://bizvmax.ru/zifra_plus
           `PDF-конвертер временно недоступен. Файл «${responseDetails.fileName}» скачан в формате DOCX и доступен для открытия в Word.`,
           "warning"
         );
+      } else if (emailSkipped) {
+        showDocumentGenerationNotice("Документ сформирован. Отправка письма пропущена.");
       }
       return {
         generated: true,
         emailed: emailSent,
+        emailSkipped,
         emailRecipientMode: emailRequest?.recipientMode || "off",
         fileName: responseDetails.fileName,
         storageRequest,
