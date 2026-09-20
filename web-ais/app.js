@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.514",
+    version: "1.7.515",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.515",
+      releasedAt: "2026-09-20",
+      changes: ["В коммуникациях слушателей и сотрудников меню больше не появляется при наведении или фокусе в сообщении. Копирование, редактирование, восстановление и отправка письма доступны по правому щелчку вместе со стандартными действиями поля и редактированием формулы."]
+    },
     {
       version: "1.7.514",
       releasedAt: "2026-09-20",
@@ -48559,6 +48564,18 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.getElementById("recordForm");
     if (!form) return;
     bindCardFormulaRecalculation(form);
+    form.querySelectorAll(".communication-message-card").forEach((card) => {
+      if (card.dataset.communicationContextBound === "true") return;
+      card.dataset.communicationContextBound = "true";
+      card.addEventListener("contextmenu", (event) => {
+        if (event.defaultPrevented) return;
+        const control = card.querySelector("[data-communication-message]");
+        if (!control) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showFieldCopyPopup(control, event.clientX, event.clientY);
+      });
+    });
     form.querySelectorAll("input, select, textarea").forEach((control) => {
       if (!isCopyableControl(control)) return;
       if (control.dataset.copyContextBound === "true") return;
@@ -48687,15 +48704,28 @@ MAX - https://bizvmax.ru/zifra_plus
         </button>
       ` : ""}
     `;
+    const communicationMenu = control?.dataset?.communicationMessage
+      ? control.closest?.(".communication-message-card")?.querySelector(".communication-message-menu")
+      : null;
+    if (communicationMenu) {
+      // Move the already-bound actions so mail recipient selection and handlers remain intact.
+      const buttons = [...communicationMenu.querySelectorAll("button")]
+        .filter((button) => button.dataset.action !== "copy-communication-message");
+      popup.communicationMessageActions = { menu: communicationMenu, buttons };
+      const pasteButton = popup.querySelector("[data-action='paste-field-value']");
+      buttons.forEach((button) => popup.insertBefore(button, pasteButton));
+      popup.addEventListener("click", (event) => {
+        if (buttons.some((button) => button === event.target || button.contains(event.target))) hideFieldCopyPopup();
+      });
+    }
     const menuItems = Array.from(popup.querySelectorAll("button"));
     menuItems.forEach((button, index) => {
       button.setAttribute("role", "menuitem");
       button.tabIndex = index === 0 ? 0 : -1;
-      button.addEventListener("focus", () => {
-        menuItems.forEach((item) => {
-          item.tabIndex = item === button ? 0 : -1;
-        });
-      });
+    });
+    popup.addEventListener("focusin", (event) => {
+      if (!menuItems.includes(event.target)) return;
+      menuItems.forEach((item) => { item.tabIndex = item === event.target ? 0 : -1; });
     });
     const focusMenuItem = (index) => {
       const enabledItems = menuItems.filter((button) => !button.disabled);
@@ -49985,6 +50015,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const popup = document.querySelector("[data-field-copy-popup]");
     const returnTarget = popup?.fieldCopyPopupReturnTarget;
     popup?.fieldCopyPopupOpener?.setAttribute?.("aria-expanded", "false");
+    const communicationActions = popup?.communicationMessageActions;
+    communicationActions?.buttons.forEach((button) => communicationActions.menu.appendChild(button));
     popup?.remove();
     if (options.restoreFocus) returnTarget?.focus?.({ preventScroll: true });
   }
