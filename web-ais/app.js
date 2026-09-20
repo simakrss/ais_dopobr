@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.518",
+    version: "1.7.519",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.519",
+      releasedAt: "2026-09-20",
+      changes: ["Во все поля поиска с лупой добавлен крестик очистки справа: в списках, фильтрах, импорте и окнах документов. Очистка сразу обновляет результаты поиска и возвращает фокус в поле; кнопка не перекрывает текст и скрывается в пустом поле."]
+    },
     {
       version: "1.7.518",
       releasedAt: "2026-09-20",
@@ -48587,6 +48592,67 @@ MAX - https://bizvmax.ru/zifra_plus
     if (lock) releaseRecordLock(lock).catch(() => {});
   }
 
+  function initializeSearchClearControls() {
+    const selector = ".search-box > input, .student-list-program-search > input, .document-template-email-marker-search > input";
+
+    function enhanceInput(input) {
+      if (!input.matches?.(selector)) return;
+      const host = input.parentElement;
+      // Settings already have their own clear action, including search-highlight cleanup.
+      if (host.querySelector(":scope > .dictionary-search-clear")) return;
+      let button = host.querySelector(":scope > .search-clear-button");
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.className = "search-clear-button";
+        button.title = "Очистить поиск";
+        button.setAttribute("aria-label", "Очистить поиск");
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"></path></svg>';
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const control = host.querySelector(":scope > input");
+          if (!control || control.matches(":disabled") || control.readOnly) return;
+          control.value = "";
+          control.focus({ preventScroll: true });
+          enhanceInput(control);
+          // Use the same handlers as typing: they update filters, pagination and focus after rendering.
+          control.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        input.insertAdjacentElement("afterend", button);
+      }
+      button.disabled = input.matches(":disabled") || input.readOnly;
+      button.hidden = !input.value || button.disabled;
+    }
+
+    function enhance(root) {
+      if (!root.isConnected) return;
+      if (root.matches?.(selector)) enhanceInput(root);
+      root.querySelectorAll?.(selector).forEach(enhanceInput);
+    }
+
+    enhance(document.body);
+    ["input", "change", "focusin"].forEach((type) => {
+      document.addEventListener(type, (event) => enhanceInput(event.target), true);
+    });
+    // Dialogs and filter popovers are inserted independently of the main render cycle.
+    const observer = new MutationObserver((mutations) => {
+      const roots = new Set();
+      mutations.forEach((mutation) => {
+        if (mutation.type === "attributes") roots.add(mutation.target);
+        else mutation.addedNodes.forEach((node) => roots.add(node));
+      });
+      roots.forEach(enhance);
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["value", "disabled", "readonly"]
+    });
+  }
+
   function enhanceCopyableFields() {
     const form = document.getElementById("recordForm");
     if (!form) return;
@@ -75081,6 +75147,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function initializeApplication() {
+    initializeSearchClearControls();
     let sharedStateError = null;
     await initializeBrowserOfflineStorage();
     try {

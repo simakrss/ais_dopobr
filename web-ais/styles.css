@@ -3585,7 +3585,8 @@ button.mobile-registry-filters-toggle {
 
 .student-list-program-search {
   display: grid !important;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 3px !important;
   padding: 0 !important;
   cursor: text !important;
@@ -4178,12 +4179,12 @@ button.mobile-registry-filters-toggle {
 
 .direct-expense-note-filter .search-box input {
   min-width: 0;
-  padding-right: 28px;
+  padding-right: 0;
 }
 
 .direct-expense-note-filter-toggle {
-  position: absolute;
-  right: 5px;
+  position: static;
+  flex: 0 0 24px;
   width: 24px;
   height: 24px;
   min-width: 24px;
@@ -5801,7 +5802,13 @@ body.long-press-dragging * {
   flex: 1 1 auto;
 }
 
-.dictionary-search-clear {
+.search-box > input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dictionary-search-clear,
+.search-clear-button {
   width: 26px;
   height: 26px;
   min-width: 26px;
@@ -5813,23 +5820,28 @@ body.long-press-dragging * {
   background: transparent;
   padding: 0;
   color: #61706b;
+  cursor: pointer;
 }
 
-.dictionary-search-clear[hidden] {
+.dictionary-search-clear[hidden],
+.search-clear-button[hidden] {
   display: none;
 }
 
-.dictionary-search-clear:hover {
+.dictionary-search-clear:hover,
+.search-clear-button:hover {
   background: #e8f1ee;
   color: var(--teal);
 }
 
-.dictionary-search-clear:focus-visible {
+.dictionary-search-clear:focus-visible,
+.search-clear-button:focus-visible {
   outline: 2px solid rgba(14, 129, 122, 0.3);
   outline-offset: 1px;
 }
 
-.dictionary-search-clear svg {
+.dictionary-search-clear svg,
+.search-clear-button svg {
   width: 15px;
   height: 15px;
   fill: none;
@@ -11689,7 +11701,7 @@ body.card-window-moving {
 
 .student-applications-program-filter-panel .student-list-program-search {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   gap: 3px;
   min-height: 32px;
   padding: 0;
@@ -12001,7 +12013,7 @@ body.card-window-moving {
 .document-template-email-marker-search {
   min-width: 0;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 5px;
