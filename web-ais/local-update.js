@@ -278,7 +278,10 @@ function createUpdater(root, hooks, options={}) {
       report({phase:"waiting",label:"Доступно обновление. Закройте карточки и завершите операции; затем установка начнётся автоматически."});
       let readySince=0, warningId="";
       while(!disposed) {
-        if(clientsReady(root) && await hooks.idle()) {
+        // Once warned, ordinary background requests must not continually restart
+        // the countdown. New unsaved UI work still cancels it; all server work is
+        // drained under the maintenance gate before any file can be installed.
+        if(clientsReady(root) && (readySince || await hooks.idle())) {
           if(!readySince){readySince=Date.now();warningId=crypto.randomUUID();}
           report({phase:"warning",warningId,label:"Система будет временно заблокирована для обновления",seconds:Math.max(0,Math.ceil((warningMs-(Date.now()-readySince))/1000))});
           const immediate=readJson(path.join(dir,"immediate-request.json"));

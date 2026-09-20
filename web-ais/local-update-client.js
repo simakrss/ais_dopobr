@@ -48,7 +48,8 @@
     // Errors and background progress stay behind the badge. Warn before installation once.
     const errorKey=state.errorId||state.label;
     if(state.phase==="error" && errorKey!==lastError){lastError=errorKey;panelOpen=false;updateError="";}
-    if(state.phase==="warning" && state.warningId!==lastWarning){lastWarning=state.warningId;panelOpen=true;updateError="";}
+    const warningKey=state.targetVersion||state.warningId;
+    if(state.phase==="warning" && warningKey!==lastWarning){lastWarning=warningKey;panelOpen=true;updateError="";}
     latestState=state;
     if(nextBlocked){indicator?.remove();indicator=null;}else ensureIndicator(state);
     if(!nextBlocked && !panelOpen){closePanel();return;}
@@ -59,7 +60,9 @@
       panel.style.cssText=blocked
         ? "border:1px solid #c8d9d5;border-top:5px solid #0b7e78;border-radius:14px;padding:28px;max-width:520px;width:calc(100% - 48px);font:15px Segoe UI,Arial;background:#fff;color:#243430;box-shadow:0 20px 90px #0006"
         : "position:fixed;bottom:64px;right:14px;z-index:2147483646;box-sizing:border-box;width:440px;max-width:calc(100vw - 28px);max-height:calc(100vh - 90px);overflow:auto;padding:14px 18px;border:1px solid #b8d4ce;border-left:5px solid #0b7e78;border-radius:10px;background:#f4fbf9;color:#243430;box-shadow:0 6px 25px #0002;font:14px Segoe UI,Arial";
+      const header=document.createElement("div");header.style.cssText="display:flex;align-items:center;justify-content:space-between;gap:12px";
       const title=document.createElement("strong");title.textContent=blocked?"Выполняется обновление системы":"Обновление системы";
+      header.append(title);
       label=document.createElement("p");label.setAttribute("role","status");label.setAttribute("aria-live","polite");label.style.margin="8px 0";
       bar=document.createElement("progress");bar.setAttribute("aria-label","Ход обновления");bar.style.cssText="display:block;width:100%;accent-color:#0b7e78";
       clock=document.createElement("small");clock.style.display="block";
@@ -68,17 +71,18 @@
       detailsText=document.createElement("p");details.append(summary,detailsText);
       const actions=document.createElement("div");actions.style.cssText="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap";
       if(!blocked){
-        const closeButton=document.createElement("button");closeButton.type="button";closeButton.textContent="Закрыть";closeButton.dataset.closeLocalUpdate="";
+        const closeButton=document.createElement("button");closeButton.type="button";closeButton.textContent="×";closeButton.dataset.closeLocalUpdate="";
+        closeButton.setAttribute("aria-label","Закрыть сообщение об обновлении");
         closeButton.title="Скрыть сообщение; автоматические повторы продолжатся";
-        closeButton.style.cssText="padding:8px 14px;border:1px solid #b8d4ce;border-radius:7px;background:#fff;color:#243430;font:600 14px Segoe UI,Arial;cursor:pointer";
-        closeButton.addEventListener("click",hideMessage);actions.append(closeButton);
+        closeButton.style.cssText="flex:0 0 30px;width:30px;height:30px;padding:0;border:1px solid #b8d4ce;border-radius:7px;background:#fff;color:#243430;font:22px/1 Segoe UI,Arial;cursor:pointer";
+        closeButton.addEventListener("click",hideMessage);header.append(closeButton);
       }
       updateButton=document.createElement("button");updateButton.type="button";updateButton.textContent="Обновить сейчас";
       updateButton.style.cssText="display:block;padding:8px 14px;border:0;border-radius:7px;background:#0b7e78;color:#fff;font:600 14px Segoe UI,Arial;cursor:pointer";
       updateButton.addEventListener("click",updateNow);
       actions.append(updateButton);
       updateNotice=document.createElement("small");updateNotice.setAttribute("role","alert");updateNotice.style.cssText="display:block;margin-top:8px;color:#a22b25";
-      panel.append(title,label,bar,clock,details,actions,updateNotice);document.body.appendChild(panel);
+      panel.append(header,label,bar,clock,details,actions,updateNotice);document.body.appendChild(panel);
       if(blocked){panel.addEventListener("cancel",event=>event.preventDefault());panel.showModal();}
       if(!started)started=Date.now();
     }

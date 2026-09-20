@@ -48,7 +48,13 @@ async function main() {
   assert.ok(find(element => element.attrs.role === "status").textContent.includes("временно занят"));
   assert.ok(!find(element => element.attrs.role === "status").textContent.includes("Y:/private"));
   assert.equal(find(element => element.tag === "details").hidden, false);
-  button("Закрыть").click(); await poll();
+  const closeButton=button("×");
+  assert.equal(closeButton.attrs["aria-label"], "Закрыть сообщение об обновлении");
+  assert.equal(panel().children[0], closeButton.parent, "Close belongs in the top header");
+  assert.equal(closeButton.parent.children.at(-1), closeButton, "Close follows title on the right");
+  assert.match(closeButton.parent.style.cssText, /justify-content:space-between/);
+  assert.equal(button("Закрыть"), undefined);
+  closeButton.click(); await poll();
   assert.equal(panel(), undefined, "Polling must not reopen a dismissed error");
   button("!").click();
   let prevented = false, stopped = false;
@@ -64,10 +70,14 @@ async function main() {
   await button("Запрос принят…").click();
   assert.equal(requests.filter(request => request.retryUpdate).length, 1);
   await new Promise(resolve => setImmediate(resolve));
-  state = { ...state, phase: "warning", canUpdateNow: true, warningId: "countdown-1", seconds: 30, label: "Предупреждение" };
+  state = { ...state, phase: "warning", canUpdateNow: true, targetVersion: "1.0.1", warningId: "countdown-1", seconds: 30, label: "Предупреждение" };
   await poll(); assert.ok(button("Обновить сейчас"));
-  button("Закрыть").click(); await poll(); assert.equal(panel(), undefined, "The same countdown must stay dismissed");
-  state.warningId = "countdown-2"; await poll(); assert.ok(button("Обновить сейчас"));
+  button("×").click(); await poll(); assert.equal(panel(), undefined, "The same countdown must stay dismissed");
+  state.phase = "waiting"; await poll(); assert.equal(panel(), undefined);
+  state.phase = "warning"; state.warningId = "countdown-2"; await poll();
+  assert.equal(panel(), undefined, "A restarted countdown for the same version stays dismissed");
+  button("!").click(); assert.ok(button("Обновить сейчас"));
+  button("×").click(); state.targetVersion = "1.0.2"; state.warningId = "countdown-3"; await poll(); assert.ok(button("Обновить сейчас"));
   await button("Обновить сейчас").click();
   assert.equal(requests.filter(request => request.updateNow).length, 1);
   await new Promise(resolve => setImmediate(resolve));
@@ -75,7 +85,7 @@ async function main() {
     state = { ...state, phase, label: "Выполняется обновление", canRetry: false };
     await poll();
     assert.equal(panel().tag, "dialog"); assert.equal(panel().open, true);
-    assert.equal(button("!"), undefined); assert.equal(button("Закрыть"), undefined);
+    assert.equal(button("!"), undefined); assert.equal(button("×"), undefined);
     prevented = false; panel().events.cancel({ preventDefault() { prevented = true; } }); assert.equal(prevented, true);
     assert.ok(!find(element => element.tag === "button" && !element.hidden), "Do not offer retry/close during installation or recovery");
   }

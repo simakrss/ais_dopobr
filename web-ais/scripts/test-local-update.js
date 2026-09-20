@@ -54,8 +54,8 @@ async function main(){
     assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/Сначала/);
     up.writeLease(immediate.root,busyClient,true);
     up.requestImmediateUpdate(immediate.root,{...warning,ready:true});
-    // New activity invalidates the accepted shortcut, not the safety checks.
-    serverIdle=false;await phase(immediate.root,"waiting");serverIdle=true;
+    // New unsaved UI work invalidates the accepted shortcut, not background polls.
+    up.writeLease(immediate.root,busyClient,false);await phase(immediate.root,"waiting");up.writeLease(immediate.root,busyClient,true);
     const renewed=await phase(immediate.root,"warning");assert.notEqual(renewed.warningId,warning.warningId);
     await pause(25);assert.equal(immediateRestarts,0);assert.equal(up.version(immediate.root),"1.0.0");
     assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/отсчёт/);
@@ -66,6 +66,24 @@ async function main(){
     assert.equal(up.readStatus(immediate.root).canUpdateNow,false);
     assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...renewed,ready:true}),/отсчёт/);
   } finally {now.dispose();await nowRunning;}
+  const background=fixture();let backgroundIdle=true,backgroundRestarts=0;
+  const backgroundUpdater=up.createUpdater(background.root,{idle:async()=>backgroundIdle,restart:async()=>{assert.equal(backgroundIdle,true);backgroundRestarts++;}},
+    {publicKey,fetcher:background.fetcher,pollMs:5,warningMs:80,drainMs:5});
+  const backgroundRun=backgroundUpdater.checkNow();
+  try {
+    const firstWarning=await phase(background.root,"warning");
+    backgroundIdle=false;
+    await pause(25);
+    const continued=up.readStatus(background.root);
+    assert.equal(continued.phase,"warning","Background traffic must not reset countdown");
+    assert.equal(continued.warningId,firstWarning.warningId);
+    await phase(background.root,"draining");
+    assert.equal(backgroundRestarts,0,"Active operations must still finish before restart");
+    assert.equal(up.version(background.root),"1.0.0","Never replace files while operations are active");
+    backgroundIdle=true;
+    await backgroundRun;
+    assert.equal(backgroundRestarts,1);
+  } finally {backgroundIdle=true;backgroundUpdater.dispose();await backgroundRun;}
   const old=fixture("0.9.0"),older=up.createUpdater(old.root,{idle:async()=>true,restart:async()=>assert.fail("downgrade")},{publicKey,fetcher:old.fetcher});await older.checkNow();older.dispose();assert.equal(old.requests.length,1);
   const corrupt=fixture();corrupt.contents.set(corrupt.release.files[0].sha256,Buffer.from("WRONG"));
   const bad=up.createUpdater(corrupt.root,{idle:async()=>true,restart:async()=>assert.fail("corrupt")},{publicKey,fetcher:corrupt.fetcher});await bad.checkNow();bad.dispose();assert.equal(up.version(corrupt.root),"1.0.0");assert.match(up.readStatus(corrupt.root).label,/сумма/);
