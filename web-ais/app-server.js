@@ -11,6 +11,7 @@ const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { Worker, isMainThread } = require("node:worker_threads");
 const { TextDecoder } = require("node:util");
+const { AsyncLocalStorage } = require("node:async_hooks");
 
 const CODEX_TRAINING_END_DATE_ASSET_PROMOTIONS = Object.freeze([
   ["app.training-end-work.js", "app.js"],
@@ -1360,7 +1361,7 @@ const CONTRACT_EVENT_IMPORT_TEMPLATES = Object.freeze([
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Document-Generation-Id",
   "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
 };
 
@@ -5980,6 +5981,8 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     : "powershell.exe";
   const launcher = buildLocalDocumentSaveDialogLauncher();
+  throwIfDocumentGenerationCancelled();
+  const signal = documentGenerationContext.getStore()?.signal;
   const args = [
     "-NoLogo",
     "-NoProfile",
@@ -6001,12 +6004,22 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      terminateLibreOfficeProcess(child).finally(() => reject(documentGenerationCancelledError()));
+    };
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", abort);
       child.kill();
       reject(new Error("Окно сохранения не было закрыто в течение 10 минут."));
     }, 10 * 60 * 1000);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       if (stdout.length < 64 * 1024) stdout += chunk;
@@ -6018,12 +6031,14 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timeout);
       reject(error);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", abort);
       clearTimeout(timeout);
       if (code !== 0) {
         reject(new Error(String(stderr || stdout || "").trim() || "Не удалось открыть окно сохранения."));
@@ -6064,16 +6079,20 @@ function showLocalDocumentSaveDialog(initialPath, outputFormat) {
 }
 
 async function promptAndSaveStudentDocumentLocally(bytes, fileName, body, outputFormat) {
+  throwIfDocumentGenerationCancelled();
   const initialPath = resolveLocalDocumentFile(body.studentFolder, fileName);
   await fs.mkdir(path.dirname(initialPath), { recursive: true });
   const selectedPath = await showLocalDocumentSaveDialog(initialPath, outputFormat);
+  throwIfDocumentGenerationCancelled();
   if (!selectedPath) return { saved: false, cancelled: true, path: initialPath };
   await fs.mkdir(path.dirname(selectedPath), { recursive: true });
+  throwIfDocumentGenerationCancelled();
   await fs.writeFile(selectedPath, bytes);
   return { saved: true, cancelled: false, path: selectedPath };
 }
 
 async function saveStudentDocumentLocally(bytes, fileName, body) {
+  throwIfDocumentGenerationCancelled();
   if (!serverSettings.openDocumentsLocally) {
     throw new Error("Включите режим работы с документами на локальном компьютере.");
   }
@@ -6083,6 +6102,7 @@ async function saveStudentDocumentLocally(bytes, fileName, body) {
   const folderPath = path.dirname(canonicalPath);
   await fs.mkdir(folderPath, { recursive: true });
   for (let attempt = 0; attempt < 10000; attempt += 1) {
+    throwIfDocumentGenerationCancelled();
     const candidateName = getStudentMailboxFileNameCandidate(path.basename(canonicalPath), attempt);
     const targetPath = path.resolve(folderPath, candidateName);
     const relativeTarget = path.relative(folderPath, targetPath);
@@ -6285,12 +6305,14 @@ function createQrCodePng(qrCode, scale = 12, marginModules = 4) {
 
 function requestBuffer(url, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
+    throwIfDocumentGenerationCancelled();
     const target = new URL(url);
     const transport = target.protocol === "http:" ? http : https;
     const requestBody = options.body === undefined || options.body === null
       ? null
       : (Buffer.isBuffer(options.body) ? options.body : Buffer.from(options.body));
     const req = transport.request(target, {
+      signal: options.signal || documentGenerationContext.getStore()?.signal,
       method: options.method || "GET",
       headers: {
         "User-Agent": "AIS-Dopobrazovanie-Web/1.0",
@@ -6456,12 +6478,14 @@ function getYandexDiskCredentials() {
 
 function requestYandexWebDav(method, davPath, options = {}) {
   return new Promise((resolve, reject) => {
+    throwIfDocumentGenerationCancelled();
     const { login, password } = getYandexDiskCredentials();
     const target = new URL("https://webdav.yandex.ru");
     target.pathname = normalizeWebDavPath(davPath);
     const body = options.body ? Buffer.from(options.body) : null;
     const acceptedStatuses = new Set(options.acceptedStatuses || [200, 201, 204, 207]);
     const request = https.request(target, {
+      signal: options.signal || documentGenerationContext.getStore()?.signal,
       method,
       headers: {
         "User-Agent": "AIS-Dopobrazovanie-Web/1.0",
@@ -15025,11 +15049,13 @@ function resolveStudentDocumentRelativeFolder(body) {
 }
 
 async function uploadStudentDocumentToYandexDisk(bytes, fileName, body) {
+  throwIfDocumentGenerationCancelled();
   const outputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
   const { relativeFolder, useParentFolder } = resolveStudentDocumentRelativeFolder(body);
   const basePath = resolveYandexDiskBasePath(useParentFolder);
   const folderPath = normalizeWebDavPath(`${basePath}/${relativeFolder}`);
   await ensureYandexDiskFolder(folderPath);
+  throwIfDocumentGenerationCancelled();
   const outputName = body.additionalOutput === true
     ? documentWorkflow.safeOutputFileName(fileName, outputFormat)
     : safeDocumentFileName(fileName, outputFormat);
@@ -33573,6 +33599,7 @@ async function resolveLibreOfficeBinary() {
 }
 
 function enqueueLibreOfficePdfConversion(operation) {
+  throwIfDocumentGenerationCancelled();
   if (libreOfficePdfPendingConversions >= LIBREOFFICE_PDF_MAX_PENDING_CONVERSIONS) {
     return Promise.reject(new Error(
       "Очередь высококачественного PDF-экспорта заполнена. Повторите через несколько минут."
@@ -33581,6 +33608,7 @@ function enqueueLibreOfficePdfConversion(operation) {
   libreOfficePdfPendingConversions += 1;
   const queuedAt = Date.now();
   const result = libreOfficePdfConversionTail.then(() => {
+    throwIfDocumentGenerationCancelled();
     if (Date.now() - queuedAt > LIBREOFFICE_PDF_QUEUE_WAIT_TIMEOUT_MS) {
       throw new Error("Ожидание в очереди PDF-экспорта превысило 5 минут.");
     }
@@ -33657,6 +33685,8 @@ async function terminateLibreOfficeProcess(child) {
 
 function runLibreOfficePdfConversion(binaryPath, argumentsList) {
   return new Promise((resolve, reject) => {
+    throwIfDocumentGenerationCancelled();
+    const signal = documentGenerationContext.getStore()?.signal;
     let child;
     try {
       child = spawn(binaryPath, argumentsList, {
@@ -33679,7 +33709,12 @@ function runLibreOfficePdfConversion(binaryPath, argumentsList) {
       settled = true;
       clearTimeout(timeoutTimer);
       clearTimeout(forcedSettlementTimer);
+      signal?.removeEventListener("abort", abort);
       callback();
+    };
+    const abort = () => {
+      terminationPromise = terminateLibreOfficeProcess(child);
+      terminationPromise.finally(() => finish(() => reject(documentGenerationCancelledError())));
     };
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
@@ -33690,6 +33725,8 @@ function runLibreOfficePdfConversion(binaryPath, argumentsList) {
         });
       }, 5000);
     }, LIBREOFFICE_PDF_CONVERSION_TIMEOUT_MS);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       if (Buffer.byteLength(stdout, "utf8") < LIBREOFFICE_PDF_DIAGNOSTIC_LIMIT_BYTES) {
@@ -33706,6 +33743,10 @@ function runLibreOfficePdfConversion(binaryPath, argumentsList) {
       finish(() => reject(new Error(`Не удалось запустить LibreOffice: ${error.message}`)));
     });
     child.on("close", (code) => {
+      if (signal?.aborted) {
+        terminationPromise.finally(() => finish(() => reject(documentGenerationCancelledError())));
+        return;
+      }
       if (timedOut) {
         terminationPromise.finally(() => {
           finish(() => reject(new Error("LibreOffice не завершил преобразование в PDF за 2 минуты.")));
@@ -33834,6 +33875,7 @@ async function convertDocxBytesToPdfWithOnlyOffice(docxBytes) {
 }
 
 async function convertDocxBytesToPdf(docxBytes, options = {}) {
+  throwIfDocumentGenerationCancelled();
   const conversionOptions = options && typeof options === "object" ? options : {};
   const highQualityConverter = typeof conversionOptions.libreOfficeConverter === "function"
     ? conversionOptions.libreOfficeConverter
@@ -33841,6 +33883,7 @@ async function convertDocxBytesToPdf(docxBytes, options = {}) {
   try {
     return await highQualityConverter(docxBytes);
   } catch (error) {
+    throwIfDocumentGenerationCancelled();
     throw new Error(
       "Не удалось сформировать PDF без потери качества через LibreOffice: "
         + `${error?.message || "неизвестная ошибка"}. `
@@ -34412,6 +34455,88 @@ function generatedDocumentPreviewError(message, statusCode) {
 function normalizeGeneratedDocumentPreviewToken(token) {
   const normalized = String(token || "").trim();
   return GENERATED_DOCUMENT_PREVIEW_TOKEN_PATTERN.test(normalized) ? normalized : "";
+}
+
+const documentGenerationContext = new AsyncLocalStorage();
+const documentGenerationControllers = new Map();
+
+function documentGenerationCancelledError() {
+  return Object.assign(new Error("Формирование документа прервано пользователем."), { code: "DOCUMENT_GENERATION_CANCELLED", statusCode: 499 });
+}
+
+function throwIfDocumentGenerationCancelled() {
+  const controller = documentGenerationContext.getStore();
+  if (controller?.marker && !controller.signal.aborted) {
+    try {
+      if (Date.now() - fsSync.statSync(controller.marker).mtimeMs < 60 * 60 * 1000) controller.abort();
+    } catch { /* No cancellation marker. */ }
+  }
+  if (controller?.signal.aborted) throw documentGenerationCancelledError();
+}
+
+function documentGenerationCancellationPath(generationId, authUser) {
+  const owner = generatedDocumentPreviewOwner(authUser);
+  if (!owner || !/^[a-zA-Z0-9_-]{16,100}$/.test(String(generationId || ""))) {
+    throw Object.assign(new Error("Некорректная сессия формирования документа."), { statusCode: 400 });
+  }
+  const key = crypto.createHash("sha256").update(`${owner}\0${generationId}`).digest("hex");
+  return path.join(STORAGE_ROOT, "document-generation-cancellations", `${key}.json`);
+}
+
+async function runCancellableDocumentRequest(req, res, authUser, operation) {
+  const controller = new AbortController();
+  let marker = "", timer = null, checking = false;
+  const cancel = () => controller.abort(documentGenerationCancelledError());
+  const disconnected = () => { if (!res.writableFinished) cancel(); };
+  try {
+    const id = String(req.headers["x-document-generation-id"] || "").trim();
+    if (id) {
+      marker = documentGenerationCancellationPath(id, authUser);
+      controller.marker = marker;
+      let controllers = documentGenerationControllers.get(marker);
+      if (!controllers) documentGenerationControllers.set(marker, controllers = new Set());
+      controllers.add(controller);
+      const check = async () => {
+        if (checking || controller.signal.aborted) return;
+        checking = true;
+        try {
+          const stat = await fs.stat(marker).catch(() => null);
+          if (stat && Date.now() - stat.mtimeMs < 60 * 60 * 1000) cancel();
+        } finally { checking = false; }
+      };
+      await check();
+      // CGI requests run in separate processes: a shared marker also cancels their work.
+      timer = setInterval(check, 300);
+      timer.unref?.();
+    }
+    req.once?.("aborted", cancel);
+    res.once?.("close", disconnected);
+    return await documentGenerationContext.run(controller, async () => {
+      throwIfDocumentGenerationCancelled();
+      return operation();
+    });
+  } catch (error) {
+    if (!res.destroyed && !res.headersSent) sendError(res, Number(error.statusCode) || 400, error.message);
+  } finally {
+    clearInterval(timer);
+    req.removeListener?.("aborted", cancel);
+    res.removeListener?.("close", disconnected);
+    const controllers = documentGenerationControllers.get(marker);
+    controllers?.delete(controller);
+    if (controllers && !controllers.size) documentGenerationControllers.delete(marker);
+  }
+}
+
+async function handleDocumentGenerationCancel(req, res, authUser) {
+  try {
+    const body = await readJsonBody(req, 4096);
+    const marker = documentGenerationCancellationPath(body.generationId, authUser);
+    await fs.mkdir(path.dirname(marker), { recursive: true });
+    // Keep the marker for late/queued requests using the same id; never delete saved documents.
+    await fs.writeFile(marker, JSON.stringify({ cancelledAt: Date.now() }));
+    for (const controller of documentGenerationControllers.get(marker) || []) controller.abort(documentGenerationCancelledError());
+    sendJson(res, 200, { cancelled: true });
+  } catch (error) { sendError(res, Number(error.statusCode) || 400, error.message); }
 }
 
 function generatedDocumentPreviewEffectiveExpiresAt(preview) {
@@ -36119,6 +36244,7 @@ function prepareAdditionalDocumentSaveTargets(body, values) {
 }
 
 async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders) {
+  throwIfDocumentGenerationCancelled();
   const targets = generated.additionalSaveTargets || [];
   const report = { saved: 0, failed: [], cancelled: primaryHeaders["X-Local-Document-Cancelled"] === "true" };
   if (report.cancelled) return report;
@@ -36127,6 +36253,7 @@ async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders)
   if (generated.editableBytes?.length) formats.set("docx", Promise.resolve(generated.editableBytes));
   const completedPaths = new Set();
   for (const [index, target] of targets.entries()) {
+    throwIfDocumentGenerationCancelled();
     try {
       if (!formats.has(target.outputFormat)) {
         if (target.outputFormat !== "pdf" || !formats.has("docx")) throw new Error("Редактируемая версия документа не найдена.");
@@ -36145,6 +36272,7 @@ async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders)
       }
       report.saved += 1;
     } catch (error) {
+      throwIfDocumentGenerationCancelled();
       report.failed.push({ index, error: String(error.message || error).slice(0, 120) });
     }
   }
@@ -36152,6 +36280,7 @@ async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders)
 }
 
 async function sendGeneratedDocumentResponse(res, generated, body = {}) {
+  throwIfDocumentGenerationCancelled();
   const result = Buffer.isBuffer(generated.bytes)
     ? generated.bytes
     : Buffer.from(generated.bytes || []);
@@ -36174,6 +36303,7 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
         extraHeaders["X-Local-Document-Saved"] = "true";
         extraHeaders["X-Local-Document-Path"] = encodeURIComponent(localSaveResult.path);
         if (body.openAfterGeneration === true) {
+          throwIfDocumentGenerationCancelled();
           try {
             await revealFileInExplorer(localSaveResult.path);
             extraHeaders["X-Local-Document-Revealed"] = "true";
@@ -36184,11 +36314,13 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
         }
       }
     } catch (saveError) {
+      throwIfDocumentGenerationCancelled();
       extraHeaders["X-Local-Document-Saved"] = "false";
       extraHeaders["X-Local-Document-Error"] = encodeURIComponent(saveError.message);
     }
   }
   if (body.saveToYandexDisk) {
+    throwIfDocumentGenerationCancelled();
     try {
       const uploadedPath = await uploadStudentDocumentToYandexDisk(
         result,
@@ -36198,6 +36330,7 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
       extraHeaders["X-Yandex-Disk-Saved"] = "true";
       extraHeaders["X-Yandex-Disk-Path"] = encodeURIComponent(uploadedPath);
     } catch (uploadError) {
+      throwIfDocumentGenerationCancelled();
       extraHeaders["X-Yandex-Disk-Saved"] = "false";
       extraHeaders["X-Yandex-Disk-Error"] = encodeURIComponent(uploadError.message);
     }
@@ -36206,6 +36339,7 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
     const additionalReport = await saveAdditionalGeneratedDocuments(generated, body, extraHeaders);
     extraHeaders["X-Additional-Documents-Result"] = encodeURIComponent(JSON.stringify(additionalReport));
   }
+  throwIfDocumentGenerationCancelled();
   sendFile(res, 200, result, outputFileName, generatedDocumentContentType(outputFormat), extraHeaders);
 }
 
@@ -36260,16 +36394,19 @@ async function handleGeneratedDocumentPreviewCancel(req, res, authUser) {
 async function handleContractDocument(req, res, authUser) {
   try {
     const body = await readJsonBody(req);
+    throwIfDocumentGenerationCancelled();
     const generationDateValues = documentWorkflow.getGenerationDateValues();
     if (body.previewOnly) await assertGeneratedDocumentPreviewRequestAllowed(authUser);
     let templateBytes;
     try {
       templateBytes = await loadTemplateBytesForRequest(body);
     } catch (primaryTemplateError) {
+      throwIfDocumentGenerationCancelled();
       if (!String(body.fallbackTemplatePath || "").trim()) throw primaryTemplateError;
       templateBytes = await loadTemplateBytes("", body.fallbackTemplatePath);
     }
     const inputFieldValues = body.fieldValues || {};
+    throwIfDocumentGenerationCancelled();
     const workflow = documentWorkflow.getDefinition(body.documentKind)
       ? prepareWorkflowDocumentValues(body.documentKind, body.workflow, body.sourceValues || {})
       : null;
@@ -36292,6 +36429,7 @@ async function handleContractDocument(req, res, authUser) {
       photoPath: sourceValues.photoPath || fieldValues.photoPath || ""
     });
     const hasQrCodeField = Object.prototype.hasOwnProperty.call(fieldValues, "QRкод");
+    throwIfDocumentGenerationCancelled();
     const qrCode = hasQrCodeField
       ? createDocumentQrCodeImage(fieldValues["QRкод"] || sourceValues["QRкод"] || "")
       : null;
@@ -36317,6 +36455,7 @@ async function handleContractDocument(req, res, authUser) {
       workflow
     );
     const requestedOutputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
+    throwIfDocumentGenerationCancelled();
     let outputFormat = requestedOutputFormat;
     let result = docxResult;
     const extraHeaders = {};
@@ -36327,6 +36466,7 @@ async function handleContractDocument(req, res, authUser) {
           result = await removeBlankInteriorPdfPages(result);
         }
       } catch (conversionError) {
+        throwIfDocumentGenerationCancelled();
         outputFormat = "docx";
         result = docxResult;
         extraHeaders["X-Document-Conversion-Fallback"] = "true";
@@ -36371,7 +36511,12 @@ async function handleContractDocument(req, res, authUser) {
           throw new Error(`Не удалось подготовить предварительный просмотр: ${conversionError.message}`);
         }
       }
+      throwIfDocumentGenerationCancelled();
       const previewToken = await registerGeneratedDocumentPreview(generated, authUser);
+      try { throwIfDocumentGenerationCancelled(); } catch (error) {
+        await cancelGeneratedDocumentPreview(previewToken, authUser);
+        throw error;
+      }
       const previewFileName = safeDocumentFileName(
         outputFileName.replace(/\.(?:pdf|docx)$/iu, ""),
         "pdf"
@@ -40325,19 +40470,23 @@ async function route(req, res) {
     return;
   }
   if (req.method === "POST" && req.url === "/api/contracts/student-document") {
-    await handleContractDocument(req, res, authUser);
+    await runCancellableDocumentRequest(req, res, authUser, () => handleContractDocument(req, res, authUser));
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/abort-generation") {
+    await handleDocumentGenerationCancel(req, res, authUser);
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/finalize") {
-    await handleGeneratedDocumentPreviewFinalize(req, res, authUser);
+    await runCancellableDocumentRequest(req, res, authUser, () => handleGeneratedDocumentPreviewFinalize(req, res, authUser));
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-start") {
-    await handleGeneratedDocumentPreviewEditorStart(req, res, authUser);
+    await runCancellableDocumentRequest(req, res, authUser, () => handleGeneratedDocumentPreviewEditorStart(req, res, authUser));
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-save") {
-    await handleGeneratedDocumentPreviewEditorSave(req, res, authUser);
+    await runCancellableDocumentRequest(req, res, authUser, () => handleGeneratedDocumentPreviewEditorSave(req, res, authUser));
     return;
   }
   if (req.method === "POST" && requestUrl.pathname === "/api/contracts/student-document-preview/editor-discard") {

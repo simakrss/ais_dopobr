@@ -948,6 +948,7 @@ const editorClientApiSource = appSource
 const clientRequestLog = [];
 let clientResponseQueue = [];
 const editorClientApiContext = {
+  getDocumentGenerationRequestOptions: () => ({}),
   Boolean,
   Error,
   Math,

@@ -1576,11 +1576,24 @@ function gateway_document_tunnel_handles(string $method, string $path): bool
         '/api/contracts/student-document-preview/editor-discard' => ['POST'],
         '/api/contracts/student-document-preview/editor-refresh' => ['POST'],
         '/api/contracts/student-document-preview/cancel' => ['POST'],
+        '/api/contracts/student-document-preview/abort-generation' => ['POST'],
         '/api/contracts/student-document-preview/editor-page' => ['GET'],
         '/api/contracts/student-document-preview/editor-file' => ['GET', 'HEAD'],
         '/api/contracts/student-document-preview/editor-callback' => ['POST'],
     ];
     return in_array($method, $previewMethods[$path] ?? [], true);
+}
+
+function gateway_run_document_operation(bool $documentRequest, callable $operation): array
+{
+    // A long generation must not hold the PHP session lock: its cancel request uses the same session.
+    $released = $documentRequest && session_status() === PHP_SESSION_ACTIVE;
+    if ($released) session_write_close();
+    try {
+        return $operation();
+    } finally {
+        if ($released) ais_auth_start_session();
+    }
 }
 
 function gateway_document_editor_control_requires_tunnel(string $method, string $path): bool
@@ -3756,6 +3769,7 @@ if (!in_array($method, ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'], true)) {
 
 $requestPath = gateway_request_path();
 $isPreviewControlRequest = in_array($requestPath, [
+    '/api/contracts/student-document-preview/abort-generation',
     '/api/contracts/student-document-preview/finalize',
     '/api/contracts/student-document-preview/editor-start',
     '/api/contracts/student-document-preview/editor-save',
@@ -3946,6 +3960,17 @@ try {
     );
     $previewAffinityBackend = gateway_document_preview_affinity_backend($previewRequestToken);
     $tunnelSettings = gateway_tunnel_settings();
+    if ($method === 'POST' && $path === '/api/contracts/student-document-preview/abort-generation') {
+        // Cancel on both potential backends, including a generation that failed over before returning a preview token.
+        $response = gateway_run_document_operation(true, fn() => gateway_run_node($url, $method, $authenticatedHeaders, $body));
+        if ($tunnelSettings !== null) {
+            $tunnelResponse = gateway_run_document_operation(true, fn() => gateway_run_tunnel($tunnelSettings, $url, $method, $authenticatedHeaders, $body));
+            if ((int) $tunnelResponse['status'] < 200 || (int) $tunnelResponse['status'] >= 300) {
+                gateway_send_node_response($tunnelResponse);
+            }
+        }
+        gateway_send_node_response($response);
+    }
     if ($previewAffinityBackend === 'tunnel' && $tunnelSettings === null) {
         gateway_fail(
             503,
@@ -3963,13 +3988,13 @@ try {
             if ($documentTunnelRoute) {
                 $tunnelHeaders['x-ais-document-backend'] = 'tunnel';
             }
-            $response = gateway_run_tunnel(
+            $response = gateway_run_document_operation($documentTunnelRoute, fn() => gateway_run_tunnel(
                 $tunnelSettings,
                 $url,
                 $method,
                 $tunnelHeaders,
                 $body
-            );
+            ));
             gateway_track_document_preview_affinity(
                 $method,
                 $path,
@@ -4102,7 +4127,7 @@ try {
     if ($documentTunnelRoute) {
         $serverHeaders['x-ais-document-backend'] = 'server';
     }
-    $response = gateway_run_node($url, $method, $serverHeaders, $body);
+    $response = gateway_run_document_operation($documentTunnelRoute, fn() => gateway_run_node($url, $method, $serverHeaders, $body));
     gateway_track_document_preview_affinity(
         $method,
         $path,

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.508",
+    version: "1.7.509",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.509",
+      releasedAt: "2026-09-20",
+      changes: ["Добавлена кнопка «Прервать» для формирования документов слушателей, сотрудников и документооборота. Отмена останавливает запросы, PDF-конвертацию и окно сохранения; закрывает предпросмотр и прекращает пакетную очередь. Уже сохранённые файлы и отправленные письма остаются на месте. Отмена из веб-версии не блокируется длительным запросом и не затрагивает другие сессии."]
+    },
     {
       version: "1.7.508",
       releasedAt: "2026-09-20",
@@ -18621,6 +18626,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function executeAttestationTask(item, options, result, onProgress = () => {}) {
     return withAttestationStudentLock(item.studentId, async (renew) => {
+      options.signal?.throwIfAborted();
+      delete result.cancelled;
       let record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
       if (!record) throw new Error("Слушатель больше не найден в базе.");
       if (!result.saved && isAttestationTaskCompleted(record, item.definition)) return { ...result, skipped: true, message: "Уже отмечено другим пользователем." };
@@ -18640,9 +18647,9 @@ MAX - https://bizvmax.ru/zifra_plus
         onProgress(`Формирование и сохранение: ${record.name} — ${item.definition.title}`);
         const generated = await downloadStudentDocumentFromTemplate(template, record, null, "Не удалось сформировать документ", {
           storageRequest, skipEmail: true, skipPreview: !options.previewEach, skipOpenAfterGeneration: true,
-          requireStorage: true, includeGeneratedBlob: true, quietErrors: true, quietEmail: true
+          requireStorage: true, includeGeneratedBlob: true, quietErrors: true, quietEmail: true, signal: options.signal
         });
-        if (generated?.cancelled) return { ...result, cancelled: true, message: "Предварительный просмотр отменён; сохранение и отправка не выполнялись." };
+        if (generated?.cancelled) return { ...result, cancelled: true, message: "Формирование прервано. Уже сохранённые файлы остаются в папках слушателей." };
         if (!generated?.storageResult?.localSaveResult?.saved && !generated?.storageResult?.yandexSaveResult?.saved) throw new Error("Сохранение в папку слушателя не подтверждено. Событие не отмечено, письмо не отправлено.");
         Object.assign(result, { saved: true, fingerprint: item.fingerprint, blob: generated.blob, fileName: generated.fileName, outputFormat: generated.outputFormat, message: "Сохранён" });
       }
@@ -18654,6 +18661,7 @@ MAX - https://bizvmax.ru/zifra_plus
         result.eventSaved = true;
       }
       if (sendEmail && !result.emailed) {
+        options.signal?.throwIfAborted();
         await renew();
         await refreshAttestationTaskSnapshot();
         record = state.data.collections.students.find((student) => String(student.id) === item.studentId);
@@ -18669,6 +18677,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!result.blob) throw new Error("Нет вложения для отправки. Откройте сохранённый документ из папки слушателя.");
         onProgress(`Отправка: ${item.definition.title} — ${current.email}`);
         const attachment = await createStudentDocumentEmailAttachment(result.blob, result.fileName, result.outputFormat);
+        options.signal?.throwIfAborted();
         const sent = await sendServerEmail({ email: current.email, subject: protocolEmail?.subject || `${item.definition.title}: ${record.name}`,
           message: protocolEmail?.message || `Добрый день!\n\nНаправляем документ «${item.definition.title}» по итогам обучения слушателя ${record.name} по программе «${getStudentContextProgram(record)?.name || record.program || ""}».\nДокумент приложен к письму.\n\nУчебный центр «Цифровизация Плюс»`,
           attachment, recipientMode: "student", recipientLabel: "председателя комиссии", skipConfirmation: true, quiet: true,
@@ -18692,15 +18701,18 @@ MAX - https://bizvmax.ru/zifra_plus
     const taskId = beginDocumentGeneration(`Просмотр: ${definition.title}`);
     let token = "", origin = "";
     try {
-      origin = await resolveDocumentProcessingOrigin("documentConversion");
+      origin = await awaitDocumentGenerationStage(taskId, () => resolveDocumentProcessingOrigin("documentConversion"));
       const preview = await requestGeneratedDocumentPreview({ templateUrl: template.templateUrl, templatePath: template.templatePath,
         fallbackTemplatePath: template.fallbackTemplatePath || "", fileName: `${definition.title}.pdf`,
         fieldValues: evaluateContractTemplateFields(draft, template.fields),
         sourceValues: { ...collectContractTemplateSourceValues(draft), ...draft.workflowSourceValues },
         documentKind: definition.kind, useCustomDocumentProperties: isChecked(template.useCustomDocumentProperties),
-        preferLocalTemplate: getEffectiveLocalDocumentsMode(), outputFormat: "pdf", skipPhoto: true }, origin);
+        preferLocalTemplate: getEffectiveLocalDocumentsMode(), outputFormat: "pdf", skipPhoto: true }, origin, taskId);
       token = preview.previewToken;
-      await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: `${definition.title}.pdf`, outputFormat: "pdf", readOnly: true });
+      throwIfDocumentGenerationCancelled(taskId);
+      await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: `${definition.title}.pdf`, outputFormat: "pdf", readOnly: true, signal: getDocumentGenerationSignal(taskId), generationTaskId: taskId });
+    } catch (error) {
+      if (!getDocumentGenerationSignal(taskId)?.aborted) throw error;
     } finally {
       if (token) await cancelGeneratedDocumentPreview(token, origin).catch(() => null);
       endDocumentGeneration(taskId);
@@ -18754,7 +18766,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="attestation-task-table-scroll"><table class="data-table attestation-task-table"><thead><tr><th><label title="Выбрать всех слушателей"><input type="checkbox" data-task-all aria-label="Все слушатели"></label></th><th>Слушатель / программа</th><th>Ведомость экзаменов</th><th>Протокол</th><th>Председатель / Email</th></tr></thead><tbody data-task-rows></tbody></table></div>
       <section class="attestation-task-confirmation" data-task-confirmation hidden></section>
       <div class="attestation-task-progress" role="status" aria-live="polite"><progress data-task-progress max="1" value="0" hidden></progress><span data-task-notice></span></div>
-      <footer class="modal-actions"><span data-task-selected></span><button class="ghost-button" data-task-stop type="button" hidden>Остановить после текущего документа</button><button class="primary-button" data-task-generate type="button">Генерировать выбранное</button></footer>
+      <footer class="modal-actions"><span data-task-selected></span><button class="ghost-button" data-task-stop type="button" hidden>Прервать формирование</button><button class="primary-button" data-task-generate type="button">Генерировать выбранное</button></footer>
     </section>`;
     const $ = (selector) => backdrop.querySelector(selector);
     const notice = (text) => { $("[data-task-notice]").textContent = text; };
@@ -18860,7 +18872,11 @@ MAX - https://bizvmax.ru/zifra_plus
       else finishClose();
     };
     $("[data-task-close]").onclick = backdrop.closeAttestationTasks;
-    $("[data-task-stop]").onclick = () => { session.stop = true; notice("Остановка после текущего документа…"); };
+    $("[data-task-stop]").onclick = () => {
+      session.stop = true;
+      activeDocumentGenerationTasks.get(session.generationTaskId)?.controller.abort();
+      notice("Прерывание формирования… Уже сохранённые файлы остаются в папках слушателей.");
+    };
     $("[data-task-all]").onchange = (event) => { backdrop.querySelectorAll("[data-task-key]:not(:disabled)").forEach((input) => event.target.checked ? session.selected.add(input.dataset.taskKey) : session.selected.delete(input.dataset.taskKey)); closeConfirmation(); paint(); };
     $("[data-task-send]").onchange = closeConfirmation;
     $("[data-task-preview-each]").onchange = closeConfirmation;
@@ -18896,6 +18912,8 @@ MAX - https://bizvmax.ru/zifra_plus
         const emailSummary = `${emailItems.length ? `<p>Протоколов к отправке председателям комиссий: ${emailItems.length}. Каждый протокол будет отправлен отдельным письмом. Получатели:</p><ul>${recipients.map((email) => `<li>${escapeHtml(email)} — протоколов: ${emailItems.filter((item) => item.email === email).length}</li>`).join("")}</ul>` : ""}${saveOnlyCount ? `<p>Экзаменационные ведомости: ${saveOnlyCount}. Только сохранение в папки слушателей, без отправки писем.</p>` : ""}${!options.sendEmail ? "<p>Отправка протоколов по почте выключена.</p>" : ""}`;
         confirmPanel(confirmTitle, `<p>Выбрано документов: ${items.length}.</p>${generateCount ? `<p>Сформировать и сохранить в папки слушателей: ${generateCount}. Одноимённые файлы могут быть заменены.</p>` : ""}${cachedCount ? `<p>Уже сохранено: ${cachedCount}. Повторной генерации этих файлов не будет.</p>` : ""}${emailSummary}`, confirmLabel, async () => {
           session.running = true; session.stop = false; paint();
+          session.generationTaskId = beginDocumentGeneration("Ведомости и протоколы", { onCancel: () => { session.stop = true; } });
+          options.signal = getDocumentGenerationSignal(session.generationTaskId);
           const progress = $("[data-task-progress]"); progress.hidden = false; progress.max = items.length; progress.value = 0;
           try {
             for (const item of items) {
@@ -18903,11 +18921,14 @@ MAX - https://bizvmax.ru/zifra_plus
               const result = session.results.get(item.key) || {};
               session.results.set(item.key, result);
               try { Object.assign(result, await executeAttestationTask(item, options, result, notice)); }
-              catch (error) { result.error = error.message; if (sharedStateDirty || sharedStateConflict) session.stop = true; }
-              if (!result.error) session.selected.delete(item.key);
+              catch (error) { result.error = error.message; if (options.signal?.aborted || sharedStateDirty || sharedStateConflict) session.stop = true; }
+              if (result.cancelled) session.stop = true;
+              if (!result.error && !result.cancelled) session.selected.delete(item.key);
               progress.value += 1; paint();
             }
           } finally {
+            endDocumentGeneration(session.generationTaskId);
+            session.generationTaskId = "";
             session.running = false; refreshRows(); paint();
             notice(`${session.stop ? "Остановлено" : "Обработка завершена"}. Обработано: ${progress.value} из ${items.length}. Результаты и ошибки показаны в столбцах документов.`);
           }
@@ -59620,7 +59641,8 @@ MAX - https://bizvmax.ru/zifra_plus
     generationFormat,
     emailDeliveryMode,
     updateProgress,
-    revealGeneratedFile = true
+    revealGeneratedFile = true,
+    signal = null
   ) {
     const result = { success: 0, skipped: 0, failed: 0, details: [] };
     let firstLocalDocument = null;
@@ -59637,6 +59659,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const preparedRecords = [];
     for (let index = 0; index < records.length; index += 1) {
+      if (signal?.aborted) { result.cancelled = true; break; }
       const source = records[index];
       updateProgress(index, `Подготовка данных: ${source.name || source.id}`);
       let record = autoFill
@@ -59651,6 +59674,7 @@ MAX - https://bizvmax.ru/zifra_plus
         continue;
       }
       try {
+        if (signal?.aborted) { result.cancelled = true; break; }
         if (autoFill) {
           replaceStudentBulkRecord(record);
           addAudit("Автозаполнение для группового документа", configs.students.title, record.name || record.id, {
@@ -59677,6 +59701,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }, new Map()).values()]
       : preparedRecords.map((record) => ({ record, count: 1 }));
     for (let index = 0; index < generationGroups.length; index += 1) {
+      if (signal?.aborted) { result.cancelled = true; break; }
       const { record, count } = generationGroups[index];
       updateProgress(preparedRecords.length + index, `Формирование: ${record.name || record.id}`);
       const documentTemplate = getStudentBulkDocumentTemplate(record, operation);
@@ -59722,7 +59747,8 @@ MAX - https://bizvmax.ru/zifra_plus
             skipEmailConfirmation: true,
             quietEmail: true,
             skipPreview: true,
-            skipOpenAfterGeneration: true
+            skipOpenAfterGeneration: true,
+            signal
           }
         );
       } catch (error) {
@@ -59730,6 +59756,7 @@ MAX - https://bizvmax.ru/zifra_plus
         result.details.push({ tone: "error", name: record.name, message: `Документ не сформирован: ${error.message}` });
         continue;
       }
+      if (generated?.cancelled) { result.cancelled = true; break; }
       if (generated?.generated) {
         result.success += count;
         if (operation === "enrollmentOrder") {
@@ -59989,7 +60016,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return target;
   }
 
-  async function runStudentBulkOperation(operation, records, updateProgress) {
+  async function runStudentBulkOperation(operation, records, updateProgress, signal = null) {
     if (operation.type === "message") {
       return runStudentBulkMessage(records, operation.messageKey, updateProgress);
     }
@@ -60013,7 +60040,8 @@ MAX - https://bizvmax.ru/zifra_plus
       operation.generationFormat,
       operation.emailDeliveryMode,
       updateProgress,
-      false
+      false,
+      signal
     );
   }
 
@@ -60029,6 +60057,7 @@ MAX - https://bizvmax.ru/zifra_plus
     let firstLocalDocument = null;
     let firstCloudDocument = null;
     for (let index = 0; index < operations.length; index += 1) {
+      if (options.signal?.aborted) { result.cancelled = true; break; }
       const operation = operations[index];
       const currentRecords = getRecords(recordIds);
       const missingRecords = Math.max(0, expectedRecordCount - currentRecords.length);
@@ -60040,7 +60069,7 @@ MAX - https://bizvmax.ru/zifra_plus
         label
       });
       try {
-        const operationResult = await runOperation(operation, currentRecords, updateProgress);
+        const operationResult = await runOperation(operation, currentRecords, updateProgress, options.signal);
         if (missingRecords) {
           operationResult.skipped = Number(operationResult.skipped || 0) + missingRecords;
           operationResult.details = [
@@ -60055,6 +60084,7 @@ MAX - https://bizvmax.ru/zifra_plus
           firstCloudDocument = operationResult.firstCloudDocument;
         }
         mergeStudentBulkOperationResult(result, operation, operationResult);
+        if (operationResult.cancelled || options.signal?.aborted) { result.cancelled = true; break; }
       } catch (error) {
         result.failed += currentRecords.length;
         result.skipped += missingRecords;
@@ -60073,6 +60103,7 @@ MAX - https://bizvmax.ru/zifra_plus
         operationComplete: true
       });
     }
+    if (result.cancelled) result.notices.push("Формирование прервано. Оставшиеся операции не запускались. Уже сохранённые файлы и отправленные письма сохранены.");
     result.notice = result.notices.join(" ");
     delete result.notices;
     return { result, firstLocalDocument, firstCloudDocument };
@@ -60308,8 +60339,11 @@ MAX - https://bizvmax.ru/zifra_plus
       running = true;
       form.querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = true; });
       progress.hidden = false;
+      const generationTaskId = operations.some((operation) => operation.type === "document")
+        ? beginDocumentGeneration("Групповое формирование документов") : "";
       try {
         const execution = await executeStudentBulkOperationPlan(operations, recordIds, {
+          signal: getDocumentGenerationSignal(generationTaskId),
           onProgress: ({ operationIndex, operationCount, currentStep, totalSteps, label, operationComplete }) => {
             progressFill.style.width = `${Math.min(100, Math.round((currentStep / totalSteps) * 100))}%`;
             progressLabel.textContent = operationComplete
@@ -60318,7 +60352,7 @@ MAX - https://bizvmax.ru/zifra_plus
           }
         });
         const { result, firstLocalDocument, firstCloudDocument } = execution;
-        if (firstLocalDocument) {
+        if (!result.cancelled && firstLocalDocument) {
           try {
             await revealStudentBulkDocument(firstLocalDocument.folder, firstLocalDocument.fileName);
           } catch (error) {
@@ -60329,7 +60363,7 @@ MAX - https://bizvmax.ru/zifra_plus
             });
           }
         }
-        if (!firstLocalDocument && firstCloudDocument) {
+        if (!result.cancelled && !firstLocalDocument && firstCloudDocument) {
           try {
             await openStudentWebDavDocumentsManager(
               firstCloudDocument.folder,
@@ -60347,7 +60381,7 @@ MAX - https://bizvmax.ru/zifra_plus
             });
           }
         }
-        progressLabel.textContent = "Все операции выполнены";
+        progressLabel.textContent = result.cancelled ? "Формирование прервано" : "Все операции выполнены";
         running = false;
         close();
         render();
@@ -60358,6 +60392,8 @@ MAX - https://bizvmax.ru/zifra_plus
         getCards().forEach(syncEventRows);
         updatePlanUi();
         progressLabel.textContent = `Ошибка: ${error.message}`;
+      } finally {
+        if (generationTaskId) endDocumentGeneration(generationTaskId);
       }
     });
     document.body.appendChild(backdrop);
@@ -70683,7 +70719,9 @@ MAX - https://bizvmax.ru/zifra_plus
         <span data-document-generation-status>Подготовка...</span>
         <div class="document-generation-progress" aria-hidden="true"><span></span></div>
       </div>
+      <button class="ghost-button" type="button" data-cancel-document-generation>Прервать</button>
     `;
+    indicator.querySelector("[data-cancel-document-generation]").addEventListener("click", cancelActiveDocumentGenerations);
     document.body.appendChild(indicator);
     return indicator;
   }
@@ -70732,21 +70770,85 @@ MAX - https://bizvmax.ru/zifra_plus
     const title = String(task.title || "Документ").trim() || "Документ";
     const status = indicator.querySelector("[data-document-generation-status]");
     if (status) status.textContent = String(task.status || `Формируется: ${title}`);
+    const cancelButton = indicator.querySelector("[data-cancel-document-generation]");
+    if (cancelButton) {
+      cancelButton.textContent = tasks.length > 1 ? "Прервать всё" : "Прервать";
+      cancelButton.disabled = tasks.every((item) => item.controller.signal.aborted);
+    }
     indicator.hidden = false;
   }
 
-  function beginDocumentGeneration(title) {
-    const taskId = `document-generation-${++documentGenerationTaskSequence}`;
+  function beginDocumentGeneration(title, options = {}) {
+    const taskId = `document-${crypto.randomUUID()}-${++documentGenerationTaskSequence}`;
     const normalizedTitle = String(title || "Документ").trim() || "Документ";
+    const controller = new AbortController();
+    const cancelFromParent = () => controller.abort();
+    options.signal?.addEventListener("abort", cancelFromParent, { once: true });
+    if (options.signal?.aborted) controller.abort();
     activeDocumentGenerationTasks.set(taskId, {
       title: normalizedTitle,
-      status: `Формируется: ${normalizedTitle}`
+      status: `Формируется: ${normalizedTitle}`,
+      controller,
+      origins: new Set(),
+      dispose: () => options.signal?.removeEventListener("abort", cancelFromParent)
     });
+    controller.signal.addEventListener("abort", () => {
+      options.onCancel?.();
+      const task = activeDocumentGenerationTasks.get(taskId);
+      if (!task) return;
+      task.status = "Прерывание формирования…";
+      for (const origin of task.origins) {
+        fetchWithTimeout(documentProcessingApiUrl("/api/contracts/student-document-preview/abort-generation", origin), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ generationId: taskId })
+        }, 20000, "Сервер не подтвердил остановку.").then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        }).catch(() => showDocumentGenerationNotice("Ожидание прервано, но сервер не подтвердил остановку. Проверьте папку документов перед повтором и обновите локальный сервис.", "warning"));
+      }
+      updateDocumentGenerationIndicator();
+    }, { once: true });
     updateDocumentGenerationIndicator();
     return taskId;
   }
 
+  function cancelActiveDocumentGenerations() {
+    for (const task of activeDocumentGenerationTasks.values()) task.controller.abort();
+  }
+
+  function getDocumentGenerationSignal(taskId) {
+    return activeDocumentGenerationTasks.get(taskId)?.controller.signal;
+  }
+
+  function throwIfDocumentGenerationCancelled(taskId) {
+    if (getDocumentGenerationSignal(taskId)?.aborted) {
+      throw Object.assign(new Error("Формирование прервано пользователем."), { name: "AbortError" });
+    }
+  }
+
+  function getDocumentGenerationRequestOptions(taskId, origin) {
+    if (!taskId) return {};
+    throwIfDocumentGenerationCancelled(taskId);
+    activeDocumentGenerationTasks.get(taskId)?.origins.add(origin);
+    return { signal: getDocumentGenerationSignal(taskId), headers: { "Content-Type": "application/json", "X-Document-Generation-Id": taskId } };
+  }
+
+  async function awaitDocumentGenerationStage(taskId, operation) {
+    throwIfDocumentGenerationCancelled(taskId);
+    const signal = getDocumentGenerationSignal(taskId);
+    let abort;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => { throwIfDocumentGenerationCancelled(taskId); return operation(); }),
+        new Promise((resolve, reject) => {
+          abort = () => reject(Object.assign(new Error("Формирование прервано пользователем."), { name: "AbortError" }));
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) abort();
+        })
+      ]);
+    } finally { signal?.removeEventListener("abort", abort); }
+  }
+
   function setDocumentGenerationStatus(taskId, status) {
+    throwIfDocumentGenerationCancelled(taskId);
     const task = activeDocumentGenerationTasks.get(taskId);
     if (!task) return;
     task.status = String(status || "").trim() || `Формируется: ${task.title}`;
@@ -70754,6 +70856,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function endDocumentGeneration(taskId) {
+    activeDocumentGenerationTasks.get(taskId)?.dispose();
     activeDocumentGenerationTasks.delete(taskId);
     updateDocumentGenerationIndicator();
   }
@@ -70938,13 +71041,14 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
-  async function requestGeneratedDocumentPreview(generationRequest, processingOrigin) {
+  async function requestGeneratedDocumentPreview(generationRequest, processingOrigin, generationTaskId = "") {
     return fetchWithTimeout(documentProcessingApiUrl(
       "/api/contracts/student-document",
       processingOrigin
     ), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      ...getDocumentGenerationRequestOptions(generationTaskId, processingOrigin),
       body: JSON.stringify({
         ...generationRequest,
         previewOnly: true,
@@ -70990,13 +71094,14 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 5000, "").catch(() => null);
   }
 
-  async function requestGeneratedDocumentEditor(previewToken, processingOrigin) {
+  async function requestGeneratedDocumentEditor(previewToken, processingOrigin, generationTaskId = "") {
     return fetchWithTimeout(documentProcessingApiUrl(
       "/api/contracts/student-document-preview/editor-start",
       processingOrigin
     ), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      ...getDocumentGenerationRequestOptions(generationTaskId, processingOrigin),
       body: JSON.stringify({ previewToken })
     }, 30000, "Сервер не открыл онлайн-редактор за 30 секунд.", async (response) => {
       const payload = await response.json().catch(() => ({}));
@@ -71173,6 +71278,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      ...getDocumentGenerationRequestOptions(options.generationTaskId, processingOrigin),
       body: JSON.stringify({
         previewToken,
         editorToken: editorSession.editorToken,
@@ -71457,6 +71563,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (settled) return;
         settled = true;
         editorStartSequence += 1;
+        options.signal?.removeEventListener("abort", abortPreview);
         backdrop.removeEventListener("keydown", trapFocus);
         window.removeEventListener("message", handleEditorMessage);
         URL.revokeObjectURL(previewUrl);
@@ -71466,6 +71573,8 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         resolve(Boolean(confirmed));
       };
+      const abortPreview = () => finish(false);
+      options.signal?.addEventListener("abort", abortPreview, { once: true });
       const refreshedEditorFrameUrl = (session) => {
         const url = new URL(session.editorUrl);
         url.searchParams.set("_aisEditorSessionRefresh", String(Date.now()));
@@ -71575,6 +71684,7 @@ MAX - https://bizvmax.ru/zifra_plus
             processingOrigin,
             editorDirty,
             {
+              generationTaskId: options.generationTaskId,
               refreshBeforeSave: sessionExpiresSoon
                 || [403, 404].includes(editorSessionRefreshStatus),
               onSessionRefreshed: () => {
@@ -71734,7 +71844,7 @@ MAX - https://bizvmax.ru/zifra_plus
         editButton.setAttribute("aria-busy", "true");
         if (description) description.textContent = "Подготавливаем защищённую сессию ONLYOFFICE…";
         try {
-          const requestedSession = await requestGeneratedDocumentEditor(previewToken, processingOrigin);
+          const requestedSession = await requestGeneratedDocumentEditor(previewToken, processingOrigin, options.generationTaskId);
           if (settled || startSequence !== editorStartSequence) {
             await discardGeneratedDocumentEditor(
               previewToken,
@@ -71770,6 +71880,7 @@ MAX - https://bizvmax.ru/zifra_plus
       requestAnimationFrame(() => {
         backdrop.querySelector(options.readOnly ? "[data-action='cancel-generated-document-preview']" : "[data-action='confirm-generated-document-preview']")?.focus({ preventScroll: true });
       });
+      if (options.signal?.aborted) abortPreview();
     });
   }
 
@@ -71964,12 +72075,15 @@ MAX - https://bizvmax.ru/zifra_plus
       const finish = (result) => {
         if (settled) return;
         settled = true;
+        options.signal?.removeEventListener("abort", abortEmailPreview);
         window.clearTimeout(previewRefreshTimer);
         backdrop.removeEventListener("keydown", trapFocus);
         backdrop.remove();
         if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
         resolve(result && typeof result === "object" ? result : null);
       };
+      const abortEmailPreview = () => finish(null);
+      options.signal?.addEventListener("abort", abortEmailPreview, { once: true });
       const applyEditedEmailChanges = () => {
         if (!readEditedEmailRequest()) return false;
         setEditing(false);
@@ -72018,6 +72132,7 @@ MAX - https://bizvmax.ru/zifra_plus
       requestAnimationFrame(() => {
         backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")?.focus({ preventScroll: true });
       });
+      if (options.signal?.aborted) abortEmailPreview();
     });
   }
 
@@ -72188,7 +72303,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const wasDisabled = Boolean(button?.disabled);
     const wasAriaBusy = button?.getAttribute("aria-busy");
     const hadGeneratingClass = Boolean(button?.classList.contains("is-document-generating"));
-    const generationTaskId = beginDocumentGeneration(documentTemplate.title || "Документ");
+    const generationTaskId = beginDocumentGeneration(documentTemplate.title || "Документ", { signal: options.signal });
     if (button) {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
@@ -72197,10 +72312,11 @@ MAX - https://bizvmax.ru/zifra_plus
     let pendingPreviewToken = "";
     let documentProcessingOrigin = "";
     try {
+      throwIfDocumentGenerationCancelled(generationTaskId);
       if (!options.skipEmail && documentTemplate.documentKind === "studentAttestationProtocol"
         && normalizeDocumentEmailDeliveryMode(documentTemplate.emailDeliveryMode, documentTemplate) !== "off") {
         setDocumentGenerationStatus(generationTaskId, "Загрузка текста письма из свойств протокола");
-        documentTemplate = await loadStudentProtocolEmailTemplate(documentTemplate);
+        documentTemplate = await awaitDocumentGenerationStage(generationTaskId, () => loadStudentProtocolEmailTemplate(documentTemplate));
       }
       const fieldValues = options.fieldValues || evaluateContractTemplateFields(record, documentTemplate.fields);
       const sourceValues = options.sourceValues || {
@@ -72238,10 +72354,10 @@ MAX - https://bizvmax.ru/zifra_plus
         preferLocalTemplate: getEffectiveLocalDocumentsMode(),
         outputFormat
       };
-      documentProcessingOrigin = await resolveDocumentProcessingOrigin("documentConversion");
+      documentProcessingOrigin = await awaitDocumentGenerationStage(generationTaskId, () => resolveDocumentProcessingOrigin("documentConversion"));
       if (previewEnabled) {
         setDocumentGenerationStatus(generationTaskId, `Подготовка предварительного просмотра: ${documentTemplate.title}`);
-        const preview = await requestGeneratedDocumentPreview(generationRequest, documentProcessingOrigin);
+        const preview = await requestGeneratedDocumentPreview(generationRequest, documentProcessingOrigin, generationTaskId);
         pendingPreviewToken = preview.previewToken;
         setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
         const confirmed = await showGeneratedDocumentPreview(preview.blob, {
@@ -72250,8 +72366,11 @@ MAX - https://bizvmax.ru/zifra_plus
           outputFormat,
           emailDescription: emailRequest?.recipientDescription || "",
           previewToken: pendingPreviewToken,
-          processingOrigin: documentProcessingOrigin
+          processingOrigin: documentProcessingOrigin,
+          generationTaskId,
+          signal: getDocumentGenerationSignal(generationTaskId)
         });
+        throwIfDocumentGenerationCancelled(generationTaskId);
         if (!confirmed) {
           await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
           pendingPreviewToken = "";
@@ -72261,8 +72380,10 @@ MAX - https://bizvmax.ru/zifra_plus
           setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение письма: ${documentTemplate.title}`);
           const reviewedEmailRequest = await showGeneratedDocumentEmailPreview(emailRequest, {
             title: documentTemplate.title,
-            fileName
+            fileName,
+            signal: getDocumentGenerationSignal(generationTaskId)
           });
+          throwIfDocumentGenerationCancelled(generationTaskId);
           if (!reviewedEmailRequest) {
             await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
             pendingPreviewToken = "";
@@ -72276,12 +72397,13 @@ MAX - https://bizvmax.ru/zifra_plus
           emailRequest = reviewedEmailRequest;
         }
       }
-      const requestedStorage = options.storageRequest || await prepareStudentDocumentStorageRequest(
+      throwIfDocumentGenerationCancelled(generationTaskId);
+      const requestedStorage = options.storageRequest || await awaitDocumentGenerationStage(generationTaskId, () => prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
         fileName,
         fileNameValues
-      );
+      ));
       const preparedStorage = prepareDocumentStorageRequestForEmail(requestedStorage, emailRequest);
       if (!preparedStorage) {
         await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
@@ -72311,6 +72433,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        ...getDocumentGenerationRequestOptions(generationTaskId, documentProcessingOrigin),
         body: JSON.stringify(finalizingPreview
           ? { previewToken: pendingPreviewToken, ...storageRequest }
           : { ...generationRequest, ...storageRequest })
@@ -72334,6 +72457,7 @@ MAX - https://bizvmax.ru/zifra_plus
           blob: await response.blob()
         };
       });
+      throwIfDocumentGenerationCancelled(generationTaskId);
       if (finalizingPreview) pendingPreviewToken = "";
       const { response, responseDetails, blob: generatedBlob } = generatedDocument;
       const additionalSaveHeader = response.headers.get("X-Additional-Documents-Result");
@@ -72373,11 +72497,11 @@ MAX - https://bizvmax.ru/zifra_plus
       let emailSent = false;
       if (emailRequest) {
         setDocumentGenerationStatus(generationTaskId, `Подготовка вложения: ${responseDetails.fileName}`);
-        const attachment = await createStudentDocumentEmailAttachment(
+        const attachment = await awaitDocumentGenerationStage(generationTaskId, () => createStudentDocumentEmailAttachment(
           generatedBlob,
           responseDetails.fileName,
           responseDetails.outputFormat
-        );
+        ));
         setDocumentGenerationStatus(generationTaskId, `Отправка письма: ${emailRequest.recipientDescription}`);
         emailSent = await sendServerEmail({
           email: emailRequest.recipient,
@@ -72395,6 +72519,7 @@ MAX - https://bizvmax.ru/zifra_plus
           markStudentContractEmailSent(record, { emailed: emailSent, emailRecipientMode: emailRequest.recipientMode });
         }
       }
+      throwIfDocumentGenerationCancelled(generationTaskId);
       if (options.workflow && !responseDetails.conversionFallback) {
         showDocumentWorkflowSaveSuccess(
           responseDetails.fileName,
@@ -72435,6 +72560,10 @@ MAX - https://bizvmax.ru/zifra_plus
       if (pendingPreviewToken) {
         await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
         pendingPreviewToken = "";
+      }
+      if (getDocumentGenerationSignal(generationTaskId)?.aborted) {
+        showDocumentGenerationNotice("Формирование прервано. Уже сохранённые файлы и отправленные письма сохранены.", "warning");
+        return { generated: false, cancelled: true, interrupted: true };
       }
       if (options.quietErrors) throw error;
       alert(`${errorTitle}: ${error.message}`);

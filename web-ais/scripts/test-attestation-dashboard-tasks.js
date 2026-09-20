@@ -49,6 +49,7 @@ function escapeAttr(value){return escapeHtml(value);}
 function render(){} function alert(message){calls.push({action:'alert',message});}
 function prepareStudentAttestationDocumentRecord(record){return {...record,workflowSourceValues:{}};}
 function beginDocumentGeneration(){calls.push({action:'preview-start'});return 1;} function endDocumentGeneration(){calls.push({action:'preview-end'});}
+function getDocumentGenerationSignal(){return undefined;} function throwIfDocumentGenerationCancelled(){} async function awaitDocumentGenerationStage(id, operation){return operation();}
 async function resolveDocumentProcessingOrigin(){return 'fixture';}
 async function requestGeneratedDocumentPreview(body){calls.push({action:'preview-request',body});return {blob:'fixture-preview',previewToken:'temporary'};}
 function evaluateContractTemplateFields(){return {};} function collectContractTemplateSourceValues(){return {};}

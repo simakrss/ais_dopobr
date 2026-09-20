@@ -31,6 +31,7 @@ async function main() {
   let local = true, conversionCalls = 0;
   const saves = [], sent = [];
   const context = {
+    throwIfDocumentGenerationCancelled: () => {},
     Buffer, documentWorkflow: workflow,
     normalizeGeneratedDocumentFormat: value => value === "docx" ? "docx" : "pdf",
     safeDocumentFileName: (value, format) => workflow.safeOutputFileName(value, format),
@@ -121,6 +122,7 @@ async function main() {
   // Real disk save routine: exact spaced names, no traversal, no destructive overwrite on collision.
   const temp = await fsp.mkdtemp(path.join(os.tmpdir(), "ais-multiple-output-test-"));
   const disk = {path, fs: fsp, documentWorkflow: workflow, serverSettings: {openDocumentsLocally: true},
+    throwIfDocumentGenerationCancelled: () => {},
     resolveLocalDocumentsFolder: () => temp,
     getStudentMailboxFileNameCandidate: (name, index) => index ? name.replace(/(\.[^.]+)$/, ` (${index})$1`) : name};
   vm.createContext(disk);

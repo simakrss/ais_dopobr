@@ -13461,12 +13461,12 @@ body.card-window-moving {
 
 .document-generation-indicator {
   position: fixed;
-  z-index: 180;
+  z-index: 12000;
   right: 18px;
   bottom: 18px;
-  width: min(380px, calc(100vw - 28px));
+  width: min(480px, calc(100vw - 28px));
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
