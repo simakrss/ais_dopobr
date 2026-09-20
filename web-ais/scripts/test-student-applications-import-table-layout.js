@@ -143,4 +143,28 @@ assert.match(stylesSource, /\.student-applications-payment-cell\s*\{[\s\S]*text-
 assert.match(stylesSource, /\.student-applications-table-options-panel\s*\{[\s\S]*z-index:\s*37/u);
 assert.doesNotMatch(stylesSource, /student-applications-import-table th:nth-child/u);
 
+const nameCellStart = appSource.indexOf("  function renderStudentApplicationImportTableCell(");
+const nameCellEnd = appSource.indexOf("  function renderStudentApplicationsImport()", nameCellStart);
+assert.ok(nameCellStart >= 0 && nameCellEnd > nameCellStart);
+const renderCell = new Function("dependencies", `
+  const {columnDataAttrs, columnStyleAttr, tableValueFilterDataAttrs, escapeAttr, escapeHtml, escapeMultilineAttr} = dependencies;
+  const STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID = "studentApplicationsImport";
+  ${appSource.slice(nameCellStart, nameCellEnd)}
+  return renderStudentApplicationImportTableCell;
+`)({
+  columnDataAttrs: () => "", columnStyleAttr: () => "", tableValueFilterDataAttrs: () => "",
+  escapeAttr: String, escapeHtml: String, escapeMultilineAttr: String
+});
+const existingCell = renderCell({name: "Тестовый слушатель"}, {key: "name"}, {
+  imported: true, repeatTooltip: "Слушатель уже есть в базе: uid test-1"
+});
+assert.match(existingCell, /student-application-repeat-badge[^>]*>В базе<\/span>/u, "Для найденной заявки показывается «В базе»");
+assert.match(existingCell, /title="Слушатель уже есть в базе: uid test-1"/u, "Подробности совпадения остаются в подсказке");
+assert.doesNotMatch(existingCell, />Повтор<\/span>/u);
+for (const context of [{imported: false}, {}]) {
+  assert.doesNotMatch(renderCell({name: "Новая заявка"}, {key: "name"}, context), /student-application-repeat-badge/u, "Новая заявка не помечается как находящаяся в базе");
+}
+assert.ok(appSource.includes('<span>В базе: <strong>${importedCount}</strong></span>'), "Название счётчика совпадает с отметкой");
+assert.ok(appSource.includes('"Слушатель уже есть в базе:"'), "Подсказка поясняет отметку");
+
 console.log("student applications import table layout tests: OK");

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.519",
+    version: "1.7.520",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.520",
+      releasedAt: "2026-09-20",
+      changes: ["В окне импорта заявок отметка «Повтор» заменена на «В базе». Обновлены подсказка отметки и название счётчика; правила поиска совпадений и повторного импорта сохранены."]
+    },
     {
       version: "1.7.519",
       releasedAt: "2026-09-20",
@@ -21764,7 +21769,7 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${index + 1}. ${parts.join(" · ")}`;
     });
     return [
-      "Повторная заявка. Слушатель уже найден в базе:",
+      "Слушатель уже есть в базе:",
       ...lines,
       "Повторный импорт разрешён."
     ].join("\n");
@@ -22151,7 +22156,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <td title="${escapeAttr(row.name || "")}" ${attrs} ${filterAttrs} ${style}>
           <div class="student-application-name-cell">
             <span>${escapeHtml(row.name || "")}</span>
-            ${context.imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(context.repeatTooltip)}">Повтор</span>` : ""}
+            ${context.imported ? `<span class="student-application-repeat-badge" title="${escapeMultilineAttr(context.repeatTooltip)}">В базе</span>` : ""}
           </div>
         </td>
       `;
@@ -22311,7 +22316,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 Всего: <strong>${visibleRows.length}</strong>
                 <span>Выбрано: <strong data-student-applications-selected-count>${selectedRows.length}</strong></span>
                 <span>Оплаты: <strong data-student-applications-selected-payment>${escapeHtml(money(selectedPayment))}</strong></span>
-                ${importedCount ? `<span>Повторные заявки: <strong>${importedCount}</strong></span>` : ""}
+                ${importedCount ? `<span>В базе: <strong>${importedCount}</strong></span>` : ""}
               </div>
             </div>
             ${renderTableOptions(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID)}
