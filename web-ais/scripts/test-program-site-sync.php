@@ -22,7 +22,9 @@ if (!function_exists('mb_strlen')) { function mb_strlen($text) { return preg_mat
 function get_post($id) { return isset($GLOBALS['posts'][$id]) ? (object) $GLOBALS['posts'][$id] : null; }
 function get_post_status($id) { return $GLOBALS['posts'][$id]['post_status'] ?? ''; }
 function get_post_type($id) { return $GLOBALS['posts'][$id]['post_type'] ?? ''; }
-function get_post_meta($id,$key,$single=true) { return ''; }
+function get_post_meta($id,$key,$single=true) { return $GLOBALS['sample_meta'][$id][$key] ?? ''; }
+function update_post_meta($id,$key,$value) { $GLOBALS['sample_meta'][$id][$key]=$value; $GLOBALS['writes']++; }
+function get_post_mime_type($id) { return $GLOBALS['sample_mime'][$id] ?? ''; }
 function get_post_thumbnail_id($id) {return $GLOBALS['thumbnails'][$id] ?? ($id===42?90:0);}
 function set_post_thumbnail($id,$image) {$GLOBALS['thumbnails'][$id]=$image;}
 function wp_get_attachment_image_url($id,$size) {return $id===90?'https://edu-plus.ru/wp-content/uploads/cover.jpg':($id===91?'https://edu-plus.ru/wp-content/uploads/other.jpg':false);}
@@ -43,6 +45,8 @@ function get_field_objects($id,$format=false) {
     foreach($GLOBALS['fields'][$id] ?? array() as $name=>$value) {
         $field=array('key'=>'field_'.$name,'name'=>$name,'value'=>$value,'type'=>'text');
         if($name==='blok_ceny') { $field['type']='repeater';$field['sub_fields']=array_map(function($key){return array('name'=>$key,'key'=>'field_'.$key,'type'=>'text');},array_keys($value[0])); }
+        if (array_key_exists($name, ais_pg_certificate_slots())) $field['type'] = 'image';
+        if ($name === 'slajder') { $field['type'] = 'repeater'; $field['sub_fields'] = array(array('name'=>'izobrazhenie_slajda','key'=>'field_izobrazhenie_slajda','type'=>'image')); }
         $result[]=$field;
     }
     return $result;
@@ -194,3 +198,53 @@ $write_count = $writes;
 rejects(function()use($schedule_data){ais_pg_sync_existing($schedule_data);},'изменились');
 check($writes === $write_count,'Concurrent short description edit prevents writes');
 echo "PASS: webinar schedule sync on both sites, calendar validation, read-only preflight, preserved reviews/biography and concurrency\n";
+
+// Explicit sample replacement works for legacy/published pages without a generator key.
+$role = 'edu';
+foreach (array('ПРО','ДОП','КПК','ППП') as $sample_type) {
+    $pages = array(); $languages = in_array($sample_type,array('ПРО','ДОП'),true) ? array('ru','en') : array('ru','page-2','page-3','page-4');
+    $sample_hash = hash('sha256', 'current plan and template ' . $sample_type);
+    foreach ($languages as $index => $language) {
+        $id = 300 + $index;
+        $posts[$id] = array('post_type'=>'attachment');
+        $sample_meta[$id]['_ais_certificate_key'] = ais_pg_certificate_key('sync-landing-42', $sample_hash, $language);
+        $sample_mime[$id] = 'image/jpeg';
+        $pages[] = array('id'=>$id, 'language'=>$language);
+    }
+    foreach (ais_pg_certificate_slots($sample_type) as $slot => $language) $fields[42][$slot] = 100;
+    $fields[42]['slajder'] = array(array('izobrazhenie_slajda'=>100));
+    $sample_data = array('model'=>array_merge($model,array('type'=>$sample_type,'updateSamples'=>true,'certificateHash'=>$sample_hash)),
+        'landingId'=>42,'productId'=>13,'version'=>ais_pg_sync_landing(42)['version']);
+    $count_before=$writes; $before_samples=$fields[42];
+    ais_pg_sync_existing($sample_data,true);
+    check($writes===$count_before,'Sample preflight does not change media or page');
+    rejects(function()use($sample_data){ais_pg_sync_existing($sample_data);},'Не загружены');
+    check($writes===$count_before,'Apply without pages must fail before writes');
+    $sample_data['certificatePages']=$pages;
+    $bad=$sample_data;$bad['certificatePages'][0]['id']=90;
+    rejects(function()use($bad){ais_pg_sync_existing($bad);},'актуальные');
+    $bad=$sample_data;$bad['model']['certificateHash']=str_repeat('f',64);
+    rejects(function()use($bad){ais_pg_sync_existing($bad);},'актуальные');
+    $bad=$sample_data;$bad['certificatePages']=array_reverse($pages);
+    rejects(function()use($bad){ais_pg_sync_existing($bad);},'порядок');
+    check($writes===$count_before,'Unowned/stale/wrong-order pages never replace samples');
+    ais_pg_sync_existing($sample_data);
+    check($fields[42]['izobrazhenie_vydavaemogo_dokumenta']===300 && $fields[42]['prevyu_vydavaemogo_dokumenta_1']===300,'Main image and preview updated');
+    check($fields[42]['izobrazhenie_vydavaemogo_dokumenta_2']===301 && $fields[42]['prevyu_vydavaemogo_dokumenta_2']===301,'Second image and preview updated');
+    check(count($fields[42]['slajder'])===count($pages),'Every appendix page is in gallery');
+    check($fields[42]['blok_opisaniya_kursa']===$before_samples['blok_opisaniya_kursa'],'Reviews preserved during sample update');
+    check($fields[42]['blok_ceny'][0]===$before_samples['blok_ceny'][0],'Other offer price preserved during sample update');
+    check($posts[42]['post_status']==='publish' && get_post_thumbnail_id(42)===91,'Publication and featured image preserved');
+    check(get_post_meta(42,'_ais_generator_key',true)==='','Legacy landing does not acquire creation ownership');
+    check(get_post_meta(42,'_ais_certificate_hash',true)===$sample_hash && get_post_meta(42,'_ais_certificate_pages',true)===$pages,'Current sample metadata saved');
+    $sample_data['version']=ais_pg_sync_landing(42)['version']; $count_before=$writes;
+    unset($fields[42]['prevyu_vydavaemogo_dokumenta_1']);
+    $sample_data['version']=ais_pg_sync_landing(42)['version'];
+    rejects(function()use($sample_data){ais_pg_sync_existing($sample_data,true);},'отсутствует поле');
+    check($writes===$count_before,'Missing ACF slot is rejected in read-only preflight');
+}
+$role='shop';
+rejects(function()use($sample_data){ais_pg_sync_certificate_assets($sample_data);},'только');
+$sample_meta[42]['_ais_generator_key']=str_repeat('a',64);
+check(ais_pg_sync_certificate_owner(42)===str_repeat('a',64),'Generated pages retain their sample ownership for later publication checks');
+echo "PASS: optional sample refresh for all types, legacy/published landing, all gallery pages, asset ownership/order/hash, missing slots and preserved unrelated data\n";

@@ -30,6 +30,9 @@ function sampleSource(program) {
   const displayedDate = `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
   const plan = program.siteTrainingPlan || [];
   if (!spec.bilingual && !plan.length) throw new Error("Заполните учебный план программы для формирования приложения к образцу документа.");
+  const landingUrl = program.siteSampleLandingUrl || `https://edu-plus.ru/${spec.base}/${String(program.landingCode || "").trim().replace(/^\/+|\/+$/g, "")}/`;
+  const parsedUrl = new URL(landingUrl);
+  if (parsedUrl.origin !== "https://edu-plus.ru" || parsedUrl.username || parsedUrl.password) throw new Error("Не удалось проверить адрес лендинга для QR-кода образца.");
   return {
     "ФИО": "ОБРАЗЕЦ", "ФИО_ENG": "SAMPLE", "ФИО_eng": "SAMPLE", "ИО": "ОБРАЗЕЦ",
     "РегНомер": "ОБРАЗЕЦ", "РегНомер_ENG": "SAMPLE", "Номер бланка": "SAMPLE", "Id": "0", "uid": "0",
@@ -47,7 +50,7 @@ function sampleSource(program) {
     "Дата приказа Отчисл Док Обр": displayedDate,
     "Дата выдачи": displayedDate, "Дата выдачи документа": displayedDate, "Дата начала обучения": displayedDate,
     "Дата окончания обучения": displayedDate, "Срок обучения_ENG": "",
-    "QRкод": `https://edu-plus.ru/${spec.base}/${String(program.landingCode || "").trim().replace(/^\/+|\/+$/g, "")}/`
+    "QRкод": landingUrl
   };
 }
 

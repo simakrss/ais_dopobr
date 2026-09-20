@@ -10,6 +10,11 @@ const markup = source.match(/dialog.innerHTML = (`[\s\S]*?`);\s*document.body.ap
 const review = source.match(/preview.innerHTML = (`[\s\S]*?`);\s*preview.querySelector/)[1];
 const renderLink = new Function("escapeAttr", "escapeHtml", `${app.match(/  function renderProgramSiteLink\([\s\S]*?\n  }/)[0]} return renderProgramSiteLink;`)(escape, escape);
 assert.match(source, /dialog.className = "modal program-site-dialog program-site-sync-dialog"/);
+assert.match(source, /<input type="checkbox" data-sync-samples>/, "Sample refresh is opt-in, not preselected");
+assert.match(source, /updateSamples: sampleInput.checked, preferLocalTemplate: getEffectiveLocalDocumentsMode\(\)/);
+assert.match(source, /\[jazzInput, dateInput, timeInput, sampleInput\][\s\S]*?plan = null; apply.disabled = true/);
+assert.match(source, /programSiteRequest\("preview-sync",[^\n]*\.\.\.sampleOptions\(\)/);
+assert.match(source, /programSiteRequest\("sync",[^\n]*\.\.\.sampleOptions\(\)/);
 assert.match(css, /\.program-site-sync-dialog \.program-site-body \{[^}]*gap: 7px;[^}]*padding: 10px 12px;/);
 assert.match(css, /\.program-site-sync-dialog \.program-site-fields \{[^}]*padding: 0;/);
 assert.match(css, /\.program-site-sync-dialog \.program-site-sync-webinar \{[^}]*grid-template-columns: 145px 120px minmax\(0, 1fr\)/);
@@ -39,5 +44,10 @@ for (const type of ["ПРО", "КПК", "ППП", "ДОП"]) {
   for (const label of ["Название лендинга", "Название товара", "Стоимость", "Старая цена", "Часы", "Срок / форма", "Адрес лендинга", "Адрес товара"]) assert.ok(preview.includes(label), label);
   assert.ok(preview.includes(escape(plan.model.name)), "Review escapes program titles");
   if (webinar) assert.match(preview, /13\.10\.2026 в 19:00 \(Москва\)/);
+  assert.match(preview, /Образцы документов<\/dt><dd>Без изменений/);
+  plan.model.updateSamples = true;
+  const refreshing = new Function("plan", "webinar", "escapeHtml", "renderProgramSiteLink", `return ${review};`)(plan, webinar, escape, renderLink);
+  assert.match(refreshing, /Сформировать заново и заменить на лендинге, включая все страницы приложения/);
+  assert.match(refreshing, /Образцы на всей странице будут заменены документами этой программы/);
 }
 console.log("PASS: compact sync-only layout, responsive field rows, visible change review/warnings, collapsed help, all program types and preserved draft values/actions");

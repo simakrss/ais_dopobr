@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.516",
+    version: "1.7.517",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.517",
+      releasedAt: "2026-09-20",
+      changes: ["В синхронизации с сайтами добавлена опция обновления образцов документов об образовании: по актуальным данным, учебному плану и шаблону заново формируются сертификаты или документ со всеми страницами приложения. Без галочки образцы не меняются; перед заменой проверяются версии данных и лендинга."]
+    },
     {
       version: "1.7.516",
       releasedAt: "2026-09-20",
@@ -33956,7 +33961,7 @@ MAX - https://bizvmax.ru/zifra_plus
         </div>
         <div class="program-site-actions" data-program-site-links>${renderProgramSiteLink(landingUrl, "Лендинг — edu-plus.ru")}${renderProgramSiteLink(publication.product?.editUrl, "Карточка товара — zifra-plus.ru")}</div>
         <p class="muted" data-program-site-link-status>Ссылки определяются по сохранённому коду лендинга и его кнопкам регистрации.</p>
-        <p class="muted">Синхронизация обновляет название, стоимость, часы и заполненные сведения. Можно выбрать изображение записи из другого лендинга для двух сайтов. Другие ценовые варианты, отзывы и образцы документов сохраняются.</p>
+        <p class="muted">Синхронизация обновляет название, стоимость, часы и заполненные сведения. Можно выбрать изображение записи для двух сайтов и обновить образцы документов по текущим данным программы. Другие ценовые варианты и отзывы сохраняются.</p>
       </div>
       <div class="program-site-preview" data-program-landing-preview data-preview-source="${escapeAttr(getProgramLandingPreviewUrl(landingUrl))}">${renderProgramLandingPreview("")}</div>
     </div>`;
@@ -34266,6 +34271,9 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="program-site-actions"><button class="primary-button" type="button" data-sync-apply disabled>Обновить сайт и магазин</button><button class="ghost-button" type="button" data-sync-refresh>Обновить проверку</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.showModal();
+    dialog.querySelector("[data-sync-preview]").insertAdjacentHTML("beforebegin", `<label class="program-site-review"><input type="checkbox" data-sync-samples><span>Обновить образцы документов об образовании <small class="muted">— по актуальным данным программы, учебному плану и шаблону</small></span></label>`);
+    const sampleInput = dialog.querySelector("[data-sync-samples]");
+    const sampleOptions = () => ({updateSamples: sampleInput.checked, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
     const status = dialog.querySelector("[data-sync-status]");
     const preview = dialog.querySelector("[data-sync-preview]");
     const apply = dialog.querySelector("[data-sync-apply]");
@@ -34275,7 +34283,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const jazzInput = dialog.querySelector("[data-sync-jazz]");
     const dateInput = dialog.querySelector("[data-sync-date]");
     const timeInput = dialog.querySelector("[data-sync-time]");
-    [jazzInput, dateInput, timeInput].forEach(input => input?.addEventListener("input", () => {
+    [jazzInput, dateInput, timeInput, sampleInput].forEach(input => input?.addEventListener("input", () => {
       plan = null; apply.disabled = true;
       status.textContent = "Параметры изменены. Нажмите «Обновить проверку», затем подтвердите синхронизацию.";
     }));
@@ -34314,7 +34322,8 @@ MAX - https://bizvmax.ru/zifra_plus
         programId = savedId;
         progress.phase("Проверка актуальных данных edu-plus.ru и zifra-plus.ru…");
         const promoSource = {...state.data.collections.programs.find(item => item.id === programId)};
-        plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value())});
+        plan = await programSiteRequest("preview-sync", {programId, productId, imageSourceId: Number(imagePicker.value()), ...sampleOptions()});
+        if (sampleInput.checked && !plan.model.updateSamples) { plan = null; throw new Error("Обновите локальную копию системы: сервер ещё не поддерживает обновление образцов документов."); }
         promoParameters = {...promoSource, type: plan.model.type, price: plan.model.price};
         preview.innerHTML = `<div class="program-site-sync-product-row"><label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label><div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div></div>
           <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
@@ -34324,9 +34333,10 @@ MAX - https://bizvmax.ru/zifra_plus
           <dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Срок / форма</dt><dd>${escapeHtml(plan.model.duration || "без изменения")} / ${escapeHtml(plan.model.studyForm || "без изменения")}</dd>
           ${plan.model.date ? `<dt>Дата и время вебинара</dt><dd>${escapeHtml(plan.model.date.split("-").reverse().join("."))} в ${escapeHtml(plan.model.time)} (Москва)</dd>` : ""}
           ${plan.model.slug ? `<dt>Адрес лендинга</dt><dd>${escapeHtml(plan.landing.url)} → ${escapeHtml(plan.model.landingUrl)}</dd><dt>Адрес товара</dt><dd>${escapeHtml(plan.product?.url || "—")} → https://zifra-plus.ru/product/${escapeHtml(plan.model.slug)}/</dd>` : ""}
-          ${plan.model.joinUrl ? `<dt>Подключение SberJazz</dt><dd>${escapeHtml(plan.model.joinUrl)}</dd>` : ""}</dl>
-          ${plan.landing.offers.length > 1 ? '<p class="program-site-notice">Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице.</p>' : ""}
-          <details class="program-site-sync-help"><summary>Что обновится</summary><p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения не меняются. "}Описание, автор, отзывы и образцы документов сохраняются. ${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
+          ${plan.model.joinUrl ? `<dt>Подключение SberJazz</dt><dd>${escapeHtml(plan.model.joinUrl)}</dd>` : ""}
+          <dt>Образцы документов</dt><dd>${plan.model.updateSamples ? "Сформировать заново и заменить на лендинге, включая все страницы приложения" : "Без изменений"}</dd></dl>
+          ${plan.landing.offers.length > 1 ? `<p class="program-site-notice">Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице.${plan.model.updateSamples ? " Образцы на всей странице будут заменены документами этой программы." : ""}</p>` : ""}
+          <details class="program-site-sync-help"><summary>Что обновится</summary><p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения записей не меняются. "}Описание, автор и отзывы сохраняются. ${plan.model.updateSamples ? "Образцы документов будут сформированы по текущим данным; прежние файлы останутся в медиатеке. " : "Образцы документов сохраняются. "}${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
           ${webinar ? '<p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение.</p>' : ""}
           <p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p></details>
           ${plan.product?.status === "draft" ? `<p class="program-site-notice">Товар — черновик: регистрация для посетителей откроется после публикации страницы и товара. Синхронизация не публикует их.</p>` : ""}`;
@@ -34350,7 +34360,7 @@ MAX - https://bizvmax.ru/zifra_plus
         progress.phase("Обновление сайта, магазина и файлов подключения…");
         const requestId = crypto.randomUUID();
         progress.watch(requestId);
-        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value()), requestId});
+        const result = await programSiteRequest("sync", {programId, productId: plan.product.id, hash: plan.hash, imageSourceId: Number(imagePicker.value()), requestId, ...sampleOptions()});
         const current = state.data.collections.programs.find(item => item.id === programId);
         if (!current) throw new Error("Сайты обновлены, но программа больше не найдена в базе.");
         current.siteSync = result;
@@ -34376,7 +34386,8 @@ MAX - https://bizvmax.ru/zifra_plus
           const snapshot = JSON.parse(card.dataset.initialSnapshot);
           if (Array.isArray(snapshot)) card.dataset.initialSnapshot = JSON.stringify(snapshot.map(item => Object.hasOwn(savedFields, item.name) && card.elements[item.name]?.value === savedFields[item.name] ? {...item, value: savedFields[item.name]} : item));
         } catch { /* Keep any unrelated unsaved edits. */ }
-        status.textContent = "Информация о программе успешно обновлена на edu-plus.ru и zifra-plus.ru." + (Object.keys(savedFields).some(key => ["promoMessage1", "promoMessage2"].includes(key)) ? " Промосообщения актуализированы." : "");
+        status.textContent = "Информация о программе успешно обновлена на edu-plus.ru и zifra-plus.ru." + (result.certificates?.length ? ` Образцы документов обновлены: ${result.certificates.length} стр.` : "") + (Object.keys(savedFields).some(key => ["promoMessage1", "promoMessage2"].includes(key)) ? " Промосообщения актуализированы." : "");
+        if (result.certificates?.length) preview.innerHTML = `<div class="program-site-actions">${result.certificates.map(image => renderProgramSiteLink(image.url, image.label || "Образец документа")).join("")}</div>`;
         void refreshProgramSiteLinks();
       } catch (error) { failed = true; status.textContent = error.message; }
       finally { progress.stop(failed); plan = null; setBusy(false); }

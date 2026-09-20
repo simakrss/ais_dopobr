@@ -56,7 +56,7 @@ async function main() {
   const syncEnd=app.indexOf("  function renderProgramGeneratorFields(",syncStart);
   const source=app.slice(syncStart,syncEnd);
   assert.match(source,/data-sync-jazz/); assert.match(source,/if \(jazzInput\) \{[\s\S]*?saveRecordFormBeforeContinuation/);
-  assert.match(source,/\[jazzInput, dateInput, timeInput\]\.forEach\(input => input\?\.addEventListener\("input", \(\) => \{\s*plan = null; apply.disabled = true;/);
+  assert.match(source,/\[jazzInput, dateInput, timeInput, sampleInput\]\.forEach\(input => input\?\.addEventListener\("input", \(\) => \{\s*plan = null; apply.disabled = true;/);
   const saveStart=source.indexOf("        current.siteSync = result;");
   const saveEnd=source.indexOf('        status.textContent = "Информация о программе успешно',saveStart);
   assert.ok(saveStart>0&&saveEnd>saveStart);

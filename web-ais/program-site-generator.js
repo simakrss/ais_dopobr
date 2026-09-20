@@ -494,7 +494,7 @@ async function inspectSite(program, call) {
     product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl}, warning: resolved.warning || ""};
 }
 
-async function previewSync(program, call, productId = 0, imageSourceId = 0) {
+async function buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate) {
   const model = normalizeSyncProgram(program);
   const imageSource = await loadImageSource(imageSourceId, call);
   if (imageSource) model.imageSource = imageSource;
@@ -509,16 +509,30 @@ async function previewSync(program, call, productId = 0, imageSourceId = 0) {
     if (!["other_course", "courses-pk", "courses-pp"].includes(base)) fail("Сайт не подтвердил раздел лендинга.", 502);
     model.landingUrl = model.slug ? `${SITES.edu}/${base}/${model.slug}/` : resolved.landing.url;
   }
+  let certificate = null;
+  if (prepareCertificate) {
+    if (!(await call("edu", "/health")).sampleSync) fail("Обновите служебный модуль edu-plus.ru для обновления образцов документов.", 409);
+    certificate = await prepareCertificate({...program, siteSampleLandingUrl: model.landingUrl || resolved.landing.url});
+    if (!/^[a-f0-9]{64}$/.test(certificate?.hash || "")) fail("Не удалось проверить версию образцов документов.");
+    model.updateSamples = true;
+    model.certificateHash = certificate.hash;
+    if (resolved.product) await call("edu", "/check-sync", {model, landingId: resolved.landing.id, landingStatus: resolved.landing.status,
+      productId: resolved.product.id, version: resolved.landing.version});
+  }
   const publicLanding = {...resolved.landing};
   delete publicLanding.fields;
   const hash = resolved.product ? crypto.createHash("sha256").update(JSON.stringify({model, target: resolved.target,
     landing: resolved.landing.version, product: resolved.product.version, productId: resolved.product.id})).digest("hex") : "";
-  return {...resolved, landing: publicLanding, model, hash};
+  return {plan: {...resolved, landing: publicLanding, model, hash}, certificate};
 }
 
-async function synchronize(program, call, productId, expectedHash, imageSourceId = 0, report = () => {}) {
+async function previewSync(program, call, productId = 0, imageSourceId = 0, prepareCertificate = null) {
+  return (await buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate)).plan;
+}
+
+async function synchronize(program, call, productId, expectedHash, imageSourceId = 0, report = () => {}, prepareCertificate = null) {
   report("Повторная проверка данных программы и двух сайтов");
-  const plan = await previewSync(program, call, productId, imageSourceId);
+  const {plan, certificate} = await buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate);
   if (!plan.product || !expectedHash || plan.hash !== expectedHash) fail("Данные программы или сайтов изменились. Обновите проверку перед синхронизацией.", 409);
   // Preflight both sites before the first write. Each write also rechecks its snapshot
   // under a lock on the actual post ID (several AIS variants can share one landing).
@@ -527,6 +541,18 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   await call("edu", "/check-sync", {...payload, version: plan.landing.version});
   report("Проверка возможности обновления магазина");
   await call("shop", "/check-sync", {...payload, version: plan.product.version});
+  let certificates;
+  if (certificate) {
+    const images = await certificate.generate(report);
+    report("Загрузка актуальных образцов документов на edu-plus.ru");
+    const assets = await call("edu", "/sync-certificate-assets", {...payload, version: plan.landing.version, images});
+    if (!Array.isArray(assets.images) || assets.images.length !== images.length || assets.images.some((image, index) =>
+      image.language !== images[index].language || !Number.isSafeInteger(Number(image.id)) || Number(image.id) < 1)) fail("Сайт не подтвердил загрузку всех страниц образцов документов.", 502);
+    certificates = assets.images.map((image, index) => ({...image, label: images[index].label}));
+    payload.certificatePages = certificates.map(({id, language}) => ({id, language}));
+    // Check uploaded ownership and unchanged landing before touching the shop.
+    await call("edu", "/check-sync", {...payload, version: plan.landing.version});
+  }
   let product;
   report("Обновление товара, изображения и файлов подключения на zifra-plus.ru");
   try { product = await call("shop", "/sync-existing", {...payload, version: plan.product.version}); }
@@ -536,6 +562,7 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
   catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
   return {ok: true, landing, product, type: plan.model.type, syncedAt: new Date().toISOString(),
+    ...(certificates ? {certificates} : {}),
     ...(plan.model.oldPriceAdjusted ? {oldPrice: plan.model.oldPrice} : {}),
     ...(plan.model.slug ? {landingCode: plan.model.slug} : {}),
     ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};

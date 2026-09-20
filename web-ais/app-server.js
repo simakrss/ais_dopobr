@@ -40197,14 +40197,26 @@ async function route(req, res) {
       const savedProgram = shared.document?.data?.collections?.programs?.find(item => String(item.id) === String(body.programId));
       if (!savedProgram && (action !== "resolve" || body.programId)) { progressJob?.finish("failed"); sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
       const program = programSiteGenerator.withTrainingPlan(savedProgram || {}, shared.document.data);
+      const reportProgress = label => progressJob?.report(label);
+      const prepareCertificate = async sampleProgram => {
+        reportProgress("Загрузка актуального шаблона документа об образовании");
+        return programSiteCertificates.prepare(sampleProgram, shared.document.data, body.preferLocalTemplate === true, {
+          loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
+          applyFormulas: applyCustomDocumentPropertyFormulas, createQr: createDocumentQrCodeImage,
+          fill: fillDocxMarkers, convert: convertDocxBytesToPdf, pdf: PDF_LIB,
+          removeBlankPages: removeBlankInteriorPdfPages,
+          render: (bytes, page) => renderOcrDocumentPageBytes(bytes, "certificate-sample.pdf", "application/pdf", page)
+        });
+      };
       if (action === "landing-code") {
         sendJson(res, 200, await programSiteGenerator.suggestLandingCode(program, call));
         return;
       }
       if (["resolve", "preview-sync", "sync"].includes(action)) {
         let result;
-        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash, body.imageSourceId, label => progressJob?.report(label));
-        else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId, body.imageSourceId);
+        const syncCertificate = body.updateSamples === true ? prepareCertificate : null;
+        if (action === "sync") result = await programSiteGenerator.synchronize(program, call, body.productId, body.hash, body.imageSourceId, reportProgress, syncCertificate);
+        else if (action === "preview-sync") result = await programSiteGenerator.previewSync(program, call, body.productId, body.imageSourceId, syncCertificate);
         else {
           // Unsaved addresses are accepted only for this read-only lookup. All site
           // mutations still use the authoritative saved program above.
@@ -40226,15 +40238,7 @@ async function route(req, res) {
       }
       programSiteGenerator.validateTemplateId(body.templateId);
       programSiteGenerator.normalizeProgram(program);
-      const reportProgress = label => progressJob?.report(label);
-      reportProgress("Загрузка шаблона документа об образовании");
-      const certificate = await programSiteCertificates.prepare(program, shared.document.data, body.preferLocalTemplate === true, {
-        loadTemplate: loadTemplateBytesForRequest, evaluate: evaluateDocumentFormula,
-        applyFormulas: applyCustomDocumentPropertyFormulas, createQr: createDocumentQrCodeImage,
-        fill: fillDocxMarkers, convert: convertDocxBytesToPdf, pdf: PDF_LIB,
-        removeBlankPages: removeBlankInteriorPdfPages,
-        render: (bytes, page) => renderOcrDocumentPageBytes(bytes, "certificate-sample.pdf", "application/pdf", page)
-      });
+      const certificate = await prepareCertificate(program);
       const result = action === "prepare"
         ? await programSiteGenerator.prepare(program, body.templateId, call, certificate, reportProgress)
         : await programSiteGenerator.publish(program, body.templateId, body.hash, call, certificate, reportProgress);

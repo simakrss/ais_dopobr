@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.4
+ * Version: 1.7.5
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -176,6 +176,9 @@ function ais_pg_certificate_assets($data) {
     if ($own_id && get_post_status($own_id) === 'publish' && get_post_meta($own_id, '_ais_generator_hash', true) !== $data['hash']) {
         throw new RuntimeException('Программа уже опубликована с другими параметрами. Автоматическая перезапись запрещена.');
     }
+    return ais_pg_upload_certificate_assets($data);
+}
+function ais_pg_upload_certificate_assets($data) {
     $type = ais_pg_program_type($data);
     $images = ais_pg_certificate_pages($data['images'] ?? null, $type);
     $validated = array();
@@ -905,10 +908,53 @@ function ais_pg_sync_validate($data) {
         foreach (array('stoimost_kursa', 'kolichestvo_chasov', 'staraya_cena', 'skidka') as $key) {
             if (!array_key_exists($key, $row)) throw new RuntimeException('В ценовом блоке отсутствует поле ' . $key . '. Проверьте ACF.');
         }
+        if (($model['updateSamples'] ?? false) === true) $snapshot['_sampleFields'] = ais_pg_sync_sample_fields($data, $snapshot);
     }
     if (isset($model['imageSource']) && !ais_pg_image_url_valid($model['imageSource']['imageUrl'] ?? null)) throw new RuntimeException('Проверьте изображение записи.');
     $snapshot['_linksPlan'] = ais_pg_sync_links_plan($data, $snapshot);
     return $snapshot;
+}
+function ais_pg_sync_certificate_owner($id) {
+    $key = get_post_meta($id, '_ais_generator_key', true);
+    return is_string($key) && preg_match('/^[a-f0-9]{64}$/D', $key) ? $key : 'sync-landing-' . (int) $id;
+}
+function ais_pg_sync_sample_fields($data, $snapshot) {
+    $model = $data['model'];
+    $slots = ais_pg_certificate_slots($model['type']);
+    $definitions = array();
+    foreach (get_field_objects((int) $snapshot['id'], false) ?: array() as $field) $definitions[$field['name']] = $field;
+    foreach ($slots as $slot => $language) {
+        if (!array_key_exists($slot, $snapshot['fields']) || ($definitions[$slot]['type'] ?? '') !== 'image') {
+            throw new RuntimeException('На лендинге отсутствует поле изображения образца ' . $slot . '. Проверьте ACF.');
+        }
+    }
+    $has_slider = array_key_exists('slajder', $snapshot['fields']);
+    if (!$has_slider && in_array($model['type'], array('КПК', 'ППП'), true)) throw new RuntimeException('На лендинге отсутствует галерея для всех страниц приложения.');
+    if ($has_slider) {
+        $slider = $definitions['slajder'] ?? array();
+        $images = array_filter($slider['sub_fields'] ?? array(), function ($field) { return $field['name'] === 'izobrazhenie_slajda' && $field['type'] === 'image'; });
+        if (($slider['type'] ?? '') !== 'repeater' || count($images) !== 1) throw new RuntimeException('Проверьте поля галереи образцов документов в ACF.');
+    }
+    $key = ais_pg_sync_certificate_owner((int) $snapshot['id']);
+    ais_pg_certificate_key($key, $model['certificateHash'] ?? '', 'ru');
+    // Initial preflight is read-only; assets arrive after rendering every page.
+    if (!array_key_exists('certificatePages', $data)) return array();
+    $pages = ais_pg_certificate_pages($data['certificatePages'], $model['type']);
+    $patch = array();
+    foreach ($slots as $slot => $language) {
+        foreach ($pages as $page) if ($page['language'] === $language) $patch[$slot] = (int) ($page['id'] ?? 0);
+    }
+    if ($has_slider) $patch['slajder'] = array_map(function ($page) { return array('izobrazhenie_slajda' => (int) ($page['id'] ?? 0)); }, $pages);
+    ais_pg_validate_certificates(array('type' => $model['type'], 'key' => $key, 'certificateHash' => $model['certificateHash'], 'certificatePages' => $pages, 'fields' => $patch));
+    return $patch;
+}
+function ais_pg_sync_certificate_assets($data) {
+    if (ais_pg_role() !== 'edu' || ($data['model']['updateSamples'] ?? false) !== true) throw new RuntimeException('Обновление образцов доступно только для выбранного лендинга.');
+    ais_pg_sync_existing($data, true);
+    // Separate from draft creation: published and legacy pages are allowed only
+    // after validating their actual ID, selected product, version and sample fields.
+    return ais_pg_upload_certificate_assets(array('type' => $data['model']['type'], 'key' => ais_pg_sync_certificate_owner((int) $data['landingId']),
+        'certificateHash' => $data['model']['certificateHash'], 'images' => $data['images'] ?? null));
 }
 function ais_pg_sync_existing($data, $check_only = false) {
     global $wpdb;
@@ -918,6 +964,7 @@ function ais_pg_sync_existing($data, $check_only = false) {
     try {
         $snapshot = ais_pg_sync_validate($data);
         if ($check_only) return array('ok' => true);
+        if (ais_pg_role() === 'edu' && ($data['model']['updateSamples'] ?? false) === true && empty($snapshot['_sampleFields'])) throw new RuntimeException('Не загружены актуальные образцы документов. Повторите синхронизацию.');
         $model = $data['model'];
         $links = $snapshot['_linksPlan'];
         $price = (string) $model['price'];
@@ -982,6 +1029,7 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 $updated = ais_pg_webinar_schedule($value, $model, $name);
                 if ($updated !== $value) $patch[$name] = $updated;
             }
+            if (isset($snapshot['_sampleFields'])) $patch = array_merge($patch, $snapshot['_sampleFields']);
             $definitions = get_field_objects($id, false) ?: array();
             $written = array();
             foreach ($definitions as $field) {
@@ -1007,8 +1055,17 @@ function ais_pg_sync_existing($data, $check_only = false) {
             // Read through fresh ACF values, not the request-local value cache.
             if (function_exists('acf_flush_value_cache')) acf_flush_value_cache($id);
             $actual = ais_pg_sync_landing($id);
-            foreach ($written as $name => $value) {
+            foreach (array_merge($written, $snapshot['_sampleFields'] ?? array()) as $name => $value) {
                 if (($actual['fields'][$name] ?? null) != $value) throw new RuntimeException('Сайт не подтвердил поле ' . $name . '. Обновите проверку.');
+            }
+            if (!empty($snapshot['_sampleFields'])) {
+                // Keep publication validation consistent for drafts created by the generator.
+                update_post_meta($id, '_ais_certificate_hash', $model['certificateHash']);
+                update_post_meta($id, '_ais_certificate_pages', $data['certificatePages']);
+                update_post_meta($id, '_ais_program_type', $model['type']);
+                if (get_post_meta($id, '_ais_certificate_hash', true) !== $model['certificateHash']
+                    || get_post_meta($id, '_ais_certificate_pages', true) != $data['certificatePages']
+                    || get_post_meta($id, '_ais_program_type', true) !== $model['type']) throw new RuntimeException('Сайт не подтвердил версию образцов. Повторите синхронизацию.');
             }
             if ($actual['title'] !== sanitize_text_field($model['name'])) throw new RuntimeException('Сайт не подтвердил название лендинга.');
             if ($links && $actual['slug'] !== $links['slug']) throw new RuntimeException('Сайт не подтвердил новый адрес лендинга.');
@@ -1031,14 +1088,15 @@ function ais_pg_dispatch($request) {
     try {
         $action = basename($request->get_route());
         if ($request->get_method() === 'POST') {
-            if (strlen($request->get_body()) > ($action === 'certificate-assets' ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
+            if (strlen($request->get_body()) > (in_array($action, array('certificate-assets', 'sync-certificate-assets'), true) ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             $data = $request->get_json_params() ?: array();
             if ($action === 'resolve-site') return ais_pg_resolve_site($data);
             if ($action === 'landing-code') return ais_pg_landing_code($data);
+            if ($action === 'sync-certificate-assets') return ais_pg_sync_certificate_assets($data);
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.4', 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.5', 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -1066,7 +1124,7 @@ function ais_pg_dispatch($request) {
 }
 add_action('rest_api_init', function () {
     foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)', 'image-source/(?P<id>\d+)', 'sync-product/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
-    foreach (array('prepare-product', 'configure-product', 'prepare-landing', 'certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('prepare-product', 'configure-product', 'prepare-landing', 'certificate-assets', 'sync-certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
 // Repair displayed links in older generated pages too, without mutating their
 // content, publication status, reviews or unrelated manually maintained pages.
