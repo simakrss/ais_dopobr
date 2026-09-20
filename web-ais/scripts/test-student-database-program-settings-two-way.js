@@ -130,6 +130,7 @@ const payload = sanitizeStudentDatabaseExportPayload({
     xlsbProgramLandingCode: "old-code",
     xlsbProgramRow: 2,
     nameEnglish: "New program name",
+    productId: "5112",
     shortName: "Новое краткое имя",
     hours: 36,
     databaseSyncFormulaFields: ["hours"]
@@ -142,6 +143,10 @@ const payload = sanitizeStudentDatabaseExportPayload({
 
 assert.equal(payload.programColumnMap["Наименование программы"], "name");
 assert.equal(payload.programColumnMap["Название программы на английском"], "nameEnglish");
+assert.equal(payload.programColumnMap["Код"], "productId");
+assert.ok(payload.programNumberFields.includes("productId"));
+assert.ok(payload.programs[0].providedFields.includes("productId"));
+assert.equal(payload.programs[0].productId, 5112);
 assert.ok(payload.programs[0].providedFields.includes("name"));
 assert.ok(payload.programs[0].providedFields.includes("nameEnglish"));
 assert.equal(payload.programs[0].name, "Новое имя в Web");
@@ -171,6 +176,7 @@ const merged = mergePrograms(
     xlsbProgramName: "Старое имя в Excel",
     xlsbProgramRow: 2,
     xlsbProgramLandingCode: "old-code",
+    productId: 5104,
     webOnly: { keep: true }
   }],
   [{
@@ -180,12 +186,13 @@ const merged = mergePrograms(
     xlsbProgramRow: 2,
     xlsbProgramLandingCode: "new-code",
     nameEnglish: "English program name",
+    productId: 5112,
     shortName: "Excel short",
     hours: 36,
     databaseSyncFormulaFields: ["hours"]
   }],
   50,
-  ["name", "nameEnglish", "shortName"]
+  ["name", "nameEnglish", "shortName", "productId"]
 );
 assert.equal(merged.length, 1);
 assert.equal(merged[0].id, "program-stable");
@@ -194,6 +201,7 @@ assert.equal(merged[0].xlsbProgramName, "Новое имя в Excel");
 assert.equal(merged[0].xlsbProgramRow, 2);
 assert.equal(merged[0].xlsbProgramLandingCode, "new-code");
 assert.equal(merged[0].nameEnglish, "English program name");
+assert.equal(merged[0].productId, 5112);
 assert.deepEqual(Array.from(merged[0].databaseSyncFormulaFields), ["hours"]);
 assert.deepEqual(merged[0].webOnly, { keep: true });
 

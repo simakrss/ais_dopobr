@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.512",
+    version: "1.7.513",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.513",
+      releasedAt: "2026-09-20",
+      changes: ["В карточку программы на вкладке «Основное» добавлено поле «Код товара в магазине» рядом с кодом лендинга. Используется существующий столбец «Код» листа «Реестр программ»: значение загружается из базы и сохраняется при редактировании карточки."]
+    },
     {
       version: "1.7.512",
       releasedAt: "2026-09-20",
@@ -6411,6 +6416,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("hours", "Часы", "number"),
         field("duration", "Срок"),
         field("landingCode", "Код лендинга"),
+        field("productId", "Код товара в магазине"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("promoSite", "На промо сайте"),
         field("gradeReportUrl", "Ссылка на отчет по оценкам"),
