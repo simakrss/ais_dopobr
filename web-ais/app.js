@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.509",
+    version: "1.7.510",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.510",
+      releasedAt: "2026-09-20",
+      changes: ["При заполнении реквизитов документа для приказа об отчислении квалификация ППП переносится из программы в карточку слушателя. Пустая квалификация отображается в списке недостающих полей, уже введённое значение не заменяется. Исправление действует и для остальных слушателей общего приказа."]
+    },
     {
       version: "1.7.509",
       releasedAt: "2026-09-20",
@@ -73721,14 +73726,9 @@ MAX - https://bizvmax.ru/zifra_plus
       { key: "diplomaIssueDate", label: "Дата выдачи" }
     ];
     if (programType === "ППП") {
-      const program = findProgramByName(record?.program);
       fields.push(
         { key: "protocolNo", label: "Номер протокола" },
-        {
-          key: "qualification",
-          label: "Квалификация",
-          value: String(record?.qualification || program?.qualification || "").trim()
-        }
+        { key: "qualification", label: "Квалификация" }
       );
     }
     return fields;

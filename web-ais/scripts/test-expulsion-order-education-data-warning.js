@@ -224,7 +224,8 @@ assert.match(
   issueFieldsSource,
   /programType === "ППП"[\s\S]*?key: "protocolNo"[\s\S]*?key: "qualification"/u
 );
-assert.match(issueFieldsSource, /record\?\.qualification \|\| program\?\.qualification/u);
+assert.doesNotMatch(issueFieldsSource, /program\?\.qualification/u,
+  "Квалификация из программы должна переноситься в карточку, а не скрывать незаполненное поле");
 assert.match(issueFieldsSource, /getMissingStudentEducationDocumentIssueFields\(record\)\.length === 0/u);
 
 const expulsionFilterSource = sourceBlock(
