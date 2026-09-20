@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.515",
+    version: "1.7.516",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.516",
+      releasedAt: "2026-09-20",
+      changes: ["Исправлено сопоставление учебных планов после синхронизации с Excel: варианты с одинаковым названием, но разным количеством часов больше не объединяются в карточке программы. Сохранение и дублирование карточки не затрагивают чужой вариант плана; при формировании документов также исключён подбор плана с другим объёмом часов."]
+    },
     {
       version: "1.7.515",
       releasedAt: "2026-09-20",
@@ -38604,6 +38609,12 @@ MAX - https://bizvmax.ru/zifra_plus
     if (rowProgramId) return false;
     const rowProgramName = String(item?.programName || "").trim();
     if (!rowProgramName) return false;
+    const rowHours = getTrainingPlanHours(rowProgramName);
+    const programHours = getTrainingPlanHours(programRecord.hours)
+      || getTrainingPlanHours(programRecord.name)
+      || getTrainingPlanHours(fallbackName);
+    // An unlinked Excel row for another hours variant is not a legacy name alias.
+    if (rowHours && rowHours !== programHours) return false;
     const keys = getProgramTrainingPlanNameKeys(programRecord, fallbackName);
     return keys.exact.has(normalizeProgramName(rowProgramName))
       || keys.comparable.has(normalizeTrainingPlanProgramName(rowProgramName));
@@ -74229,20 +74240,26 @@ MAX - https://bizvmax.ru/zifra_plus
       const linkedRows = rows.filter((item) => String(item?.programId || "").trim() === programId);
       if (linkedRows.length) return linkedRows;
     }
+    const requestedHours = getTrainingPlanHours(
+      record?.hours || record?.programHours || record?.totalHours || program?.hours || programName
+    );
+    const eligibleRows = rows.filter((item) => {
+      const rowProgramId = String(item?.programId || "").trim();
+      if (rowProgramId && rowProgramId !== programId) return false;
+      const rowHours = getTrainingPlanHours(item?.programName);
+      return !requestedHours || !rowHours || rowHours === requestedHours;
+    });
     const exactNames = new Set([programName, program?.name]
       .map(normalizeProgramName)
       .filter(Boolean));
-    const exactRows = rows.filter((item) => exactNames.has(normalizeProgramName(item?.programName)));
+    const exactRows = eligibleRows.filter((item) => exactNames.has(normalizeProgramName(item?.programName)));
     if (exactRows.length) return exactRows;
     const comparableNames = new Set([programName, program?.name, program?.shortName]
       .map(normalizeTrainingPlanProgramName)
       .filter(Boolean));
-    const comparableRows = rows.filter((item) => (
+    const comparableRows = eligibleRows.filter((item) => (
       comparableNames.has(normalizeTrainingPlanProgramName(item?.programName))
     ));
-    const requestedHours = getTrainingPlanHours(
-      record?.hours || record?.programHours || record?.totalHours || program?.hours || programName
-    );
     if (requestedHours) {
       const matchingHours = comparableRows.filter((item) => (
         getTrainingPlanHours(item?.programName) === requestedHours

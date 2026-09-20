@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260920-communication-right-click-v1";
+  const AUTH_BUILD = "20260920-training-plan-hours-match-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
