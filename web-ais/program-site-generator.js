@@ -422,8 +422,11 @@ function normalizeSyncProgram(program) {
   const type = programType(program);
   if (!id || !name) fail("Сохраните программу с заполненным названием.");
   if (program.price === "" || program.price == null) fail("Заполните стоимость программы (для бесплатной — 0).");
-  const price = Number(program.price), oldPrice = Number(program.oldPrice || 0), hours = Number(program.hours);
-  if (![price, oldPrice].every(value => Number.isFinite(value) && value >= 0 && value <= 10000000)) fail("Проверьте стоимость и старую цену.");
+  const price = Number(program.price), sourceOldPrice = Number(program.oldPrice || 0), hours = Number(program.hours);
+  if (![price, sourceOldPrice].every(value => Number.isFinite(value) && value >= 0 && value <= 10000000)) fail("Проверьте стоимость и старую цену.");
+  // A 25% uplift over the current price corresponds to a 20% discount from the old price.
+  const oldPrice = sourceOldPrice < price ? Math.round((price * 1.25 + Number.EPSILON) * 100) / 100 : sourceOldPrice;
+  if (oldPrice > 10000000) fail("Рассчитанная старая цена превышает допустимые 10 000 000 ₽. Проверьте стоимость программы.");
   if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) fail("Проверьте количество часов.");
   const schedule = {};
   if (type === "ПРО" && (program.webinarDate || program.webinarTime)) {
@@ -443,6 +446,7 @@ function normalizeSyncProgram(program) {
     if (!idUrl) slug = landingCodeFromPromoSite(promo);
   }
   return {id, type, name, productName: text(program.siteProductName || name, 500), price, oldPrice, hours,
+    ...(sourceOldPrice < price ? {oldPriceAdjusted: true} : {}),
     ...schedule,
     ...(slug ? {slug} : {}),
     ...(type === "ПРО" && text(program.webinarJoinUrl, 2000) ? {joinUrl: normalizeJoinUrl(program.webinarJoinUrl)} : {}),
@@ -532,6 +536,7 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
   catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
   return {ok: true, landing, product, type: plan.model.type, syncedAt: new Date().toISOString(),
+    ...(plan.model.oldPriceAdjusted ? {oldPrice: plan.model.oldPrice} : {}),
     ...(plan.model.slug ? {landingCode: plan.model.slug} : {}),
     ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};
 }

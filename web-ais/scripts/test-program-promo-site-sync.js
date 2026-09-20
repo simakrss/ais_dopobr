@@ -34,8 +34,8 @@ const start=source.indexOf("    apply.addEventListener(\"click\", async () => {"
 const end=source.indexOf('    dialog.querySelector("[data-sync-refresh]")',start);
 assert.ok(start>0&&end>start);
 async function integration(options={}) {
-  const current={...program,id:"p",promoMessage1:original,promoMessage2:"Цена: 390 руб.",name:"Название",...(options.staleDate?{webinarDate:"2026-09-26"}:{})};
-  const baseline=[{name:"promoMessage1",value:original},{name:"promoMessage2",value:current.promoMessage2},{name:"name",value:"Название"}];
+  const current={...program,id:"p",oldPrice:"500",promoMessage1:original,promoMessage2:"Цена: 390 руб.",name:"Название",...(options.staleDate?{webinarDate:"2026-09-26"}:{})};
+  const baseline=[{name:"promoMessage1",value:original},{name:"promoMessage2",value:current.promoMessage2},{name:"name",value:"Название"},{name:"oldPrice",value:"500"}];
   const card={elements:{},dataset:{initialSnapshot:JSON.stringify(baseline)},querySelector:()=>null};
   for(const item of baseline)card.elements[item.name]={value:item.value,dispatchEvent(){}};
   card.elements.name.value="Несохранённое название";
@@ -43,17 +43,22 @@ async function integration(options={}) {
   const ctx={Event,current,card,status,programId:"p",busy:false,plan:{hash:"h",product:{id:1}},promoParameters:program,
     state:{data:{collections:{programs:[current]}}},apply:{addEventListener:(name,fn)=>{click=fn;}},setBusy:()=>{},
     imagePicker:{value:()=>0},ensureRecordLockForSave:async()=>true,crypto:require("node:crypto"),progress:{start(){},phase(){},stop(){},watch(){},local(){}},
-    programSiteRequest:async()=>{if(options.siteFailure)throw Error("Сбой синхронизации");return {ok:true,type:"ПРО",landing:{url:"https://example.test/"}};},
+    programSiteRequest:async()=>{if(options.siteFailure)throw Error("Сбой синхронизации");return {ok:true,type:"ПРО",landing:{url:"https://example.test/"},...(options.adjustOldPrice ? {oldPrice:1112.5} : {})};},
     persist:()=>saved.push(structuredClone(current)),flushSharedApplicationState:async()=>!options.flushFailure,
     refreshProgramSiteLinks:()=>{}
   };
   vm.createContext(ctx);vm.runInContext(helpers+source.slice(start,end),ctx);await click();
-  if(options.siteFailure||options.staleDate){assert.equal(saved.length,0);assert.equal(current.promoMessage1,original);if(options.staleDate)assert.match(status.textContent,/изменились/);return;}
+  if(options.siteFailure||options.staleDate){assert.equal(saved.length,0);assert.equal(current.promoMessage1,original);assert.equal(current.oldPrice,"500");assert.equal(card.elements.oldPrice.value,"500");if(options.staleDate)assert.match(status.textContent,/изменились/);return;}
   assert.equal(current.promoMessage1,expected);assert.equal(current.promoMessage2,"Цена: 890 руб.");
   assert.equal(saved[0].promoMessage1Touched,true);assert.equal(saved[0].promoMessage2Touched,true);
   assert.equal(card.elements.promoMessage1.value,expected);assert.equal(card.elements.name.value,"Несохранённое название");
   const snapshot=JSON.parse(card.dataset.initialSnapshot);
   assert.equal(snapshot[0].value,options.flushFailure?original:expected);assert.equal(snapshot[2].value,"Название");
+  const expectedOldPrice = options.adjustOldPrice ? "1112.5" : "500";
+  assert.equal(current.oldPrice, expectedOldPrice);
+  assert.equal(saved[0].oldPrice, expectedOldPrice);
+  assert.equal(card.elements.oldPrice.value, expectedOldPrice);
+  assert.equal(snapshot[3].value, options.flushFailure ? "500" : expectedOldPrice);
   assert.match(status.textContent,options.flushFailure?/пока не сохранены/:/Промосообщения актуализированы/);
 }
-(async()=>{await integration();await integration({siteFailure:true});await integration({flushFailure:true});await integration({staleDate:true});console.log("PASS: both promo messages, price/date/time, free/zero prices, weekdays, rich text/URLs, non-webinars, retries, successful-only sync, shared save and card drafts");})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{await integration();await integration({siteFailure:true});await integration({flushFailure:true});await integration({staleDate:true});await integration({adjustOldPrice:true});await integration({adjustOldPrice:true,siteFailure:true});await integration({adjustOldPrice:true,flushFailure:true});console.log("PASS: both promo messages, price/date/time, free/zero prices, weekdays, rich text/URLs, non-webinars, retries, successful-only sync, shared save, corrected old price and card drafts");})().catch(error=>{console.error(error);process.exitCode=1;});

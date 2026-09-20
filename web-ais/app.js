@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.513",
+    version: "1.7.514",
     releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.514",
+      releasedAt: "2026-09-20",
+      changes: ["При синхронизации сайтов старая цена ниже текущей автоматически рассчитывается как текущая × 1,25, с округлением до копеек. Рассчитанная цена и скидка показываются перед подтверждением, передаются на лендинг и в магазин; после успешного обновления старая цена сохраняется в карточке программы. Равная или более высокая старая цена не меняется."]
+    },
     {
       version: "1.7.513",
       releasedAt: "2026-09-20",
@@ -34304,7 +34309,8 @@ MAX - https://bizvmax.ru/zifra_plus
         preview.innerHTML = `<div class="program-site-sync-product-row"><label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label><div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div></div>
           <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
-          <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd>
+          <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}${plan.model.oldPriceAdjusted ? " · автоматически: стоимость × 1,25" : ""}</dd>
+          <dt>Скидка</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? Math.round(100 * (1 - Number(plan.model.price) / Number(plan.model.oldPrice))) : 0}%</dd>
           <dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Срок / форма</dt><dd>${escapeHtml(plan.model.duration || "без изменения")} / ${escapeHtml(plan.model.studyForm || "без изменения")}</dd>
           ${plan.model.date ? `<dt>Дата и время вебинара</dt><dd>${escapeHtml(plan.model.date.split("-").reverse().join("."))} в ${escapeHtml(plan.model.time)} (Москва)</dd>` : ""}
           ${plan.model.slug ? `<dt>Адрес лендинга</dt><dd>${escapeHtml(plan.landing.url)} → ${escapeHtml(plan.model.landingUrl)}</dd><dt>Адрес товара</dt><dd>${escapeHtml(plan.product?.url || "—")} → https://zifra-plus.ru/product/${escapeHtml(plan.model.slug)}/</dd>` : ""}
@@ -34339,6 +34345,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!current) throw new Error("Сайты обновлены, но программа больше не найдена в базе.");
         current.siteSync = result;
         const savedFields = getProgramPromoSyncFields(current, promoParameters);
+        if (Number.isFinite(result.oldPrice)) savedFields.oldPrice = String(result.oldPrice);
         if (result.landingCode) savedFields.landingCode = result.landingCode;
         if (current.type === "ПРО" && result.type === "ПРО" && result.gradeReportUrl) savedFields.gradeReportUrl = result.gradeReportUrl;
         if (result.landing?.url) current.landingUrl = result.landing.url;

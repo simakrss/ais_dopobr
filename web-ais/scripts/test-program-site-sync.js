@@ -18,6 +18,25 @@ async function main() {
   for (const type of ["ДОП","КПК","ППП","ПРО"]) assert.equal(pg.normalizeSyncProgram({...program,type}).type,type,"No meeting, English name, description or samples required for sync");
   for (const patch of [{price:""},{price:null},{price:-1},{hours:0},{name:""}]) assert.throws(()=>pg.normalizeSyncProgram({...program,...patch}));
   assert.equal(pg.normalizeSyncProgram({...program,price:0}).price,0);
+  for (const type of ["ДОП", "КПК", "ППП", "ПРО"]) {
+    for (const oldPrice of [500, 0, "", null, undefined]) {
+      const model = pg.normalizeSyncProgram({...program, type, price: 1000, oldPrice});
+      assert.equal(model.oldPrice, 1250);
+      assert.equal(model.oldPriceAdjusted, true);
+      assert.equal(Math.round(100 * (1 - model.price / model.oldPrice)), 20);
+    }
+  }
+  for (const oldPrice of [1000, 1250, 1500]) {
+    const model = pg.normalizeSyncProgram({...program, price: 1000, oldPrice});
+    assert.equal(model.oldPrice, oldPrice, "Equal/higher old prices stay unchanged");
+    assert.equal(model.oldPriceAdjusted, undefined);
+  }
+  assert.equal(pg.normalizeSyncProgram({...program, price: 19.99, oldPrice: 10}).oldPrice, 24.99);
+  assert.equal(pg.normalizeSyncProgram({...program, price: 0, oldPrice: 0}).oldPrice, 0);
+  assert.equal(pg.normalizeSyncProgram({...program, price: 8000000, oldPrice: 0}).oldPrice, 10000000);
+  for (const patch of [{oldPrice: -1}, {oldPrice: "invalid"}, {price: 8000001, oldPrice: 0}]) {
+    assert.throws(() => pg.normalizeSyncProgram({...program, ...patch}));
+  }
   const ambiguous = await pg.previewSync(program,call);
   assert.equal(ambiguous.product,null); assert.equal(ambiguous.hash,"");
   assert.equal(ambiguous.landing.fields,undefined);
@@ -29,7 +48,22 @@ async function main() {
   const traced=async (...args)=>{calls.push(args);return call(...args);};
   const done=await pg.synchronize(program,traced,13,plan.hash);
   assert.equal(done.ok,true);
+  assert.equal(done.oldPrice, undefined, "Unchanged prices do not rewrite the program card");
   assert.deepEqual(calls.filter(c=>["/check-sync","/sync-existing"].includes(c[1])).map(c=>c[0]+c[1]),["edu/check-sync","shop/check-sync","shop/sync-existing","edu/sync-existing"]);
+  const cheaperOldPrice = {...program, price: 1000, oldPrice: 500};
+  const adjustedPlan = await pg.previewSync(cheaperOldPrice, call, 13);
+  calls.length = 0;
+  const adjusted = await pg.synchronize(cheaperOldPrice, traced, 13, adjustedPlan.hash);
+  assert.equal(adjustedPlan.model.oldPrice, 1250, "Preview uses the corrected price");
+  assert.equal(adjusted.oldPrice, 1250, "Successful sync returns the corrected price for the card");
+  for (const entry of calls.filter(c => ["/check-sync", "/sync-existing"].includes(c[1]))) {
+    assert.equal(entry[2].model.price, 1000);
+    assert.equal(entry[2].model.oldPrice, 1250, "Both sites receive the same corrected price in preflight and write");
+  }
+  assert.equal(cheaperOldPrice.oldPrice, 500, "Preview and sync do not mutate the source record");
+  const repeated = await pg.previewSync({...cheaperOldPrice, oldPrice: adjusted.oldPrice}, call, 13);
+  assert.equal(repeated.model.oldPrice, 1250);
+  assert.equal(repeated.model.oldPriceAdjusted, undefined, "Repeated sync must not compound the uplift");
   for (const changed of [{...program,price:10},{...program,name:"Другое название"}]) {
     calls.length=0;await assert.rejects(pg.synchronize(changed,traced,13,plan.hash),/изменились/);
     assert.ok(!calls.some(c=>c[1]==="/sync-existing"));
