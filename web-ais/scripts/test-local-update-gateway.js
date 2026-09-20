@@ -26,6 +26,16 @@ try{
   const accepted=request("POST","/api/local-update/status",start,"http://127.0.0.1:18881");
   assert.equal(accepted.status,200);assert.equal(JSON.parse(accepted.body).updateNowAccepted,true);
   assert.equal(up.readJson(path.join(up.runtimeDir(root),"immediate-request.json")).warningId,warning.warningId);
+  const error={phase:"error",canRetry:true,errorId:crypto.randomUUID(),updatedAt:Date.now()};
+  up.atomicJson(path.join(up.runtimeDir(root),"status.json"),error);
+  const retry={id,ready:true,retryUpdate:true,errorId:error.errorId};
+  assert.equal(request("POST","/api/local-update/status",retry,"https://attacker.test").status,403);
+  assert.equal(request("POST","/api/local-update/status",{...retry,ready:false},"http://127.0.0.1:18881").status,409);
+  assert.equal(request("POST","/api/local-update/status",{...retry,errorId:"stale"},"http://127.0.0.1:18881").status,409);
+  assert.equal(request("POST","/api/local-update/status",{...retry,updateNow:true},"http://127.0.0.1:18881").status,409);
+  const retried=request("POST","/api/local-update/status",retry,"http://127.0.0.1:18881");
+  assert.equal(retried.status,200);assert.equal(JSON.parse(retried.body).retryAccepted,true);
+  assert.equal(up.readJson(path.join(up.runtimeDir(root),"retry-request.json")).errorId,error.errorId);
   up.atomicJson(path.join(up.runtimeDir(root),"status.json"),{phase:"installing",updatedAt:Date.now(),label:"Updating"});
   for(const method of ["GET","POST","DELETE"])assert.equal(request(method,"/api/students/save").status,503);
   const maintenancePage=request("GET","/");assert.equal(maintenancePage.status,503);assert.match(maintenancePage.body,/local-update-client.js\?v=maintenance/);

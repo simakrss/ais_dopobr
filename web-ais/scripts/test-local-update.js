@@ -83,6 +83,46 @@ async function main(){
   // Files changed by an external folder sync; the old process still needs restarting.
   for(const file of shared.release.files)fs.writeFileSync(path.join(shared.root,file.path),shared.contents.get(file.sha256));
   await sharedUpdater.checkNow();sharedUpdater.dispose();assert.equal(sharedRestarts,1);
+  const retry=fixture();let deny=true,retryRestarts=0;
+  const retryUpdater=up.createUpdater(retry.root,{idle:async()=>true,restart:async()=>{retryRestarts++;}},
+    {publicKey,fetcher:async url=>{if(deny)throw Object.assign(Error("EPERM: rename private status.json"),{code:"EPERM"});return retry.fetcher(url);},pollMs:1,warningMs:1,drainMs:1});
+  try {
+    await retryUpdater.checkNow();
+    const error=up.readStatus(retry.root);assert.equal(error.phase,"error");assert.equal(error.canRetry,true);
+    assert.match(error.label,/автоматически/);assert.doesNotMatch(error.label,/EPERM|private/);
+    assert.match(error.errorDetails,/EPERM/);assert.ok(error.retryAt>Date.now());
+    assert.throws(()=>up.requestUpdateRetry(retry.root,{ready:true,errorId:"stale"}),/изменилось/);
+    assert.throws(()=>up.requestUpdateRetry(retry.root,{ready:false,errorId:error.errorId}),/Сначала/);
+    up.requestUpdateRetry(retry.root,{ready:true,errorId:error.errorId});
+    await retryUpdater.check();
+    const second=up.readStatus(retry.root);assert.notEqual(second.errorId,error.errorId);
+    deny=false;
+    await retryUpdater.check();assert.equal(retryRestarts,0,"Old retry requests must not replay against a new error");
+    up.requestUpdateRetry(retry.root,{ready:true,errorId:second.errorId});
+    await retryUpdater.check();assert.equal(retryRestarts,1);assert.equal(up.readStatus(retry.root).phase,"complete");
+  } finally {retryUpdater.dispose();}
+  const automatic=fixture();let transient=true,automaticRestarts=0;
+  const automaticUpdater=up.createUpdater(automatic.root,{idle:async()=>true,restart:async()=>{automaticRestarts++;}},
+    {publicKey,fetcher:async url=>{if(transient)throw Object.assign(Error("busy"),{code:"EBUSY"});return automatic.fetcher(url);},retryMs:1,pollMs:1,warningMs:1,drainMs:1});
+  try {await automaticUpdater.checkNow();transient=false;await pause(5);await automaticUpdater.check();assert.equal(automaticRestarts,1);}
+  finally {automaticUpdater.dispose();}
+  const guarded=fixture();up.atomicJson(path.join(up.runtimeDir(guarded.root),"journal.json"),{files:[]});
+  up.atomicJson(path.join(up.runtimeDir(guarded.root),"status.json"),{phase:"error",canRetry:true,errorId:"old",updatedAt:Date.now()});
+  assert.throws(()=>up.requestUpdateRetry(guarded.root,{ready:true,errorId:"old"}),/изменилось/);
+  const guardedUpdater=up.createUpdater(guarded.root,{idle:async()=>true,restart:async()=>assert.fail("Journal must block retry")},{publicKey,fetcher:guarded.fetcher});
+  await guardedUpdater.checkNow();guardedUpdater.dispose();assert.equal(guarded.requests.length,0);
+  const reporting=fixture(),reportStage=path.join(up.runtimeDir(reporting.root),"test-stage");
+  fs.mkdirSync(reportStage,{recursive:true});
+  for(const file of reporting.release.files)fs.writeFileSync(path.join(reportStage,file.sha256),reporting.contents.get(file.sha256));
+  let restored=0;
+  await assert.rejects(()=>up.install(reporting.root,reporting.release,reportStage,{
+    report(){throw Object.assign(Error("Simulated progress file lock"),{code:"EPERM"});},
+    async restart(){restored++;}
+  }),/Simulated/);
+  assert.equal(restored,1,"Even if rollback reporting fails, restore the original program");
+  for(const [name,bytes]of reporting.old)assert.equal(fs.readFileSync(path.join(reporting.root,name),"utf8"),bytes);
+  assert.equal(fs.existsSync(path.join(up.runtimeDir(reporting.root),"journal.json")),false);
+  assert.equal(fs.existsSync(path.join(reporting.root,".runtime","local-update-install.lock")),false);
   console.log("PASS: signed manifests, exact allowlist, downgrade prevention, download hashes, immediate update/countdown scope, waiting for drafts and operations, install/restart, backup/rollback, crash journal, settings untouched");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{

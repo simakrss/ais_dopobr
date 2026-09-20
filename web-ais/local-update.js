@@ -21,12 +21,44 @@ const hostKey = crypto.createHash("sha256").update(os.hostname().toLowerCase()).
 const allowedPath = name => typeof name === "string" && (FILES.includes(name) || /^(?:[a-z][a-z0-9-]*\.(?:js|css|html)|scripts\/[a-z][a-z0-9-]*\.(?:js|ps1))$/.test(name));
 const runtimeDir = root => path.join(root, ".runtime", "local-updates", hostKey);
 function readJson(file, fallback = null) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; } }
+const FILE_BUSY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+const retryPause = new Int32Array(new SharedArrayBuffer(4));
+function retryFileOperation(operation) {
+  for (let attempt = 0; ; attempt++) {
+    try { return operation(); }
+    catch (error) {
+      if (!FILE_BUSY_CODES.has(error.code) || attempt >= 5) throw error;
+      // Windows scanners/sync clients can briefly deny replacement of an open file.
+      // Keep the destination intact; never unlink it to work around a sharing violation.
+      Atomics.wait(retryPause, 0, 0, 25 * (2 ** attempt));
+    }
+  }
+}
+function cleanupTemp(file) {
+  try { if (fs.existsSync(file)) retryFileOperation(() => fs.unlinkSync(file)); } catch { /* Never mask the original write error. */ }
+}
+function updateErrorInfo(error) {
+  const details = String(error?.message || error || "Неизвестная ошибка обновления.").slice(0, 800);
+  return {
+    errorCode: String(error?.code || ""),
+    errorDetails: details,
+    label: FILE_BUSY_CODES.has(error?.code)
+      ? "Файл обновления временно занят или недоступен. Система повторит попытку автоматически. Можно продолжать работу или нажать «Применить»."
+      : details.slice(0, 300)
+  };
+}
+function reportBestEffort(report, patch) {
+  try { report(patch); }
+  catch (error) { console.warn("Не удалось записать состояние обновления: " + updateErrorInfo(error).label); }
+}
 function atomicJson(file, data) {
   fs.mkdirSync(path.dirname(file), {recursive:true});
   const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  const fd = fs.openSync(temp, "wx", 0o600);
-  try { fs.writeFileSync(fd, JSON.stringify(data)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  try { fs.renameSync(temp, file); } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
+  try {
+    const fd = fs.openSync(temp, "wx", 0o600);
+    try { fs.writeFileSync(fd, JSON.stringify(data)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    retryFileOperation(() => fs.renameSync(temp, file));
+  } finally { cleanupTemp(temp); }
 }
 function safeTarget(root, name) {
   if (!allowedPath(name)) throw Error("Недопустимый файл обновления.");
@@ -119,12 +151,24 @@ function requestImmediateUpdate(root, request) {
     warningId: state.warningId, targetVersion: state.targetVersion, requestedAt: Date.now()
   });
 }
+function requestUpdateRetry(root, request) {
+  const state = readStatus(root);
+  if (request.ready !== true || !clientsReady(root)) throw Error("Сначала сохраните и закройте карточки во всех окнах системы.");
+  if (state.phase !== "error" || state.canRetry !== true || !state.errorId || request.errorId !== state.errorId) {
+    throw Error("Состояние обновления изменилось. Дождитесь актуального сообщения.");
+  }
+  atomicJson(path.join(runtimeDir(root), "retry-request.json"), {
+    errorId: state.errorId, requestedAt: Date.now()
+  });
+}
 function replaceFile(target, bytes) {
   fs.mkdirSync(path.dirname(target), {recursive:true});
   const temp = target + `.ais-update-${crypto.randomUUID()}`;
-  const fd = fs.openSync(temp,"wx",0o600);
-  try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  try { fs.renameSync(temp,target); } finally { if(fs.existsSync(temp))fs.unlinkSync(temp); }
+  try {
+    const fd = fs.openSync(temp,"wx",0o600);
+    try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    retryFileOperation(() => fs.renameSync(temp,target));
+  } finally { cleanupTemp(temp); }
 }
 function restore(root) {
   const dir=runtimeDir(root), journal=readJson(path.join(dir,"journal.json"));
@@ -149,8 +193,8 @@ async function install(root, release, stage, hooks) {
   const lock=path.join(root,".runtime","local-update-install.lock");
   fs.mkdirSync(path.dirname(lock),{recursive:true});
   try { fs.mkdirSync(lock); } catch { throw Error("Другой экземпляр обновляет эту папку. Повторная проверка будет позже."); }
-  atomicJson(path.join(lock,"owner.json"),{host:hostKey,pid:process.pid});
   try {
+    atomicJson(path.join(lock,"owner.json"),{host:hostKey,pid:process.pid});
     if(fs.existsSync(path.join(dir,"journal.json")))throw Error("Сначала восстановите прерванное обновление.");
     fs.mkdirSync(path.join(dir,"backups"),{recursive:true});
     for(const file of release.files) {
@@ -177,26 +221,37 @@ async function install(root, release, stage, hooks) {
     fs.unlinkSync(path.join(dir,"journal.json"));
   } catch(error) {
     if(fs.existsSync(path.join(dir,"journal.json"))) {
-      hooks.report({phase:"rollback",label:"Восстановление предыдущей версии"});
+      reportBestEffort(hooks.report,{phase:"rollback",label:"Восстановление предыдущей версии"});
       try { restore(root); await hooks.restart(); }
-      catch { hooks.report({phase:"recovery-error",label:"Не удалось восстановить запуск. Работа заблокирована; требуется перезапуск или восстановление из резервной копии."}); throw Error("Ошибка восстановления после обновления."); }
+      catch { reportBestEffort(hooks.report,{phase:"recovery-error",label:"Не удалось восстановить запуск. Работа заблокирована; требуется перезапуск или восстановление из резервной копии."}); throw Error("Ошибка восстановления после обновления."); }
     }
     throw error;
   } finally {
     // Only our empty lock directory; never a recursive deletion or a caller-supplied path.
-    fs.unlinkSync(path.join(lock,"owner.json"));fs.rmdirSync(lock);
+    if(fs.existsSync(path.join(lock,"owner.json")))retryFileOperation(()=>fs.unlinkSync(path.join(lock,"owner.json")));
+    retryFileOperation(()=>fs.rmdirSync(lock));
   }
 }
 function createUpdater(root, hooks, options={}) {
   const dir=runtimeDir(root), fetcher=options.fetcher||fetch;
   const pollMs=options.pollMs??2000, warningMs=options.warningMs??30000, drainMs=options.drainMs??4000;
   const runningVersion=version(root);
-  let running=false, disposed=false, maintenance=false, updated=false, nextCheck=Date.now()+15000;
+  let running=false, disposed=false, maintenance=false, updated=false, nextCheck=Date.now()+15000, failures=0;
   let state={phase:"idle",version:version(root),build:build(root),label:"Обновления проверяются автоматически"};
-  const report=patch=>{state={...state,...patch,canUpdateNow:(patch.phase||state.phase)==="warning",updatedAt:Date.now()};atomicJson(path.join(dir,"status.json"),state);};
-  const heartbeat=setInterval(()=>{if(running)report({});},5000);heartbeat.unref?.();
+  const report=patch=>{
+    const phase=patch.phase||state.phase;
+    state={...state,...(patch.phase && phase!=="error" ? {errorId:"",errorDetails:"",errorCode:"",retryAt:null} : {}),...patch,
+      canUpdateNow:phase==="warning",canRetry:phase==="error"&&!fs.existsSync(path.join(dir,"journal.json")),updatedAt:Date.now()};
+    atomicJson(path.join(dir,"status.json"),state);
+  };
+  const heartbeat=setInterval(()=>{if(running)reportBestEffort(report,{});},5000);heartbeat.unref?.();
   async function check() {
-    if(running||disposed||Date.now()<nextCheck)return;
+    if(running||disposed)return;
+    // A durable recovery journal must never be bypassed by retry or background polling.
+    if(state.phase==="recovery-error" || fs.existsSync(path.join(dir,"journal.json")))return;
+    const retry=readJson(path.join(dir,"retry-request.json"));
+    if(state.phase==="error" && state.errorId && retry?.errorId===state.errorId && retry.requestedAt>=state.updatedAt)nextCheck=0;
+    if(Date.now()<nextCheck)return;
     running=true; nextCheck=Date.now()+300000+Math.floor(Math.random()*30000);
     try {
       const bytes=await download(BASE+"latest.json?check="+Date.now(),250000,fetcher);
@@ -205,7 +260,7 @@ function createUpdater(root, hooks, options={}) {
       // A shared/Yandex-synced folder may already contain new files while Node is
       // still executing the previous release. It still needs a coordinated restart.
       if(compareVersions(release.version,runningVersion)<=0 || compareVersions(release.version,local)<0
-        || (installed && compareVersions(release.version,installed.version)<0)) {report({phase:"idle",version:local,label:"Установлена актуальная версия",checkedAt:Date.now()});return;}
+        || (installed && compareVersions(release.version,installed.version)<0)) {failures=0;report({phase:"idle",version:local,label:"Установлена актуальная версия",checkedAt:Date.now()});return;}
       const stage=path.join(dir,"staging",release.version); fs.mkdirSync(stage,{recursive:true});
       report({phase:"downloading",targetVersion:release.version,label:"Загрузка обновления в фоновом режиме",completed:0,total:release.files.length});
       let completed=0;
@@ -242,10 +297,14 @@ function createUpdater(root, hooks, options={}) {
       if(!clientsReady(root))throw Error("Есть незавершённая работа. Установка отложена.");
       report({phase:"installing",label:"Установка обновления",completed:0,total:release.files.length});
       await install(root,release,stage,{...hooks,report});
-      updated=true;
+      updated=true;failures=0;
       report({phase:"complete",version:release.version,build:release.build,label:"Обновление установлено. Перезагрузка интерфейса",completed:release.files.length,total:release.files.length});
     } catch(error) {
-      if(state.phase!=="recovery-error")report({phase:"error",label:String(error.message).slice(0,300)});
+      failures++;
+      if(FILE_BUSY_CODES.has(error.code) && failures<=3)nextCheck=Date.now()+(options.retryMs??60000);
+      if(state.phase!=="recovery-error")reportBestEffort(report,{
+        phase:"error",...updateErrorInfo(error),errorId:crypto.randomUUID(),retryAt:nextCheck
+      });
     } finally {maintenance=state.phase==="recovery-error";running=false;}
   }
   async function recover() {
@@ -254,11 +313,11 @@ function createUpdater(root, hooks, options={}) {
       let alive=false;try{process.kill(owner.pid,0);alive=true;}catch{}
       if(!alive||owner.pid===process.pid){fs.unlinkSync(path.join(lock,"owner.json"));fs.rmdirSync(lock);}
     }
-    if(!fs.existsSync(path.join(dir,"journal.json"))) {report({phase:"idle"});return;}
-    maintenance=true;report({phase:"rollback",label:"Восстановление прерванного обновления"});
-    try {restore(root);maintenance=false;report({phase:"error",label:"Предыдущая версия восстановлена после прерванного обновления."});}
-    catch(error){report({phase:"recovery-error",label:error.message});throw error;}
+    if(!fs.existsSync(path.join(dir,"journal.json"))) {reportBestEffort(report,{phase:"idle"});return;}
+    maintenance=true;reportBestEffort(report,{phase:"rollback",label:"Восстановление прерванного обновления"});
+    try {restore(root);maintenance=false;reportBestEffort(report,{phase:"error",errorId:crypto.randomUUID(),label:"Предыдущая версия восстановлена после прерванного обновления. Можно повторить обновление.",retryAt:nextCheck});}
+    catch(error){reportBestEffort(report,{phase:"recovery-error",label:error.message});throw error;}
   }
   return {check,recover,maintenance:()=>maintenance,didUpdate:()=>updated,dispose(){disposed=true;clearInterval(heartbeat);},checkNow(){nextCheck=0;return check();}};
 }
-module.exports={BASE,PUBLIC_KEY,FILES,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,restore,install,createUpdater};
+module.exports={BASE,PUBLIC_KEY,FILES,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,requestUpdateRetry,retryFileOperation,updateErrorInfo,restore,install,createUpdater};

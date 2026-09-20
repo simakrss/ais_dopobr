@@ -7,6 +7,10 @@ const server=http.createServer(async(req,res)=>{
   if(req.url==="/api/local-update/status"){
     let body="";for await(const chunk of req)body+=chunk;
     if(body){const data=JSON.parse(body);lastReady=data.ready;
+      if(data.retryUpdate){
+        if(!lastReady||state.phase!=="error"||data.errorId!==state.errorId){res.statusCode=409;res.setHeader("Content-Type","application/json");return res.end(JSON.stringify({error:"Повторная проверка недоступна."}));}
+        state={...state,phase:"downloading",label:"Тест: повторная проверка запущена",completed:1,total:23,retryAccepted:true};
+      }
       if(data.updateNow){
         if(!lastReady||data.warningId!==state.warningId){res.statusCode=409;res.setHeader("Content-Type","application/json");return res.end(JSON.stringify({error:"Окно не готово к обновлению."}));}
         state={...state,phase:"installing",label:"Тест: обновление запущено кнопкой",completed:1,total:23,updateNowAccepted:true};
@@ -18,6 +22,7 @@ const server=http.createServer(async(req,res)=>{
     const mode=req.url.slice(9);
     const phases={warning:{phase:"warning",label:"Система будет временно заблокирована для обновления",seconds:30},waiting:{phase:"waiting",label:"Обновление ожидает закрытия карточек и завершения операций."},install:{phase:"installing",label:"Установка файлов программы",completed:3,total:23},restart:{phase:"restarting",label:"Перезапуск и проверка локальной системы"},error:{phase:"error",label:"Подпись обновления не подтверждена. Работа продолжается."},complete:{phase:"complete",label:"Обновление установлено",build:"fixture-new"}};
     if(phases[mode])state={...state,...phases[mode],targetVersion:"1.0.1",canUpdateNow:mode==="warning",warningId:require("node:crypto").randomUUID(),updateNowAccepted:false};
+    if(mode==="error")state={...state,label:"EPERM: operation not permitted, rename 'Y:/test/status.tmp' -> 'Y:/test/status.json'",canRetry:true,errorId:require("node:crypto").randomUUID(),retryAt:Date.now()+60000};
     res.setHeader("Content-Type","application/json");return res.end(JSON.stringify({ok:true,lastReady}));
   }
   res.setHeader("Content-Type","text/html; charset=utf-8");
