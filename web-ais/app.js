@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.507",
-    releasedAt: "2026-09-18"
+    version: "1.7.508",
+    releasedAt: "2026-09-20"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.508",
+      releasedAt: "2026-09-20",
+      changes: ["После сообщения о незаполненной дате отчисления при заполнении реквизитов документа об образовании открывается вкладка «Приказы, СДО», а курсор переходит в поле «Дата отчисления». Несохранённые значения карточки сохраняются в черновике."]
+    },
     {
       version: "1.7.507",
       releasedAt: "2026-09-18",
@@ -36539,7 +36544,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const issueDate = String(record.expulsionDate || record.expulsionOrderDate || "").trim();
     if (!parseOrdersSdoDate(issueDate)) {
       alert("Заполните дату отчисления. Дата выдачи документа берется из даты отчисления.");
-      form.querySelector("[name='expulsionDate'], [name='expulsionOrderDate']")?.focus({ preventScroll: true });
+      focusStudentDocumentField("expulsionDate", record);
       return null;
     }
     return { form, record, program, programType, issueDate };
