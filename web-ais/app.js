@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.521",
+    version: "1.7.522",
     releasedAt: "2026-09-21"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.522",
+      releasedAt: "2026-09-21",
+      changes: ["Группы договоров сотрудников и группы ПРО у слушателей свёрнуты по умолчанию. В панели списка при наличии групп добавлены компактные векторные кнопки «Развернуть все группы» и «Свернуть все группы». Ручной выбор состояния сохраняется, действия учитывают текущие фильтры и не меняют выбранные записи."]
+    },
     {
       version: "1.7.521",
       releasedAt: "2026-09-21",
@@ -23432,6 +23437,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="bulk-toolbar ${selected.length ? "active" : ""} ${inlineSummaryHtml ? "has-inline-summary" : ""}">
         <span class="bulk-toolbar-selection-count">Выбрано: <strong>${selected.length}</strong></span>
+        ${renderRegistryGroupControls(configId, rows)}
         ${inlineSummaryHtml}
         ${statusOptions.length ? `
           <select id="bulkStatusSelect" class="select-control" ${statusField?.dict ? `data-settings-dictionary="${escapeAttr(statusField.dict)}"` : ""} ${selected.length ? "" : "disabled"}>
@@ -24002,9 +24008,70 @@ MAX - https://bizvmax.ru/zifra_plus
     return [pro, other, unknown].filter((group) => group.rows.length);
   }
 
-  function getStudentCollapsedGroups() {
-    const saved = state.tableSettings.students?.collapsedGroups;
-    return new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === "string") : []);
+  function getRegistryListGroupItems(configId, rows) {
+    if (configId === "students") {
+      return (getStudentTableGroups(rows) || []).flatMap((group) => [group, ...(group.children || [])]);
+    }
+    if (configId === "contracts") return getEmployeeContractGroups(rows).filter((group) => group.rows.length > 1);
+    return [];
+  }
+
+  function getRegistryCollapsedGroups(configId, groups) {
+    const settings = state.tableSettings[configId] || {};
+    const collapsed = new Set(Array.isArray(settings.collapsedGroups) ? settings.collapsedGroups : []);
+    const expanded = new Set(Array.isArray(settings.expandedGroups) ? settings.expandedGroups : []);
+    groups.forEach((group) => {
+      const defaultCollapsed = configId === "contracts" || group.key === "pro" || group.key.startsWith("pro:");
+      if (defaultCollapsed && !expanded.has(group.key)) collapsed.add(group.key);
+    });
+    return collapsed;
+  }
+
+  function saveRegistryGroupExpansion(configId, keys, expanded) {
+    const settings = state.tableSettings[configId] || {};
+    const closedKeys = new Set(Array.isArray(settings.collapsedGroups) ? settings.collapsedGroups : []);
+    const openKeys = new Set(Array.isArray(settings.expandedGroups) ? settings.expandedGroups : []);
+    keys.forEach((key) => {
+      if (expanded) { openKeys.add(key); closedKeys.delete(key); }
+      else { closedKeys.add(key); openKeys.delete(key); }
+    });
+    state.tableSettings[configId] = { ...settings, collapsedGroups: [...closedKeys], expandedGroups: [...openKeys] };
+    persistTableSettings();
+  }
+
+  function renderRegistryGroupControls(configId, rows) {
+    const groups = getRegistryListGroupItems(configId, rows);
+    if (!groups.length) return "";
+    const collapsed = getRegistryCollapsedGroups(configId, groups);
+    const allExpanded = groups.every((group) => !collapsed.has(group.key));
+    const allCollapsed = groups.every((group) => collapsed.has(group.key));
+    return `<span class="registry-group-controls" role="group" aria-label="Группы списка">
+      <button class="ghost-button icon-only registry-group-button" data-action="set-registry-groups-expanded" data-config="${escapeAttr(configId)}" data-expanded="true" type="button" title="Развернуть все группы" aria-label="Развернуть все группы" ${allExpanded ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 8l4-4 4 4M4 12h16M8 16l4 4 4-4"></path></svg>
+      </button>
+      <button class="ghost-button icon-only registry-group-button" data-action="set-registry-groups-expanded" data-config="${escapeAttr(configId)}" data-expanded="false" type="button" title="Свернуть все группы" aria-label="Свернуть все группы" ${allCollapsed ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4l4 4 4-4M4 12h16M8 20l4-4 4 4"></path></svg>
+      </button>
+    </span>`;
+  }
+
+  function setRegistryListGroupsExpanded(configId, expanded) {
+    if (!["students", "contracts"].includes(configId)) return;
+    const groups = getRegistryListGroupItems(configId, getVisibleRows(configs[configId]));
+    if (!groups.length) return;
+    saveRegistryGroupExpansion(configId, groups.map((group) => group.key), expanded);
+    state.tablePages[configId] = 1;
+    render();
+  }
+
+  function bindRegistryGroupControls() {
+    document.querySelectorAll("[data-action='set-registry-groups-expanded']").forEach((button) => {
+      button.addEventListener("click", () => setRegistryListGroupsExpanded(button.dataset.config, button.dataset.expanded === "true"));
+    });
+  }
+
+  function getStudentCollapsedGroups(groups = getStudentTableGroups(getVisibleRows(configs.students)) || []) {
+    return getRegistryCollapsedGroups("students", groups.flatMap((group) => [group, ...(group.children || [])]));
   }
 
   function getExpandedStudentGroupRows(groups, collapsed) {
@@ -24044,10 +24111,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function toggleStudentListGroup(key) {
     const collapsed = getStudentCollapsedGroups();
-    if (collapsed.has(key)) collapsed.delete(key);
-    else collapsed.add(key);
-    state.tableSettings.students = { ...state.tableSettings.students, collapsedGroups: [...collapsed] };
-    persistTableSettings();
+    saveRegistryGroupExpansion("students", [key], collapsed.has(key));
     state.tablePages.students = 1;
     render();
   }
@@ -24104,9 +24168,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }));
   }
 
-  function getEmployeeContractCollapsedGroups() {
-    const saved = state.tableSettings.contracts?.collapsedGroups;
-    return new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === "string") : []);
+  function getEmployeeContractCollapsedGroups(groups = getEmployeeContractGroups(getVisibleRows(configs.contracts))) {
+    return getRegistryCollapsedGroups("contracts", groups.filter((group) => group.rows.length > 1));
   }
 
   function getExpandedEmployeeContractRows(groups, collapsed) {
@@ -24143,10 +24206,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function toggleEmployeeContractGroup(key) {
     const collapsed = getEmployeeContractCollapsedGroups();
-    if (collapsed.has(key)) collapsed.delete(key);
-    else collapsed.add(key);
-    state.tableSettings.contracts = { ...state.tableSettings.contracts, collapsedGroups: [...collapsed] };
-    persistTableSettings();
+    saveRegistryGroupExpansion("contracts", [key], collapsed.has(key));
     state.tablePages.contracts = 1;
     render();
   }
@@ -24192,7 +24252,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getCurrentTablePageRows(configId, rows) {
     if (configId === "contracts") {
-      rows = getExpandedEmployeeContractRows(getEmployeeContractGroups(rows), getEmployeeContractCollapsedGroups());
+      const groups = getEmployeeContractGroups(rows);
+      rows = getExpandedEmployeeContractRows(groups, getEmployeeContractCollapsedGroups(groups));
     }
     const pagination = getTablePagination(configId, rows.length);
     return rows.slice(pagination.start, pagination.end);
@@ -24204,21 +24265,20 @@ MAX - https://bizvmax.ru/zifra_plus
     let rows = getVisibleRows(config);
     const groups = configId === "students" ? getStudentTableGroups(rows) : null;
     if (groups) {
-      const collapsed = getStudentCollapsedGroups();
-      groups.flatMap((group) => [group, ...(group.children || [])]).forEach((group) => {
-        if (group.rows.some((row) => String(row.id) === String(id))) collapsed.delete(group.key);
-      });
-      state.tableSettings.students = { ...state.tableSettings.students, collapsedGroups: [...collapsed] };
-      persistTableSettings();
+      const collapsed = getStudentCollapsedGroups(groups);
+      const keys = groups.flatMap((group) => [group, ...(group.children || [])])
+        .filter((group) => group.rows.some((row) => String(row.id) === String(id)))
+        .map((group) => group.key);
+      keys.forEach((key) => collapsed.delete(key));
+      if (keys.length) saveRegistryGroupExpansion("students", keys, true);
       rows = getExpandedStudentGroupRows(groups, collapsed);
     }
     if (configId === "contracts") {
       const employeeGroups = getEmployeeContractGroups(rows);
-      const collapsed = getEmployeeContractCollapsedGroups();
+      const collapsed = getEmployeeContractCollapsedGroups(employeeGroups);
       const group = employeeGroups.find((item) => item.rows.some((row) => String(row.id) === String(id)));
       if (group && collapsed.delete(group.key)) {
-        state.tableSettings.contracts = { ...state.tableSettings.contracts, collapsedGroups: [...collapsed] };
-        persistTableSettings();
+        saveRegistryGroupExpansion("contracts", [group.key], true);
       }
       rows = getExpandedEmployeeContractRows(employeeGroups, collapsed);
     }
@@ -24280,9 +24340,9 @@ MAX - https://bizvmax.ru/zifra_plus
       `;
     }
     const studentGroups = configId === "students" ? getStudentTableGroups(rows) : null;
-    const collapsedGroups = studentGroups ? getStudentCollapsedGroups() : null;
+    const collapsedGroups = studentGroups ? getStudentCollapsedGroups(studentGroups) : null;
     const employeeGroups = configId === "contracts" ? getEmployeeContractGroups(rows) : null;
-    const employeeCollapsed = employeeGroups ? getEmployeeContractCollapsedGroups() : null;
+    const employeeCollapsed = employeeGroups ? getEmployeeContractCollapsedGroups(employeeGroups) : null;
     const expandedRows = studentGroups ? getExpandedStudentGroupRows(studentGroups, collapsedGroups)
       : employeeGroups ? getExpandedEmployeeContractRows(employeeGroups, employeeCollapsed) : rows;
     const pagination = getTablePagination(configId, expandedRows.length);
@@ -45673,6 +45733,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     bindStudentListGroups();
     bindEmployeeContractGroups();
+    bindRegistryGroupControls();
 
     document.querySelectorAll("[data-action='toggle-all-selection']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => toggleAllSelection(checkbox.dataset.config, checkbox.checked));

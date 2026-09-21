@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const names = [
+  "getRegistryListGroupItems", "getRegistryCollapsedGroups", "saveRegistryGroupExpansion", "renderRegistryGroupControls", "setRegistryListGroupsExpanded", "bindRegistryGroupControls",
   "normalizeEmployeeActPersonName", "parseTableSortDate", "getEmployeeContractGroups",
   "getEmployeeContractCollapsedGroups", "getExpandedEmployeeContractRows", "getEmployeeContractPageEntries",
   "renderEmployeeContractGroupRow", "toggleEmployeeContractGroup", "selectEmployeeContractGroup", "bindEmployeeContractGroups",
@@ -66,6 +67,14 @@ assert.deepEqual(ids(groups[0].rows), ["new", "recent", "old", "invalid"], "ISO/
 assert.equal(JSON.stringify(context.rows), snapshot, "Grouping must not mutate records or source order");
 assert.deepEqual(ids(context.getEmployeeContractGroups([{id:"a",name:employee,contractDate:""},{id:"b",name:employee,contractDate:"2026-01-01"},{id:"c",name:employee,contractDate:"2026-01-01"}])[0].rows), ["b","c","a"], "Equal dates keep stable order");
 let html = render();
+assert.deepEqual(renderedIds(html), ["single", "unnamed1", "unnamed2"], "Grouped contracts start collapsed; singletons remain visible");
+assert.match(html, /aria-expanded="false"/);
+assert.equal(context.persisted, 0, "Reading defaults does not change preferences");
+assert.equal(context.renderRegistryGroupControls("contracts", [context.rows[1]]), "", "No controls for single contracts");
+assert.equal(context.renderRegistryGroupControls("contracts", []), "");
+assert.match(context.renderRegistryGroupControls("contracts", context.rows), /data-expanded="false"[^>]*disabled/);
+context.setRegistryListGroupsExpanded("contracts", true);
+html = render();
 assert.equal((html.match(/data-action="toggle-employee-contract-group"/g) || []).length, 1);
 assert.match(html, /Договоров: 4/);
 assert.deepEqual(renderedIds(html), ["new", "recent", "old", "invalid", "single", "unnamed1", "unnamed2"]);
@@ -77,7 +86,7 @@ context.toggleRowSelection("contracts", "new", true);
 assert.match(render(), /data-employee-contract-group="employee:иванов иван иванович"[^>]*data-indeterminate="true"/);
 context.selectEmployeeContractGroup(key, true);
 assert.equal(context.getSelected("contracts").length, 4);
-context.state.tableSettings.contracts = {pageSize:50,customColumns:["name"]};
+context.state.tableSettings.contracts = {...context.state.tableSettings.contracts,pageSize:50,customColumns:["name"]};
 context.toggleEmployeeContractGroup(key);
 assert.deepEqual(renderedIds(render()), ["single", "unnamed1", "unnamed2"]);
 assert.equal(context.getSelected("contracts").length, 4, "Collapsing preserves selection");
@@ -110,6 +119,8 @@ context.state.data.collections.contracts = context.rows;
 context.state.selected = {};
 context.state.tableSettings = {};
 context.state.tablePages = {};
+assert.deepEqual(renderedIds(render()), ["solo"]);
+context.setRegistryListGroupsExpanded("contracts", true);
 assert.deepEqual(renderedIds(render()), Array.from({length:50},(_,i)=>`a${54-i}`));
 context.toggleAllSelection("contracts", true);
 assert.deepEqual(Array.from(context.getSelected("contracts")), renderedIds(render()), "Select-page selects exactly rendered rows");
@@ -155,6 +166,30 @@ assert.equal(checkbox.indeterminate, true);
 listeners.change();
 assert.equal(context.getSelected("contracts").length, 55);
 assert.match(source, /bindStudentListGroups\(\);\s*bindEmployeeContractGroups\(\);/u);
+assert.match(source, /bindEmployeeContractGroups\(\);\s*bindRegistryGroupControls\(\);/u);
+assert.ok(source.includes('${renderRegistryGroupControls(configId, rows)}'), "Buttons use the existing toolbar");
+const beforeBulkSelection = JSON.stringify(context.state.selected);
+context.state.tablePages.contracts = 5;
+context.setRegistryListGroupsExpanded("contracts", true);
+assert.equal(context.state.tablePages.contracts, 1);
+assert.equal(JSON.stringify(context.state.selected), beforeBulkSelection);
+context.state.tableSettings = JSON.parse(JSON.stringify(context.state.tableSettings));
+assert.equal(context.getEmployeeContractCollapsedGroups().has(key), false, "Manual expansion survives reload");
+context.setRegistryListGroupsExpanded("contracts", false);
+assert.equal(renderedIds(render()).length, 0);
+context.filterIds = ["a0", "a1"];
+context.setRegistryListGroupsExpanded("contracts", true);
+context.filterIds = null;
+assert.equal(context.getEmployeeContractCollapsedGroups().has(key), false);
+assert.equal(context.getEmployeeContractCollapsedGroups().has("employee:другой сотрудник"), true, "Filtered expansion does not change unseen groups");
+context.rows.push({id:"fresh1",name:"Новый сотрудник"},{id:"fresh2",name:"Новый сотрудник"});
+assert.equal(context.getEmployeeContractCollapsedGroups().has("employee:новый сотрудник"), true, "New employee groups start collapsed");
+context.rows.splice(-2);
+const bulkListeners = {};
+context.document = {querySelectorAll:()=>[{dataset:{config:"contracts",expanded:"false"},addEventListener:(name,fn)=>{bulkListeners[name]=fn;}}]};
+context.bindRegistryGroupControls();
+bulkListeners.click();
+assert.equal(renderedIds(render()).length, 0);
 console.log("PASS: employee groups, singletons, date order, normalization, empty names, pagination, selection, collapse persistence, filtering, navigation, escaping and DOM bindings");
 
 if (process.argv.includes("--serve")) {
@@ -163,8 +198,10 @@ if (process.argv.includes("--serve")) {
     persistTableSettings=()=>localStorage.setItem("employee-group-fixture-settings",JSON.stringify(state.tableSettings));
     render=()=>{
       document.querySelector('#selected').textContent='Выбрано договоров: '+getSelected('contracts').length;
+      document.querySelector('#group-controls').innerHTML=renderRegistryGroupControls('contracts',getVisibleRows());
       document.querySelector('#table').innerHTML=renderTable(configs.contracts,getVisibleRows(),'contracts');
       bindEmployeeContractGroups();
+      bindRegistryGroupControls();
       document.querySelectorAll('[data-action="toggle-row-selection"]').forEach(el=>el.onchange=()=>toggleRowSelection('contracts',el.dataset.id,el.checked));
       document.querySelector('[data-action="toggle-all-selection"]')?.addEventListener('change',event=>toggleAllSelection('contracts',event.target.checked));
       document.querySelectorAll('[data-action="edit"]').forEach(el=>el.onclick=()=>{const row=rows.find(row=>row.id===el.dataset.id);document.querySelector('#card').textContent='Открыт договор '+row.contractNo+' от '+row.contractDate;});
@@ -177,7 +214,7 @@ if (process.argv.includes("--serve")) {
     if(request.url==="/styles.css"){response.setHeader("Content-Type","text/css");return response.end(fs.readFileSync(path.join(root,"styles.css")));}
     if(request.url==="/fixture.js"){response.setHeader("Content-Type","text/javascript");return response.end(browserScript);}
     response.setHeader("Content-Type","text/html; charset=utf-8");
-    response.end('<!doctype html><html lang="ru"><title>Группировка договоров — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Сотрудники — тестовые данные</h2><label>Поиск <input id="filter"></label><p id="selected"></p><section id="table" class="collection-register"></section><p id="card"></p><script src="fixture.js"></script></body></html>');
+    response.end('<!doctype html><html lang="ru"><title>Группировка договоров — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Сотрудники — тестовые данные</h2><label>Поиск <input id="filter"></label><div class="bulk-toolbar"><span id="selected"></span><span id="group-controls"></span></div><section id="table" class="collection-register"></section><p id="card"></p><script src="fixture.js"></script></body></html>');
   });
   server.listen(0,"127.0.0.1",()=>console.log(`Employee groups UI fixture: http://127.0.0.1:${server.address().port}/`));
 }

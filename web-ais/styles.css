@@ -3507,6 +3507,32 @@ button.mobile-registry-filters-toggle {
   color: var(--muted);
 }
 
+.registry-group-controls {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.registry-group-controls .registry-group-button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px;
+}
+
+.registry-group-button svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .bulk-toolbar.has-inline-summary > .bulk-toolbar-selection-count {
   margin-right: 0;
 }

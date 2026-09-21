@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const names = ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram",
+  "getRegistryListGroupItems", "getRegistryCollapsedGroups", "saveRegistryGroupExpansion", "renderRegistryGroupControls", "setRegistryListGroupsExpanded", "bindRegistryGroupControls",
   "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
   "renderStudentGroupRow", "toggleStudentListGroup", "selectStudentListGroup", "bindStudentListGroups",
   "getTablePageSize", "getTablePagination", "getCurrentTablePageRows", "setTablePageForRow", "renderTablePagination",
@@ -68,6 +69,19 @@ assert.equal(context.getExpandedStudentGroupRows(groups, new Set(["pro:id:a"])).
 assert.deepEqual(plain(context.rows), rows, "Grouping must not mutate rows");
 
 let html = context.renderTable(context.configs.students, context.rows, "students");
+assert.equal((html.match(/data-webinar-student-id=/g) || []).length, 5, "PRO starts collapsed, other types stay visible");
+assert.match(html, /data-student-group="pro"[^>]*aria-expanded="false"/);
+assert.equal(context.getStudentCollapsedGroups().has("pro:id:a"), true, "Program subgroups also start collapsed");
+assert.equal(context.getStudentCollapsedGroups().has("other"), false);
+assert.equal(context.persisted, 0, "Reading defaults must not write settings");
+let controls = context.renderRegistryGroupControls("students", context.rows);
+assert.equal((controls.match(/<svg /g) || []).length, 2, "Compact controls are vector icons");
+assert.match(controls, /title="Развернуть все группы"/);
+assert.match(controls, /aria-label="Свернуть все группы"/);
+assert.equal(context.renderRegistryGroupControls("students", context.rows.slice(60)), "", "No PRO means no grouping controls");
+assert.equal(context.renderRegistryGroupControls("programs", context.rows), "");
+context.setRegistryListGroupsExpanded("students", true);
+html = context.renderTable(context.configs.students, context.rows, "students");
 assert.equal((html.match(/data-webinar-student-id=/g) || []).length, 50);
 assert.match(html, /Автор статьи/);
 assert.match(html, /aria-expanded="true"/);
@@ -163,6 +177,36 @@ context.bindStudentListGroups();
 assert.equal(checkbox.indeterminate, true);
 listeners.change();
 assert.equal(context.getSelected("students").length, 60);
+
+// Bulk expand/collapse preserves selection and remembers explicit choices.
+const selectedBeforeBulk = JSON.stringify(context.state.selected);
+context.state.tablePages.students = 8;
+context.setRegistryListGroupsExpanded("students", false);
+assert.equal(context.state.tablePages.students, 1);
+assert.equal(context.getExpandedStudentGroupRows(context.getStudentTableGroups(context.rows), context.getStudentCollapsedGroups()).length, 0);
+assert.equal(JSON.stringify(context.state.selected), selectedBeforeBulk);
+controls = context.renderRegistryGroupControls("students", context.rows);
+assert.match(controls, /data-expanded="false"[^>]*disabled/);
+context.setRegistryListGroupsExpanded("students", true);
+context.state.tableSettings = JSON.parse(JSON.stringify(context.state.tableSettings));
+assert.equal(context.getExpandedStudentGroupRows(context.getStudentTableGroups(context.rows), context.getStudentCollapsedGroups()).length, 65, "Expanded state survives reload");
+assert.match(context.renderRegistryGroupControls("students", context.rows), /data-expanded="true"[^>]*disabled/);
+context.setRegistryListGroupsExpanded("students", false);
+context.filter = "56";
+context.setRegistryListGroupsExpanded("students", true);
+context.filter = "";
+assert.equal(context.getStudentCollapsedGroups().has("pro"), false);
+assert.equal(context.getStudentCollapsedGroups().has("pro:id:z"), false);
+assert.equal(context.getStudentCollapsedGroups().has("pro:id:a"), true, "Filtered expansion leaves other programs collapsed");
+assert.equal(context.getStudentCollapsedGroups().has("other"), true, "Unseen groups keep their state");
+context.rows.push({id:"new-pro",name:"Новая заявка",program:"Новый вебинар",educationType:"ПРО"});
+assert.equal(context.getStudentCollapsedGroups().has("pro:name:новый вебинар"), true, "New groups still start collapsed after other groups were expanded");
+context.rows.pop();
+const bulkListeners = {};
+context.document = {querySelectorAll:()=>[{dataset:{config:"students",expanded:"true"},addEventListener:(name,fn)=>{bulkListeners[name]=fn;}}]};
+context.bindRegistryGroupControls();
+bulkListeners.click();
+assert.equal(context.getExpandedStudentGroupRows(context.getStudentTableGroups(context.rows), context.getStudentCollapsedGroups()).length, 65);
 console.log("PASS: student grouping, sorting, pagination, filtered/nested selection, persistence, return-to-row, escaping and DOM bindings");
 
 if (process.argv.includes("--serve")) {
@@ -172,8 +216,10 @@ if (process.argv.includes("--serve")) {
     persistTableSettings=()=>localStorage.setItem("group-fixture-settings",JSON.stringify(state.tableSettings));
     render=()=>{
       document.querySelector("#selected").textContent="Выбрано: "+getSelected("students").length;
+      document.querySelector("#group-controls").innerHTML=renderRegistryGroupControls("students",getVisibleRows());
       document.querySelector("#table").innerHTML=renderTable(configs.students,getVisibleRows(),"students");
       bindStudentListGroups();
+      bindRegistryGroupControls();
       document.querySelectorAll('[data-action="toggle-row-selection"]').forEach(el=>el.onchange=()=>toggleRowSelection("students",el.dataset.id,el.checked));
       document.querySelectorAll('[data-action="toggle-all-selection"]').forEach(el=>el.onchange=()=>toggleAllSelection("students",el.checked));
       document.querySelectorAll('[data-action="table-page"]').forEach(el=>el.onclick=()=>{state.tablePages.students=Number(el.dataset.page);render();});
@@ -186,7 +232,7 @@ if (process.argv.includes("--serve")) {
     if (req.url === "/styles.css") {res.setHeader("Content-Type","text/css");return res.end(fs.readFileSync(path.join(root,"styles.css")));}
     if (req.url === "/fixture.js") {res.setHeader("Content-Type","text/javascript");return res.end(browserScript);}
     res.setHeader("Content-Type","text/html; charset=utf-8");
-    res.end('<!doctype html><html lang="ru"><title>Группировка слушателей — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Слушатели — тестовые данные</h2><label>Поиск <input id="filter"></label><p id="selected"></p><section id="table" class="collection-register"></section><script src="fixture.js"></script></body></html>');
+    res.end('<!doctype html><html lang="ru"><title>Группировка слушателей — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Слушатели — тестовые данные</h2><label>Поиск <input id="filter"></label><div class="bulk-toolbar"><span id="selected"></span><span id="group-controls"></span></div><section id="table" class="collection-register"></section><script src="fixture.js"></script></body></html>');
   });
   server.listen(0,"127.0.0.1",()=>console.log(`Groups UI fixture: http://127.0.0.1:${server.address().port}/`));
 }
