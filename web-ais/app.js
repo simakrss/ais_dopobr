@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.520",
-    releasedAt: "2026-09-20"
+    version: "1.7.521",
+    releasedAt: "2026-09-21"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.521",
+      releasedAt: "2026-09-21",
+      changes: ["В списке сотрудников несколько договоров одного сотрудника объединены в сворачиваемую группу, внутри — от новых к старым по дате договора. Единственный договор отображается без группы. Сохраняются свёрнутые группы, доступны выбор договоров сотрудника и переходы между карточками в порядке списка."]
+    },
     {
       version: "1.7.520",
       releasedAt: "2026-09-20",
@@ -24071,6 +24076,104 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function getEmployeeContractGroups(rows) {
+    const groups = new Map();
+    rows.forEach((row, index) => {
+      // Contracts have separate record IDs; the employee is identified by the same
+      // normalized full name used in employee acts and payment matching.
+      const name = normalizeEmployeeActPersonName(row.name);
+      const key = name ? `employee:${name}` : `contract:${row.id || index}`;
+      if (!groups.has(key)) groups.set(key, {
+        key,
+        label: String(row.name || "").replace(/\s+/gu, " ").trim(),
+        rows: []
+      });
+      groups.get(key).rows.push(row);
+    });
+    // Keep the current list's group order; only the contracts inside each group
+    // have a fixed descending date order. Missing dates belong at the end.
+    return [...groups.values()].map((group) => ({
+      ...group,
+      rows: group.rows.sort((left, right) => {
+        const leftDate = parseTableSortDate(left.contractDate);
+        const rightDate = parseTableSortDate(right.contractDate);
+        if (leftDate === null) return rightDate === null ? 0 : 1;
+        if (rightDate === null) return -1;
+        return rightDate - leftDate;
+      })
+    }));
+  }
+
+  function getEmployeeContractCollapsedGroups() {
+    const saved = state.tableSettings.contracts?.collapsedGroups;
+    return new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === "string") : []);
+  }
+
+  function getExpandedEmployeeContractRows(groups, collapsed) {
+    return groups.flatMap((group) => group.rows.length > 1 && collapsed.has(group.key) ? [] : group.rows);
+  }
+
+  function getEmployeeContractPageEntries(groups, collapsed, pageRows) {
+    const pageIds = new Set(pageRows.map((row) => String(row.id)));
+    return groups.flatMap((group) => {
+      const isGroup = group.rows.length > 1;
+      const isCollapsed = isGroup && collapsed.has(group.key);
+      const entries = isCollapsed ? [] : group.rows
+        .filter((row) => pageIds.has(String(row.id)))
+        .map((row) => ({ row }));
+      return isGroup && (isCollapsed || entries.length)
+        ? [{ group, collapsed: isCollapsed }, ...entries]
+        : entries;
+    });
+  }
+
+  function renderEmployeeContractGroupRow({ group, collapsed }, fieldCount, selected) {
+    const selectedIds = new Set(selected);
+    const count = group.rows.filter((row) => selectedIds.has(String(row.id).trim())).length;
+    const checked = count === group.rows.length;
+    return `<tr class="student-list-group employee-contract-group">
+      <td class="select-col"><input type="checkbox" data-action="select-employee-contract-group" data-employee-contract-group="${escapeAttr(group.key)}" ${checked ? "checked" : ""} data-indeterminate="${count > 0 && !checked}" aria-label="${escapeAttr(`Выбрать договоры: ${group.label}`)}" title="Все договоры сотрудника с учётом фильтров, включая другие страницы"></td>
+      <td colspan="${fieldCount}"><button class="student-list-group-toggle" data-action="toggle-employee-contract-group" data-employee-contract-group="${escapeAttr(group.key)}" type="button" aria-expanded="${!collapsed}">
+        <span class="student-list-group-arrow" aria-hidden="true">${collapsed ? "▸" : "▾"}</span>
+        <span class="student-list-group-label">${escapeHtml(group.label)}</span>
+        <span class="student-list-group-count">Договоров: ${group.rows.length}${count ? ` · выбрано ${count}` : ""}</span>
+      </button></td>
+    </tr>`;
+  }
+
+  function toggleEmployeeContractGroup(key) {
+    const collapsed = getEmployeeContractCollapsedGroups();
+    if (collapsed.has(key)) collapsed.delete(key);
+    else collapsed.add(key);
+    state.tableSettings.contracts = { ...state.tableSettings.contracts, collapsedGroups: [...collapsed] };
+    persistTableSettings();
+    state.tablePages.contracts = 1;
+    render();
+  }
+
+  function selectEmployeeContractGroup(key, checked) {
+    const group = getEmployeeContractGroups(getVisibleRows(configs.contracts)).find((item) => item.key === key);
+    if (!group) return;
+    const selected = new Set(getSelected("contracts"));
+    group.rows.forEach((row) => {
+      const id = String(row.id || "").trim();
+      if (checked) selected.add(id);
+      else selected.delete(id);
+    });
+    setSelected("contracts", [...selected]);
+    render();
+  }
+
+  function bindEmployeeContractGroups() {
+    document.querySelectorAll("[data-action='toggle-employee-contract-group']").forEach((button) => {
+      button.addEventListener("click", () => toggleEmployeeContractGroup(button.dataset.employeeContractGroup));
+    });
+    document.querySelectorAll("[data-action='select-employee-contract-group']").forEach((checkbox) => {
+      checkbox.indeterminate = checkbox.dataset.indeterminate === "true";
+      checkbox.addEventListener("change", () => selectEmployeeContractGroup(checkbox.dataset.employeeContractGroup, checkbox.checked));
+    });
+  }
+
   function getTablePageSize(configId) {
     const saved = Number(state.tableSettings[configId]?.pageSize);
     return TABLE_PAGE_SIZE_OPTIONS.includes(saved) ? saved : DEFAULT_TABLE_PAGE_SIZE;
@@ -24088,6 +24191,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getCurrentTablePageRows(configId, rows) {
+    if (configId === "contracts") {
+      rows = getExpandedEmployeeContractRows(getEmployeeContractGroups(rows), getEmployeeContractCollapsedGroups());
+    }
     const pagination = getTablePagination(configId, rows.length);
     return rows.slice(pagination.start, pagination.end);
   }
@@ -24105,6 +24211,16 @@ MAX - https://bizvmax.ru/zifra_plus
       state.tableSettings.students = { ...state.tableSettings.students, collapsedGroups: [...collapsed] };
       persistTableSettings();
       rows = getExpandedStudentGroupRows(groups, collapsed);
+    }
+    if (configId === "contracts") {
+      const employeeGroups = getEmployeeContractGroups(rows);
+      const collapsed = getEmployeeContractCollapsedGroups();
+      const group = employeeGroups.find((item) => item.rows.some((row) => String(row.id) === String(id)));
+      if (group && collapsed.delete(group.key)) {
+        state.tableSettings.contracts = { ...state.tableSettings.contracts, collapsedGroups: [...collapsed] };
+        persistTableSettings();
+      }
+      rows = getExpandedEmployeeContractRows(employeeGroups, collapsed);
     }
     const rowIndex = rows.findIndex((row) => String(row.id || "") === String(id));
     if (rowIndex < 0) return;
@@ -24165,12 +24281,16 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const studentGroups = configId === "students" ? getStudentTableGroups(rows) : null;
     const collapsedGroups = studentGroups ? getStudentCollapsedGroups() : null;
-    const expandedRows = studentGroups ? getExpandedStudentGroupRows(studentGroups, collapsedGroups) : rows;
+    const employeeGroups = configId === "contracts" ? getEmployeeContractGroups(rows) : null;
+    const employeeCollapsed = employeeGroups ? getEmployeeContractCollapsedGroups() : null;
+    const expandedRows = studentGroups ? getExpandedStudentGroupRows(studentGroups, collapsedGroups)
+      : employeeGroups ? getExpandedEmployeeContractRows(employeeGroups, employeeCollapsed) : rows;
     const pagination = getTablePagination(configId, expandedRows.length);
     const pageRows = expandedRows.slice(pagination.start, pagination.end);
     const tableEntries = studentGroups
       ? getStudentGroupPageEntries(studentGroups, collapsedGroups, pageRows)
-      : pageRows.map((row) => ({ row }));
+      : employeeGroups ? getEmployeeContractPageEntries(employeeGroups, employeeCollapsed, pageRows)
+        : pageRows.map((row) => ({ row }));
     const columnMinWidths = new Map(fields.map((fieldItem) => [
       fieldItem.key,
       pageRows.reduce((minimum, row) => Math.max(minimum, getSingleLineTableColumnMinWidth(
@@ -24209,7 +24329,9 @@ MAX - https://bizvmax.ru/zifra_plus
           </thead>
           <tbody>
             ${tableEntries.map((entry) => {
-              if (entry.group) return renderStudentGroupRow(entry, fields.length, selected);
+              if (entry.group) return configId === "contracts"
+                ? renderEmployeeContractGroupRow(entry, fields.length, selected)
+                : renderStudentGroupRow(entry, fields.length, selected);
               const row = entry.row;
               const recordLock = getRecordLock(recordLockEntityType(configId), row.id);
               const programHoursSummary = configId === "programs"
@@ -45550,6 +45672,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     bindStudentListGroups();
+    bindEmployeeContractGroups();
 
     document.querySelectorAll("[data-action='toggle-all-selection']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => toggleAllSelection(checkbox.dataset.config, checkbox.checked));
@@ -46611,7 +46734,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getContractNavigationRows() {
     const visibleRows = getVisibleRows(configs.contracts);
-    return visibleRows.length ? visibleRows : (state.data.collections.contracts || []);
+    const rows = visibleRows.length ? visibleRows : (state.data.collections.contracts || []);
+    return getEmployeeContractGroups(rows).flatMap((group) => group.rows);
   }
 
   function getContractCardNavigation(record = {}) {
