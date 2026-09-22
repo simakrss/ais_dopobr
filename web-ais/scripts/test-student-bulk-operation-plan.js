@@ -12,6 +12,7 @@ assert.ok(start >= 0 && end > start, "Не найден блок плана гр
 
 const calls = [];
 const runners = {
+  runStudentBulkStatus: async (...args) => { calls.push(["status", ...args]); return { success: 2 }; },
   runStudentBulkMessage: async (...args) => { calls.push(["message", ...args]); return { success: 2 }; },
   runStudentBulkEvents: async (...args) => { calls.push(["event", ...args]); return { success: 2 }; },
   runStudentBulkOrderDetails: async (...args) => { calls.push(["orderDetails", ...args]); return { success: 2 }; },
@@ -26,6 +27,7 @@ const factory = new Function(
   "studentCommunicationMessages",
   "studentBulkDocumentOperations",
   "parseOrdersSdoDate",
+  "getStudentBulkStatusOptions",
   ...Object.keys(runners),
   `${source.slice(start, end)}\nreturn { formatStudentBulkOperationCount, getStudentBulkOperationLabel, validateStudentBulkOperation, getStudentBulkOperationSignature, findStudentBulkOperationConflict, mergeStudentBulkOperationResult, runStudentBulkOperation, executeStudentBulkOperationPlan };`
 );
@@ -33,6 +35,7 @@ const helpers = factory(
   studentCommunicationMessages,
   studentBulkDocumentOperations,
   parseOrdersSdoDate,
+  (field) => field === "status" ? ["Учится", "Отчислен"] : ["Обучающиеся", "Вебинары"],
   ...Object.values(runners)
 );
 
@@ -43,6 +46,18 @@ assert.equal(helpers.formatStudentBulkOperationCount(5), "5 операций");
 assert.equal(helpers.formatStudentBulkOperationCount(12), "12 операций");
 assert.match(helpers.validateStudentBulkOperation({ type: "event", events: [] }), /событие/u);
 assert.match(helpers.validateStudentBulkOperation({ type: "frdoDate", frdoDate: "" }), /дату/u);
+for (const [type, statusValue] of [["status", "Учится"], ["additionalStatus", "Вебинары"]]) {
+  assert.equal(helpers.validateStudentBulkOperation({ type, statusValue }), "");
+  assert.match(helpers.validateStudentBulkOperation({ type, statusValue: "" }), /статус/u);
+  assert.match(helpers.validateStudentBulkOperation({ type, statusValue: "Несуществующий" }), /справочника/u);
+  assert.match(helpers.getStudentBulkOperationLabel({ type, statusValue }), new RegExp(statusValue, "u"));
+  assert.equal(helpers.getStudentBulkOperationSignature({ type, statusValue, messageKey: "a" }), helpers.getStudentBulkOperationSignature({ type, statusValue, messageKey: "b" }));
+  assert.equal(helpers.findStudentBulkOperationConflict([{ type, statusValue }, { type, statusValue }]).index, 1);
+  assert.equal(helpers.findStudentBulkOperationConflict([{ type, statusValue }, { type, statusValue: "Другое" }]).index, 1);
+}
+assert.equal(helpers.findStudentBulkOperationConflict([
+  { type: "status", statusValue: "Учится" }, { type: "additionalStatus", statusValue: "Обучающиеся" }
+]), null);
 assert.equal(
   helpers.getStudentBulkOperationLabel({ type: "document", documentOperation: "education" }),
   "Сформировать документы: Документы об образовании"
@@ -135,6 +150,11 @@ assert.deepEqual(total.notices, ["Ожидает синхронизации"]);
   assert.equal(calls[0][0], "message");
   assert.equal(calls[1][0], "document");
   assert.equal(calls[1][2], "education");
+  const signal = new AbortController().signal;
+  for (const [type, statusValue] of [["status", "Учится"], ["additionalStatus", "Вебинары"]]) {
+    await helpers.runStudentBulkOperation({ type, statusValue }, records, progress, signal);
+    assert.deepEqual(calls.at(-1), ["status", records, type, statusValue, progress, signal]);
+  }
   const store = new Map([["1", { id: "1", first: false, second: false }]]);
   let reads = 0;
   await helpers.executeStudentBulkOperationPlan([

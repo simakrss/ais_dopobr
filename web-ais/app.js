@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.527",
+    version: "1.7.528",
     releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.528",
+      releasedAt: "2026-09-22",
+      changes: ["В групповые операции слушателей добавлены установка статуса и дополнительного статуса из существующих справочников. Операции выполняются в выбранном порядке с подтверждением, учётом блокировок, сохранением в общую базу и журналом изменений."]
+    },
     {
       version: "1.7.527",
       releasedAt: "2026-09-22",
@@ -60346,13 +60351,81 @@ MAX - https://bizvmax.ru/zifra_plus
     return result;
   }
 
+  function getStudentBulkStatusOptions(fieldName) {
+    const values = fieldName === "status"
+      ? state.data.dictionaries.statuses || STUDENT_STATUS_ORDER
+      : fieldName === "additionalStatus" ? state.data.dictionaries.studentAdditionalStatuses || [] : [];
+    return unique(values.map((value) => String(value || "").trim()).filter(Boolean));
+  }
+
+  async function runStudentBulkStatus(records, fieldName, requestedValue, updateProgress, signal = null) {
+    const value = String(requestedValue || "").trim();
+    if (!["status", "additionalStatus"].includes(fieldName) || !getStudentBulkStatusOptions(fieldName).includes(value)) {
+      throw new Error("Выберите статус из справочника.");
+    }
+    const label = fieldName === "status" ? "Статус" : "Доп. статус";
+    const result = { success: 0, skipped: 0, failed: 0, details: [] };
+    const notices = new Set();
+    for (let index = 0; index < records.length; index += 1) {
+      if (signal?.aborted) { result.cancelled = true; break; }
+      const source = records[index];
+      updateProgress(index, `${label}: ${source.name || source.id}`);
+      let acquired = false;
+      try {
+        acquired = await acquireRecordLock("students", source.id, { promptTakeover: false });
+        if (!acquired) {
+          result.skipped += 1;
+          result.details.push({ tone: "warning", name: source.name, message: "Запись заблокирована другой сессией." });
+          continue;
+        }
+        if (signal?.aborted) { result.cancelled = true; break; }
+        const current = getRowsByIds("students", [source.id])[0];
+        if (!current) {
+          result.skipped += 1;
+          result.details.push({ tone: "warning", name: source.name, message: "Записи больше нет в базе." });
+          continue;
+        }
+        const record = { ...current, [fieldName]: value };
+        if (fieldName === "status" && value !== String(current.status || "").trim()) {
+          record.additionalStatus = resolveStudentAdditionalStatusAfterMainStatusChange(
+            record, findProgramByName(record.program)?.type || record.educationType
+          );
+        }
+        const changes = ["status", "additionalStatus"].filter((key) => (current[key] || "") !== (record[key] || ""))
+          .map((key) => ({ field: key, label: key === "status" ? "Статус" : "Доп. статус", before: current[key] || "", after: record[key] || "" }));
+        if (!changes.length) {
+          result.skipped += 1;
+          result.details.push({ tone: "muted", name: current.name, message: `${label} уже установлен: ${value}.` });
+          continue;
+        }
+        replaceStudentBulkRecord(record);
+        addAudit("Массовое изменение статуса", configs.students.title, `${record.name}: ${label} — ${value}`, {
+          entityType: "students", entityId: record.id, entityLabel: record.name, changes
+        });
+        // Save while the record is still locked; the next operation rereads these changes.
+        const notice = await persistStudentBulkChanges();
+        if (notice) notices.add(notice);
+        result.success += 1;
+      } catch (error) {
+        result.failed += 1;
+        result.details.push({ tone: "error", name: source.name, message: error.message || "Не удалось изменить статус." });
+      } finally {
+        if (acquired) await releaseRecordLock();
+      }
+    }
+    result.notice = [...notices].join(" ");
+    return result;
+  }
+
   const studentBulkOperationDefinitions = Object.freeze([
     { key: "message", label: "Отправить сообщение" },
     { key: "document", label: "Сформировать документы" },
     { key: "orderDetails", label: "Сформировать номер и дату приказа" },
     { key: "frdoDate", label: "Установить дату выгрузки в ФРДО" },
     { key: "portalAccess", label: "Отправить данные для доступа к порталу" },
-    { key: "event", label: "Проставить события" }
+    { key: "event", label: "Проставить события" },
+    { key: "status", label: "Установить статус" },
+    { key: "additionalStatus", label: "Установить дополнительный статус" }
   ]);
 
   function formatStudentBulkOperationCount(count) {
@@ -60372,6 +60445,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function getStudentBulkOperationLabel(operation = {}) {
     const type = String(operation.type || operation.operation || "");
     const definition = studentBulkOperationDefinitions.find((item) => item.key === type);
+    if (["status", "additionalStatus"].includes(type)) {
+      return `${definition.label}: ${String(operation.statusValue || "").trim() || "не выбран"}`;
+    }
     if (type === "message") {
       const message = studentCommunicationMessages.find((item) => item.key === operation.messageKey);
       return `${definition?.label || "Сообщение"}: ${message?.label || "не выбрано"}`;
@@ -60397,11 +60473,15 @@ MAX - https://bizvmax.ru/zifra_plus
     if (type === "document" && !String(operation.documentOperation || "").trim()) return "Выберите документ.";
     if (type === "frdoDate" && !parseOrdersSdoDate(operation.frdoDate)) return "Укажите корректную дату выгрузки в ФРДО.";
     if (type === "event" && !(operation.events || []).length) return "Выберите хотя бы одно событие.";
+    if (["status", "additionalStatus"].includes(type) && !getStudentBulkStatusOptions(type).includes(String(operation.statusValue || "").trim())) {
+      return type === "status" ? "Выберите статус из справочника." : "Выберите дополнительный статус из справочника.";
+    }
     return "";
   }
 
   function getStudentBulkOperationSignature(operation = {}) {
     const type = String(operation.type || "").trim();
+    if (["status", "additionalStatus"].includes(type)) return JSON.stringify({ type, statusValue: String(operation.statusValue || "").trim() });
     if (type === "message") return JSON.stringify({ type, messageKey: String(operation.messageKey || "").trim() });
     if (type === "document") return JSON.stringify({
       type,
@@ -60433,7 +60513,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const signatures = operations.map(getStudentBulkOperationSignature);
     const duplicateIndex = signatures.findIndex((signature, index) => signatures.indexOf(signature) !== index);
     if (duplicateIndex >= 0) return { index: duplicateIndex, message: "полностью повторяет уже добавленную операцию" };
-    const singletonTypes = ["portalAccess", "frdoDate"];
+    const singletonTypes = ["portalAccess", "frdoDate", "status", "additionalStatus"];
     for (const type of singletonTypes) {
       const indexes = operations.map((item, index) => item.type === type ? index : -1).filter((index) => index >= 0);
       if (indexes.length > 1) return { index: indexes[1], message: "конфликтует с уже добавленной операцией этого вида" };
@@ -60517,6 +60597,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function runStudentBulkOperation(operation, records, updateProgress, signal = null) {
+    if (["status", "additionalStatus"].includes(operation.type)) {
+      return runStudentBulkStatus(records, operation.type, operation.statusValue, updateProgress, signal);
+    }
     if (operation.type === "message") {
       return runStudentBulkMessage(records, operation.messageKey, updateProgress);
     }
@@ -60697,6 +60780,18 @@ MAX - https://bizvmax.ru/zifra_plus
               `).join("")}
             </div>
               </div>
+              <div data-student-bulk-panel="status" hidden>
+                <label><span>Статус</span><select name="bulkStatus">
+                  <option value="">Выберите статус</option>
+                  ${renderStudentStatusOptions(getStudentBulkStatusOptions("status"))}
+                </select></label>
+              </div>
+              <div data-student-bulk-panel="additionalStatus" hidden>
+                <label><span>Дополнительный статус</span><select name="bulkAdditionalStatus">
+                  <option value="">Выберите дополнительный статус</option>
+                  ${renderStudentStatusOptions(getStudentBulkStatusOptions("additionalStatus"))}
+                </select></label>
+              </div>
               <p class="student-bulk-operation-hint" data-student-bulk-hint>Сообщение будет сформировано отдельно для каждого слушателя по шаблону вкладки «Коммуникации».</p>
             </section>
           </template>
@@ -60718,7 +60813,9 @@ MAX - https://bizvmax.ru/zifra_plus
       orderDetails: "Один номер и дата приказа будут записаны всем выбранным слушателям. Если номер не введён, он сформируется по системной формуле.",
       frdoDate: "Дата выгрузки в ФРДО будет записана во все выбранные карточки программ КПК и ППП с учётом блокировок записей.",
       portalAccess: "Доступ отправляется персонально каждому слушателю; отсутствующие учётные данные формируются автоматически.",
-      event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами."
+      event: "Все отмеченные события будут записаны одним пакетом с указанными для них датами.",
+      status: "Статус будет установлен выбранным слушателям. Дополнительный статус изменяется по тем же правилам, что и в карточке. Для своего значения добавьте установку дополнительного статуса после этой операции.",
+      additionalStatus: "Дополнительный статус будет установлен выбранным слушателям, без изменения основного статуса. Заблокированные записи будут пропущены."
     };
     const close = () => { if (!running) backdrop.remove(); };
     const getCards = () => [...plan.querySelectorAll("[data-student-bulk-operation-card]")];
@@ -60788,6 +60885,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const type = value("operation");
       return {
         type,
+        statusValue: type === "status" ? value("bulkStatus") : type === "additionalStatus" ? value("bulkAdditionalStatus") : "",
         messageKey: value("messageKey"),
         documentOperation: value("documentOperation"),
         operationDate: value("operationDate"),
