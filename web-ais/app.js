@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.522",
-    releasedAt: "2026-09-21"
+    version: "1.7.523",
+    releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.523",
+      releasedAt: "2026-09-22",
+      changes: ["В новых общих расходах поля «Дата» и «Оплачено» заполнены текущей датой. При номере в расходах «Личная карта» флажок «Закрыто в бухгалтерии» недоступен; при смене номера снова доступен. Существующие даты и отметки автоматически не изменяются."]
+    },
     {
       version: "1.7.522",
       releasedAt: "2026-09-21",
@@ -11944,6 +11949,7 @@ MAX - https://bizvmax.ru/zifra_plus
     delete form.dataset.recordLockLost;
     form.removeAttribute("aria-readonly");
     form.querySelector("[data-record-lock-warning]")?.remove();
+    syncGeneralExpenseAccountingControl(form);
   }
 
   function dismissRecordLockNotice(recordKey = "") {
@@ -35778,7 +35784,8 @@ MAX - https://bizvmax.ru/zifra_plus
       const checked = state.modal?.config === "generalExpenses" && item.key === "accountingClosed"
         ? String(value ?? "").trim() === "+"
         : isChecked(value);
-      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${checked ? "checked" : ""}></label>`;
+      const personalCard = item.key === "accountingClosed" && isGeneralExpensePersonalCard(record.bkExpenseNo);
+      return `${label}<input name="${item.key}" type="checkbox" value="Да" ${checked ? "checked" : ""} ${personalCard ? 'disabled title="Недоступно для расходов с личной карты"' : ""}></label>`;
     }
     if (item.type === "textarea") {
       const rows = Number(layoutOptions.rows || (layoutOptions.list ? 3 : 0));
@@ -39815,6 +39822,31 @@ MAX - https://bizvmax.ru/zifra_plus
       || (configId === "generalExpenses" && fieldKey === "accountingClosed")
     ) return "+";
     return "Да";
+  }
+
+  function isGeneralExpensePersonalCard(value) {
+    return /^личная\s+карта$/iu.test(String(value || "").trim());
+  }
+
+  function syncGeneralExpenseAccountingControl(form = document.getElementById("recordForm")) {
+    if (!form || (form.dataset.config !== "generalExpenses" && form.dataset.sourceType !== "general")) return;
+    const checkbox = form.elements.accountingClosed;
+    const numberInput = form.elements.bkExpenseNo;
+    if (!checkbox || !numberInput) return;
+    const personalCard = isGeneralExpensePersonalCard(numberInput.value);
+    checkbox.disabled = personalCard || form.dataset.recordReadonly === "true" || Boolean(state.modal?.readOnly);
+    checkbox.title = personalCard ? "Недоступно для расходов с личной карты" : "";
+  }
+
+  function bindGeneralExpenseAccountingControl(form = document.getElementById("recordForm")) {
+    if (!form || (form.dataset.config !== "generalExpenses" && form.dataset.sourceType !== "general")) return;
+    syncGeneralExpenseAccountingControl(form);
+    const input = form.elements.bkExpenseNo;
+    if (!input || input.dataset.generalExpenseAccountingBound === "true") return;
+    input.dataset.generalExpenseAccountingBound = "true";
+    const sync = () => syncGeneralExpenseAccountingControl(form);
+    input.addEventListener("input", sync);
+    input.addEventListener("change", sync);
   }
 
   function paymentRowHasData(record, index) {
@@ -44473,6 +44505,7 @@ MAX - https://bizvmax.ru/zifra_plus
     bindStudentExpenseEditorEvents();
     bindMoneyInputStepControls(document);
     applyRecordFormReadOnlyMode();
+    bindGeneralExpenseAccountingControl();
     initializeRecordFormSnapshot(document.getElementById("recordForm"));
     initializeRecordFormSnapshot(document.getElementById("studentExpenseEditorForm"));
     initializeRecordFormSnapshot(document.getElementById("employeeExpenseEditorForm"));
@@ -47572,6 +47605,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.getElementById("employeeExpenseEditorForm");
     if (form && form.dataset.employeeExpenseSubmitBound !== "true") {
       form.dataset.employeeExpenseSubmitBound = "true";
+      bindGeneralExpenseAccountingControl(form);
       syncEmployeePaymentActCheckboxes(form);
       form.addEventListener("click", (event) => scheduleEmployeePaymentActCheckboxChange(event, form));
       form.addEventListener("submit", saveEmployeeExpenseEditor);
@@ -47668,7 +47702,11 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!["direct", "general"].includes(sourceType) && targetType !== sourceType) return;
     fields.forEach((item) => {
       if (item.type === "checkbox") {
-        source[item.key] = formData.has(item.key) ? "Да" : "";
+        if (context.configId === "generalExpenses" && item.key === "accountingClosed") {
+          source[item.key] = getStoredCheckboxValue(context.configId, item.key, Boolean(form.elements[item.key]?.checked));
+        } else {
+          source[item.key] = formData.has(item.key) ? "Да" : "";
+        }
         return;
       }
       if (!formData.has(item.key)) return;
@@ -51680,7 +51718,9 @@ MAX - https://bizvmax.ru/zifra_plus
         values[item.key] = getStoredCheckboxValue(
           formElement.dataset.config,
           item.key,
-          formData.has(item.key)
+          formElement.dataset.config === "generalExpenses" && item.key === "accountingClosed"
+            ? formElement.elements[item.key].checked
+            : formData.has(item.key)
         );
         return;
       }
@@ -75142,6 +75182,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function ensureRecordUid(config, record = {}) {
     if (state.modal?.id) return record;
+    const currentDate = config.collection === "generalExpenses" ? todayIso() : "";
     const recordWithDefaults = {
       ...record,
       ...(config.collection === "students"
@@ -75151,7 +75192,11 @@ MAX - https://bizvmax.ru/zifra_plus
         ? { section: normalizeContractSection(record.section, record.status) }
         : {}),
       ...(config.collection === "generalExpenses"
-        ? { section: normalizeGeneralExpenseSection(record.section, record.counterparty) }
+        ? {
+          section: normalizeGeneralExpenseSection(record.section, record.counterparty),
+          date: record.date ?? currentDate,
+          paid: record.paid ?? currentDate
+        }
         : {})
     };
     if (!config.fields?.some((item) => item.key === "uid")) return recordWithDefaults;
