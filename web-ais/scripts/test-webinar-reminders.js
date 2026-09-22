@@ -13,6 +13,7 @@ const names = [
   "getWebinarProgramForStudent", "getWebinarMessageContext", "renderWebinarMessage", "deliverWebinarMessages",
   "getStudentContextProgram", "getStudentProgramPromoMessage", "getStudentProgramMenuActions", "performStudentProgramMenuAction",
   "getWebinarTeacherOptions", "getSelectedWebinarRecipients",
+  "getWebinarAuthorTeachers", "parseProgramAuthorPayments", "normalizeProgramAuthorPayments", "normalizePaymentPercent",
   "bindWebinarMessageActions", "showWebinarMessageMenu", "openWebinarMessageComposer",
   "hideFieldCopyPopup", "handleFieldCopyPopupOutside", "getStudentCommunicationAddressee",
   "getCardFieldFormulaBinding", "getCardFieldFormula", "setCardFieldFormula", "validateCardFieldFormula", "openCardFieldFormulaSettings",
@@ -28,7 +29,7 @@ function fixtureData() {
     dictionaries: {},
     collections: {
       programs: [
-        { id: "pro", type: "ПРО", name: "Он-лайн семинар: Тестовый вебинар", shortName: "Тест ПРО", webinarDate: "2026-08-04", webinarTime: "18:00", webinarJoinUrl: "https://example.test/join?token=test", teachers: "Иванова Елена Владимировна", promoMessage1: "Приглашаем на вебинар!\nhttps://example.test/webinar", promoMessage2: "Второе ПРО" },
+        { id: "pro", type: "ПРО", name: "Он-лайн семинар: Тестовый вебинар", shortName: "Тест ПРО", webinarDate: "2026-08-04", webinarTime: "18:00", webinarJoinUrl: "https://example.test/join?token=test", authorSource: "Иванова Елена Владимировна", teachers: "", promoMessage1: "Приглашаем на вебинар!\nhttps://example.test/webinar", promoMessage2: "Второе ПРО" },
         { id: "other", type: "ПРО", name: "Другой вебинар" },
         { id: "kpk", type: "КПК", name: "Курс повышения квалификации", promoMessage1: " ", promoMessage2: "Второе промосообщение КПК" },
         { id: "ppp", type: "ППП", name: "Переподготовка", promoMessage1: "Промосообщение ППП" },
@@ -146,6 +147,39 @@ async function test() {
   ]);
   assert.equal(people.length, 3);
   assert.ok(people.some(item=>item.id==="new")); assert.ok(!people.some(item=>item.id==="old"));
+  const authorProgram = c.state.data.collections.programs[0];
+  const authorSnapshot = JSON.stringify(authorProgram);
+  let authorTeachers = c.getWebinarAuthorTeachers(authorProgram, teacherOptions);
+  assert.equal(authorTeachers.length, 1, "Author selects a single deduplicated teacher even when teachers is empty");
+  assert.equal(authorTeachers[0].id, "t1");
+  assert.equal(JSON.stringify(authorProgram), authorSnapshot);
+  for (const program of [
+    {author:"Иванова Елена Владимировна"},
+    {"Автор":"Иванова Елена Владимировна (25,5%)"},
+    {authorSource:"Иванова Елена Владимировна ([АвторскаяСтавка] руб.)",authorPayments:[]},
+    {authorPayments:[{recipient:" Иванова  Елена Владимировна ",amountFormula:"50%"}]},
+    {authorPayments:[{name:"Иванова Елена Владимировна",formula:"1000"}],teachers:"Петров Иван Сергеевич"},
+    {authorSource:"Иванова Елена Владимировна",teachers:"Петров Иван Сергеевич"}
+  ]) {
+    assert.equal(c.getWebinarAuthorTeachers(program,teacherOptions)[0]?.id,"t1");
+  }
+  for(const separator of [", ","; ","\n"]){
+    const matched=c.getWebinarAuthorTeachers({authorSource:"Иванова Елена Владимировна (50%)"+separator+"Петров Иван Сергеевич (1000 руб.)"},teacherOptions);
+    assert.equal(matched.length,2,"Multiple authors require manual selection, not the first name: "+JSON.stringify(separator));
+  }
+  assert.equal(c.getWebinarAuthorTeachers({teachers:"Иванова Елена Владимировна"},teacherOptions).length,0,"Do not use the unrelated teachers field");
+  assert.equal(c.getWebinarAuthorTeachers({author:"Неизвестный Автор"},teacherOptions).length,0);
+  assert.equal(c.getWebinarAuthorTeachers({author:"Иванова Е. В."},teacherOptions).length,0,"Do not guess identity from initials");
+  assert.equal(c.getWebinarAuthorTeachers({author:"СЕМЁНОВА ЕЛЕНА СЕРГЕЕВНА"},people).length,2,"Different emails remain ambiguous");
+  authorTeachers=c.getWebinarAuthorTeachers({author:"Семёнова Елена Сергеевна"},people.filter(item=>item.id!=="other-email"));
+  assert.equal(authorTeachers.length,1);assert.equal(authorTeachers[0].id,"new");
+  const autoContext=c.getWebinarMessageContext("pro","teacher",c.getWebinarAuthorTeachers(authorProgram)[0].id);
+  assert.equal(autoContext.recipients[0].email,"teacher@example.test");
+  assert.equal(autoContext.fields.ИмяОтчество,"Елена Владимировна");
+  assert.equal(autoContext.errors.length,0);
+  assert.match(functions.get("openWebinarMessageComposer"),/const suggested = getWebinarAuthorTeachers\(context.program, teachers\)/u);
+  assert.match(functions.get("openWebinarMessageComposer"),/suggested.length === 1 && suggested\[0\].id === teacher.id/u);
+  assert.doesNotMatch(functions.get("openWebinarMessageComposer"),/program.teachers/u);
   const composer = {dataset:{webinarMessageAudience:"students"}};
   const control = {name:"message",disabled:false,closest:selector=>selector==="[data-webinar-message-composer]"?composer:null};
   const binding = c.getCardFieldFormulaBinding(control);

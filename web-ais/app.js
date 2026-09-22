@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.525",
+    version: "1.7.526",
     releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.526",
+      releasedAt: "2026-09-22",
+      changes: ["В напоминании преподавателю вебинара сотрудник автоматически выбирается по полю «Автор» из реестра программ. Учитываются записи авторов с формулами оплаты и повторяющиеся договоры с одинаковым email; имя и адрес сразу подставляются в предпросмотр письма. При неоднозначном совпадении остаётся ручной выбор."]
+    },
     {
       version: "1.7.525",
       releasedAt: "2026-09-22",
@@ -41935,6 +41940,18 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
+  function getWebinarAuthorTeachers(program, teachers = null) {
+    const source = [program?.authorSource, program?.author, program?.["Автор"]]
+      .find((value) => String(value || "").trim()) || "";
+    const configuredAuthors = Array.isArray(program?.authorPayments) && program.authorPayments.length
+      ? program.authorPayments
+      : String(source).split(/[\n;]+/u).flatMap((entry) => parseProgramAuthorPayments(entry));
+    const normalizeName = (value) => normalizeProgramName(value).replace(/ё/gu, "е");
+    const authorNames = new Set(normalizeProgramAuthorPayments(configuredAuthors)
+      .map((author) => normalizeName(author.recipient)).filter(Boolean));
+    return (teachers || getWebinarTeacherOptions()).filter((teacher) => authorNames.has(normalizeName(teacher.name)));
+  }
+
   function getSelectedWebinarRecipients(context, excludedEmails = []) {
     const excluded = new Set([...excludedEmails].map((email) => String(email).trim().toLowerCase()));
     return context.recipients.filter((item) => context.audience !== "students" || !excluded.has(item.email.trim().toLowerCase()));
@@ -42044,8 +42061,7 @@ MAX - https://bizvmax.ru/zifra_plus
     try { context = getWebinarMessageContext(programId, audience); }
     catch (error) { alert(error.message); return; }
     const teachers = getWebinarTeacherOptions();
-    const teacherNames = String(context.program.teachers || "").split(/[\n;]+/u).map(normalizeProgramName).filter(Boolean);
-    const suggested = teachers.filter((item) => teacherNames.includes(normalizeProgramName(item.name)));
+    const suggested = getWebinarAuthorTeachers(context.program, teachers);
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop custom-record-email-backdrop";
     backdrop.dataset.webinarMessageComposer = "";
@@ -42053,7 +42069,7 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.innerHTML = `<section class="modal custom-record-email-dialog webinar-message-dialog" role="dialog" aria-modal="true" aria-labelledby="webinarMessageTitle">
       <header class="modal-head custom-record-email-head"><div><p class="eyebrow">Вебинар · ПРО</p><h2 id="webinarMessageTitle">${audience === "teacher" ? "Напоминание преподавателю" : "Напоминание слушателям"}</h2><p>${escapeHtml(context.program.name)}</p></div><button class="icon-button" type="button" data-webinar-close aria-label="Закрыть">×</button></header>
       <form class="custom-record-email-form"><div class="custom-record-email-body">
-        ${audience === "teacher" ? `<label>Преподаватель<select name="teacherId" required><option value="">Выберите сотрудника</option>${teachers.map((teacher) => `<option value="${escapeAttr(teacher.id)}" ${suggested.length === 1 && suggested[0].id === teacher.id ? "selected" : ""}>${escapeHtml(teacher.name)} — ${escapeHtml(teacher.email || "Email не указан")}${suggested.includes(teacher) ? " · указан в программе" : ""}</option>`).join("")}</select></label>` : ""}
+        ${audience === "teacher" ? `<label>Преподаватель<select name="teacherId" required><option value="">Выберите сотрудника</option>${teachers.map((teacher) => `<option value="${escapeAttr(teacher.id)}" ${suggested.length === 1 && suggested[0].id === teacher.id ? "selected" : ""}>${escapeHtml(teacher.name)} — ${escapeHtml(teacher.email || "Email не указан")}${suggested.includes(teacher) ? " · автор программы" : ""}</option>`).join("")}</select></label>` : ""}
         <div data-webinar-preview-summary></div>
         <label>Тема письма<input name="subject" maxlength="200" required></label>
         <label class="custom-record-email-message-field">Текст письма<textarea name="message" maxlength="100000" rows="12" required></textarea></label>
