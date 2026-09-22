@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.523",
+    version: "1.7.524",
     releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.524",
+      releasedAt: "2026-09-22",
+      changes: ["Слушатели «На зачисление» с доп. статусом «Отложенный старт» выделены в отдельную сворачиваемую группу. За 5 дней до даты начала обучения на рабочем столе появляется плитка с количеством ближайших и уже наступивших стартов и общим числом слушателей на зачисление. Нажатие открывает список с раскрытой группой; даты пересчитываются при смене дня."]
+    },
     {
       version: "1.7.523",
       releasedAt: "2026-09-22",
@@ -6179,7 +6184,8 @@ MAX - https://bizvmax.ru/zifra_plus
       DEFAULT_STUDENT_ADDITIONAL_STATUS,
       STUDENT_LEARNING_ADDITIONAL_STATUS,
       PRO_STUDENT_ADDITIONAL_STATUS,
-      PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS
+      PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS,
+      "На зачисление (отложенный старт)"
     ],
     fundingSources: ["Собственные средства", "За счет организации", "Федеральный бюджет", "Местный бюджет"],
     citizenships: [DEFAULT_CITIZENSHIP],
@@ -8399,6 +8405,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((expense, index) => normalizeGeneralExpenseRecord(expense, index));
     data.dictionaries.studentAdditionalStatuses = unique([
       ...(data.dictionaries.studentAdditionalStatuses || []),
+      "На зачисление (отложенный старт)",
       ...data.collections.students.map((student) => student.additionalStatus)
     ].map((value) => String(value || "").trim()).filter(Boolean));
     const directExpensePartition = attachDirectExpensesToStudentRecords(
@@ -19035,6 +19042,64 @@ MAX - https://bizvmax.ru/zifra_plus
     </button>`;
   }
 
+  function isStudentAwaitingEnrollment(student) {
+    return String(student?.status || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU") === "на зачисление";
+  }
+
+  function isStudentDeferredStart(student) {
+    const status = String(student?.additionalStatus || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU").replace(/ё/gu, "е");
+    return isStudentAwaitingEnrollment(student)
+      && (status === "отложенный старт" || status === "на зачисление (отложенный старт)");
+  }
+
+  function getDeferredStartSummary(students = state.data.collections.students || []) {
+    const awaiting = students.filter(isStudentAwaitingEnrollment);
+    const deferred = awaiting.filter(isStudentDeferredStart);
+    const due = deferred.map((record) => ({ record, days: calculateDaysUntilDate(record.startDate) }))
+      .filter((item) => Number.isFinite(item.days) && item.days <= 5);
+    return {
+      enrollmentCount: awaiting.length,
+      deferredCount: deferred.length,
+      dueCount: due.length,
+      upcomingCount: due.filter((item) => item.days > 0).length,
+      startedCount: due.filter((item) => item.days <= 0).length
+    };
+  }
+
+  function renderDeferredStartDashboardTile() {
+    const summary = getDeferredStartSummary();
+    if (!summary.dueCount) return "";
+    return `<button type="button" class="panel dashboard-attestation-tile dashboard-deferred-start-tile" data-action="open-deferred-start-students" title="Открыть слушателей на зачисление и группу «Отложенный старт». Срок рассчитывается по дате начала обучения.">
+      <span class="eyebrow">Отложенный старт</span><strong>${summary.dueCount}</strong>
+      <small>Старт в ближайшие 5 дней: ${summary.upcomingCount}${summary.startedCount ? `<br>Старт уже наступил: ${summary.startedCount}` : ""}</small>
+      <small>Всего на зачисление: <b>${summary.enrollmentCount}</b></small>
+    </button>`;
+  }
+
+  function openDeferredStartStudents() {
+    if (!canAccessView("students")) return;
+    pushStudentStatusHistory("На зачисление");
+    state.view = "students";
+    state.search = "";
+    state.statusFilter = "На зачисление";
+    state.studentProgramTypeFilter = [];
+    state.studentImportedViewIds = [];
+    state.studentListFilters = { programs: [], dateField: "", datePeriod: "", dateFrom: "", dateTo: "" };
+    state.studentListProgramQuery = "";
+    clearTableValueFilter("students");
+    saveRegistryGroupExpansion("students", ["deferred-start"], true);
+    state.sort = getStudentStatusTableSort(state.statusFilter);
+    state.tablePages.students = 1;
+    state.tableOptions = null;
+    render();
+  }
+
+  function refreshDashboardCalendarDay() {
+    if (state.view !== "dashboard" || state.modal || document.visibilityState === "hidden" || document.querySelector(".modal-backdrop")) return;
+    const tasks = document.querySelector("[data-dashboard-calendar-date]");
+    if (tasks && tasks.dataset.dashboardCalendarDate !== todayIso()) render();
+  }
+
   function renderDashboard() {
     const students = state.data.collections.students;
     const direct = sumBy(getAllDirectExpenses(), "amount");
@@ -19057,6 +19122,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .slice(0, 5)
       .map((item) => ({ ...item, daysRemaining: calculateDaysUntilDate(item.endDate) }));
     const attestationDashboardTile = renderAttestationDashboardTile();
+    const deferredStartDashboardTile = renderDeferredStartDashboardTile();
     const pendingIssuedDocuments = getIssuedDocumentRows()
       .filter((row) => row.frdoKey === "pending");
     const pendingIssuedDocumentDays = pendingIssuedDocuments
@@ -19090,7 +19156,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}" ${pendingIssuedDocuments.length || attestationDashboardTile ? "" : "hidden"}>
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile ? "" : "hidden"}>
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -19118,6 +19184,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ` : ""}
 
       ${attestationDashboardTile}
+      ${deferredStartDashboardTile}
       </div>
       <section class="panel">
         <div class="panel-head">
@@ -23991,11 +24058,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentListGroups(rows, programs = state.data.collections.programs || []) {
+    const deferred = { key: "deferred-start", label: "Отложенный старт", rows: [] };
     const pro = { key: "pro", label: "ПРО — прочие программы, вебинары, мастер-классы", rows: [], children: [] };
     const other = { key: "other", label: "Остальные программы — КПК, ППП, ДОП", rows: [] };
     const unknown = { key: "unknown", label: "Другие виды / вид программы не определён", rows: [] };
     const programGroups = new Map();
     rows.forEach((row) => {
+      if (isStudentDeferredStart(row)) {
+        deferred.rows.push(row);
+        return;
+      }
       const program = getStudentContextProgram(row, programs);
       const type = normalizeEducationProgramType(program?.type || row.educationType);
       if (type !== "ПРО") {
@@ -24011,7 +24083,7 @@ MAX - https://bizvmax.ru/zifra_plus
       programGroups.get(key).rows.push(row);
     });
     pro.children = [...programGroups.values()].sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
-    return [pro, other, unknown].filter((group) => group.rows.length);
+    return [deferred, pro, other, unknown].filter((group) => group.rows.length);
   }
 
   function getRegistryListGroupItems(configId, rows) {
@@ -41595,7 +41667,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getStudentTableGroups(rows) {
     const groups = getStudentListGroups(rows);
-    return groups.some((group) => group.key === "pro") ? groups : null;
+    return groups.some((group) => group.key === "pro" || group.key === "deferred-start") ? groups : null;
   }
 
   function getStudentProgramPromoField(program) {
@@ -44483,6 +44555,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindEvents() {
     document.querySelector("[data-action='open-attestation-tasks']")?.addEventListener("click", openAttestationTasksDialog);
+    document.querySelector("[data-action='open-deferred-start-students']")?.addEventListener("click", openDeferredStartStudents);
     bindDocumentWorkflowEvents();
     bindGlobalEscapeKey();
     bindSidebarOutsideClick();
@@ -75429,6 +75502,7 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     }
     window.setInterval(pollSharedApplicationState, SHARED_STATE_POLL_INTERVAL_MS);
+    window.setInterval(refreshDashboardCalendarDay, 60000);
     if (!isDatabaseDemoMode()) {
       window.setInterval(checkTrainingEndNotifications, TRAINING_END_NOTIFICATION_CHECK_INTERVAL_MS);
     }
@@ -75439,6 +75513,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     window.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible") return;
+      refreshDashboardCalendarDay();
       pollSharedApplicationState();
       if (!isDatabaseDemoMode()) {
         pollSharedRecordLocks();

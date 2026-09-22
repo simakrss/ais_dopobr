@@ -38,6 +38,7 @@ const context = {
   EMPLOYEE_PAYMENT_TABLE_CONFIG_ID: "employee", ISSUED_DOCUMENT_TABLE_CONFIG_ID: "issued"
 };
 vm.createContext(context);
+for (const name of ["isStudentAwaitingEnrollment", "isStudentDeferredStart"]) vm.runInContext(extract(name), context);
 for (const name of ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram", "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries", "renderStudentGroupRow", "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "getColumnWidth", "getRegistryColumnPercentages", "columnStyleAttr", "columnDataAttrs", "renderTable", "applyColumnWidthToDom", "getTableCellTooltipTarget"]) {
   vm.runInContext(extract(name), context);
 }

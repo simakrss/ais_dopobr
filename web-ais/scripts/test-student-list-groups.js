@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const names = ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram",
+  "isStudentAwaitingEnrollment", "isStudentDeferredStart",
   "getRegistryListGroupItems", "getRegistryCollapsedGroups", "saveRegistryGroupExpansion", "renderRegistryGroupControls", "setRegistryListGroupsExpanded", "bindRegistryGroupControls",
   "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
   "renderStudentGroupRow", "toggleStudentListGroup", "selectStudentListGroup", "bindStudentListGroups",
@@ -207,6 +208,33 @@ context.document = {querySelectorAll:()=>[{dataset:{config:"students",expanded:"
 context.bindRegistryGroupControls();
 bulkListeners.click();
 assert.equal(context.getExpandedStudentGroupRows(context.getStudentTableGroups(context.rows), context.getStudentCollapsedGroups()).length, 65);
+
+// Deferred starts form a separate group even when no PRO programs are visible.
+const oldRows = context.rows;
+context.rows = [
+  {id:"deferred-kpk",name:"Отложенный КПК",programId:"k",status:"На зачисление",additionalStatus:"На зачисление (отложенный старт)"},
+  {id:"deferred-pro",name:"Отложенный ПРО",programId:"a",status:"На зачисление",additionalStatus:"Отложенный старт"},
+  {id:"usual",name:"Обычный КПК",programId:"k",status:"На зачисление"},
+  {id:"learning",name:"Уже учится",programId:"k",status:"Учится",additionalStatus:"Отложенный старт"}
+];
+context.state.tableSettings = {};
+context.state.selected = {};
+let deferredGroups = context.getStudentTableGroups(context.rows);
+assert.deepEqual(Array.from(deferredGroups, group => group.key), ["deferred-start", "other"]);
+assert.deepEqual(ids(deferredGroups[0].rows), ["deferred-kpk", "deferred-pro"]);
+assert.equal(context.getStudentCollapsedGroups().has("deferred-start"), false, "Deferred starts are visible by default");
+assert.equal(context.getStudentTableGroups(context.rows.slice(2)), null, "No deferred or PRO rows: keep the flat list");
+context.selectStudentListGroup("deferred-start", true);
+assert.deepEqual(Array.from(context.getSelected("students")).sort(), ["deferred-kpk", "deferred-pro"]);
+context.toggleStudentListGroup("deferred-start");
+assert.equal(context.getStudentCollapsedGroups().has("deferred-start"), true);
+context.setTablePageForRow("students", "deferred-kpk");
+assert.equal(context.getStudentCollapsedGroups().has("deferred-start"), false, "Opening/returning to a student expands this group too");
+context.filter = "КПК";
+context.selectStudentListGroup("deferred-start", false);
+assert.deepEqual(Array.from(context.getSelected("students")), ["deferred-pro"], "Group selection respects filters");
+context.filter = "";
+context.rows = oldRows;
 console.log("PASS: student grouping, sorting, pagination, filtered/nested selection, persistence, return-to-row, escaping and DOM bindings");
 
 if (process.argv.includes("--serve")) {

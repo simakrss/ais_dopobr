@@ -3168,6 +3168,10 @@ html.is-database-demo-mode .contract-photo-path-field {
 
 .dashboard-document-tasks.without-frdo { grid-template-columns: 200px; }
 .dashboard-document-tasks.without-attestation { grid-template-columns: minmax(0, 1fr); }
+.dashboard-document-tasks.with-deferred-start { grid-template-columns: minmax(0, 1fr) 200px 200px; }
+.dashboard-document-tasks.with-deferred-start.without-attestation { grid-template-columns: minmax(0, 1fr) 200px; }
+.dashboard-document-tasks.with-deferred-start.without-frdo { grid-template-columns: 200px 200px; }
+.dashboard-document-tasks.with-deferred-start.without-frdo.without-attestation { grid-template-columns: 200px; }
 .dashboard-document-tasks[hidden] { display: none !important; }
 .dashboard-document-tasks .dashboard-frdo-widget {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(75px, 0.8fr) 28px;
@@ -3210,6 +3214,8 @@ html.is-database-demo-mode .contract-photo-path-field {
 .dashboard-attestation-tile > small { font-size: 11px; line-height: 1.25; }
 .dashboard-attestation-tile.has-pending-signatures > strong { font-size: 26px; }
 .dashboard-attestation-tile.has-pending-signatures > small { line-height: 1.15; }
+.dashboard-deferred-start-tile { border-top-color: #bd7a16; }
+.dashboard-deferred-start-tile > strong { color: #875609; font-size: 26px; }
 .attestation-signature-count { color: #875609; font-weight: 600; }
 .attestation-tasks-backdrop { z-index: 1900; }
 .attestation-tasks-backdrop[hidden] { display: none !important; }
@@ -3252,8 +3258,17 @@ html.is-database-demo-mode .contract-photo-path-field {
 .attestation-task-progress progress { width: 100%; accent-color: var(--teal); }
 .attestation-tasks-dialog > .modal-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
 .attestation-tasks-dialog > .modal-actions > span { margin-right: auto; }
+@media (max-width: 1100px) {
+  .dashboard-document-tasks.with-deferred-start:not(.without-frdo) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-document-tasks.with-deferred-start .dashboard-frdo-widget { grid-column: 1 / -1; }
+}
 @media (max-width: 850px) {
-  .dashboard-document-tasks { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-document-tasks,
+  .dashboard-document-tasks.with-deferred-start:not(.without-frdo) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .dashboard-document-tasks.with-deferred-start.without-frdo { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-deferred-start-tile { max-width: 100%; }
 }
 @media (max-width: 720px) {
   .dashboard-document-tasks .dashboard-frdo-widget { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px; height: auto; min-height: 100px; gap: 8px; }

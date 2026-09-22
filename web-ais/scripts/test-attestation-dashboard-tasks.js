@@ -89,18 +89,22 @@ async function main() {
   assert.match(completed.renderAttestationDashboardTile(), /<strong>1<\/strong>/, "A newly pending document restores the tile");
   const tileStart=source.indexOf('      <div class="dashboard-document-tasks '),tileEnd=source.indexOf('      <section class="panel">',tileStart);
   assert.ok(tileStart>0&&tileEnd>tileStart);
-  const renderTileRow=new Function('attestationDashboardTile','pendingIssuedDocuments',`
-    const frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0,frdoDeadlineLabel='',frdoDaysIndicatorLabel='',escapeHtml=value=>value;
+  const renderTileRow=new Function('attestationDashboardTile','pendingIssuedDocuments','deferredStartDashboardTile = ""',`
+    const frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0,frdoDeadlineLabel='',frdoDaysIndicatorLabel='',escapeHtml=value=>value,todayIso=()=>"2026-09-22";
     return \`${source.slice(tileStart,tileEnd)}\`;
   `);
   const noTiles=renderTileRow('',[]);
-  assert.match(noTiles,/without-frdo without-attestation" hidden>/);
+  assert.match(noTiles,/without-frdo without-attestation"[^>]* hidden>/);
   assert.doesNotMatch(noTiles,/<button/);
-  assert.match(renderTileRow('',[{}]),/without-attestation" >/);
+  assert.match(renderTileRow('',[{}]),/without-attestation"[^>]* >/);
   assert.match(renderTileRow('',[{}]),/dashboard-frdo-widget/);
   assert.doesNotMatch(renderTileRow('',[{}]),/open-attestation-tasks/);
   assert.match(renderTileRow(c.renderAttestationDashboardTile(),[]),/without-frdo "/);
   assert.doesNotMatch(renderTileRow(c.renderAttestationDashboardTile(),[]),/dashboard-frdo-widget|without-attestation|hidden/);
+  const deferredOnly=renderTileRow('',[],'<button>Отложенный старт</button>');
+  assert.match(deferredOnly,/with-deferred-start/);
+  assert.doesNotMatch(deferredOnly,/hidden/);
+  assert.match(renderTileRow(c.renderAttestationDashboardTile(),[{}],'<button>Отложенный старт</button>'),/with-deferred-start/);
   const css=fs.readFileSync(path.join(root,'styles.css'),'utf8');
   assert.match(css,/\.dashboard-document-tasks\.without-attestation\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css,/\.dashboard-document-tasks\[hidden\]\s*\{\s*display: none !important/);
@@ -310,6 +314,7 @@ main().then(()=>{
   assert.ok(start>0&&end>start);
   const dashboardFixture=`function renderFixtureDocumentTasks(){
     const attestationDashboardTile=renderAttestationDashboardTile();
+    const deferredStartDashboardTile='',todayIso=()=>"2026-09-22";
     const pendingIssuedDocuments=Array(6).fill({}),frdoWidgetTone='',frdoDeadlineDays=30,overdueIssuedDocumentsCount=0;
     const frdoDeadlineLabel='До ближайшего срока: 28 дн.',frdoDaysIndicatorLabel='Осталось дней: 28';
     return \`${source.slice(start,end)}\`;
