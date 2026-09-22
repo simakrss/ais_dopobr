@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.524",
+    version: "1.7.525",
     releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.525",
+      releasedAt: "2026-09-22",
+      changes: ["В списке слушателей вместо телефона отображается дата начала обучения, а колонка «Остаток» перенесена в конец. Сохранённый вид таблицы обновляется без сброса остальных настроек; телефон остаётся в карточке слушателя."]
+    },
     {
       version: "1.7.524",
       releasedAt: "2026-09-22",
@@ -4244,7 +4249,7 @@
   const CONTRACTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-contracts-table-layout-v1";
   const CONTRACTS_TABLE_LAYOUT_VERSION = "agency-after-services";
   const STUDENTS_TABLE_LAYOUT_VERSION_KEY = "ais-dopobr-students-table-layout-v1";
-  const STUDENTS_TABLE_LAYOUT_VERSION = "days-until-end-replaces-documents";
+  const STUDENTS_TABLE_LAYOUT_VERSION = "start-date-replaces-phone-balance-last";
   const STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID = "studentApplicationsImport";
   const STUDENT_APPLICATIONS_IMPORT_DEFAULT_SORT = Object.freeze({ key: "date", dir: "desc" });
   const TABLE_VALUE_FILTER_HOVER_DELAY_MS = 1000;
@@ -5981,7 +5986,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status: 110,
       program: 310,
       applicationDate: 105,
-      phone: 120,
+      startDate: 105,
       balance: 82,
       endDate: 105,
       daysUntilEnd: 105
@@ -6395,7 +6400,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("manager", "Ответственный"),
         field("tags", "Теги", "textarea")
       ],
-      table: ["name", "status", "program", "applicationDate", "phone", "balance", "endDate", "daysUntilEnd"]
+      table: ["name", "status", "program", "applicationDate", "startDate", "endDate", "daysUntilEnd", "balance"]
     },
     contracts: {
       title: "Сотрудники",
@@ -13405,6 +13410,21 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
+  function migrateStudentTableSettings(current = {}) {
+    const baseOrder = configs.students.table;
+    const savedOrder = Array.isArray(current.order)
+      ? current.order.map((key) => key === "documentsStatus" ? "daysUntilEnd" : key === "phone" ? "startDate" : key)
+        .filter((key) => baseOrder.includes(key))
+      : [];
+    const order = [...unique([...savedOrder, ...baseOrder]).filter((key) => key !== "balance"), "balance"];
+    const widths = { ...(current.widths || {}) };
+    if (widths.documentsStatus !== undefined && widths.daysUntilEnd === undefined) widths.daysUntilEnd = widths.documentsStatus;
+    if (widths.phone !== undefined && widths.startDate === undefined) widths.startDate = widths.phone;
+    delete widths.documentsStatus;
+    delete widths.phone;
+    return { ...current, order, widths };
+  }
+
   function loadTableSettings() {
     const saved = localStorage.getItem(TABLE_SETTINGS_KEY);
     let settings = {};
@@ -13418,20 +13438,12 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = settings.students && typeof settings.students === "object"
         ? settings.students
         : {};
-      const order = Array.isArray(current.order)
-        ? current.order.map((key) => key === "documentsStatus" ? "daysUntilEnd" : key)
-        : [];
-      const widths = { ...(current.widths || {}) };
-      if (widths.documentsStatus !== undefined && widths.daysUntilEnd === undefined) {
-        widths.daysUntilEnd = widths.documentsStatus;
-      }
-      delete widths.documentsStatus;
-      settings.students = { ...current, order: unique(order), widths };
+      settings.students = migrateStudentTableSettings(current);
       try {
         localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(settings));
         localStorage.setItem(STUDENTS_TABLE_LAYOUT_VERSION_KEY, STUDENTS_TABLE_LAYOUT_VERSION);
       } catch (error) {
-        console.warn("Не удалось сохранить новую колонку срока обучения слушателей", error);
+        console.warn("Не удалось сохранить новый порядок колонок слушателей", error);
       }
     }
     if (localStorage.getItem(DIRECT_EXPENSES_TABLE_LAYOUT_VERSION_KEY) !== DIRECT_EXPENSES_TABLE_LAYOUT_VERSION) {
