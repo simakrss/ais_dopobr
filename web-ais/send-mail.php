@@ -623,6 +623,17 @@ function send_smtp_mail(
     }
 }
 
+function apply_email_receipt_override(array $settings, array $data): array
+{
+    if (array_key_exists('requestDeliveryAndReadReceipts', $data)) {
+        if (!is_bool($data['requestDeliveryAndReadReceipts'])) {
+            throw new InvalidArgumentException('Некорректная настройка уведомлений о доставке и прочтении.');
+        }
+        $settings['requestDeliveryAndReadReceipts'] = $data['requestDeliveryAndReadReceipts'];
+    }
+    return $settings;
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     header('Allow: POST');
     send_json(405, ['ok' => false, 'error' => 'Разрешен только POST-запрос.']);
@@ -709,7 +720,7 @@ $attachmentAuditText = count($attachmentFileNames) > 0
     : 'Без вложений';
 
 try {
-    $settings = load_mail_settings();
+    $settings = apply_email_receipt_override(load_mail_settings(), $data);
     $receiptStatus = send_smtp_mail($settings, $to, $subject, $message, $attachments);
     ais_audit_try_append([
         'action' => 'Отправлено письмо',

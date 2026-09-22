@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const vm = require("node:vm");
+const { spawnSync } = require("node:child_process");
 
 const {
   smtpResponseSupportsExtension,
@@ -171,7 +173,95 @@ async function testSmtpBackpressure() {
   assert.equal(writeSettled, true);
 }
 
-testSmtpBackpressure().then(() => {
+async function testPerMessageReceiptOptions() {
+  const clientSend = appSource.match(/^  async function sendServerEmail\([\s\S]*?^  \}\r?$/mu)?.[0];
+  const smtpSend = serverSource.match(/^async function sendEmailThroughConfiguredMailbox\([\s\S]*?^\}\r?$/mu)?.[0];
+  assert.ok(clientSend && smtpSend, "Use production client and SMTP functions");
+  const bodies = [];
+  const send = vm.runInNewContext(`(${clientSend})`, {
+    state: {},
+    normalizeServerEmailSubject: String,
+    resolveServerEmailRecipient: email => ({ recipient: email, sendToSystemMailbox: false }),
+    fetchWithTimeout: async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return { response: { ok: true }, payload: { ok: true } };
+    }
+  });
+  for (const choice of [undefined, true, false]) {
+    assert.equal(await send({
+      email: recipient, subject: "Вебинар", message: "Напоминание",
+      entityId: "test", entityName: "Тест", quiet: true, skipConfirmation: true,
+      requestDeliveryAndReadReceipts: choice
+    }), true);
+    assert.equal(bodies.at(-1).requestDeliveryAndReadReceipts, choice);
+    assert.equal(Object.hasOwn(bodies.at(-1), "requestDeliveryAndReadReceipts"), choice !== undefined);
+  }
+  assert.match(serverSource, /requestDeliveryAndReadReceipts: body\.requestDeliveryAndReadReceipts/u);
+  for (const defaultValue of [true, false]) {
+    for (const supportsDsn of [true, false]) {
+      for (const choice of [undefined, true, false]) {
+        const settings = Object.freeze({ login: sender, requestDeliveryAndReadReceipts: defaultValue });
+        const commands = []; const data = [];
+        const smtp = vm.runInNewContext(`(${smtpSend})`, {
+          createEmailEnvelopeCommands, createEmailMessage, SMTP_MESSAGE_TIMEOUT_MS: 60000,
+          assertSmtpResponse: response => assert.equal(response.code, 250),
+          runAuthenticatedSmtpSession: callback => callback({
+            settings, supportsDsn,
+            writeCommand: async command => commands.push(command),
+            writeData: async value => data.push(value),
+            waitForResponse: async () => ({ code: 250 })
+          })
+        });
+        const effective = choice ?? defaultValue;
+        const result = await smtp({ to: recipient, subject: "Вебинар", message: "Тест", requestDeliveryAndReadReceipts: choice });
+        assert.equal(result.requestDeliveryAndReadReceipts, effective, "Audit must use the per-message choice");
+        assert.equal(result.readReceiptRequested, effective);
+        assert.equal(result.deliveryReceiptRequested, effective && supportsDsn);
+        assert.equal(commands[0].includes("RET=HDRS"), effective && supportsDsn);
+        assert.equal(commands[1].includes("NOTIFY=SUCCESS,FAILURE,DELAY"), effective && supportsDsn);
+        assert.equal(data[0].includes("Disposition-Notification-To:"), effective);
+        assert.equal(settings.requestDeliveryAndReadReceipts, defaultValue, "Global settings are not changed");
+      }
+    }
+  }
+  const invalidSmtp = vm.runInNewContext(`(${smtpSend})`, {
+    runAuthenticatedSmtpSession: () => assert.fail("Invalid values must be rejected before connecting to SMTP")
+  });
+  for (const invalid of [null, "false", "true", 0, 1, [], {}]) {
+    await assert.rejects(invalidSmtp({ requestDeliveryAndReadReceipts: invalid }), /Некорректная настройка/u);
+  }
+
+  const phpHelper = phpSource.match(/^function apply_email_receipt_override\([\s\S]*?^\}/mu)?.[0];
+  assert.ok(phpHelper);
+  assert.match(phpSource, /\$settings = apply_email_receipt_override\(load_mail_settings\(\), \$data\);/u);
+  const phpScript = `declare(strict_types=1);\n${phpHelper}\n
+      $results = [];
+      foreach ([true, false] as $default) {
+        $settings = ['requestDeliveryAndReadReceipts' => $default];
+        foreach ([[], ['requestDeliveryAndReadReceipts' => true], ['requestDeliveryAndReadReceipts' => false]] as $data) {
+          $result = apply_email_receipt_override($settings, $data);
+          $results[] = [$result['requestDeliveryAndReadReceipts'], $settings['requestDeliveryAndReadReceipts']];
+        }
+      }
+      $rejected = 0;
+      foreach ([null, 'false', 'true', 0, 1, [], new stdClass()] as $invalid) {
+        try { apply_email_receipt_override([], ['requestDeliveryAndReadReceipts' => $invalid]); }
+        catch (InvalidArgumentException $error) { $rejected++; }
+      }
+      echo json_encode(['results' => $results, 'rejected' => $rejected]);`;
+  const phpTest = spawnSync(process.env.PHP_BINARY || "php", ["-r", phpScript], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert.ifError(phpTest.error);
+  assert.equal(phpTest.status, 0, phpTest.stderr);
+  assert.deepEqual(JSON.parse(phpTest.stdout), {
+    results: [[true, true], [true, true], [false, true], [false, false], [true, false], [false, false]],
+    rejected: 7
+  });
+}
+
+testSmtpBackpressure().then(testPerMessageReceiptOptions).then(() => {
   console.log("Email delivery/read receipt request tests passed.");
 }).catch((error) => {
   console.error(error);

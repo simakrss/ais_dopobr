@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.526",
+    version: "1.7.527",
     releasedAt: "2026-09-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.527",
+      releasedAt: "2026-09-22",
+      changes: ["В окна отправки напоминаний слушателям и преподавателю добавлен флажок запроса уведомлений о доставке и прочтении. Его исходное состояние берётся из общих настроек почты; изменение действует только для текущей отправки и учитывается в локальном и серверном режимах."]
+    },
     {
       version: "1.7.526",
       releasedAt: "2026-09-22",
@@ -41981,6 +41986,7 @@ MAX - https://bizvmax.ru/zifra_plus
       try {
         sent = await sendServerEmail({
           email: recipient.email, subject: content.subject, message: content.message,
+          requestDeliveryAndReadReceipts: content.requestDeliveryAndReadReceipts,
           entityType: context.audience === "teacher" ? "contracts" : "students",
           entityId: recipient.id, entityName: recipient.name,
           recipientMode: context.audience === "teacher" ? "employee" : "student",
@@ -42073,6 +42079,11 @@ MAX - https://bizvmax.ru/zifra_plus
         <div data-webinar-preview-summary></div>
         <label>Тема письма<input name="subject" maxlength="200" required></label>
         <label class="custom-record-email-message-field">Текст письма<textarea name="message" maxlength="100000" rows="12" required></textarea></label>
+        <label class="webinar-recipient-choice">
+          <input type="checkbox" name="requestDeliveryAndReadReceipts" ${state.data.meta?.emailRequestDeliveryAndReadReceipts !== false ? "checked" : ""} aria-describedby="webinarReceiptHint">
+          <span>Запрашивать уведомления о доставке и прочтении</span>
+        </label>
+        <p class="muted" id="webinarReceiptHint">Только для этой отправки. Уведомление о доставке зависит от поддержки почтового сервера, а о прочтении — от почтовой программы и согласия получателя.</p>
         <p class="muted">Проверьте текст и получателей. Письма отправляются отдельно через системную почту с паузой 3,5 секунды и фиксируются в журнале действий. Не закрывайте вкладку до завершения. Повторное открытие и отправка создадут новые письма.</p>
         <div data-webinar-send-results></div>
       </div><footer class="custom-record-email-footer webinar-message-footer"><span data-webinar-send-status role="status" aria-live="polite"></span><button class="ghost-button" type="button" data-webinar-refresh>Обновить предпросмотр</button><button class="ghost-button" type="button" data-webinar-stop hidden>Остановить</button><button class="primary-button" type="submit">Отправить</button><button class="icon-button" type="button" data-webinar-close aria-label="Закрыть">×</button></footer></form>
@@ -42175,7 +42186,10 @@ MAX - https://bizvmax.ru/zifra_plus
       event.preventDefault();
       if (sending || attempted || sendButton.disabled || !form.reportValidity()) return;
       sending = true;
-      const content = { subject: form.elements.subject.value.trim(), message: form.elements.message.value.trim() };
+      const content = {
+        subject: form.elements.subject.value.trim(), message: form.elements.message.value.trim(),
+        requestDeliveryAndReadReceipts: form.elements.requestDeliveryAndReadReceipts.checked
+      };
       form.querySelectorAll("input, textarea, select").forEach((control) => { control.disabled = true; });
       sendButton.disabled = true; refreshButton.disabled = true; stopButton.hidden = false;
       form.setAttribute("aria-busy", "true");
@@ -42225,6 +42239,7 @@ MAX - https://bizvmax.ru/zifra_plus
     entityType = "students",
     entityId = "",
     entityName = "",
+    requestDeliveryAndReadReceipts,
     quiet = false
   }) {
     const normalizedSubject = normalizeServerEmailSubject(subject);
@@ -42277,6 +42292,7 @@ MAX - https://bizvmax.ru/zifra_plus
           to: recipient,
           subject: normalizedSubject,
           message: String(message).trim(),
+          ...(typeof requestDeliveryAndReadReceipts === "boolean" ? { requestDeliveryAndReadReceipts } : {}),
           ...(resolvedAttachment ? { attachment: resolvedAttachment } : {}),
           ...(Array.isArray(resolvedAttachments) && resolvedAttachments.length
             ? { attachments: resolvedAttachments }

@@ -245,6 +245,19 @@ async function test() {
   assert.ok(h.calls.every(call => call.skipConfirmation && call.quiet && call.recipientMode === "student" && call.entityType === "students" && call.entityId));
   await c.deliverWebinarMessages(teacher, content);
   assert.equal(h.calls[2].entityType, "contracts"); assert.equal(h.calls[2].email, "teacher@example.test");
+  for (const audience of ["students", "teacher"]) {
+    for (const requestDeliveryAndReadReceipts of [true, false]) {
+      const b = harness();
+      const preview = b.c.getWebinarMessageContext("pro", audience, audience === "teacher" ? "t1" : "");
+      await b.c.deliverWebinarMessages(preview, { ...content, requestDeliveryAndReadReceipts });
+      assert.equal(b.calls.length, audience === "teacher" ? 1 : 2);
+      assert.ok(b.calls.every(call => call.requestDeliveryAndReadReceipts === requestDeliveryAndReadReceipts));
+    }
+  }
+  assert.equal(h.calls[0].requestDeliveryAndReadReceipts, undefined, "Omitted choice preserves global settings");
+  assert.match(functions.get("openWebinarMessageComposer"), /name="requestDeliveryAndReadReceipts"/u);
+  assert.match(functions.get("openWebinarMessageComposer"), /state\.data\.meta\?\.emailRequestDeliveryAndReadReceipts !== false/u);
+  assert.match(functions.get("openWebinarMessageComposer"), /requestDeliveryAndReadReceipts: form\.elements\.requestDeliveryAndReadReceipts\.checked/u);
   await assert.rejects(c.deliverWebinarMessages(context, {subject:"",message:"text"}));
   await assert.rejects(c.deliverWebinarMessages(context, {subject:"x".repeat(201),message:"text"}));
   await assert.rejects(c.deliverWebinarMessages(context, {subject:"title",message:"ю".repeat(50001)}));
@@ -309,7 +322,7 @@ function serveFixture() {
   let lastKnownClipboardText='';const readFieldClipboardText=async()=>'';
   const hideStudentDocumentRecognitionFieldMenu=()=>{};
   let calls=0;
-  const sendServerEmail=async args=>{calls++;document.getElementById('testMailLog').textContent='Тестовых отправок: '+calls+'; получатель: '+args.email;return true;};
+  const sendServerEmail=async args=>{calls++;document.getElementById('testMailLog').textContent='Тестовых отправок: '+calls+'; получатель: '+args.email+'; уведомления: '+args.requestDeliveryAndReadReceipts;return true;};
   ${production}
   bindWebinarMessageActions();
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented){const popup=document.querySelector('[data-field-copy-popup]');const formula=document.querySelector('[data-card-field-formula-dialog]');if(popup)hideFieldCopyPopup();else if(formula)formula.closeCardFieldFormulaDialog();else document.querySelector('[data-webinar-message-composer]')?.closeWebinarMessageComposer();}});

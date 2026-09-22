@@ -25521,8 +25521,12 @@ async function sendEmailThroughConfiguredMailbox({
   message,
   attachment,
   attachments,
+  requestDeliveryAndReadReceipts,
   idempotencyKey = ""
 }) {
+  if (requestDeliveryAndReadReceipts !== undefined && typeof requestDeliveryAndReadReceipts !== "boolean") {
+    throw new Error("Некорректная настройка уведомлений о доставке и прочтении.");
+  }
   return runAuthenticatedSmtpSession(async ({
     settings,
     writeCommand,
@@ -25533,10 +25537,11 @@ async function sendEmailThroughConfiguredMailbox({
     if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(settings.login) || /[\r\n]/u.test(settings.login)) {
       throw new Error("Логин исходящего почтового ящика должен быть адресом электронной почты.");
     }
+    const requestReceipts = requestDeliveryAndReadReceipts ?? settings.requestDeliveryAndReadReceipts;
     const envelope = createEmailEnvelopeCommands({
       from: settings.login,
       to,
-      requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts,
+      requestDeliveryAndReadReceipts: requestReceipts,
       supportsDsn
     });
     await writeCommand(envelope.mailFrom, 250, "Адрес отправителя");
@@ -25551,7 +25556,7 @@ async function sendEmailThroughConfiguredMailbox({
         message,
         attachment,
         attachments,
-        requestDeliveryAndReadReceipts: settings.requestDeliveryAndReadReceipts,
+        requestDeliveryAndReadReceipts: requestReceipts,
         idempotencyKey
       })}\r\n.\r\n`, "Передача письма", SMTP_MESSAGE_TIMEOUT_MS);
       deliveryResponse = await waitForResponse("Отправка письма", SMTP_MESSAGE_TIMEOUT_MS);
@@ -25565,9 +25570,10 @@ async function sendEmailThroughConfiguredMailbox({
     assertSmtpResponse(deliveryResponse, 250, "Отправка письма");
     return {
       ...settings,
+      requestDeliveryAndReadReceipts: requestReceipts,
       dsnSupported: Boolean(supportsDsn),
       deliveryReceiptRequested: envelope.requestDeliveryReceipt,
-      readReceiptRequested: Boolean(settings.requestDeliveryAndReadReceipts)
+      readReceiptRequested: Boolean(requestReceipts)
     };
   });
 }
@@ -39728,7 +39734,10 @@ async function handleServerEmail(req, res, authUser) {
     }
     const attachments = normalizeServerEmailAttachments(body);
     auditAttachmentNames = attachments.map((item) => item.fileName);
-    const settings = await sendEmailThroughConfiguredMailbox({ to, subject, message, attachments });
+    const settings = await sendEmailThroughConfiguredMailbox({
+      to, subject, message, attachments,
+      requestDeliveryAndReadReceipts: body.requestDeliveryAndReadReceipts
+    });
     const messageType = auditText(auditContext.messageType, 240) || "Письмо";
     const recipientMode = auditContext.recipientMode === "system"
       ? "системный ящик"
