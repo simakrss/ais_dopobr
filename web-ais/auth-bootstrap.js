@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20260923-employee-users-list-v1";
+  const AUTH_BUILD = "20260923-shared-user-roles-v1";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
@@ -139,6 +139,12 @@
     databaseDemoModeHeartbeatRunning = true;
     try {
       const payload = await request("api/auth/me");
+      if (payload.user && (payload.user.role !== authenticatedUser?.role || payload.user.id !== authenticatedUser?.id)) {
+        app.innerHTML = "";
+        app.style.visibility = "hidden";
+        window.location.reload();
+        return true;
+      }
       if (typeof payload.demoModeEnabled === "boolean") {
         return handleExternalDatabaseDemoMode(payload.demoModeEnabled);
       }

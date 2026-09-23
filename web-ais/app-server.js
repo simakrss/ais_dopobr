@@ -1675,6 +1675,7 @@ function publicAuthUser(user) {
     login: String(user?.login || ""),
     name: String(user?.name || ""),
     role: String(user?.role || "manager"),
+    sharedRoleVersion: String(user?.sharedRoleVersion || "0"),
     status: String(user?.status || "blocked"),
     email: String(user?.email || ""),
     phone: String(user?.phone || ""),
@@ -2102,7 +2103,7 @@ async function getRequestAuthUser(req) {
     }).catch(() => null);
     return employee
       ? {
-          ...publicPartnerAuthUser(employee),
+          ...publicAuthUser(await resolveSharedAuthUser(publicPartnerAuthUser(employee))),
           sessionExpiresAt: Number(session.expiresAt) || 0,
           authSessionKey: `node:${tokenHash}`
         }
@@ -2117,7 +2118,7 @@ async function getRequestAuthUser(req) {
   }
   return user
     ? {
-        ...publicAuthUser(user),
+        ...publicAuthUser(await resolveSharedAuthUser(user)),
         sessionExpiresAt: Number(session.expiresAt) || 0,
         authSessionKey: `node:${tokenHash}`
       }
@@ -2194,6 +2195,7 @@ async function handleAuthLogin(req, res) {
     && users[index].status === "active"
     && authVerifyPassword(body.password, users[index].passwordHash)
   ) {
+    users[index] = await resolveSharedAuthUser(users[index]);
     users[index].lastLoginAt = new Date().toISOString();
     await saveAuthUsers(users);
     const session = await createAuthSession(users[index]);
@@ -2236,7 +2238,7 @@ async function handleAuthLogin(req, res) {
     sendError(res, 401, "Неверный логин или пароль.");
     return;
   }
-  const partnerUser = publicPartnerAuthUser(employee);
+  const partnerUser = await resolveSharedAuthUser(publicPartnerAuthUser(employee));
   const session = await createAuthSession(partnerUser);
   await safelyAppendAuditEntry({
     action: "Вход в систему",
@@ -2270,7 +2272,7 @@ async function handleAuthMe(req, res, user) {
 }
 
 async function handleAuthLogout(req, res) {
-  const user = await getRequestAuthUser(req);
+  const user = await getRequestAuthUser(req).catch(() => null);
   if (user) {
     await safelyAppendAuditEntry({
       action: "Выход из системы",
@@ -2295,6 +2297,7 @@ async function handleAuthProfile(req, res, user) {
   const users = await loadAuthUsers();
   const index = users.findIndex((item) => item.id === user.id);
   if (index < 0) throw new Error("Пользователь не найден.");
+  users[index] = await resolveSharedAuthUser(users[index]);
   users[index].email = validateAuthEmail(body.email);
   users[index].phone = validateAuthPhone(body.phone);
   users[index].updatedAt = new Date().toISOString();
@@ -2439,6 +2442,7 @@ async function handleAdminUsers(req, res, user) {
   }
   const activeAdmins = users.filter((item) => item.role === "admin" && item.status === "active").length;
   if (!activeAdmins) throw new Error("В системе должен оставаться хотя бы один активный администратор.");
+  users[index] = await saveSharedAuthRole(users[index], sharedAuthRoleExpectedVersion(before, users[index], body.sharedRoleVersion), user.login);
   await saveAuthUsers(users);
   const saved = publicAuthUser(users[index]);
   const changes = [];
@@ -37006,11 +37010,144 @@ function synchronizeAuthUsersWithEmployees(users = [], contracts = [], options =
 
 let authEmployeeSyncInFlight = null;
 
+// Roles are shared; credentials and contract-dependent blocking remain local.
+const sharedAuthRoleTables = new WeakSet();
+
+function sharedAuthRoleIdentity(user) {
+  const login = normalizeAuthLogin(user?.login);
+  const kind = user?.employeeId || user?.authSource === "employee" ? "employee" : "manual";
+  return { login, kind, key: crypto.createHash("sha256").update(`${kind}\0${login}`).digest("hex") };
+}
+
+function applySharedAuthRole(user, row) {
+  const identity = sharedAuthRoleIdentity(user);
+  if (!row) return { ...user, sharedRoleVersion: "0" };
+  const allowed = identity.kind === "employee" ? ["partner", "manager"] : ["manager", "admin"];
+  if (row.principal_key !== identity.key || !allowed.includes(row.role)) {
+    throw new Error("Некорректное общее назначение роли. Обратитесь к администратору.");
+  }
+  return { ...user, role: row.role, sharedRoleVersion: String(row.revision),
+    ...(identity.kind === "employee" ? { employeeRoleOverride: row.role } : {}) };
+}
+
+function sharedAuthRoleExpectedVersion(before, after, requestedVersion) {
+  const expected = String(requestedVersion ?? "0");
+  if (!before || sharedAuthRoleIdentity(before).key === sharedAuthRoleIdentity(after).key) return expected;
+  if (expected !== String(before.sharedRoleVersion || "0")) {
+    const error = new Error("Роль уже изменена. Обновите список пользователей перед изменением логина или привязки.");
+    error.statusCode = 409;
+    throw error;
+  }
+  return "0";
+}
+
+async function ensureSharedAuthRoleTable(pool) {
+  if (sharedAuthRoleTables.has(pool)) return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS ais_auth_roles (
+    state_key VARCHAR(64) NOT NULL,
+    principal_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    login VARCHAR(64) NOT NULL,
+    principal_type VARCHAR(16) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    revision BIGINT UNSIGNED NOT NULL DEFAULT 1,
+    updated_at DATETIME(3) NOT NULL,
+    updated_by VARCHAR(160) NOT NULL DEFAULT '',
+    PRIMARY KEY (state_key, principal_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  sharedAuthRoleTables.add(pool);
+}
+
+async function resolveSharedAuthUser(user, poolOverride) {
+  if (isDatabaseDemoModeEnabled()) return user;
+  const pool = poolOverride || await getSharedRecordLocksMySqlPool();
+  if (!pool) return applySharedAuthRole(user, null);
+  await ensureSharedAuthRoleTable(pool);
+  const [rows] = await pool.query("SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key = ?",
+    [SHARED_STATE_MYSQL_KEY, sharedAuthRoleIdentity(user).key]);
+  if (rows[0]) return applySharedAuthRole(user, rows[0]);
+  await initializeSharedAuthRoles([user], pool);
+  const [created] = await pool.query("SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key = ?",
+    [SHARED_STATE_MYSQL_KEY, sharedAuthRoleIdentity(user).key]);
+  return applySharedAuthRole(user, created[0]);
+}
+
+async function resolveSharedAuthUsers(users, poolOverride) {
+  if (isDatabaseDemoModeEnabled()) return users;
+  const pool = poolOverride || await getSharedRecordLocksMySqlPool();
+  if (!pool) return users.map(user => applySharedAuthRole(user, null));
+  await ensureSharedAuthRoleTable(pool);
+  const [rows] = await pool.query("SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ?", [SHARED_STATE_MYSQL_KEY]);
+  const roles = new Map(rows.map(row => [row.principal_key, row]));
+  const missing = users.filter(user => !roles.has(sharedAuthRoleIdentity(user).key));
+  if (missing.length) {
+    await initializeSharedAuthRoles(missing, pool);
+    const [created] = await pool.query("SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ?", [SHARED_STATE_MYSQL_KEY]);
+    created.forEach(row => roles.set(row.principal_key, row));
+  }
+  return users.map(user => applySharedAuthRole(user, roles.get(sharedAuthRoleIdentity(user).key)));
+}
+
+async function initializeSharedAuthRoles(users, pool) {
+  await ensureSharedAuthRoleTable(pool);
+  for (const user of users) {
+    const identity = sharedAuthRoleIdentity(user);
+    validateAuthLogin(identity.login);
+    applySharedAuthRole(user, { principal_key: identity.key, role: user.role, revision: 1 });
+    // Only the initial import creates a row. Stale/offline copies NEVER update it.
+    await pool.query(`INSERT IGNORE INTO ais_auth_roles
+      (state_key, principal_key, login, principal_type, role, revision, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 1, UTC_TIMESTAMP(3), 'initial-import')`,
+      [SHARED_STATE_MYSQL_KEY, identity.key, identity.login, identity.kind, user.role]);
+  }
+}
+
+async function saveSharedAuthRole(user, expectedVersion, actorLogin, poolOverride) {
+  const identity = sharedAuthRoleIdentity(user);
+  validateAuthLogin(identity.login);
+  // Reuse the same strict role validation as reads, including the employee/admin boundary.
+  applySharedAuthRole(user, { principal_key: identity.key, role: user.role, revision: 1 });
+  const pool = poolOverride || await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Не настроено общее хранилище ролей. Настройте подключение MySQL.");
+  await ensureSharedAuthRoleTable(pool);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    // Create a locked slot without changing an existing role or its version.
+    await connection.query(`INSERT INTO ais_auth_roles
+      (state_key, principal_key, login, principal_type, role, revision, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(3), ?)
+      ON DUPLICATE KEY UPDATE principal_key = VALUES(principal_key)`,
+      [SHARED_STATE_MYSQL_KEY, identity.key, identity.login, identity.kind, user.role, String(actorLogin || "").slice(0, 160)]);
+    const [rows] = await connection.query("SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key = ? FOR UPDATE",
+      [SHARED_STATE_MYSQL_KEY, identity.key]);
+    const row = rows[0];
+    if (String(row.revision) !== String(expectedVersion ?? "0")) {
+      const error = new Error("Роль уже изменена на сайте или другом компьютере. Закройте окно, обновите список пользователей и повторите изменение.");
+      error.statusCode = 409;
+      throw error;
+    }
+    await connection.query(`UPDATE ais_auth_roles SET role = ?, revision = revision + 1,
+      updated_at = UTC_TIMESTAMP(3), updated_by = ? WHERE state_key = ? AND principal_key = ?`,
+      [user.role, String(actorLogin || "").slice(0, 160), SHARED_STATE_MYSQL_KEY, identity.key]);
+    const result = applySharedAuthRole(user, { ...row, role: user.role, revision: String(BigInt(row.revision) + 1n) });
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 function synchronizeStoredAuthUsersWithEmployees() {
   if (authEmployeeSyncInFlight) return authEmployeeSyncInFlight;
   const operation = (async () => {
     const [users, contracts] = await Promise.all([loadAuthUsers(), readEmployeeAuthContracts()]);
-    const result = synchronizeAuthUsersWithEmployees(users, contracts);
+    const sharedUsers = await resolveSharedAuthUsers(users);
+    const result = synchronizeAuthUsersWithEmployees(sharedUsers, contracts);
+    result.users = await resolveSharedAuthUsers(result.users);
+    result.changed ||= JSON.stringify(result.users) !== JSON.stringify(users);
     if (result.changed) await saveAuthUsers(result.users);
     return result;
   })();
@@ -39943,13 +40080,13 @@ async function route(req, res) {
         await handleAuthLogin(req, res);
         return;
       }
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/logout") {
+        await handleAuthLogout(req, res);
+        return;
+      }
       const authUser = await getRequestAuthUser(req);
       if (req.method === "GET" && requestUrl.pathname === "/api/auth/me") {
         await handleAuthMe(req, res, authUser);
-        return;
-      }
-      if (req.method === "POST" && requestUrl.pathname === "/api/auth/logout") {
-        await handleAuthLogout(req, res);
         return;
       }
       if (!authUser) {
@@ -40067,7 +40204,7 @@ async function route(req, res) {
     try {
       await handleAdminUsers(req, res, authUser);
     } catch (error) {
-      sendError(res, 400, error.message);
+      sendError(res, Number(error.statusCode) || 400, error.message);
     }
     return;
   }
@@ -40586,6 +40723,15 @@ module.exports = {
   publicAuthEmployee,
   authEmployeeCredentialFingerprint,
   synchronizeAuthUsersWithEmployees,
+  sharedAuthRoleIdentity,
+  sharedAuthRoleExpectedVersion,
+  parseSharedRecordLocksMySqlConnectionString,
+  applySharedAuthRole,
+  ensureSharedAuthRoleTable,
+  initializeSharedAuthRoles,
+  resolveSharedAuthUser,
+  resolveSharedAuthUsers,
+  saveSharedAuthRole,
   closeSharedRecordLocksStorage,
   closeStudentApplicationsMySqlStorage,
   closeAssistantStatisticsMySqlStorage,

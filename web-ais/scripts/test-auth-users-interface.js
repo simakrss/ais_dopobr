@@ -67,7 +67,7 @@ async function checkPartnerRouting() {
 async function checkSaveLifecycle() {
   const state = createState();
   state.authUserEditorId = "b";
-  const fields = {...users[1], password:""}, button = {}, fieldset = {};
+  const fields = {...users[1], password:"", sharedRoleVersion:"7"}, button = {}, fieldset = {};
   const form = {dataset:{userId:"b"}, querySelector:selector=>selector === "fieldset" ? fieldset : button};
   let requests = 0, finishRequest;
   const c = {state, isAdminUser:()=>true, getCurrentAuthUser:()=>({id:"a"}), render:()=>{},
@@ -76,6 +76,7 @@ async function checkSaveLifecycle() {
       requests++;
       const payload = JSON.parse(request.body);
       assert.equal(payload.role,"partner");
+      assert.equal(payload.sharedRoleVersion,"7","Submit version from opened form, not latest background state");
       assert.equal(payload.email,"retained@example.test");
       assert.equal(payload.password,undefined,"Linked employee credentials are never submitted");
       return await new Promise((resolve,reject)=>{finishRequest={resolve,reject};});

@@ -182,6 +182,7 @@ function ais_auth_public_user(array $user): array
         'login' => (string) ($user['login'] ?? ''),
         'name' => (string) ($user['name'] ?? ''),
         'role' => (string) ($user['role'] ?? 'manager'),
+        'sharedRoleVersion' => (string) ($user['sharedRoleVersion'] ?? '0'),
         'status' => (string) ($user['status'] ?? 'blocked'),
         'email' => (string) ($user['email'] ?? ''),
         'phone' => (string) ($user['phone'] ?? ''),
@@ -397,7 +398,7 @@ function ais_auth_count_active_admins(array $users): int
     )));
 }
 
-function ais_auth_admin_save_user(array $payload, string $currentUserId): array
+function ais_auth_admin_save_user(array $payload, string $currentUserId, ?callable $beforeWrite = null): array
 {
     $users = ais_auth_load_users();
     $id = trim((string) ($payload['id'] ?? ''));
@@ -470,8 +471,10 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
             'updatedAt' => $now,
             'lastLoginAt' => '',
         ];
+        $newIndex = array_key_last($users);
+        if ($beforeWrite !== null) $users[$newIndex] = $beforeWrite($users[$newIndex]);
         ais_auth_write_users($users);
-        return ais_auth_public_user($users[array_key_last($users)]);
+        return ais_auth_public_user($users[$newIndex]);
     }
     $previous = $users[$index];
     if ((string) ($previous['id'] ?? '') === $currentUserId && ($role !== 'admin' || $status !== 'active')) {
@@ -505,6 +508,7 @@ function ais_auth_admin_save_user(array $payload, string $currentUserId): array
     if (ais_auth_count_active_admins($users) < 1) {
         throw new InvalidArgumentException('В системе должен оставаться хотя бы один активный администратор.');
     }
+    if ($beforeWrite !== null) $users[$index] = $beforeWrite($users[$index]);
     ais_auth_write_users($users);
     return ais_auth_public_user($users[$index]);
 }

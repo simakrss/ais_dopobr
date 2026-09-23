@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.532",
+    version: "1.7.533",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.533",
+      releasedAt: "2026-09-23",
+      changes: ["Роли пользователей едины для сайта и локальных копий. Изменения применяются при входе и в открытых кабинетах; старые копии и устаревшие окна редактирования не перезаписывают новые назначения."]
+    },
     {
       version: "1.7.532",
       releasedAt: "2026-09-23",
@@ -30758,7 +30763,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <section class="panel admin-users-panel" id="admin-tab-users" role="tabpanel">
         <div class="section-head">
-          <p class="admin-tab-summary">Учётные записи администраторов, менеджеров и сотрудников. ФИО и реквизиты связанных записей берутся из карточек сотрудников.</p>
+          <p class="admin-tab-summary">Роли едины для сайта и всех локальных копий. ФИО и реквизиты связанных записей берутся из карточек сотрудников.</p>
           <div class="admin-users-actions">
             <button class="ghost-button" data-action="refresh-auth-users" type="button" ${state.authUsersLoading ? "disabled" : ""}>Синхронизировать сотрудников</button>
             <button class="primary-button" data-action="create-auth-user" type="button">Добавить пользователя</button>
@@ -31733,7 +31738,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function collectAuthUserEditorDraft(form) {
     const data = new FormData(form);
-    return { id: String(form.dataset.userId || ""), ...Object.fromEntries(["employeeId", "login", "name", "email", "phone", "role", "status", "password"].map((key) => [key, String(data.get(key) || "")])) };
+    return { id: String(form.dataset.userId || ""), ...Object.fromEntries(["employeeId", "login", "name", "email", "phone", "role", "status", "password", "sharedRoleVersion"].map((key) => [key, String(data.get(key) || "")])) };
   }
 
   function openAuthUserEditor(id = "new") {
@@ -31857,6 +31862,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }).join("");
     return `
       <form class="auth-user-editor" data-action="save-auth-user" data-user-id="${escapeAttr(user.id || "")}">
+        <input type="hidden" name="sharedRoleVersion" value="${escapeAttr(user.sharedRoleVersion || "0")}">
         <div class="auth-user-editor-head">
           <div>
             <h3>${isNew ? "Новая учётная запись" : `Редактирование: ${escapeHtml(user.login)}`}</h3>
@@ -32127,6 +32133,7 @@ MAX - https://bizvmax.ru/zifra_plus
             password: String(data.get("password") || "")
           }),
           role: String(data.get("role") || "manager"),
+          sharedRoleVersion: String(data.get("sharedRoleVersion") || "0"),
           status: String(data.get("status") || "active"),
           email: String(data.get("email") || "").trim(),
           phone: String(data.get("phone") || "").trim()

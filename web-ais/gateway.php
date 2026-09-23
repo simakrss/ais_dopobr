@@ -397,7 +397,12 @@ function gateway_require_user(): array
     if ($user === null) {
         gateway_fail(401, 'Требуется вход в систему.');
     }
-    return $user;
+    try {
+        return gateway_resolve_shared_auth_user($user);
+    } catch (Throwable $error) {
+        error_log('Shared role check failed: ' . $error->getMessage());
+        gateway_fail(503, 'Не удалось проверить общую роль пользователя. Повторите запрос.');
+    }
 }
 
 function gateway_require_admin(array $user): void
@@ -645,6 +650,136 @@ function gateway_employee_credential_fingerprint(array $employee): string
     );
 }
 
+function gateway_shared_auth_role_identity(array $user): array
+{
+    $login = ais_auth_normalize_login((string) ($user['login'] ?? ''));
+    $kind = !empty($user['employeeId']) || ($user['authSource'] ?? '') === 'employee' ? 'employee' : 'manual';
+    return ['login' => $login, 'kind' => $kind, 'key' => hash('sha256', $kind . "\0" . $login)];
+}
+
+function gateway_apply_shared_auth_role(array $user, ?array $row): array
+{
+    $identity = gateway_shared_auth_role_identity($user);
+    if ($row === null) return [...$user, 'sharedRoleVersion' => '0'];
+    $allowed = $identity['kind'] === 'employee' ? ['partner', 'manager'] : ['manager', 'admin'];
+    if (($row['principal_key'] ?? '') !== $identity['key'] || !in_array($row['role'] ?? '', $allowed, true)) {
+        throw new RuntimeException('Некорректное общее назначение роли. Обратитесь к администратору.');
+    }
+    return [...$user, 'role' => $row['role'], 'sharedRoleVersion' => (string) $row['revision'],
+        ...($identity['kind'] === 'employee' ? ['employeeRoleOverride' => $row['role']] : [])];
+}
+
+function gateway_shared_auth_role_expected_version(?array $before, array $after, string $expected): string
+{
+    if ($before === null || gateway_shared_auth_role_identity($before)['key'] === gateway_shared_auth_role_identity($after)['key']) return $expected;
+    if ($expected !== (string) ($before['sharedRoleVersion'] ?? '0')) {
+        throw new RuntimeException('Роль уже изменена. Обновите список пользователей перед изменением логина или привязки.', 409);
+    }
+    return '0';
+}
+
+function gateway_ensure_shared_auth_roles(PDO $pdo): void
+{
+    static $prepared = null;
+    if ($prepared === $pdo) return;
+    $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS ais_auth_roles (
+  state_key VARCHAR(64) NOT NULL,
+  principal_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  login VARCHAR(64) NOT NULL,
+  principal_type VARCHAR(16) NOT NULL,
+  role VARCHAR(16) NOT NULL,
+  revision BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  updated_at DATETIME(3) NOT NULL,
+  updated_by VARCHAR(160) NOT NULL DEFAULT '',
+  PRIMARY KEY (state_key, principal_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL);
+    $prepared = $pdo;
+}
+
+function gateway_resolve_shared_auth_users(array $users, ?PDO $pdo = null): array
+{
+    if (gateway_database_demo_mode_enabled()) return $users;
+    $pdo ??= gateway_record_locks_pdo();
+    gateway_ensure_shared_auth_roles($pdo);
+    $statement = $pdo->prepare('SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ?');
+    $statement->execute([gateway_shared_state_key()]);
+    $roles = [];
+    foreach ($statement->fetchAll() as $row) $roles[$row['principal_key']] = $row;
+    $missing = array_filter($users, static fn(array $user): bool => !isset($roles[gateway_shared_auth_role_identity($user)['key']]));
+    if ($missing !== []) {
+        gateway_initialize_shared_auth_roles($missing, $pdo);
+        $statement->execute([gateway_shared_state_key()]);
+        foreach ($statement->fetchAll() as $row) $roles[$row['principal_key']] = $row;
+    }
+    return array_map(static fn(array $user): array => gateway_apply_shared_auth_role(
+        $user, $roles[gateway_shared_auth_role_identity($user)['key']] ?? null
+    ), $users);
+}
+
+function gateway_resolve_shared_auth_user(array $user): array
+{
+    if (gateway_database_demo_mode_enabled()) return $user;
+    $pdo = gateway_record_locks_pdo();
+    gateway_ensure_shared_auth_roles($pdo);
+    $statement = $pdo->prepare('SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key = ?');
+    $statement->execute([gateway_shared_state_key(), gateway_shared_auth_role_identity($user)['key']]);
+    $row = $statement->fetch();
+    if (!$row) {
+        gateway_initialize_shared_auth_roles([$user], $pdo);
+        $statement->execute([gateway_shared_state_key(), gateway_shared_auth_role_identity($user)['key']]);
+        $row = $statement->fetch();
+    }
+    return gateway_apply_shared_auth_role($user, $row ?: null);
+}
+
+function gateway_initialize_shared_auth_roles(array $users, PDO $pdo): void
+{
+    gateway_ensure_shared_auth_roles($pdo);
+    $statement = $pdo->prepare("INSERT IGNORE INTO ais_auth_roles
+      (state_key, principal_key, login, principal_type, role, revision, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, 1, UTC_TIMESTAMP(3), 'initial-import')");
+    foreach ($users as $user) {
+        $identity = gateway_shared_auth_role_identity($user);
+        ais_auth_validate_login($identity['login']);
+        gateway_apply_shared_auth_role($user, ['principal_key' => $identity['key'], 'role' => $user['role'], 'revision' => 1]);
+        $statement->execute([gateway_shared_state_key(), $identity['key'], $identity['login'], $identity['kind'], $user['role']]);
+    }
+}
+
+function gateway_save_shared_auth_role(array $user, string $expectedVersion, string $actorLogin, ?PDO $pdo = null): array
+{
+    $identity = gateway_shared_auth_role_identity($user);
+    ais_auth_validate_login($identity['login']);
+    gateway_apply_shared_auth_role($user, ['principal_key' => $identity['key'], 'role' => $user['role'], 'revision' => 1]);
+    $pdo ??= gateway_record_locks_pdo();
+    gateway_ensure_shared_auth_roles($pdo);
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare('INSERT INTO ais_auth_roles
+          (state_key, principal_key, login, principal_type, role, revision, updated_at, updated_by)
+          VALUES (?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(3), ?)
+          ON DUPLICATE KEY UPDATE principal_key = VALUES(principal_key)');
+        $statement->execute([gateway_shared_state_key(), $identity['key'], $identity['login'], $identity['kind'], $user['role'], mb_substr($actorLogin, 0, 160)]);
+        $statement = $pdo->prepare('SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key = ? FOR UPDATE');
+        $statement->execute([gateway_shared_state_key(), $identity['key']]);
+        $row = $statement->fetch();
+        if ((string) $row['revision'] !== $expectedVersion) {
+            throw new RuntimeException('Роль уже изменена на сайте или другом компьютере. Закройте окно, обновите список пользователей и повторите изменение.', 409);
+        }
+        $statement = $pdo->prepare('UPDATE ais_auth_roles SET role = ?, revision = revision + 1,
+          updated_at = UTC_TIMESTAMP(3), updated_by = ? WHERE state_key = ? AND principal_key = ?');
+        $statement->execute([$user['role'], mb_substr($actorLogin, 0, 160), gateway_shared_state_key(), $identity['key']]);
+        $result = gateway_apply_shared_auth_role($user, [...$row, 'role' => $user['role'], 'revision' => (string) ((int) $row['revision'] + 1)]);
+        $pdo->commit();
+        return $result;
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $error;
+    }
+}
+
 function gateway_sync_employee_auth_users(): array
 {
     $lockPath = ais_auth_storage_root() . '/employee-users-sync.lock';
@@ -660,7 +795,8 @@ function gateway_sync_employee_auth_users(): array
         gateway_shared_state_ensure_contract_expiration($pdo);
         $contracts = gateway_shared_state_read_collection($pdo, 'contracts');
         $directory = gateway_build_employee_auth_directory($contracts);
-        $users = ais_auth_load_users();
+        $originalUsers = ais_auth_load_users();
+        $users = gateway_resolve_shared_auth_users($originalUsers, $pdo);
         $stats = [
             'total' => count($directory['employees']),
             'created' => 0,
@@ -844,7 +980,8 @@ function gateway_sync_employee_auth_users(): array
             $stats['updated']++;
             $stats['blockedMissing']++;
         }
-        if ($stats['created'] > 0 || $stats['updated'] > 0) {
+        $users = gateway_resolve_shared_auth_users($users, $pdo);
+        if ($stats['created'] > 0 || $stats['updated'] > 0 || $users !== $originalUsers) {
             ais_auth_write_users($users);
         }
         return [
@@ -993,6 +1130,7 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
         if ($user === null) {
             gateway_fail(401, 'Неверный логин или пароль.');
         }
+        $user = gateway_resolve_shared_auth_user($user);
         ais_audit_try_append([
             'action' => 'Вход в систему',
             'area' => 'Авторизация',
@@ -1046,6 +1184,7 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
             (string) ($payload['email'] ?? ''),
             (string) ($payload['phone'] ?? '')
         );
+        $updated = gateway_resolve_shared_auth_user($updated);
         ais_audit_try_append([
             'action' => 'Изменён личный кабинет',
             'area' => 'Пользователи',
@@ -1265,7 +1404,10 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
         }
         $saved = ais_auth_admin_save_user(
             $payload,
-            (string) $currentUser['id']
+            (string) $currentUser['id'],
+            static fn(array $user): array => gateway_save_shared_auth_role(
+                $user, gateway_shared_auth_role_expected_version($beforePrivate, $user, (string) ($payload['sharedRoleVersion'] ?? '0')), (string) $currentUser['login']
+            )
         );
         $changes = [];
         foreach ([
@@ -4137,5 +4279,5 @@ try {
     );
     gateway_send_node_response($response);
 } catch (Throwable $error) {
-    gateway_fail(500, $error->getMessage());
+    gateway_fail($error->getCode() === 409 ? 409 : 500, $error->getMessage());
 }
