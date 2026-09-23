@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.528",
-    releasedAt: "2026-09-22"
+    version: "1.7.529",
+    releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.529",
+      releasedAt: "2026-09-23",
+      changes: ["Рядом с ID купона сотрудника добавлена кнопка со значком ссылки. Она открывает купон в интернет-магазине по текущему значению поля, а при отсутствии корректного ID — список купонов. Переход доступен и в режиме просмотра карточки."]
+    },
     {
       version: "1.7.528",
       releasedAt: "2026-09-22",
@@ -11852,6 +11857,7 @@ MAX - https://bizvmax.ru/zifra_plus
       "acquire-available-record-lock",
       "check-post-index",
       "open-sdo-courses",
+      "open-employee-coupon",
       "open-student-activity-log",
       "open-student-audit-log",
       "open-student-course-page",
@@ -32083,6 +32089,9 @@ MAX - https://bizvmax.ru/zifra_plus
           ${couponField ? renderField(couponField, record) : ""}
           <div class="contract-coupon-id-control">
             ${couponIdField ? renderField(couponIdField, record) : ""}
+            <button class="orders-sdo-icon-button contract-coupon-open-button" data-action="open-employee-coupon" type="button" title="Открыть купон в магазине; без ID — список купонов" aria-label="Открыть купон в магазине">
+              ${renderOrdersSdoIcon("link")}
+            </button>
             <button class="orders-sdo-icon-button is-magic contract-coupon-generate-button" data-action="generate-employee-coupon" type="button" title="${magicTitle}" aria-label="${magicTitle}">
               ${renderOrdersSdoIcon("wand")}
             </button>
@@ -36529,6 +36538,7 @@ MAX - https://bizvmax.ru/zifra_plus
       history: '<path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path><path d="M12 7v5l3 2"></path>',
       key: '<circle cx="8" cy="15" r="3"></circle><path d="m10.5 13.5 8-8"></path><path d="m16 8 2 2"></path><path d="m14 10 2 2"></path>',
       laptop: '<rect x="5" y="4" width="14" height="11" rx="1.5"></rect><path d="M3 18h18"></path><path d="m5 15-2 3"></path><path d="m19 15 2 3"></path><path d="M9 18h6"></path>',
+      link: '<path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"></path>',
       lock: '<rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v3"></path>',
       mail: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path>',
       mailDownload: '<rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="m4 6 8 6 8-6"></path><path d="M12 13v8"></path><path d="m9 18 3 3 3-3"></path>',
@@ -46025,6 +46035,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", openContractStudentPicker);
     document.querySelector("[data-action='generate-employee-coupon']")
       ?.addEventListener("click", generateEmployeeCouponFromLogin);
+    document.querySelector("[data-action='open-employee-coupon']")
+      ?.addEventListener("click", openEmployeeCoupon);
     const employeePaymentAccounting = document.querySelector("[data-employee-payment-accounting]");
     syncEmployeePaymentActCheckboxes(employeePaymentAccounting);
     employeePaymentAccounting?.addEventListener("input", previewEmployeePaymentAccountingField);
@@ -48557,6 +48569,18 @@ MAX - https://bizvmax.ru/zifra_plus
       source: "employee-payment-accounting"
     });
     commitEmployeePaymentAccountingChange(draft, { sourceId, field: "amount" }, true);
+  }
+
+  function getEmployeeCouponAdminUrl(value) {
+    const id = String(value ?? "").trim();
+    return /^\d+$/u.test(id) && /[1-9]/u.test(id)
+      ? `https://zifra-plus.ru/wp-admin/post.php?post=${encodeURIComponent(id)}&action=edit&classic-editor#`
+      : "https://zifra-plus.ru/wp-admin/edit.php?post_type=shop_coupon#";
+  }
+
+  function openEmployeeCoupon() {
+    const form = document.querySelector("#recordForm[data-config='contracts']");
+    if (form) openExternalUrl(getEmployeeCouponAdminUrl(form.elements.couponId?.value));
   }
 
   function generateEmployeeCouponFromLogin() {
