@@ -281,9 +281,15 @@
       <header class="partner-topbar">
         <button class="partner-menu-button" data-action="toggle-sidebar" type="button" aria-label="Открыть меню">${icon("menu")}</button>
         <div><span>Кабинет партнёра</span><h1>${escapeHtml(active.label)}</h1></div>
-        <button class="partner-topbar-profile" data-view="profile" type="button">
-          ${icon("profile")}<span>${escapeHtml(state.portal?.profile?.name || authUser.name || "Партнёр")}</span>
-        </button>
+        <div class="partner-account">
+          <button class="partner-topbar-profile" id="partner-account-trigger" data-action="toggle-account-menu" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="partner-account-menu" aria-label="Меню партнёра: ${escapeAttr(state.portal?.profile?.name || authUser.name || "Партнёр")}">
+            ${icon("profile")}<span>${escapeHtml(state.portal?.profile?.name || authUser.name || "Партнёр")}</span>
+          </button>
+          <div class="partner-account-menu" id="partner-account-menu" role="menu" aria-labelledby="partner-account-trigger" hidden>
+            <button data-view="profile" type="button" role="menuitem" tabindex="-1">${icon("profile")}<span>Профиль</span></button>
+            <button data-action="logout" type="button" role="menuitem" tabindex="-1">${icon("logout")}<span>Выйти</span></button>
+          </div>
+        </div>
       </header>
     `;
   }
@@ -899,7 +905,43 @@
     else window.location.replace(authApi.appUrl(""));
   }
 
+  function setPartnerAccountMenu(open, { focusIndex = null, restoreFocus = false } = {}) {
+    const menu = app.querySelector("#partner-account-menu");
+    const trigger = app.querySelector("#partner-account-trigger");
+    if (!menu || !trigger) return;
+    menu.hidden = !open;
+    trigger.setAttribute("aria-expanded", String(open));
+    if (open) {
+      document.querySelector(".partner-tab-context-menu")?.remove();
+      const items = menu.querySelectorAll('[role="menuitem"]');
+      if (focusIndex !== null && items.length) items[(focusIndex + items.length) % items.length].focus();
+    } else if (restoreFocus) trigger.focus();
+  }
+
+  function handlePartnerAccountMenuKeydown(event) {
+    const menu = app.querySelector("#partner-account-menu");
+    if (!menu) return false;
+    if (event.key === "Escape" && !menu.hidden) {
+      event.preventDefault();
+      setPartnerAccountMenu(false, { restoreFocus: true });
+      return true;
+    }
+    if (event.target.closest("#partner-account-trigger") && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      setPartnerAccountMenu(true, { focusIndex: event.key === "ArrowUp" ? -1 : 0 });
+      return true;
+    }
+    if (menu.hidden || !menu.contains(event.target) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
+    event.preventDefault();
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : index + (event.key === "ArrowUp" ? -1 : 1);
+    items[(next + items.length) % items.length]?.focus();
+    return true;
+  }
+
   function showProfileTabMenu(x, y) {
+    setPartnerAccountMenu(false);
     document.querySelector(".partner-tab-context-menu")?.remove();
     const menu = document.createElement("div");
     menu.className = "partner-tab-context-menu";
@@ -923,8 +965,12 @@
     const button = event.target.closest("[data-action]");
     if (!button) return;
     const action = button.dataset.action;
+    if (action === "toggle-account-menu") {
+      const open = app.querySelector("#partner-account-menu")?.hidden === true;
+      setPartnerAccountMenu(open, { focusIndex: open ? 0 : null });
+    }
     if (action === "toggle-sidebar") { state.sidebarOpen = !state.sidebarOpen; render(); }
-    if (action === "logout") logout();
+    if (action === "logout") { setPartnerAccountMenu(false); logout(); }
     if (action === "switch-account") authApi.redirectToLogin?.();
     if (action === "reload-portal") loadPortal();
     if (action === "open-payable") navigate("payments", { status: "payable" });
@@ -990,6 +1036,7 @@
   });
 
   app.addEventListener("keydown", (event) => {
+    if (handlePartnerAccountMenuKeydown(event)) return;
     const row = event.target.closest("tr[data-action='select-payment-month']");
     if (row && ["Enter", " "].includes(event.key)) {
       event.preventDefault();
@@ -1055,6 +1102,11 @@
   });
 
   app.addEventListener("contextmenu", (event) => {
+    if (event.target.closest("#partner-account-trigger")) {
+      event.preventDefault();
+      setPartnerAccountMenu(true, { focusIndex: 0 });
+      return;
+    }
     if (!event.target.closest(".partner-profile-tabs")) return;
     event.preventDefault();
     showProfileTabMenu(event.clientX, event.clientY);
@@ -1086,6 +1138,7 @@
   });
 
   document.addEventListener("click", (event) => {
+    if (!event.target.closest(".partner-account")) setPartnerAccountMenu(false);
     const restore = event.target.closest("[data-action='restore-profile-tabs']");
     if (restore) {
       state.profileTabs = PROFILE_TABS.map((tab) => tab.id);
@@ -1095,6 +1148,12 @@
     if (!event.target.closest(".partner-tab-context-menu")) document.querySelector(".partner-tab-context-menu")?.remove();
   });
 
+  app.addEventListener("focusout", (event) => {
+    const account = event.target.closest(".partner-account");
+    if (account && !account.contains(event.relatedTarget)) setPartnerAccountMenu(false);
+  });
+
+  window.addEventListener("popstate", () => setPartnerAccountMenu(false));
   window.addEventListener("hashchange", () => { parseRoute(); render(); if (state.view === "materials" && !state.materials) loadMaterials("/"); });
   window.addEventListener("ais:auth-refreshed", (event) => {
     if (event.detail?.user?.role !== "partner") window.location.reload();

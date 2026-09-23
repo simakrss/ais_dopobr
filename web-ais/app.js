@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.536",
+    version: "1.7.537",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.537",
+      releasedAt: "2026-09-23",
+      changes: ["На ФИО партнёра в правом верхнем углу добавлено меню «Профиль» и «Выйти»: открытие обычным или правым щелчком, управление клавиатурой и закрытие вне меню или по Escape."]
+    },
     {
       version: "1.7.536",
       releasedAt: "2026-09-23",
