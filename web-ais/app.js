@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.530",
+    version: "1.7.531",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.531",
+      releasedAt: "2026-09-23",
+      changes: ["После успешного сохранения формулы окно редактора автоматически закрывается, фокус возвращается к обновлённому полю карточки. При ошибке или отсутствии подтверждения общей базы редактор остаётся открытым."]
+    },
     {
       version: "1.7.530",
       releasedAt: "2026-09-23",
@@ -49603,6 +49608,7 @@ MAX - https://bizvmax.ru/zifra_plus
       saving = true;
       form.querySelector("[type='submit']").disabled = true;
       status.textContent = "Сохранение формулы…";
+      let closeAfterSave = false;
       try {
         setCardFieldFormula(binding, formula);
         baseline = formula;
@@ -49613,6 +49619,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (isWebinar) card?.refreshWebinarFormulaField?.(binding.field);
         else refreshCardFormulaValues(card, {forceField: binding.field});
         const saved = await flushSharedApplicationStateThroughGeneration(generation);
+        closeAfterSave = saved === true;
         status.textContent = saved
           ? (isWebinar ? "Шаблон сохранён в настройках. Поле письма обновлено, выбор получателей сохранён." : "Формула сохранена. Поле обновлено; данные карточки сохраняются её кнопкой «Сохранить».")
           : "Поле обновлено локально, но общая база ещё не подтвердила сохранение. Проверьте соединение и повторите сохранение.";
@@ -49622,6 +49629,7 @@ MAX - https://bizvmax.ru/zifra_plus
         saving = false;
         form.querySelector("[type='submit']").disabled = false;
       }
+      if (closeAfterSave) await close();
     });
     editor.focus({preventScroll: true});
     return true;
