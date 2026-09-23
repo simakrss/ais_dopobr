@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.538",
+    version: "1.7.539",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.539",
+      releasedAt: "2026-09-23",
+      changes: ["Из профиля партнёра убрано служебное поле пути к фотографии. Загрузка, замена и автоматическое сохранение фотографии работают без изменений; существующие пути и файлы сохранены."]
+    },
     {
       version: "1.7.538",
       releasedAt: "2026-09-23",

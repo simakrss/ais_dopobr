@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 process.env.AIS_SHARED_STATE_LOCAL_ONLY = "1";
 
@@ -89,6 +90,36 @@ assert.deepEqual(sanitizePartnerProfileUpdate({ email: " partner@example.test ",
   email: "partner@example.test"
 });
 assert.deepEqual(sanitizePartnerProfileUpdate({ password: "" }), {});
+
+// Hide the internal photo path without clearing the stored path or disabling photo controls.
+const photoEmployee = { ...contracts[1], photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" };
+const photoProfile = buildPartnerProfile(photoEmployee);
+const photoField = photoProfile.tabs.main.find(field => field.key === "photoPath");
+assert.ok(photoField, "Fixture includes the internal field returned by existing backends");
+const profileRenderContext = {
+  state: { portal: { profile: photoProfile }, profileTab: "main", profileTabs: ["main", "contract", "documents"], profileDraft: {}, profilePhotoRevision: 1 },
+  PROFILE_TABS: [{ id: "main", label: "Основное" }, { id: "contract", label: "Договор" }, { id: "documents", label: "Документы" }],
+  authApi: { appUrl: value => `/${value}` }, window: {}, renderEmpty: () => "", renderDocumentsModal: () => ""
+};
+vm.createContext(profileRenderContext);
+vm.runInContext(["escapeHtml", "escapeAttr", "icon", "formatDate", "renderProfileField", "renderProfile"].map(name => {
+  const match = partnerSource.replace(/\r\n/g, "\n").match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  \\}$`, "m"));
+  assert.ok(match, name); return match[0];
+}).join("\n"), profileRenderContext);
+for (const tab of ["main", "contract", "documents"]) {
+  if (tab !== "main") photoProfile.tabs[tab].push({ ...photoField });
+  profileRenderContext.state.profileTab = tab;
+  const html = profileRenderContext.renderProfile();
+  assert.doesNotMatch(html, /Путь к фотографии|photoPath|ИвановИИ\.jpg/);
+  assert.match(html, /Заменить фотографию/); assert.match(html, /data-partner-photo-input/);
+  assert.match(html, /api\/partner\/photo/); assert.match(html, /Сохранить изменения/);
+  assert.ok(photoProfile.tabs[tab].some(field => field.key === "photoPath"), "Rendering must not mutate profile data");
+}
+profileRenderContext.state.profileTab = "main";
+assert.match(profileRenderContext.renderProfile(), /ФИО \/ контрагент/);
+assert.equal(photoProfile.photoAvailable, true);
+assert.equal(photoEmployee.photoPath, "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg");
+assert.deepEqual(sanitizePartnerProfileUpdate({ email: "partner@example.test", photoPath: "" }), { email: "partner@example.test" });
 
 const paymentData = buildPartnerPaymentData({
   collections: {

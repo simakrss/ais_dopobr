@@ -609,7 +609,8 @@
   function renderProfile() {
     const profile = state.portal.profile || {};
     const tabsById = new Map(PROFILE_TABS.map((tab) => [tab.id, tab]));
-    const activeFields = profile.tabs?.[state.profileTab] || [];
+    // The photo uploader manages the storage path; keep it out of the partner's form.
+    const activeFields = (profile.tabs?.[state.profileTab] || []).filter(field => field.key !== "photoPath");
     const photoUrl = authApi.appUrl(`api/partner/photo?v=${state.profilePhotoRevision}`);
     return `
       <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><button class="partner-secondary-button" data-action="open-documents" type="button">${icon("folder")}Документы на Яндекс‑Диске</button></section>
