@@ -33,6 +33,7 @@ function sampleSource(program) {
   const landingUrl = program.siteSampleLandingUrl || `https://edu-plus.ru/${spec.base}/${String(program.landingCode || "").trim().replace(/^\/+|\/+$/g, "")}/`;
   const parsedUrl = new URL(landingUrl);
   if (parsedUrl.origin !== "https://edu-plus.ru" || parsedUrl.username || parsedUrl.password) throw new Error("Не удалось проверить адрес лендинга для QR-кода образца.");
+  const activityScope = String(program.activityScope ?? "").trim();
   return {
     "ФИО": "ОБРАЗЕЦ", "ФИО_ENG": "SAMPLE", "ФИО_eng": "SAMPLE", "ИО": "ОБРАЗЕЦ",
     "РегНомер": "ОБРАЗЕЦ", "РегНомер_ENG": "SAMPLE", "Номер бланка": "SAMPLE", "Id": "0", "uid": "0",
@@ -40,7 +41,7 @@ function sampleSource(program) {
     "Прогр обуч факт": String(program.name || "").trim(), "Прогр обуч факт_ENG": english,
     "Название программы на английском": english, "Наименование программы": String(program.name || "").trim(),
     "Вид  программы ДПО": type, "Вид программы ДПО": type, "Количество часов": String(program.hours), "Часы": String(program.hours),
-    "Квалификация": String(program.qualification || ""), "СфераДеятельности": String(program.activityScope || program.qualification || ""),
+    "Квалификация": String(program.qualification || ""), "СфераДеятельности": activityScope, "Сфера деятельности": activityScope,
     "УчебныйПлан": plan.map(row => [row.discipline, row.totalHours, "Зачтено"].join("\t")).join("\n"),
     "ДокументОбОбразовании": "ОБРАЗЕЦ", "Документ об образовании": "ОБРАЗЕЦ",
     "Обр_Вид образования": "Диплом", "Обр_Серия": "ОБРАЗЕЦ", "Обр_Номер": "ОБРАЗЕЦ",

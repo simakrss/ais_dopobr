@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.539",
+    version: "1.7.540",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.540",
+      releasedAt: "2026-09-23",
+      changes: ["Исправлена подстановка «Сферы деятельности» в документы об образовании и образцы для сайта: используется одноимённое поле выбранной программы, а не квалификация или тип программы. Учтены связанные программы и варианты с разным количеством часов; настройки формул и шаблоны сохранены."]
+    },
     {
       version: "1.7.539",
       releasedAt: "2026-09-23",
@@ -5000,7 +5005,7 @@ MAX - https://bizvmax.ru/zifra_plus
     "ИО", "ФИО_ENG", "Прогр обуч факт_ENG", "Дата выдачи документа", "Дата отчисления", "Дата приказа отчисления",
     "Дата приказа Отчисл Док Обр",
     "Документ об образовании", "Номер бланка", "РегНомер", "Номер протокола", "Оценка ИА",
-    "Квалификация", "УчебныйПлан", "СфераДеятельности", "Часы", "Срок обучения_ENG", "QRкод",
+    "Квалификация", "УчебныйПлан", "СфераДеятельности", "Сфера деятельности", "Часы", "Срок обучения_ENG", "QRкод",
     "Вид  программы ДПО", "Номер приказа зачисления", "Дата приказа зачисления", "Номер приказа отчисления", "Пол"
   ];
   const contractTemplateSourceFieldMap = {
@@ -74929,6 +74934,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (record?.attestationDocumentKind && Object.prototype.hasOwnProperty.call(record.workflowSourceValues || {}, fieldName)) {
         return record.workflowSourceValues[fieldName];
       }
+      if (["СфераДеятельности", "Сфера деятельности"].includes(fieldName)) return getContractTemplateSourceValue(fieldName, record);
       return field.name === "УчебныйПлан" ? formatEducationDocumentTrainingPlan(record) : "";
     }
     if (fieldName === "ФИО_ENG" && /ТРАНСЛИТЕРАЦИЯ/i.test(formula)) {
@@ -75117,9 +75123,9 @@ MAX - https://bizvmax.ru/zifra_plus
       return String(record.qualification || program?.qualification || "").trim();
     }
     if (normalized === "УчебныйПлан") return formatEducationDocumentTrainingPlan(record);
-    if (normalized === "СфераДеятельности") {
-      const program = findProgramByName(record.program);
-      return String(program?.qualification || record.qualification || program?.type || "").trim();
+    if (["СфераДеятельности", "Сфера деятельности"].includes(normalized)) {
+      const program = findEducationDocumentProgram(record);
+      return String(program?.activityScope ?? "").trim();
     }
     if (normalized === "Срок обучения_ENG") return formatEducationDocumentStudyPeriod(record);
     if (normalized === "QRкод") return String(record.qrCode || getProgramPromoUrl(findProgramByName(record.program)) || "").trim();
