@@ -33,6 +33,15 @@
     materials: null,
     materialsLoading: false,
     materialsError: "",
+    materialsTab: "files",
+    socialMaterials: null,
+    socialLoading: false,
+    socialError: "",
+    socialSearch: "",
+    socialType: "",
+    socialProgramId: "",
+    socialDrafts: {},
+    socialCopyStatus: "",
     profileTab: "main",
     profileTabs: loadProfileTabOrder(),
     draggedProfileTab: "",
@@ -83,6 +92,7 @@
       arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
       download: '<path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/>',
       external: '<path d="M14 4h6v6m0-6-9 9M19 13v6H5V5h6"/>',
+      copy: '<path d="M9 9h12v12H9V9ZM15 5V3H3v12h2"/>',
       file: '<path d="M6 3h8l4 4v14H6V3Zm8 0v5h5"/>',
       chevron: '<path d="m9 6 6 6-6 6"/>',
       chart: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>',
@@ -456,6 +466,11 @@
     const items = folder?.items || [];
     return `
       <section class="partner-page-heading"><div><p>Рекламные материалы</p><h2>Материалы партнёра</h2></div><a class="partner-secondary-button" href="${escapeAttr(state.portal.materials?.publicUrl || "#")}" target="_blank" rel="noopener noreferrer">${icon("external")}Открыть на Яндекс‑Диске</a></section>
+      <nav class="partner-profile-tabs partner-material-tabs" aria-label="Разделы материалов">
+        <button type="button" data-action="set-materials-tab" data-tab="files" class="${state.materialsTab === "files" ? "is-active" : ""}" aria-pressed="${state.materialsTab === "files"}">Файлы</button>
+        <button type="button" data-action="set-materials-tab" data-tab="social" class="${state.materialsTab === "social" ? "is-active" : ""}" aria-pressed="${state.materialsTab === "social"}">Информация для соцсетей</button>
+      </nav>
+      ${state.materialsTab === "social" ? renderSocialMaterials() : `
       <section class="partner-panel partner-materials-panel">
         <header class="partner-materials-toolbar">
           <nav class="partner-breadcrumbs" aria-label="Путь в материалах">${renderMaterialBreadcrumbs(folder?.path || "/")}</nav>
@@ -463,7 +478,88 @@
         </header>
         ${state.materialsLoading ? `<div class="partner-loading-inline"><span class="auth-spinner"></span>Загрузка папки...</div>` : state.materialsError ? `<div class="partner-error-panel"><p>${escapeHtml(state.materialsError)}</p><button class="partner-secondary-button" data-action="refresh-materials" type="button">Повторить</button></div>` : items.length ? `<div class="partner-file-grid">${items.map(renderMaterialItem).join("")}</div>` : renderEmpty("В этой папке пока нет материалов.")}
       </section>
+      `}
     `;
+  }
+
+  function getFilteredSocialPrograms() {
+    const words = state.socialSearch.trim().toLocaleLowerCase("ru-RU").split(/\s+/).filter(Boolean);
+    return (state.socialMaterials?.programs || []).filter(program => (
+      (!state.socialType || program.type === state.socialType)
+      && words.every(word => `${program.name} ${program.type}`.toLocaleLowerCase("ru-RU").includes(word))
+    ));
+  }
+
+  function renderSocialMaterials() {
+    if (state.socialLoading && !state.socialMaterials) return `<section class="partner-panel partner-loading-inline" role="status"><span class="auth-spinner"></span>Подготовка сообщений с вашим купоном...</section>`;
+    const programs = getFilteredSocialPrograms();
+    const program = programs.find(item => item.id === state.socialProgramId) || programs[0];
+    state.socialProgramId = program?.id || "";
+    const coupon = state.socialMaterials?.coupon || "";
+    const message = program ? state.socialDrafts[program.id] ?? program.message : "";
+    return `<section class="partner-panel partner-social-panel">
+      <header class="partner-panel-head"><div>${icon("mail")}<span><h3>Информация для соцсетей</h3><p>Готовые сообщения о курсах с вашим персональным купоном</p></span></div>
+        <button class="partner-secondary-button" data-action="refresh-social-materials" type="button" ${state.socialLoading ? "disabled" : ""}>${icon("refresh")}${state.socialLoading ? "Обновление…" : "Обновить"}</button></header>
+      ${state.socialError ? `<div class="partner-error-panel" role="alert">${escapeHtml(state.socialError)}</div>` : ""}
+      ${!coupon && !state.socialLoading ? `<div class="partner-error-panel" role="status">Персональный купон не назначен. Обратитесь к администратору: после заполнения поля «Персональный купон» в карточке сотрудника нажмите «Обновить».</div>` : ""}
+      <div class="partner-social-layout">
+        <aside class="partner-social-catalog">
+          <label class="partner-social-field"><span>Поиск курса</span><input type="search" data-social-search value="${escapeAttr(state.socialSearch)}" placeholder="Название программы"></label>
+          <label class="partner-social-field"><span>Тип программы</span><select data-social-type><option value="">Все программы</option>${["ПРО","КПК","ППП","ДОП"].map(type => `<option value="${type}" ${state.socialType === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+          <label class="partner-social-field"><span>Курсы · ${programs.length}</span><select class="partner-social-programs" data-social-program size="12" aria-label="Выберите курс">${programs.map(item => `<option value="${escapeAttr(item.id)}" ${item.id === program?.id ? "selected" : ""}>${escapeHtml(item.type)} · ${escapeHtml(item.name)}</option>`).join("")}</select></label>
+          <small>Программы со статусом «Набор». Архивные программы и прошедшие вебинары не показываются.</small>
+        </aside>
+        <div class="partner-social-message">
+          ${program ? `<h3>${escapeHtml(program.name)}</h3>
+            <p class="partner-social-coupon">Ваш купон: <strong>${escapeHtml(coupon || "не назначен")}</strong></p>
+            <label class="partner-social-field"><span>Текст для публикации</span><textarea data-social-message rows="16" ${!coupon || state.socialLoading ? "readonly" : ""}>${escapeHtml(message)}</textarea></label>
+            <small>Можно отредактировать текст перед копированием. Изменения здесь не меняют промосообщение в реестре программ.</small>
+            <div class="partner-social-actions">
+              <button class="partner-primary-button" data-action="copy-social-message" type="button" ${!coupon || state.socialLoading ? "disabled" : ""}>${icon("copy")}Копировать сообщение</button>
+              <button class="partner-secondary-button" data-action="reset-social-message" type="button">Восстановить текст</button>
+              ${program.landingUrl ? `<a class="partner-secondary-button" href="${escapeAttr(program.landingUrl)}" target="_blank" rel="noopener noreferrer">${icon("external")}Открыть курс</a>` : ""}
+            </div>
+            <p class="partner-social-copy-status" role="status" aria-live="polite">${escapeHtml(state.socialCopyStatus)}</p>` : renderEmpty("По выбранным условиям курсов не найдено.")}
+        </div>
+      </div>
+    </section>`;
+  }
+
+  async function loadSocialMaterials() {
+    if (state.socialLoading) return;
+    state.socialLoading = true;
+    state.socialError = "";
+    state.socialCopyStatus = "";
+    render();
+    try {
+      const result = await authApi.request("api/partner/social-materials");
+      // Keep a personal edit only while its source text and coupon have not changed.
+      const previous = new Map((state.socialMaterials?.programs || []).map(program => [program.id, program.message]));
+      state.socialDrafts = Object.fromEntries((result.programs || []).filter(program => (
+        state.socialMaterials?.coupon === result.coupon && previous.get(program.id) === program.message
+        && Object.prototype.hasOwnProperty.call(state.socialDrafts, program.id)
+      )).map(program => [program.id, state.socialDrafts[program.id]]));
+      state.socialMaterials = result;
+    } catch (error) { state.socialError = error.message || "Не удалось загрузить сообщения. Нажмите «Обновить»."; }
+    finally { state.socialLoading = false; render(); }
+  }
+
+  async function copySocialMessage() {
+    const program = (state.socialMaterials?.programs || []).find(item => item.id === state.socialProgramId);
+    if (!program || !state.socialMaterials?.coupon || state.socialLoading) return;
+    const text = state.socialDrafts[program.id] ?? program.message;
+    if (!text.trim()) { state.socialCopyStatus = "Текст сообщения пуст."; render(); return; }
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) await navigator.clipboard.writeText(text);
+      else {
+        const field = app.querySelector("[data-social-message]");
+        if (!field) throw new Error("Поле сообщения недоступно.");
+        field.focus(); field.select();
+        if (!document.execCommand("copy")) throw new Error("Скопируйте выделенный текст вручную: Ctrl+C.");
+      }
+      state.socialCopyStatus = "Сообщение скопировано. Вставьте его в публикацию в соцсети.";
+    } catch { state.socialCopyStatus = "Не удалось скопировать автоматически. Выделите текст и нажмите Ctrl+C."; }
+    render();
   }
 
   function renderMaterialBreadcrumbs(path) {
@@ -840,6 +936,14 @@
     if (action === "sort-group") changeSort("group", button.dataset.key);
     if (action === "open-material-folder") loadMaterials(button.dataset.path || "/");
     if (action === "refresh-materials") loadMaterials(state.materials?.path || "/");
+    if (action === "set-materials-tab") {
+      state.materialsTab = button.dataset.tab === "social" ? "social" : "files";
+      render();
+      if (state.materialsTab === "social") loadSocialMaterials();
+    }
+    if (action === "refresh-social-materials") loadSocialMaterials();
+    if (action === "copy-social-message") copySocialMessage();
+    if (action === "reset-social-message") { delete state.socialDrafts[state.socialProgramId]; state.socialCopyStatus = ""; render(); }
     if (action === "open-documents") loadDocuments("");
     if (action === "open-document-folder") loadDocuments(button.dataset.path || "");
     if (action === "refresh-documents") loadDocuments(state.documentsData?.path || "");
@@ -852,6 +956,13 @@
   });
 
   app.addEventListener("input", (event) => {
+    if (event.target.matches("[data-social-search]")) {
+      const start = event.target.selectionStart, end = event.target.selectionEnd;
+      state.socialSearch = event.target.value; state.socialCopyStatus = ""; render();
+      const input = app.querySelector("[data-social-search]"); input?.focus({preventScroll:true});
+      if (start !== null && end !== null) input?.setSelectionRange(start, end);
+    }
+    if (event.target.matches("[data-social-message]")) { state.socialDrafts[state.socialProgramId] = event.target.value; state.socialCopyStatus = ""; }
     if (event.target.matches("[data-filter='q']")) updateFilter(event.target);
     if (event.target.closest("[data-feedback-form]") && event.target.name in state.feedbackDraft) {
       state.feedbackDraft[event.target.name] = event.target.value;
@@ -864,6 +975,8 @@
   });
 
   app.addEventListener("change", (event) => {
+    if (event.target.matches("[data-social-type]")) { state.socialType = event.target.value; state.socialCopyStatus = ""; render(); }
+    if (event.target.matches("[data-social-program]")) { state.socialProgramId = event.target.value; state.socialCopyStatus = ""; render(); }
     if (event.target.matches("[data-partner-photo-input]")) {
       const file = event.target.files?.[0];
       event.target.value = "";

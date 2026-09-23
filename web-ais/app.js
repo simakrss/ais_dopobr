@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.534",
+    version: "1.7.535",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.535",
+      releasedAt: "2026-09-23",
+      changes: ["В материалах партнёра добавлена «Информация для соцсетей»: рекламные сообщения о доступных курсах с персональным купоном текущего партнёра, поиск и фильтр по типу программы, редактирование перед копированием. Чужие купоны заменяются, исходные промосообщения реестра не изменяются."]
+    },
     {
       version: "1.7.534",
       releasedAt: "2026-09-23",

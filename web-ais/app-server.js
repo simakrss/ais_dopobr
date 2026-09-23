@@ -38964,6 +38964,82 @@ function normalizePartnerMaterialsUrl(value) {
   return parsed.toString();
 }
 
+function partnerSocialPlainText(value) {
+  return String(value ?? "").slice(0, 60000)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<a\b[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, "$2 — $1")
+    .replace(/<br\s*\/?>|<\/(?:p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(nbsp|amp|quot|apos|lt|gt);/gi, (_, entity) => ({nbsp:" ",amp:"&",quot:'"',apos:"'",lt:"<",gt:">"})[entity.toLowerCase()])
+    .replace(/&#(x[\da-f]+|\d+);/gi, (_, code) => {
+      const point = code[0].toLowerCase() === "x" ? parseInt(code.slice(1), 16) : Number(code);
+      return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : "";
+    })
+    .replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+    .replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function partnerSocialLandingUrl(value) {
+  let source = String(value || "").trim();
+  if (/^\/?[a-z0-9][a-z0-9_-]{1,79}\/?$/i.test(source)) source = `https://edu-plus.ru/${source.replace(/^\/|\/$/g, "")}`;
+  if (/^(?:www\.)?edu-plus\.ru\//i.test(source)) source = `https://${source}`;
+  if (!/^(?:https?:\/\/|\/(?!\/))/i.test(source)) return "";
+  try {
+    const url = new URL(source, "https://edu-plus.ru/");
+    if (!source || !/^https?:$/.test(url.protocol) || !/^(?:www\.)?edu-plus\.ru$/i.test(url.hostname)
+      || url.username || url.password || url.port || url.searchParams.has("preview")) return "";
+    url.protocol = "https:";
+    return url.toString();
+  } catch { return ""; }
+}
+
+function buildPartnerSocialMaterials(data = {}, employee = {}, today = getMoscowCalendarDateKey()) {
+  // Only the authenticated partner's contract supplies the coupon; never accept one from the request.
+  const coupon = String(employee.coupon || "").replace(/[\r\n\u0000-\u001f]/g, "").trim().slice(0, 200);
+  const types = { "ПРО":"Онлайн-семинар", "КПК":"Повышение квалификации", "ППП":"Профессиональная переподготовка", "ДОП":"Дополнительное образование" };
+  const programs = (data.collections?.programs || []).flatMap(program => {
+    const type = String(program.type || "").trim().toUpperCase();
+    const name = partnerSocialPlainText(program.name);
+    if (!types[type] || !name || String(program.status || "").trim().toLowerCase() !== "набор") return [];
+    const webinarDate = type === "ПРО" ? normalizePartnerDate(program.webinarDate) : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(webinarDate) && webinarDate < today) return [];
+    const landingUrl = partnerSocialLandingUrl(program.promoSite);
+    const sourceText = [program.promoMessage1, program.promoMessage2].map(partnerSocialPlainText).find(Boolean) || "";
+    let message = sourceText;
+    if (!message) {
+      const price = Number(String(program.price ?? "").replace(/\s/g, "").replace(",", "."));
+      const hours = Number(program.hours);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(webinarDate) ? webinarDate.split("-").reverse().join(".") : "";
+      const time = /^\d{2}:\d{2}$/.test(String(program.webinarTime || "")) ? program.webinarTime : "";
+      message = [
+        `Откройте новые возможности для обучения!\n\nУчебный центр «Цифровизация Плюс» приглашает на программу «${name}».`,
+        [types[type], Number.isFinite(hours) && hours > 0 ? `${hours} ч` : "", partnerSocialPlainText(program.studyForm)].filter(Boolean).join(" · "),
+        type === "ПРО" && date ? `Дата мероприятия: ${date}${time ? ` в ${time} (мск)` : ""}.` : "",
+        Number.isFinite(price) && price > 0 ? `Стоимость: ${new Intl.NumberFormat("ru-RU").format(price)} ₽.` : "",
+        `Узнайте подробности и подайте заявку: ${landingUrl || "https://edu-plus.ru/"}`
+      ].filter(Boolean).join("\n\n");
+    }
+    // Existing registry messages sometimes contain somebody else's literal coupon.
+    // Replace their coupon lines, including discount promises, with this partner's code.
+    message = message.split("\n").filter(line => !/(?:купон|промокод|promo.?code|coupon)/iu.test(line)).join("\n").trim();
+    message = message.replace(/https?:\/\/[^\s<>]+/gi, raw => {
+      try {
+        const url = new URL(raw);
+        if (!/^(?:www\.)?(?:edu-plus|zifra-plus)\.ru$/i.test(url.hostname)) return raw;
+        let changed = false;
+        for (const key of [...url.searchParams.keys()]) if (/^(coupon|coupon_code|apply_coupon|promo_code|discount_code)$/i.test(key)) {
+          url.searchParams.delete(key); changed = true;
+        }
+        return changed ? url.toString() : raw;
+      } catch { return raw; }
+    }).replace(/\n{3,}/g, "\n\n");
+    if (landingUrl && !message.includes(landingUrl)) message += `\n\nПодробнее и запись: ${landingUrl}`;
+    if (coupon) message += `\n\n🎁 Персональный купон: ${coupon}\nВведите его при оформлении заказа. Условия применения купона уточняйте в интернет-магазине.`;
+    return [{ id:String(program.id || ""), name, type, landingUrl, message, source:sourceText ? "promo" : "generated" }];
+  }).filter(program => program.id).sort((a,b) => a.name.localeCompare(b.name, "ru", {numeric:true, sensitivity:"base"}));
+  return { coupon, programs };
+}
+
 function normalizePartnerMaterialsPath(value) {
   const parts = String(value || "")
     .replace(/\\/gu, "/")
@@ -39198,6 +39274,11 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
     }
     if (req.method === "GET" && requestUrl.pathname === "/api/partner/materials") {
       sendJson(res, 200, await readPartnerMaterialsFolder(requestUrl.searchParams.get("path") || "/"));
+      return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/partner/social-materials") {
+      const context = await resolvePartnerPortalContext(authUser);
+      sendJson(res, 200, buildPartnerSocialMaterials(context.data, context.employee));
       return;
     }
     if (req.method === "PUT" && requestUrl.pathname === "/api/partner/profile") {
@@ -40792,6 +40873,9 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  buildPartnerSocialMaterials,
+  partnerSocialPlainText,
+  partnerSocialLandingUrl,
   validateSharedInterfaceLayout,
   readSharedInterfaceLayout,
   saveSharedInterfaceLayout,
