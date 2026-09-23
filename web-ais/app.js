@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.529",
+    version: "1.7.530",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.530",
+      releasedAt: "2026-09-23",
+      changes: ["Поля типовых сообщений слушателей и сотрудников перетаскиваются из списка и внутри текста без Shift. Перенос сохраняет поле целиком, поддерживает отмену и не оставляет дубликаты при обновлении подсветки. Это работает и в окне редактирования формулы сообщения."]
+    },
     {
       version: "1.7.529",
       releasedAt: "2026-09-23",
@@ -4301,7 +4306,10 @@
     "[data-action='drag-program-training-plan-row']",
     "[data-contract-field-drag-handle]",
     "[data-program-payment-constant-token]",
-    "[data-automatic-expense-rule-token]"
+    "[data-automatic-expense-rule-token]",
+    "form[data-action='save-communication-templates'] [data-template-token]",
+    ".communication-template-field-dialog [data-template-token]",
+    "[data-card-message-formula] [data-template-token]"
   ].join(", ");
   const STUDENT_CARD_TAB_ORDER_KEY = "ais-dopobr-student-card-tab-order-v1";
   const TAB_ORDER_SETTINGS_KEY = "ais-dopobr-tab-orders-v1";
@@ -63990,6 +63998,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!editor) return;
     let draggedFormulaBlock = null;
     let formulaHighlightTimer = null;
+    const drag = bindCommunicationTemplateTokenDragLifecycle(dialog);
     initializeCommunicationTemplateEditorHistory(editor);
 
     editor.addEventListener("compositionstart", () => {
@@ -64006,7 +64015,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (editor.dataset.composing === "true") return;
       window.clearTimeout(formulaHighlightTimer);
       formulaHighlightTimer = window.setTimeout(() => {
-        refreshCommunicationTemplateFormulaEditor(editor, true);
+        if (!drag.isActive()) refreshCommunicationTemplateFormulaEditor(editor, true);
       }, 140);
     });
     editor.addEventListener("keydown", (event) => {
@@ -64016,7 +64025,8 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     editor.addEventListener("blur", () => {
       window.clearTimeout(formulaHighlightTimer);
-      refreshCommunicationTemplateFormulaEditor(editor);
+      syncCommunicationTemplateFormulaEditor(editor);
+      if (!drag.isActive()) refreshCommunicationTemplateFormulaEditor(editor);
     });
     dialog.addEventListener("dragstart", (event) => {
       const token = event.target.closest?.("[data-template-token]");
@@ -64065,8 +64075,12 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       commitCommunicationTemplateEditorChange(editor, beforeValue);
       syncCommunicationTemplateFormulaEditor(editor);
-      refreshCommunicationTemplateFormulaEditor(editor, true);
+      const caretOffset = getCommunicationTemplateNodeStartOffset(editor, block) + token.length;
+      drag.finish();
+      draggedFormulaBlock = null;
+      refreshCommunicationTemplateFormulaEditor(editor);
       editor.focus({ preventScroll: true });
+      setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
     });
   }
 
@@ -64398,11 +64412,42 @@ MAX - https://bizvmax.ru/zifra_plus
     syncDataFormulaEditor(editor);
   }
 
+  function bindCommunicationTemplateTokenDragLifecycle(root) {
+    let activeToken = null;
+    let dragging = false;
+    const finish = () => {
+      activeToken?.classList.remove("is-dragging");
+      activeToken = null;
+      dragging = false;
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancel);
+      document.removeEventListener("dragend", finish);
+    };
+    const cancel = () => { if (!dragging) finish(); };
+    const begin = (event) => {
+      if (event.type === "pointerdown" && event.button !== 0) return;
+      const token = event.target.closest?.("[data-template-token]");
+      if (!token || !root.contains(token)) return;
+      finish();
+      activeToken = token;
+      dragging = event.type === "dragstart";
+      document.addEventListener("pointerup", finish);
+      document.addEventListener("pointercancel", cancel);
+      document.addEventListener("dragend", finish);
+    };
+    // Protect the source DOM before pointerdown moves focus and triggers blur.
+    // Native dragstart also fires pointercancel; it must not end this protection.
+    root.addEventListener("pointerdown", begin, { capture: true });
+    root.addEventListener("dragstart", begin, { capture: true });
+    return { isActive: () => Boolean(activeToken), finish };
+  }
+
   function bindCommunicationTemplateDragAndDrop() {
     const tokenMime = "application/x-ais-template-field";
     const forms = document.querySelectorAll("form[data-action='save-communication-templates']");
     forms.forEach((form) => {
       let draggedTemplateBlock = null;
+      const drag = bindCommunicationTemplateTokenDragLifecycle(form);
 
     form.addEventListener("click", openTemplateEditorLink);
     form.addEventListener("dragstart", (event) => {
@@ -64439,7 +64484,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (editor.dataset.composing === "true") return;
         window.clearTimeout(templateHighlightTimer);
         templateHighlightTimer = window.setTimeout(() => {
-          refreshCommunicationTemplateEditor(editor, true);
+          if (!drag.isActive()) refreshCommunicationTemplateEditor(editor, true);
         }, 140);
       });
       editor.addEventListener("keydown", (event) => {
@@ -64449,7 +64494,8 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       editor.addEventListener("blur", () => {
         window.clearTimeout(templateHighlightTimer);
-        refreshCommunicationTemplateEditor(editor);
+        syncCommunicationTemplateEditor(editor);
+        if (!drag.isActive()) refreshCommunicationTemplateEditor(editor);
       });
       editor.addEventListener("dragover", (event) => {
         if (!Array.from(event.dataTransfer?.types || []).includes(tokenMime)) return;
@@ -64482,8 +64528,12 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         commitCommunicationTemplateEditorChange(editor, beforeEditorValue);
         syncCommunicationTemplateEditor(editor);
-        refreshCommunicationTemplateEditor(editor, true);
-        editor.focus();
+        const caretOffset = getCommunicationTemplateNodeStartOffset(editor, block) + token.length;
+        drag.finish();
+        draggedTemplateBlock = null;
+        refreshCommunicationTemplateEditor(editor);
+        editor.focus({ preventScroll: true });
+        setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
       });
     });
     });
