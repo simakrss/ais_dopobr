@@ -39,7 +39,7 @@ if (PHP_SAPI === 'cli-server') {
 function check($ok, $message) { if (!$ok) throw new RuntimeException($message); }
 function ok($value) { check(!is_wp_error($value), is_wp_error($value) ? $value->message : ''); return $value; }
 function status($value, $code) { check(is_wp_error($value) && $value->data['status'] === $code, 'Expected error ' . $code); }
-$root = $test_root . '/queue'; mkdir($root, 0700);
+$root = ais_dr_root(); mkdir($root, 0700);
 $now = time();
 $call = fn($action, $data = array(), $time = null) => ais_dr_dispatch($root, $action, $data, $time ?? $now);
 $worker1 = str_repeat('1', 32); $worker2 = str_repeat('2', 32);

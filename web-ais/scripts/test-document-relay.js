@@ -17,16 +17,26 @@ async function main() {
   assert.equal(maximum, 2); assert.deepEqual(ordered, [0,1,2,3]);
   const php = process.env.PHP_BINARY || "C:/Users/ronad/AppData/Local/Microsoft/WinGet/Packages/PHP.PHP.8.3_Microsoft.Winget.Source_8wekyb3d8bbwe/php.exe";
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ais-relay-node-"));
+  const direct = process.argv.includes("--direct");
+  const publicRoot = path.join(temp,"public_html");
+  fs.mkdirSync(path.join(publicRoot,"wp-content","mu-plugins"),{recursive:true});
+  fs.writeFileSync(path.join(temp,"ais-program-site.key"),secret,{mode:0o600});
+  fs.copyFileSync(path.join(__dirname,"../services/wordpress/ais-document-relay.php"),path.join(publicRoot,"wp-content","mu-plugins","ais-document-relay.php"));
   const net = require("node:net"); const probe = net.createServer();
   await new Promise(r => probe.listen(0, "127.0.0.1", r)); const port = probe.address().port; await new Promise(r => probe.close(r));
-  const child = spawn(php, ["-S", `127.0.0.1:${port}`, path.join(__dirname, "test-document-relay.php")], {env: {...process.env, AIS_RELAY_TEST_ROOT: temp}, windowsHide: true, stdio: "ignore"});
+  const child = spawn(php, ["-S", `127.0.0.1:${port}`, ...(direct ? ["-t",publicRoot] : [path.join(__dirname, "test-document-relay.php")])], {env: {...process.env, AIS_RELAY_TEST_ROOT: temp}, windowsHide: true, stdio: "ignore"});
   let startupError = null;
   child.on("error", error => { startupError = error; });
-  const client = relay.createClient(secret, {base: `http://127.0.0.1:${port}/wp-json/ais-document-relay/v1`});
+  const clientOptions = {base: `http://127.0.0.1:${port}${direct ? "/wp-content/mu-plugins/ais-document-relay.php" : "/wp-json/ais-document-relay/v1"}`, fetch: (url,options) => new Promise((resolve,reject) => {
+    const request = require("node:http").request(url,{method:options.method,signal:options.signal,headers:{...options.headers,Host:"zifra-plus.ru"}}, response => {
+      const chunks=[]; response.on("data",chunk=>chunks.push(chunk)); response.on("end",()=>resolve(new Response(Buffer.concat(chunks),{status:response.statusCode}))); response.on("error",reject);
+    }); request.on("error",reject); request.end(options.body);
+  })};
+  const client = relay.createClient(secret, clientOptions);
   const workers = [], handled = [];
   try {
     for (let n = 0; ; n++) { if (startupError) throw startupError; try { await client.call("health"); break; } catch(error) { if (n > 50) throw error; await new Promise(r=>setTimeout(r,100)); } }
-    await assert.rejects(relay.createClient("b".repeat(64), {base: `http://127.0.0.1:${port}/wp-json/ais-document-relay/v1`}).call("health"), error => error.statusCode === 403);
+    await assert.rejects(relay.createClient("b".repeat(64), clientOptions).call("health"), error => error.statusCode === 403);
     for (const workerId of ["1".repeat(32), "2".repeat(32)]) {
       workers.push(relay.startWorker({workerId, getClient: async () => client, getCapabilities: async () => ["pdf", "ocr"], execute: async (kind, payload, controller) => {
         handled.push({workerId, index: payload.index, kind});
@@ -48,7 +58,7 @@ async function main() {
     for (let n=0;n<100&&!handled.some(x=>x.index===99);n++) await new Promise(r=>setTimeout(r,100));
     assert.ok(handled.some(x=>x.index===99)); controller.abort(new Error("test cancel")); await rejected;
     assert.equal(fs.readdirSync(privateRoot).filter(file=>/\.(input|output)$/.test(file)).length,0);
-    console.log("Relay end-to-end: PHP/Node signatures, encrypted multi-chunk transfer, two concurrent workers, balanced jobs, result cleanup, cancellation and stable order OK");
+    console.log(`Relay ${direct ? "direct" : "WordPress"} end-to-end: PHP/Node signatures, encrypted multi-chunk transfer, two concurrent workers, balanced jobs, result cleanup, cancellation and stable order OK`);
   } finally {
     workers.forEach(worker => worker.stop());
     if (child.exitCode === null && !startupError) await new Promise(resolve => { child.once("exit",resolve); child.kill(); });

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.542",
+    version: "1.7.543",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.543",
+      releasedAt: "2026-09-23",
+      changes: ["PDF отображается внутри окна на телефонах и компьютерах: постраничный просмотр, масштабирование, открытие и скачивание. Обмен заданиями PDF/OCR ускорен: защищённый обработчик работает без загрузки WordPress, с сохранением шифрования, отмены и распределения между компьютерами."]
+    },
     {
       version: "1.7.542",
       releasedAt: "2026-09-23",
@@ -72099,6 +72104,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function requestGeneratedDocumentPreview(generationRequest, processingOrigin, generationTaskId = "") {
+    // Load the renderer while the server is generating; never delay the document request.
+    if (typeof window !== "undefined" && typeof APP_BASE_URL !== "undefined") {
+      import(new URL("pdf-preview.js?v=20260923-mobile-pdf-v1", APP_BASE_URL).href)
+        .then(() => window.AisPdfPreview.preload(APP_BASE_URL.href)).catch(() => null);
+    }
     return fetchWithTimeout(documentProcessingApiUrl(
       "/api/contracts/student-document",
       processingOrigin
@@ -72416,7 +72426,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 ? `<br>Отправка по email: ${escapeHtml(emailDescription)}.`
                 : ""}${!editorAvailable ? "<br>Редактирование сейчас недоступно. Можно продолжить без редактирования." : ""}</span>
           </div>
-          ${previewAvailable ? `<iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>` : `<div class="generated-document-preview-summary"><button class="ghost-button" data-action="download-generated-document-preview" type="button">Скачать DOCX для проверки</button></div>`}
+          ${previewAvailable ? `<div class="generated-document-preview-body"><div class="generated-document-pdf-viewer" data-generated-pdf-viewer>Загружаем просмотр PDF…</div><iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="about:blank" hidden title="Редактирование документа ${escapeAttr(title)}"></iframe></div>` : `<div class="generated-document-preview-summary"><button class="ghost-button" data-action="download-generated-document-preview" type="button">Скачать DOCX для проверки</button></div>`}
           <footer class="modal-actions generated-document-preview-actions">
             <small data-generated-document-preview-hint>Сохранение в папку документов и отправка начнутся только после подтверждения.</small>
             <div class="generated-document-preview-buttons">
@@ -72430,6 +72440,24 @@ MAX - https://bizvmax.ru/zifra_plus
         </section>
       `;
       let settled = false;
+      let pdfViewer = null;
+      let pdfViewerSequence = 0;
+      const pdfHost = backdrop.querySelector("[data-generated-pdf-viewer]");
+      const startPdfPreview = async () => {
+        if (!pdfHost || settled) return;
+        const current = ++pdfViewerSequence;
+        pdfViewer?.destroy(); pdfViewer = null;
+        pdfHost.hidden = false;
+        try {
+          await import(new URL("pdf-preview.js?v=20260923-mobile-pdf-v1", APP_BASE_URL).href);
+          if (settled || current !== pdfViewerSequence) return;
+          pdfViewer = window.AisPdfPreview.mount(pdfHost, previewBlob, {fileName, baseUrl: APP_BASE_URL.href});
+        } catch {
+          if (!settled && current === pdfViewerSequence) {
+            pdfHost.innerHTML = `<p>Не удалось загрузить просмотр PDF.</p><a href="${escapeAttr(previewUrl)}" download="${escapeAttr(fileName.replace(/\.(?:docx|pdf)$/i, "") + ".pdf")}">Скачать PDF</a>`;
+          }
+        }
+      };
       let editorSession = null;
       let editorReady = false;
       let editorChangesPending = false;
@@ -72459,7 +72487,8 @@ MAX - https://bizvmax.ru/zifra_plus
         editorSessionRefreshStatus = 0;
         if (frame) {
           frame.classList.remove("is-editor");
-          frame.src = `${previewUrl}#toolbar=1&navpanes=0`;
+          frame.hidden = true;
+          frame.src = "about:blank";
           frame.title = `Предварительный просмотр документа ${title}`;
         }
         if (heading) heading.textContent = "Предварительный просмотр";
@@ -72487,8 +72516,11 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         if (continueButton) continueButton.disabled = false;
         editorSession = null;
+        startPdfPreview();
       };
       const setEditorMode = (session) => {
+        pdfViewerSequence++; pdfViewer?.destroy(); pdfViewer = null;
+        if (pdfHost) pdfHost.hidden = true;
         editorSession = session;
         editorReady = false;
         editorChangesPending = false;
@@ -72497,6 +72529,7 @@ MAX - https://bizvmax.ru/zifra_plus
         editorSessionRefreshRequired = false;
         editorSessionRefreshStatus = 0;
         if (frame) {
+          frame.hidden = false;
           frame.classList.add("is-editor");
           frame.src = session.editorUrl;
           frame.title = `Редактирование документа ${title}`;
@@ -72628,6 +72661,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (settled) return;
         settled = true;
         editorStartSequence += 1;
+        pdfViewerSequence++; pdfViewer?.destroy(); pdfViewer = null;
         options.signal?.removeEventListener("abort", abortPreview);
         backdrop.removeEventListener("keydown", trapFocus);
         window.removeEventListener("message", handleEditorMessage);
@@ -72761,6 +72795,7 @@ MAX - https://bizvmax.ru/zifra_plus
           );
           if (settled || editorSession !== sessionToSave) return false;
           const previousPreviewUrl = previewUrl;
+          previewBlob = saved.blob;
           previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
           sessionToSave.editRevision = saved.editRevision;
           setPreviewMode(
@@ -72945,6 +72980,7 @@ MAX - https://bizvmax.ru/zifra_plus
       document.body.appendChild(backdrop);
       requestAnimationFrame(() => {
         backdrop.querySelector(options.readOnly ? "[data-action='cancel-generated-document-preview']" : "[data-action='confirm-generated-document-preview']")?.focus({ preventScroll: true });
+        startPdfPreview();
       });
       if (options.signal?.aborted) abortPreview();
     });

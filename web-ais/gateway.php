@@ -1722,7 +1722,7 @@ function gateway_document_relay_health(): array
     $context = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 8, 'follow_location' => 0,
         'header' => "Content-Type: application/json\r\nX-AIS-Timestamp: $stamp\r\nX-AIS-Nonce: $nonce\r\nX-AIS-Signature: $signature\r\n",
         'content' => $body]]);
-    $bytes = @file_get_contents('https://zifra-plus.ru' . $resource, false, $context, 0, 8193);
+    $bytes = @file_get_contents('https://zifra-plus.ru/wp-content/mu-plugins/ais-document-relay.php?action=health', false, $context, 0, 8193);
     $status = $bytes !== false && strlen($bytes) <= 8192 ? json_decode($bytes, true) : null;
     if (!is_array($status) || ($status['ok'] ?? false) !== true) return $summary + ['error' => 'Очередь документов временно недоступна.'];
     return array_merge($summary, ['ok' => true, 'workers' => (int) ($status['workers'] ?? 0), 'pdf' => (int) ($status['pdf'] ?? 0), 'ocr' => (int) ($status['ocr'] ?? 0)]);

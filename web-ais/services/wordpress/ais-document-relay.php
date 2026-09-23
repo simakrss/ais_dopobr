@@ -2,14 +2,33 @@
 /**
  * Plugin Name: АИС — защищённая очередь PDF и OCR
  * Description: Исходящий обмен с исполнителями АИС; зашифрованные временные документы вне public_html.
- * Version: 1.0.0
+ * Version: 1.1.0
  */
-defined('ABSPATH') || exit;
+// Direct requests use the same signed protocol without booting WordPress/WooCommerce.
+// The file remains an MU plugin too, preserving compatibility with older desktops.
+$ais_dr_direct = !defined('ABSPATH');
+if ($ais_dr_direct) define('ABSPATH', dirname(__DIR__, 2) . '/');
+class AisDrStandaloneError {
+    public $message, $data;
+    function __construct($message, $status) { $this->message = $message; $this->data = array('status' => $status); }
+}
 const AIS_DR_MAX_BYTES = 50331648;
 const AIS_DR_CHUNK = 393216;
-function ais_dr_error($message, $status = 400) { return new WP_Error('ais_document_relay', $message, array('status' => $status)); }
+function ais_dr_error($message, $status = 400) { return class_exists('WP_Error') ? new WP_Error('ais_document_relay', $message, array('status' => $status)) : new AisDrStandaloneError($message, $status); }
+function ais_dr_is_error($value) { return $value instanceof AisDrStandaloneError || (function_exists('is_wp_error') && is_wp_error($value)); }
+function ais_dr_nonce($nonce) {
+    // Shared atomic replay guard for both transports, never two independent nonce stores.
+    $root = ais_dr_root();
+    if (!is_dir($root) && !@mkdir($root, 0700, true) && !is_dir($root)) return false;
+    foreach (glob($root . '/nonce-*.used') ?: array() as $file) if (filemtime($file) < time() - 250) @unlink($file);
+    $file = "$root/nonce-$nonce.used";
+    $handle = @fopen($file, 'x');
+    if (!$handle) return false;
+    fclose($handle); chmod($file, 0600); return true;
+}
 function ais_dr_permission($request) {
-    if (strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST)) !== 'zifra-plus.ru') return ais_dr_error('Очередь работает только на zifra-plus.ru.', 404);
+    $host = function_exists('home_url') ? parse_url(home_url(), PHP_URL_HOST) : ($_SERVER['HTTP_HOST'] ?? '');
+    if (strtolower((string) $host) !== 'zifra-plus.ru') return ais_dr_error('Очередь работает только на zifra-plus.ru.', 404);
     $body = $request->get_body();
     if (strlen($body) > 700000 || $request->get_query_params()) return ais_dr_error('Недопустимый запрос очереди.', 413);
     $key_file = dirname(rtrim(ABSPATH, '/\\')) . '/ais-program-site.key';
@@ -23,9 +42,7 @@ function ais_dr_permission($request) {
     $proof = hash_hmac('sha256', implode("\n", array($request->get_method(), '/wp-json' . $request->get_route(), $stamp, $nonce, hash('sha256', $body))), $key);
     if (!hash_equals($proof, $signature)) return ais_dr_error('Подпись запроса не подтверждена.', 403);
     // No WordPress cookie/admin bypass. Nonces are atomically unique across PHP processes.
-    if (!add_option('_ais_dr_nonce_' . $nonce, (string) time(), '', false)) return ais_dr_error('Повторный запрос отклонён.', 409);
-    global $wpdb;
-    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s AND CAST(option_value AS UNSIGNED) < %d", $wpdb->esc_like('_ais_dr_nonce_') . '%', time() - 250));
+    if (!ais_dr_nonce($nonce)) return ais_dr_error('Повторный запрос отклонён или хранилище недоступно.', 409);
     return true;
 }
 function ais_dr_root() { return dirname(rtrim(ABSPATH, '/\\')) . '/ais-document-relay-private'; }
@@ -182,12 +199,13 @@ function ais_dr_handle($request) {
         if (!is_array($data)) throw new InvalidArgumentException('Некорректный запрос.');
         $action = basename($request->get_route());
         $result = ais_dr_dispatch($root, $action, $data, time());
-        if (is_wp_error($result)) return $result;
-        return new WP_REST_Response($result, 200, array('Cache-Control' => 'no-store, private'));
+        if (ais_dr_is_error($result)) return $result;
+        return class_exists('WP_REST_Response') ? new WP_REST_Response($result, 200, array('Cache-Control' => 'no-store, private')) : $result;
     } catch (InvalidArgumentException $error) { return ais_dr_error($error->getMessage(), 400);
     } catch (Throwable $error) { return ais_dr_error('Ошибка защищённой очереди. Повторите запрос.', 503);
     } finally { flock($lock, LOCK_UN); fclose($lock); }
 }
+if (!$ais_dr_direct) {
 add_action('rest_api_init', function () {
     register_rest_route('ais-document-relay/v1', '/(?P<action>health|submit|put|commit|claim|read|renew|result-start|result-put|complete|status|cancel|ack)', array(
         'methods' => 'POST', 'permission_callback' => 'ais_dr_permission', 'callback' => 'ais_dr_handle'));
@@ -204,3 +222,26 @@ add_action('ais_document_relay_cleanup', function () {
     try { if (flock($lock, LOCK_EX)) ais_dr_cleanup($root, time()); }
     finally { flock($lock, LOCK_UN); fclose($lock); }
 });
+} else {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, private');
+    header('X-Content-Type-Options: nosniff');
+    $action = (string) ($_GET['action'] ?? '');
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !preg_match('/^(health|submit|put|commit|claim|read|renew|result-start|result-put|complete|status|cancel|ack)$/D', $action)) {
+        http_response_code(404); echo '{"message":"Not found"}'; exit;
+    }
+    $request = new class($action) {
+        private $action, $body;
+        function __construct($action) { $this->action = $action; $this->body = file_get_contents('php://input', false, null, 0, 700001); }
+        function get_body() { return $this->body; }
+        function get_method() { return 'POST'; }
+        function get_route() { return '/ais-document-relay/v1/' . $this->action; }
+        function get_query_params() { return array_diff_key($_GET, array('action' => true)); }
+        function get_header($name) { return (string) ($_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $name))] ?? ''); }
+        function get_json_params() { return json_decode($this->body, true); }
+    };
+    $permission = ais_dr_permission($request);
+    $result = $permission === true ? ais_dr_handle($request) : $permission;
+    if (ais_dr_is_error($result)) { http_response_code($result->data['status']); echo json_encode(array('message' => $result->message)); }
+    else echo json_encode($result, JSON_UNESCAPED_UNICODE);
+}

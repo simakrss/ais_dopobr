@@ -25,6 +25,9 @@ async function main(){
   const historical=structuredClone(one.release);historical.version="1.7.541";historical.files=historical.files.filter(file=>file.path!=="document-relay.js");
   assert.equal(up.validateEnvelope(sign(historical),publicKey).version,"1.7.541");
   historical.version="1.7.542";assert.throws(()=>up.validateEnvelope(sign(historical),publicKey),/Неполный/);
+  const withoutViewer=structuredClone(one.release);withoutViewer.version="1.7.542";withoutViewer.files=withoutViewer.files.filter(file=>file.path!=="pdf-preview.js"&&!file.path.startsWith("pdfjs-"));
+  assert.equal(up.validateEnvelope(sign(withoutViewer),publicKey).version,"1.7.542");
+  withoutViewer.version="1.7.543";assert.throws(()=>up.validateEnvelope(sign(withoutViewer),publicKey),/Неполный/);
   assert.throws(()=>up.validateEnvelope({...one.envelope,payload:Buffer.from("{}").toString("base64")},publicKey),/Подпись/);
   for(const bad of ["../app.js","storage/settings.json",".runtime/key.pem","C:/app.js"]){const data=structuredClone(one.release);data.files[0].path=bad;assert.throws(()=>up.validateEnvelope(sign(data),publicKey),/состав/);assert.throws(()=>up.safeTarget(one.root,bad));}
   const dup=structuredClone(one.release);dup.files[1]=dup.files[0];assert.throws(()=>up.validateEnvelope(sign(dup),publicKey));

@@ -9,6 +9,7 @@ const FILES = Object.freeze([
   "app.js", "app-server.js", "auth-bootstrap.js", "index.html", "styles.css", "favicon.ico",
   "field-html-links.js", "document-workflow.js", "demo-mode-privacy.js", "local-server.js",
   "local-document-save-dialog.js", "document-relay.js", "local-update.js", "local-update-client.js", "partner-app.js",
+  "pdf-preview.js", "pdfjs-core.js", "pdfjs-worker.js", "pdfjs-license.html",
   "program-site-generator.js", "program-site-certificates.js", "program-site-progress.js",
   "server-cli.js", "student-import-worker.js", "scripts/start-lan-system.js",
   "scripts/sync-student-database.ps1", "scripts/query-student-applications.ps1",
@@ -91,7 +92,8 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
   const release = JSON.parse(bytes.toString("utf8"));
   if (release.protocol !== 1 || !/^\d+\.\d+\.\d+$/.test(release.version) || !/^[a-z0-9-]{5,100}$/.test(release.build) || !/^[a-f0-9]{40}$/.test(release.commit)) throw Error("Неподдерживаемое обновление.");
   // Verify historical manifests during publishing too; the relay first ships in 1.7.542.
-  const requiredFiles = FILES.filter(name => name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0);
+  const requiredFiles = FILES.filter(name => (name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0)
+    && (!(name === "pdf-preview.js" || name.startsWith("pdfjs-")) || compareVersions(release.version, "1.7.543") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
   const seen = new Set(); let total = 0;
   for (const file of release.files) {

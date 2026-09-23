@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const BASE = "https://zifra-plus.ru/wp-json/ais-document-relay/v1";
+const BASE = "https://zifra-plus.ru/wp-content/mu-plugins/ais-document-relay.php";
 const POLL_MS = 3000;
 const CHUNK_BYTES = 384 * 1024;
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -45,7 +45,8 @@ function createClient(secret, options = {}) {
     const proof = crypto.createHmac("sha256", derive(secret, "authentication"))
       .update(["POST", resource, timestamp, nonce, hash(body)].join("\n")).digest("hex");
     const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000);
-    const response = await fetcher(`${base}/${action}`, {method: "POST", redirect: "error", signal: requestSignal,
+    const endpoint = base.endsWith(".php") ? `${base}?action=${action}` : `${base}/${action}`;
+    const response = await fetcher(endpoint, {method: "POST", redirect: "error", signal: requestSignal,
       headers: {"Content-Type": "application/json", "X-AIS-Timestamp": timestamp, "X-AIS-Nonce": nonce, "X-AIS-Signature": proof}, body});
     // Read incrementally so a broken endpoint cannot exhaust the worker's memory.
     let length = 0; const chunks = [];

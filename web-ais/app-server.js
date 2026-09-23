@@ -40204,6 +40204,10 @@ async function handleServerEmail(req, res, authUser) {
 }
 
 const PUBLIC_STATIC_PATHS = new Set([
+  "/pdf-preview.js",
+  "/pdfjs-core.js",
+  "/pdfjs-worker.js",
+  "/pdfjs-license.html",
   "/app.js",
   "/auth-bootstrap.js",
   "/local-update-client.js",
