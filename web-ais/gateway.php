@@ -1708,6 +1708,26 @@ function gateway_tunnel_admin_summary(): array
     ];
 }
 
+function gateway_document_relay_health(): array
+{
+    $summary = ['ok' => false, 'site' => 'https://zifra-plus.ru', 'pollMs' => 3000];
+    $keyFile = dirname(__DIR__, 2) . '/lms-runtime/data/program-site-keys.json';
+    $keys = is_readable($keyFile) ? json_decode((string) file_get_contents($keyFile), true) : [];
+    $secret = (string) ($keys['shop'] ?? '');
+    if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) return $summary + ['error' => 'Ключ очереди документов не настроен.'];
+    $resource = '/wp-json/ais-document-relay/v1/health';
+    $stamp = (string) time(); $nonce = bin2hex(random_bytes(16)); $body = '{}';
+    $key = hash_hmac('sha256', 'ais-document-relay-v1:authentication', $secret, true);
+    $signature = hash_hmac('sha256', implode("\n", ['POST', $resource, $stamp, $nonce, hash('sha256', $body)]), $key);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 8, 'follow_location' => 0,
+        'header' => "Content-Type: application/json\r\nX-AIS-Timestamp: $stamp\r\nX-AIS-Nonce: $nonce\r\nX-AIS-Signature: $signature\r\n",
+        'content' => $body]]);
+    $bytes = @file_get_contents('https://zifra-plus.ru' . $resource, false, $context, 0, 8193);
+    $status = $bytes !== false && strlen($bytes) <= 8192 ? json_decode($bytes, true) : null;
+    if (!is_array($status) || ($status['ok'] ?? false) !== true) return $summary + ['error' => 'Очередь документов временно недоступна.'];
+    return array_merge($summary, ['ok' => true, 'workers' => (int) ($status['workers'] ?? 0), 'pdf' => (int) ($status['pdf'] ?? 0), 'ocr' => (int) ($status['ocr'] ?? 0)]);
+}
+
 function gateway_external_services_admin_payload(): array
 {
     $settings = gateway_server_settings();
@@ -1742,6 +1762,7 @@ function gateway_external_services_admin_payload(): array
             ),
         ],
         'tunnel' => $tunnel,
+        'relay' => gateway_document_relay_health(),
         'recognition' => [
             'serviceUrl' => $ocrServiceUrl,
             'localApiUrl' => gateway_join_external_service_url(
@@ -1828,6 +1849,14 @@ function gateway_document_editor_control_requires_tunnel(string $method, string 
         '/api/contracts/student-document-preview/editor-discard',
         '/api/contracts/student-document-preview/editor-refresh',
     ], true);
+}
+
+function gateway_document_compute_uses_queue(string $method, string $path, string $affinity): bool
+{
+    // Existing preview/editor sessions remain on their original backend. New compute never needs an inbound tunnel.
+    return ($affinity === '' && $method === 'POST' && $path === '/api/contracts/student-document')
+        || str_starts_with($path, '/api/students/recognize-documents/')
+        || $path === '/api/local-document-services/health';
 }
 
 function gateway_response_header(array $response, string $expectedName): string
@@ -4211,6 +4240,7 @@ try {
         $previewAffinityBackend !== 'server'
         && $tunnelSettings !== null
         && gateway_tunnel_handles($method, $path)
+        && !gateway_document_compute_uses_queue($method, $path, $previewAffinityBackend)
     ) {
         try {
             $tunnelHeaders = $authenticatedHeaders;

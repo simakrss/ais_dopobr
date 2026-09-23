@@ -22,6 +22,9 @@ function fixture(next="1.0.1"){
 }
 async function main(){
   const one=fixture();assert.equal(up.validateEnvelope(one.envelope,publicKey).version,"1.0.1");
+  const historical=structuredClone(one.release);historical.version="1.7.541";historical.files=historical.files.filter(file=>file.path!=="document-relay.js");
+  assert.equal(up.validateEnvelope(sign(historical),publicKey).version,"1.7.541");
+  historical.version="1.7.542";assert.throws(()=>up.validateEnvelope(sign(historical),publicKey),/Неполный/);
   assert.throws(()=>up.validateEnvelope({...one.envelope,payload:Buffer.from("{}").toString("base64")},publicKey),/Подпись/);
   for(const bad of ["../app.js","storage/settings.json",".runtime/key.pem","C:/app.js"]){const data=structuredClone(one.release);data.files[0].path=bad;assert.throws(()=>up.validateEnvelope(sign(data),publicKey),/состав/);assert.throws(()=>up.safeTarget(one.root,bad));}
   const dup=structuredClone(one.release);dup.files[1]=dup.files[0];assert.throws(()=>up.validateEnvelope(sign(dup),publicKey));

@@ -29,7 +29,10 @@ assert.match(appSource, /title: "Распознавание"/u);
 assert.match(appSource, /title: "Формирование документов"/u);
 assert.match(appSource, /authRequest\("api\/admin\/external-services"\)/u);
 assert.match(appSource, /probeLocalDocumentServices\(force\)/u);
-assert.match(appSource, /Локальный Docker[\s\S]*Защищённый туннель/u);
+assert.match(appSource, /Локальный Docker[\s\S]*Очередь zifra-plus.ru → свободный компьютер/u);
+assert.match(appSource, /Компьютеров для OCR/u);
+assert.match(appSource, /Компьютеров для PDF/u);
+assert.match(gatewaySource, /'relay' => gateway_document_relay_health\(\)/u);
 assert.match(styles, /\.admin-external-services-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/su);
 assert.match(styles, /@media \(max-width: 980px\)[\s\S]*\.admin-external-services-grid\s*\{[^}]*grid-template-columns:\s*1fr/su);
 

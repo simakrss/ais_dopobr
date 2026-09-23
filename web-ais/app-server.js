@@ -63,6 +63,9 @@ const localUpdate = require("./local-update.js");
 let localUpdateActiveRequests = 0;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
+const documentRelay = require("./document-relay.js");
+let documentRelayWorker = null;
+let documentRelayClientPromise = null;
 const programSiteProgress = require("./program-site-progress.js").createProgressStore();
 const programSiteCertificates = require("./program-site-certificates.js");
 const ROOT = path.resolve(process.env.AIS_APP_ROOT || SERVER_CODE_ROOT);
@@ -2690,6 +2693,7 @@ async function readTunnelRuntimeAdminSummary() {
 
 async function buildExternalServicesAdminPayload() {
   const tunnel = await readTunnelRuntimeAdminSummary();
+  const relay = await getDocumentRelayClient().then(client => client.call("health")).catch(error => ({ok: false, error: error.message}));
   const localGatewayUrl = sanitizeExternalServiceAdminUrl(
     process.env.AIS_LOCAL_DOCUMENT_SERVICES_ORIGIN,
     DEFAULT_LOCAL_DOCUMENT_SERVICES_ORIGIN
@@ -2714,6 +2718,7 @@ async function buildExternalServicesAdminPayload() {
       healthUrl: joinExternalServiceAdminUrl(localGatewayUrl, "/api/local-document-services/health")
     },
     tunnel,
+    relay: { ...relay, site: "https://zifra-plus.ru", pollMs: documentRelay.POLL_MS },
     recognition: {
       serviceUrl: ocrServiceUrl,
       localApiUrl: joinExternalServiceAdminUrl(localGatewayUrl, "/api/students/recognize-documents"),
@@ -14172,6 +14177,7 @@ async function recognizeOcrDocument(document) {
     mimeType: document.contentType,
     base64: bytes.toString("base64")
   };
+  if (isHostedDocumentRelayClient()) return runDocumentRelayOcr("recognize", requestPayload);
   if (shouldUseOcrCli()) {
     return runOcrCli(["--recognize-stdin"], requestPayload);
   }
@@ -14213,6 +14219,7 @@ async function renderOcrDocumentPageBytes(bytes, fileName, mimeType, page) {
     page: Math.max(1, Math.min(20, Number(page) || 1)),
     base64: bytes.toString("base64")
   };
+  if (isHostedDocumentRelayClient()) return runDocumentRelayOcr("render-page", requestPayload);
   if (shouldUseOcrCli()) {
     return runOcrCli(["--render-page-stdin"], requestPayload, 2 * 60 * 1000);
   }
@@ -14304,6 +14311,9 @@ function normalizeOcrFieldRegionResponse(value, expectedKey) {
 
 async function recognizeOcrFieldRegion(value) {
   const requestPayload = normalizeOcrFieldRegionRequest(value);
+  if (isHostedDocumentRelayClient()) {
+    return normalizeOcrFieldRegionResponse(await runDocumentRelayOcr("recognize-field", requestPayload), requestPayload.key);
+  }
   let payload;
   if (shouldUseOcrCli()) {
     payload = await runOcrCli(
@@ -14640,15 +14650,17 @@ async function runStudentDocumentRecognitionJob(job, options) {
     job.totalFiles = documents.length;
     job.progress = 8;
     job.stage = `Найдено файлов: ${documents.length}`;
-    const fileResults = [];
-    for (let index = 0; index < documents.length; index += 1) {
-      const document = documents[index];
+    const fileResults = new Array(documents.length);
+    const relayStatus = isHostedDocumentRelayClient() ? await (await getDocumentRelayClient()).call("health") : null;
+    const concurrency = relayStatus ? Math.max(1, Math.min(6, Number(relayStatus.ocr) || 1)) : 1;
+    let processed = 0;
+    await documentRelay.mapConcurrent(documents, concurrency, async (document, index) => {
       const fileStartedAt = Date.now();
       job.stage = `Распознавание ${index + 1} из ${documents.length}: ${document.relativeName}`;
-      job.progress = Math.min(94, 10 + Math.round((index / documents.length) * 84));
+      job.progress = Math.min(94, 10 + Math.round((processed / documents.length) * 84));
       try {
         const payload = await recognizeOcrDocument(document);
-        fileResults.push({
+        fileResults[index] = {
           fileName: document.fileName,
           relativeName: document.relativeName,
           contentType: document.contentType,
@@ -14682,9 +14694,9 @@ async function runStudentDocumentRecognitionJob(job, options) {
           textExtraction: String(payload.textExtraction || "ocr").slice(0, 24),
           durationMs: Number(payload.durationMs) || Date.now() - fileStartedAt,
           error: ""
-        });
+        };
       } catch (error) {
-        fileResults.push({
+        fileResults[index] = {
           fileName: document.fileName,
           relativeName: document.relativeName,
           contentType: document.contentType,
@@ -14698,10 +14710,11 @@ async function runStudentDocumentRecognitionJob(job, options) {
           textExtraction: "",
           durationMs: Date.now() - fileStartedAt,
           error: error.message
-        });
+        };
       }
-      job.processedFiles = index + 1;
-    }
+      job.processedFiles = ++processed;
+      job.progress = Math.min(94, 10 + Math.round((processed / documents.length) * 84));
+    });
     const successfulFiles = fileResults.filter((item) => !item.error);
     if (!successfulFiles.length) {
       const firstError = fileResults.find((item) => item.error)?.error;
@@ -15005,6 +15018,10 @@ function handleStudentDocumentRecognitionResult(req, res, requestUrl) {
 }
 
 async function readOcrHealthPayload() {
+  if (isHostedDocumentRelayClient()) {
+    const status = await (await getDocumentRelayClient()).call("health");
+    return { ok: status.ocr > 0, processing: "site-queue", workers: status.ocr, pollMs: documentRelay.POLL_MS };
+  }
   if (shouldUseOcrCli()) {
     const health = await runOcrCli(["--health"], null, 30 * 1000);
     return { ...health, installation: getOcrRuntimeBootstrap().status() };
@@ -33905,6 +33922,13 @@ async function convertDocxBytesToPdf(docxBytes, options = {}) {
     return await highQualityConverter(docxBytes);
   } catch (error) {
     throwIfDocumentGenerationCancelled();
+    if (typeof conversionOptions.libreOfficeConverter !== "function") {
+      const client = await getDocumentRelayClient();
+      const result = await client.run("pdf", {base64: docxBytes.toString("base64")}, {signal: documentGenerationContext.getStore()?.signal});
+      const bytes = Buffer.from(String(result?.base64 || ""), "base64");
+      if (bytes.length > documentRelay.MAX_BYTES || bytes.subarray(0, 5).toString() !== "%PDF-") throw new Error("Исполнитель вернул некорректный PDF.");
+      return bytes;
+    }
     throw new Error(
       "Не удалось сформировать PDF без потери качества через LibreOffice: "
         + `${error?.message || "неизвестная ошибка"}. `
@@ -36239,6 +36263,68 @@ async function proxyOnlyOfficeWebSocket(req, socket, head) {
   });
   proxyRequest.once("error", () => socket.destroy());
   proxyRequest.end();
+}
+
+function isHostedDocumentRelayClient() {
+  return SERVER_CODE_ROOT !== ROOT && process.env.AIS_DOCUMENT_RELAY_WORKER !== "1";
+}
+
+function getDocumentRelayClient() {
+  if (!documentRelayClientPromise) {
+    documentRelayClientPromise = documentRelay.fromStorage(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"))
+      .catch(() => { documentRelayClientPromise = null; throw new Error("Защищённая очередь документов не подключена: проверьте ключ связи с zifra-plus.ru на этом компьютере."); });
+  }
+  return documentRelayClientPromise;
+}
+
+async function runDocumentRelayOcr(operation, payload) {
+  const result = await (await getDocumentRelayClient()).run("ocr", {operation, payload}, {signal: documentGenerationContext.getStore()?.signal});
+  if (!result?.ok) throw new Error("Исполнитель не подтвердил распознавание документа.");
+  return result;
+}
+
+async function executeDocumentRelayJob(kind, payload, controller) {
+  return documentGenerationContext.run(controller, async () => {
+    if (kind === "pdf") {
+      const bytes = Buffer.from(String(payload?.base64 || ""), "base64");
+      if (!bytes.length || bytes.length > MAX_DOCX_BYTES || bytes.subarray(0, 2).toString() !== "PK") throw new Error("Некорректный документ DOCX.");
+      const pdf = await convertDocxBytesToPdfWithLibreOffice(bytes);
+      return {base64: pdf.toString("base64")};
+    }
+    const operations = {recognize: "--recognize-stdin", "render-page": "--render-page-stdin", "recognize-field": "--recognize-field-stdin"};
+    if (kind !== "ocr" || !Object.hasOwn(operations, payload?.operation) || !payload?.payload || typeof payload.payload !== "object") throw new Error("Недопустимое задание OCR.");
+    const data = payload.payload;
+    if (typeof data.base64 !== "string" || Buffer.byteLength(data.base64) > Math.ceil(MAX_OCR_DOCUMENT_BYTES / 3) * 4 + 4) throw new Error("Некорректный размер OCR-документа.");
+    if (shouldUseOcrCli()) return runOcrCli([operations[payload.operation]], data, 6 * 60 * 1000);
+    const serviceUrl = String(process.env.OCR_SERVICE_URL || DEFAULT_OCR_SERVICE_URL).trim().replace(/\/+$/g, "");
+    const body = Buffer.from(JSON.stringify(data));
+    const bytes = await requestBuffer(`${serviceUrl}/v1/${payload.operation}`, {
+      method: "POST", headers: {"Content-Type": "application/json", "Content-Length": body.length}, body,
+      signal: controller.signal, timeoutMs: 6 * 60 * 1000, maxResponseBytes: 8 * 1024 * 1024
+    });
+    const result = JSON.parse(bytes.toString("utf8"));
+    if (!result?.ok) throw new Error(result?.error || "OCR не завершён.");
+    return result;
+  });
+}
+
+function startDocumentRelayWorker() {
+  if (documentRelayWorker || isHostedDocumentRelayClient() || isDatabaseDemoModeEnabled()) return documentRelayWorker;
+  let capabilities = [], checkedAt = 0;
+  documentRelayWorker = documentRelay.startWorker({
+    getClient: getDocumentRelayClient,
+    isPaused: () => localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase),
+    getCapabilities: async () => {
+      if (Date.now() - checkedAt > 30000) {
+        const [pdf, ocr] = await Promise.all([resolveLibreOfficeBinary(), readOcrHealthPayload().catch(() => null)]);
+        capabilities = [...(pdf ? ["pdf"] : []), ...(ocr?.ok ? ["ocr"] : [])]; checkedAt = Date.now();
+      }
+      return capabilities;
+    },
+    execute: executeDocumentRelayJob,
+    onError: message => console.warn(`Очередь PDF/OCR: ${message}`)
+  });
+  return documentRelayWorker;
 }
 
 function isUnavailableDocumentPathError(error) {
@@ -40872,13 +40958,14 @@ if (isMainThread && require.main === module) {
         startSharedApplicationStateMirror();
         startAutomaticContractExpirationScheduler();
         startTrainingEndNotificationScheduler();
+        startDocumentRelayWorker();
         const server = http.createServer((req, res) => {
           const pathname = new URL(req.url,"http://localhost").pathname;
           if (pathname === "/api/local-update/runtime") {
             if (!requestHasConfiguredGatewaySecret(req)) {sendError(res,404,"Not found");return;}
             const jobs=[...studentImportJobs.values(),...studentExportJobs.values(),...studentDocumentRecognitionJobs.values()]
               .filter(job=>["running","queued","pending"].includes(job.status)).length;
-            sendJson(res,200,{activeRequests:localUpdateActiveRequests,jobs:jobs+Number(Boolean(trainingEndNotificationJobPromise))+Number(Boolean(automaticContractExpirationCheckPromise))+Number(Boolean(sharedStateMirrorRefreshPromise))+Number(Boolean(sharedStateOfflineSyncPromise)),version:localUpdate.version(SERVER_CODE_ROOT)});return;
+            sendJson(res,200,{activeRequests:localUpdateActiveRequests,jobs:jobs+Number(Boolean(documentRelayWorker?.status().busy))+Number(Boolean(trainingEndNotificationJobPromise))+Number(Boolean(automaticContractExpirationCheckPromise))+Number(Boolean(sharedStateMirrorRefreshPromise))+Number(Boolean(sharedStateOfflineSyncPromise)),relay:documentRelayWorker?.status() || null,version:localUpdate.version(SERVER_CODE_ROOT)});return;
           }
           if (!["/api/health","/local-update-client.js"].includes(pathname) && localUpdate.BLOCKING.has(localUpdate.readStatus(SERVER_CODE_ROOT).phase)) {
             sendError(res,503,"Выполняется обновление системы. Дождитесь завершения.");return;
@@ -40909,6 +40996,9 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  getDocumentRelayClient,
+  startDocumentRelayWorker,
+  executeDocumentRelayJob,
   buildPartnerSocialMaterials,
   partnerSocialPlainText,
   partnerSocialLandingUrl,

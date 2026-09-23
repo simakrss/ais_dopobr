@@ -8,7 +8,7 @@ const PUBLIC_KEY = "MCowBQYDK2VwAyEARDRUcPC/vPdxq9MOFlSfwBJUJNEz58fA8Jxhiuz9sCE=
 const FILES = Object.freeze([
   "app.js", "app-server.js", "auth-bootstrap.js", "index.html", "styles.css", "favicon.ico",
   "field-html-links.js", "document-workflow.js", "demo-mode-privacy.js", "local-server.js",
-  "local-document-save-dialog.js", "local-update.js", "local-update-client.js", "partner-app.js",
+  "local-document-save-dialog.js", "document-relay.js", "local-update.js", "local-update-client.js", "partner-app.js",
   "program-site-generator.js", "program-site-certificates.js", "program-site-progress.js",
   "server-cli.js", "student-import-worker.js", "scripts/start-lan-system.js",
   "scripts/sync-student-database.ps1", "scripts/query-student-applications.ps1",
@@ -90,7 +90,9 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
   if (!crypto.verify(null, bytes, key, Buffer.from(envelope.signature,"base64"))) throw Error("Подпись обновления не подтверждена.");
   const release = JSON.parse(bytes.toString("utf8"));
   if (release.protocol !== 1 || !/^\d+\.\d+\.\d+$/.test(release.version) || !/^[a-z0-9-]{5,100}$/.test(release.build) || !/^[a-f0-9]{40}$/.test(release.commit)) throw Error("Неподдерживаемое обновление.");
-  if (!Array.isArray(release.files) || release.files.length < FILES.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
+  // Verify historical manifests during publishing too; the relay first ships in 1.7.542.
+  const requiredFiles = FILES.filter(name => name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0);
+  if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
   const seen = new Set(); let total = 0;
   for (const file of release.files) {
     if (!allowedPath(file.path) || seen.has(file.path) || !/^[a-f0-9]{64}$/.test(file.sha256)
@@ -98,7 +100,7 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
     seen.add(file.path); total += file.size;
   }
   if (total > 100*1024*1024) throw Error("Слишком большой пакет обновления.");
-  if(FILES.some(name=>!seen.has(name)))throw Error("Неполный комплект файлов обновления.");
+  if(requiredFiles.some(name=>!seen.has(name)))throw Error("Неполный комплект файлов обновления.");
   return release;
 }
 async function download(url, maxBytes, fetcher = fetch) {

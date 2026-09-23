@@ -7,7 +7,8 @@ param(
   [switch]$ValidateProfile,
   [switch]$TunnelRuntime,
   # Explicit, separately approved installation only; never part of -All.
-  [switch]$ProgramSites
+  [switch]$ProgramSites,
+  [switch]$DocumentRelay
 )
 
 Set-StrictMode -Version Latest
@@ -25,6 +26,7 @@ $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "app-server.js",
+  "document-relay.js",
   "local-update.js",
   "document-workflow.js",
   "program-site-generator.js",
@@ -67,6 +69,7 @@ function Test-DeployablePath([string]$PathValue) {
   $exactFiles = @(
     ".htaccess",
     "app-server.js",
+    "document-relay.js",
     "app.js",
     "audit-lib.php",
     "auth-bootstrap.js",
@@ -138,10 +141,15 @@ if ($ListDeployable) {
 }
 
 if ($ValidateProfile) {
-  if ($TunnelRuntime -or $ProgramSites -or $All -or $RelativePath.Count) {
+  if ($TunnelRuntime -or $ProgramSites -or $DocumentRelay -or $All -or $RelativePath.Count) {
     throw "-ValidateProfile cannot be combined with deployment parameters."
   }
   $pathsToDeploy = @()
+} elseif ($DocumentRelay) {
+  if ($ProgramSites -or $TunnelRuntime -or $All -or $RelativePath.Count) { throw "-DocumentRelay нельзя объединять с другими режимами." }
+  $moduleTracked = @(& (Get-GitPath) -C $repositoryRoot ls-files -- web-ais/services/wordpress/ais-document-relay.php)
+  if (-not $moduleTracked.Count) { throw "Сначала добавьте модуль очереди в проверенный коммит." }
+  $pathsToDeploy = @("services/wordpress/ais-document-relay.php")
 } elseif ($ProgramSites) {
   if ($TunnelRuntime -or $All -or $RelativePath.Count) { throw "-ProgramSites нельзя объединять с другими режимами публикации." }
   $moduleTracked = @(& (Get-GitPath) -C $repositoryRoot ls-files -- web-ais/services/wordpress/ais-program-generator.php)
@@ -570,7 +578,12 @@ function Install-ProgramSiteModules {
   }
 }
 
-$results = if ($ProgramSites) {
+$results = if ($DocumentRelay) {
+  $remoteKey = Read-ProgramSitePrivateFile '/zifra-plus.ru/ais-program-site.key'
+  $localKeys = [IO.File]::ReadAllText((Join-Path $appRoot 'storage/program-site-keys.json')) | ConvertFrom-Json
+  if (-not $remoteKey -or $remoteKey.Trim() -cne [string]$localKeys.shop) { throw 'Ключ связи с zifra-plus.ru не совпадает. Публикация остановлена без изменения ключей.' }
+  Publish-FileTarget 'services/wordpress/ais-document-relay.php' '/zifra-plus.ru/public_html/wp-content/mu-plugins/ais-document-relay.php' 'private document queue module'
+} elseif ($ProgramSites) {
   Install-ProgramSiteModules
 } else { foreach ($relativeFile in $pathsToDeploy) {
   if ($relativeFile -eq ".runtime/tunnel-runtime.json") {
@@ -594,7 +607,7 @@ $results | Format-Table -AutoSize
 # Publish immutable signed installation files first, and switch latest.json last.
 # Only the publishing workstation owns this private signing key. It never enters FTP.
 $updateSigningKey = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem'
-if (-not $ProgramSites -and -not $TunnelRuntime -and -not $ValidateProfile -and
+if (-not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
     (Test-Path -LiteralPath $updateSigningKey)) {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   $nodePath = if ($nodeCommand) { $nodeCommand.Source } else {

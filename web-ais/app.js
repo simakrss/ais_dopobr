@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.541",
+    version: "1.7.542",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.542",
+      releasedAt: "2026-09-23",
+      changes: ["PDF и распознавание документов доступны через защищённую очередь zifra-plus.ru без входящих туннелей. Запущенные компьютеры автоматически проверяют задания каждые 3 секунды, распределяют нагрузку и подхватывают задания отключившегося исполнителя. Данные передаются зашифрованными и удаляются после получения результата; сохранение документов не дублируется."]
+    },
     {
       version: "1.7.541",
       releasedAt: "2026-09-23",
@@ -30816,6 +30821,7 @@ MAX - https://bizvmax.ru/zifra_plus
     localAvailableLabel,
     localUnavailableLabel,
     tunnelConfigured,
+    queue = false,
     rows
   }) {
     return `
@@ -30829,8 +30835,8 @@ MAX - https://bizvmax.ru/zifra_plus
             ${renderExternalServiceStatus(localAvailable, localAvailableLabel, localUnavailableLabel)}
             ${renderExternalServiceStatus(
               tunnelConfigured,
-              "Туннель настроен",
-              "Туннель не настроен"
+              queue ? "Исполнители в сети" : "Туннель настроен",
+              queue ? "Нет доступных исполнителей" : "Туннель не настроен"
             )}
           </div>
         </header>
@@ -30849,9 +30855,9 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderAdminExternalServicesPanel() {
     const externalServices = state.externalServices || {};
     const data = externalServices.data || {};
-    const tunnel = data.tunnel || {};
     const recognition = data.recognition || {};
     const documentGeneration = data.documentGeneration || {};
+    const relay = data.relay || {};
     const localCapabilities = externalServices.localCapabilities;
     const localRecognitionAvailable = localCapabilities
       ? localCapabilities.appServerAvailable === true && localCapabilities.ocrAvailable === true
@@ -30860,18 +30866,11 @@ MAX - https://bizvmax.ru/zifra_plus
       ? localCapabilities.appServerAvailable === true
         && localCapabilities.documentConversionAvailable === true
       : null;
-    const tunnelConfigured = externalServices.loaded ? tunnel.configured === true : null;
-    const tunnelKeyLabel = tunnel.secretConfigured
-      ? "Настроен, значение скрыто"
-      : "Не настроен";
     const converterKeyLabel = documentGeneration.accessKeyConfigured === true
       ? "Настроен, значение скрыто"
       : documentGeneration.accessKeyConfigured === false
         ? "Не настроен"
         : "Управляется локальным сервисом";
-    const tunnelUpdatedAt = tunnel.updatedAt
-      ? formatDateTimeRu(tunnel.updatedAt)
-      : "Нет данных";
     const documentRoutes = Array.isArray(documentGeneration.routes)
       ? documentGeneration.routes
       : [];
@@ -30881,7 +30880,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div>
             <p class="eyebrow">Подключение</p>
             <h2>Сервисы</h2>
-            <p class="admin-tab-summary">Система сначала использует Docker-сервисы на текущем компьютере, а при их недоступности обращается к этому компьютеру через защищённый туннель.</p>
+            <p class="admin-tab-summary">PDF и распознавание выполняются локально или через защищённую очередь zifra-plus.ru. Задания распределяются между доступными компьютерами без туннеля.</p>
           </div>
           <button
             class="ghost-button ${externalServices.loading ? "is-loading" : ""}"
@@ -30894,7 +30893,8 @@ MAX - https://bizvmax.ru/zifra_plus
           <strong>Порядок подключения</strong>
           <span>Локальный Docker</span>
           <span aria-hidden="true">→</span>
-          <span>Защищённый туннель</span>
+          <span>Очередь zifra-plus.ru → свободный компьютер</span>
+          <small>Проверка заданий — каждые 3 секунды. Каждый компьютер выполняет одно задание очереди одновременно.</small>
           <small>Секретные ключи хранятся только на сервере и в браузер не передаются.</small>
         </div>
         ${externalServices.error ? `
@@ -30907,13 +30907,14 @@ MAX - https://bizvmax.ru/zifra_plus
             localAvailable: localRecognitionAvailable,
             localAvailableLabel: "Локальный OCR доступен",
             localUnavailableLabel: "Локальный OCR недоступен",
-            tunnelConfigured,
+            queue: true,
+            tunnelConfigured: externalServices.loaded ? Number(relay.ocr) > 0 : null,
             rows: [
               { label: "OCR-сервис Docker", value: recognition.serviceUrl },
               { label: "Локальный API", value: recognition.localApiUrl },
-              { label: "API через туннель", value: recognition.tunnelApiUrl },
+              { label: "Компьютеров для OCR", value: String(Number(relay.ocr) || 0) },
               { label: "Разрешённый маршрут", value: recognition.route },
-              { label: "Ключ туннеля", value: tunnelKeyLabel }
+              { label: "Очередь", value: relay.site || "https://zifra-plus.ru" }
             ]
           })}
           ${renderAdminExternalServiceCard({
@@ -30922,12 +30923,13 @@ MAX - https://bizvmax.ru/zifra_plus
             localAvailable: localDocumentGenerationAvailable,
             localAvailableLabel: "Конвертер доступен",
             localUnavailableLabel: "Конвертер недоступен",
-            tunnelConfigured,
+            queue: true,
+            tunnelConfigured: externalServices.loaded ? Number(relay.pdf) > 0 : null,
             rows: [
               { label: "Конвертер Docker", value: documentGeneration.serviceUrl },
               { label: "Источник для конвертера", value: documentGeneration.sourceUrl },
               { label: "Локальный API", value: documentGeneration.localApiUrl },
-              { label: "API через туннель", value: documentGeneration.tunnelApiUrl },
+              { label: "Компьютеров для PDF", value: String(Number(relay.pdf) || 0) },
               {
                 label: "Разрешённые маршруты",
                 html: documentRoutes.length
@@ -30939,8 +30941,8 @@ MAX - https://bizvmax.ru/zifra_plus
           })}
         </div>
         <footer class="admin-external-services-foot">
-          <span>Адрес туннеля: ${renderExternalServiceValue(tunnel.baseUrl)}</span>
-          <span>Параметры обновлены: <strong>${escapeHtml(tunnelUpdatedAt)}</strong></span>
+          <span>PDF/OCR не требуют входящих соединений. Туннель может использоваться другими сервисами, в том числе редактором.</span>
+          ${relay.error ? `<span role="alert">${escapeHtml(relay.error)}</span>` : ""}
         </footer>
       </section>
     `;
