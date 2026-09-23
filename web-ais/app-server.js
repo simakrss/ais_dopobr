@@ -37010,6 +37010,85 @@ function synchronizeAuthUsersWithEmployees(users = [], contracts = [], options =
 
 let authEmployeeSyncInFlight = null;
 
+const sharedInterfaceLayoutTables = new WeakSet();
+
+function validateSharedInterfaceLayout(changes) {
+  const invalid = () => { const error = new Error("Некорректные настройки компоновки интерфейса."); error.statusCode = 400; throw error; };
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).length > 4000) invalid();
+  for (const [key, value] of Object.entries(changes)) {
+    if (!/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/.test(key)
+      || key.split(":").some(part => ["__proto__", "constructor", "prototype"].includes(part))) invalid();
+    if (value === null) continue; // A persisted tombstone resets every copy, including old browser caches.
+    if (key === "startView") {
+      if (typeof value !== "string" || !/^[\w-]{1,80}$/.test(value)) invalid();
+    } else if (key.includes(":width:") || key.endsWith(":pageSize")) {
+      if (!Number.isFinite(value) || value < 1 || value > 10000) invalid();
+    } else if (!Array.isArray(value) || value.length > 10000 || value.some(item => typeof item !== "string" || item.length > 300)) invalid();
+  }
+  if (Buffer.byteLength(JSON.stringify(changes)) > 512 * 1024) invalid();
+  return changes;
+}
+
+async function ensureSharedInterfaceLayoutTable(pool) {
+  if (sharedInterfaceLayoutTables.has(pool)) return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS ais_interface_layout (
+    state_key VARCHAR(64) NOT NULL,
+    preference_key VARCHAR(200) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    value_json MEDIUMTEXT NOT NULL,
+    PRIMARY KEY (state_key, preference_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  sharedInterfaceLayoutTables.add(pool);
+}
+
+async function readSharedInterfaceLayout(poolOverride) {
+  const pool = poolOverride || await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Не настроено общее хранилище компоновки MySQL.");
+  await ensureSharedInterfaceLayoutTable(pool);
+  const [rows] = await pool.query("SELECT preference_key, value_json FROM ais_interface_layout WHERE state_key = ?", [SHARED_STATE_MYSQL_KEY]);
+  return { preferences: Object.fromEntries(rows.filter(row => row.preference_key !== "initialized").map(row => [row.preference_key, JSON.parse(row.value_json)])),
+    initialized: rows.some(row => row.preference_key === "initialized" && row.value_json === "true") };
+}
+
+async function saveSharedInterfaceLayout(changes, initialize = false, poolOverride) {
+  validateSharedInterfaceLayout(changes);
+  const pool = poolOverride || await getSharedRecordLocksMySqlPool();
+  if (!pool) throw new Error("Не настроено общее хранилище компоновки MySQL.");
+  await ensureSharedInterfaceLayoutTable(pool);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    // Lock one common marker: initial migration is atomic and happens only once.
+    await connection.query("INSERT IGNORE INTO ais_interface_layout VALUES (?, 'initialized', 'false')", [SHARED_STATE_MYSQL_KEY]);
+    const [rows] = await connection.query("SELECT value_json FROM ais_interface_layout WHERE state_key = ? AND preference_key = 'initialized' FOR UPDATE", [SHARED_STATE_MYSQL_KEY]);
+    if (!initialize || rows[0].value_json !== "true") {
+      for (const [key, value] of Object.entries(changes)) {
+        await connection.query(initialize
+          ? "INSERT IGNORE INTO ais_interface_layout VALUES (?, ?, ?)"
+          : "INSERT INTO ais_interface_layout VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value_json = VALUES(value_json)",
+        [SHARED_STATE_MYSQL_KEY, key, JSON.stringify(value)]);
+      }
+      if (initialize) await connection.query("UPDATE ais_interface_layout SET value_json = 'true' WHERE state_key = ? AND preference_key = 'initialized'", [SHARED_STATE_MYSQL_KEY]);
+    }
+    await connection.commit();
+  } catch (error) { await connection.rollback(); throw error; }
+  finally { connection.release(); }
+  return readSharedInterfaceLayout(pool);
+}
+
+async function handleSharedInterfaceLayout(req, res) {
+  try {
+    const canInitialize = !process.env.AIS_GATEWAY_SHARED_SECRET;
+    let result;
+    if (req.method === "GET") result = await readSharedInterfaceLayout();
+    else if (req.method === "PATCH" || req.method === "POST") {
+      const body = await readJsonBody(req, 512 * 1024);
+      if (body.initialize === true && !canInitialize) { sendError(res, 403, "Перенос компоновки выполняется из локальной системы."); return; }
+      result = await saveSharedInterfaceLayout(body.changes, body.initialize === true);
+    } else { sendError(res, 405, "Метод не поддерживается."); return; }
+    sendJson(res, 200, { ok: true, ...result, canInitialize });
+  } catch (error) { sendError(res, error.statusCode || 503, error.message); }
+}
+
 // Roles are shared; credentials and contract-dependent blocking remain local.
 const sharedAuthRoleTables = new WeakSet();
 
@@ -40280,6 +40359,10 @@ async function route(req, res) {
     await handleSharedRecordLocks(req, res, authUser, requestUrl);
     return;
   }
+  if (requestUrl.pathname === "/api/interface-layout") {
+    await handleSharedInterfaceLayout(req, res);
+    return;
+  }
   if (requestUrl.pathname === "/api/shared-state") {
     await handleSharedApplicationState(req, res, authUser, requestUrl);
     return;
@@ -40709,6 +40792,9 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  validateSharedInterfaceLayout,
+  readSharedInterfaceLayout,
+  saveSharedInterfaceLayout,
   startOcrRuntimePreparation,
   handleContractDocument,
   prepareWorkflowDocumentValues,

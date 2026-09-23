@@ -650,6 +650,89 @@ function gateway_employee_credential_fingerprint(array $employee): string
     );
 }
 
+function gateway_validate_interface_layout(mixed $changes): array
+{
+    $invalid = static function (): never { throw new RuntimeException('Некорректные настройки компоновки интерфейса.', 400); };
+    if (!is_array($changes) || count($changes) > 4000) $invalid();
+    foreach ($changes as $key => $value) {
+        if (!is_string($key) || !preg_match('/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/D', $key)
+            || array_intersect(explode(':', $key), ['__proto__', 'constructor', 'prototype'])) $invalid();
+        if ($value === null) continue;
+        if ($key === 'startView') {
+            if (!is_string($value) || !preg_match('/^[\w-]{1,80}$/D', $value)) $invalid();
+        } elseif (str_contains($key, ':width:') || str_ends_with($key, ':pageSize')) {
+            if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value) || $value < 1 || $value > 10000) $invalid();
+        } elseif (!is_array($value) || !array_is_list($value) || count($value) > 10000) $invalid();
+        else foreach ($value as $item) if (!is_string($item) || mb_strlen($item) > 300) $invalid();
+    }
+    if (strlen(json_encode($changes, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)) > 512 * 1024) $invalid();
+    return $changes;
+}
+
+function gateway_ensure_interface_layout(PDO $pdo): void
+{
+    static $prepared = null;
+    if ($prepared === $pdo) return;
+    $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS ais_interface_layout (
+  state_key VARCHAR(64) NOT NULL,
+  preference_key VARCHAR(200) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  value_json MEDIUMTEXT NOT NULL,
+  PRIMARY KEY (state_key, preference_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL);
+    $prepared = $pdo;
+}
+
+function gateway_read_interface_layout(?PDO $pdo = null): array
+{
+    $pdo ??= gateway_record_locks_pdo();
+    gateway_ensure_interface_layout($pdo);
+    $statement = $pdo->prepare('SELECT preference_key, value_json FROM ais_interface_layout WHERE state_key = ?');
+    $statement->execute([gateway_shared_state_key()]);
+    $preferences = [];
+    $initialized = false;
+    foreach ($statement->fetchAll() as $row) {
+        if ($row['preference_key'] === 'initialized') $initialized = $row['value_json'] === 'true';
+        else $preferences[$row['preference_key']] = json_decode($row['value_json'], true, 512, JSON_THROW_ON_ERROR);
+    }
+    return ['preferences' => (object) $preferences, 'initialized' => $initialized];
+}
+
+function gateway_save_interface_layout(array $changes, ?PDO $pdo = null): array
+{
+    gateway_validate_interface_layout($changes);
+    $pdo ??= gateway_record_locks_pdo();
+    gateway_ensure_interface_layout($pdo);
+    $pdo->beginTransaction();
+    try {
+        $statement = $pdo->prepare("INSERT IGNORE INTO ais_interface_layout VALUES (?, 'initialized', 'false')");
+        $statement->execute([gateway_shared_state_key()]);
+        $statement = $pdo->prepare("SELECT value_json FROM ais_interface_layout WHERE state_key = ? AND preference_key = 'initialized' FOR UPDATE");
+        $statement->execute([gateway_shared_state_key()]);
+        $statement->fetchAll();
+        $statement = $pdo->prepare('INSERT INTO ais_interface_layout VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value_json = VALUES(value_json)');
+        foreach ($changes as $key => $value) $statement->execute([gateway_shared_state_key(), $key, json_encode($value, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)]);
+        $pdo->commit();
+    } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $error; }
+    return gateway_read_interface_layout($pdo);
+}
+
+function gateway_handle_interface_layout(string $method, string $body): never
+{
+    try {
+        if ($method === 'GET') $result = gateway_read_interface_layout();
+        elseif (in_array($method, ['PATCH', 'POST'], true)) {
+            if (strlen($body) > 512 * 1024) gateway_fail(413, 'Настройки компоновки слишком велики.');
+            $payload = gateway_read_json_body($body);
+            if (($payload['initialize'] ?? false) === true) gateway_fail(403, 'Перенос компоновки выполняется из локальной системы.');
+            $changes = gateway_validate_interface_layout($payload['changes'] ?? null);
+            $result = gateway_save_interface_layout($changes);
+        } else gateway_fail(405, 'Метод не поддерживается.');
+        gateway_json(200, ['ok' => true, ...$result, 'canInitialize' => false]);
+    } catch (Throwable $error) { gateway_fail($error->getCode() === 400 ? 400 : 503, $error->getMessage()); }
+}
+
 function gateway_shared_auth_role_identity(array $user): array
 {
     $login = ais_auth_normalize_login((string) ($user['login'] ?? ''));
@@ -4112,6 +4195,10 @@ try {
             }
         }
         gateway_send_node_response($response);
+    }
+
+    if ($path === '/api/interface-layout') {
+        gateway_handle_interface_layout($method, $body);
     }
     if ($previewAffinityBackend === 'tunnel' && $tunnelSettings === null) {
         gateway_fail(

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.533",
+    version: "1.7.534",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.534",
+      releasedAt: "2026-09-23",
+      changes: ["Общая компоновка для всех пользователей сайта и локальных копий: порядок меню и вкладок, столбцы и их ширина, размеры страниц, раскрытие групп, порядок статусов рабочего стола и стартовый раздел. Первоначальный порядок переносится из локальной системы; изменения и сбросы автоматически синхронизируются, в том числе после восстановления связи."]
+    },
     {
       version: "1.7.533",
       releasedAt: "2026-09-23",
@@ -4335,6 +4340,7 @@
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
+  const INTERFACE_LAYOUT_PENDING_KEY = "ais-dopobr-interface-layout-pending-v1";
   const PROGRAM_REGISTRY_FILTERS_KEY = "ais-dopobr-program-registry-filters-v1";
   const programRegistryFilterPreferences = new Map();
   const DEFAULT_STUDENT_DATABASE_WEBDAV_PATH =
@@ -7668,6 +7674,10 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   })();
   let sharedStateReady = false;
+  const interfaceLayoutSync = {
+    snapshot: captureInterfaceLayout(), migration: captureInterfaceLayout(), pending: readInterfaceLayoutPending(),
+    running: false, ready: false, timer: 0, warned: false, needsRender: false
+  };
   let sharedStateOffline = false;
   let sharedStateRevision = Math.max(0, Number(sharedStateRecovery.meta.revision) || 0);
   let sharedStateBackendId = String(sharedStateRecovery.meta.backendId || "");
@@ -13557,6 +13567,143 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function persistTableSettings() {
     localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(state.tableSettings));
+    queueInterfaceLayoutSave();
+  }
+
+  function readInterfaceLayoutPending() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(INTERFACE_LAYOUT_PENDING_KEY) || "{}");
+      return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+    } catch { return {}; }
+  }
+
+  function captureInterfaceLayout() {
+    const preferences = { nav: state.navItemOrder || [], dashboard: state.dashboardStudentStatusOrder || [],
+      startView: String(localStorage.getItem(START_VIEW_KEY) || "dashboard") };
+    Object.entries(state.tabOrders || {}).forEach(([group, order]) => { preferences[`tabs:${group}`] = order; });
+    Object.entries(state.tableSettings || {}).forEach(([id, settings]) => {
+      for (const name of ["order", "pageSize", "collapsedGroups", "expandedGroups"]) {
+        if (settings[name] !== undefined) preferences[`table:${id}:${name}`] = settings[name];
+      }
+      Object.entries(settings.widths || {}).forEach(([column, width]) => { preferences[`table:${id}:width:${column}`] = width; });
+    });
+    // A detached snapshot is essential: dragging/resizing mutates settings in place.
+    return JSON.parse(JSON.stringify(preferences));
+  }
+
+  function storeInterfaceLayoutPending() {
+    try { localStorage.setItem(INTERFACE_LAYOUT_PENDING_KEY, JSON.stringify(interfaceLayoutSync.pending)); }
+    catch (error) { console.warn("Не удалось сохранить очередь компоновки", error); }
+  }
+
+  function queueInterfaceLayoutSave() {
+    if (isDatabaseDemoMode()) return;
+    const next = captureInterfaceLayout();
+    for (const key of new Set([...Object.keys(interfaceLayoutSync.snapshot), ...Object.keys(next)])) {
+      if (JSON.stringify(next[key]) !== JSON.stringify(interfaceLayoutSync.snapshot[key])) {
+        interfaceLayoutSync.pending[key] = next[key] ?? null;
+      }
+    }
+    interfaceLayoutSync.snapshot = next;
+    storeInterfaceLayoutPending();
+    window.clearTimeout(interfaceLayoutSync.timer);
+    interfaceLayoutSync.timer = window.setTimeout(() => void synchronizeInterfaceLayout(), 700);
+  }
+
+  function mergeVisibleInterfaceOrder(saved, visible) {
+    // Keep role-restricted items in the common order when a manager moves visible items.
+    const ordered = [...new Set(visible)];
+    let index = 0;
+    const merged = [...new Set(saved || [])].map(id => ordered.includes(id) ? ordered[index++] : id);
+    return [...merged, ...ordered.slice(index)];
+  }
+
+  function applyInterfaceLayout(preferences) {
+    const values = { ...preferences, ...interfaceLayoutSync.pending };
+    const tables = {}, tabs = {};
+    for (const [key, value] of Object.entries(values)) {
+      if (value === null) continue;
+      const [kind, id, property, column] = key.split(":");
+      if ([id, property, column].some(part => ["__proto__", "constructor", "prototype"].includes(part))) continue;
+      if (kind === "tabs" && Array.isArray(value)) tabs[id] = [...new Set(value.filter(item => typeof item === "string"))];
+      if (kind !== "table" || !id) continue;
+      const table = tables[id] ||= {};
+      if (property === "width" && column && Number.isFinite(value)) (table.widths ||= {})[column] = value;
+      else if (["order", "collapsedGroups", "expandedGroups"].includes(property) && Array.isArray(value)) table[property] = [...new Set(value)];
+      else if (property === "pageSize" && TABLE_PAGE_SIZE_OPTIONS.includes(value)) table.pageSize = value;
+    }
+    const before = captureInterfaceLayout();
+    state.navItemOrder = Array.isArray(values.nav) ? [...new Set(values.nav)] : [];
+    state.dashboardStudentStatusOrder = Array.isArray(values.dashboard) ? [...new Set(values.dashboard)] : [];
+    state.tabOrders = tabs;
+    state.tableSettings = tables;
+    localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(state.navItemOrder));
+    localStorage.setItem(DASHBOARD_STATUS_ORDER_KEY, JSON.stringify(state.dashboardStudentStatusOrder));
+    localStorage.setItem(TAB_ORDER_SETTINGS_KEY, JSON.stringify(tabs));
+    localStorage.setItem(TABLE_SETTINGS_KEY, JSON.stringify(tables));
+    localStorage.setItem(START_VIEW_KEY, navItems.some(item => item.id === values.startView) ? values.startView : "dashboard");
+    interfaceLayoutSync.snapshot = captureInterfaceLayout();
+    const changed = JSON.stringify(before) !== JSON.stringify(interfaceLayoutSync.snapshot);
+    interfaceLayoutSync.needsRender ||= changed;
+    return changed;
+  }
+
+  function refreshInterfaceLayoutDom() {
+    if (!interfaceLayoutSync.needsRender || document.querySelector(".is-dragging, .is-resizing, .is-resizing-column")) return;
+    const reorder = (elements, ids, key) => {
+      const nodes = new Map([...elements].map(node => [node.dataset[key], node]));
+      ids.forEach(id => { const node = nodes.get(id); if (node) node.parentElement.appendChild(node); });
+    };
+    // Move existing nodes, not their HTML: open forms, listeners, focus and entered values survive.
+    reorder(document.querySelectorAll("[data-nav-item]"), getOrderedNavItems().map(item => item.id), "navItem");
+    reorder(document.querySelectorAll("[data-dashboard-student-status-item]"), getOrderedDashboardStudentStatuses(), "dashboardStudentStatusItem");
+    document.querySelectorAll("[data-orderable-tabs]").forEach(container => {
+      const nodes = [...container.querySelectorAll("[data-orderable-tab]")];
+      const defaults = nodes.sort((a, b) => Number(a.dataset.orderableTabDefaultIndex) - Number(b.dataset.orderableTabDefaultIndex));
+      const tabs = getOrderedTabs(container.dataset.orderableTabs, defaults.map(node => ({ id: node.dataset.orderableTab })));
+      reorder(nodes, tabs.map(tab => tab.id), "orderableTab");
+    });
+    const focused = document.activeElement;
+    if (state.modal || state.view === "settings" || state.adminSettingsDirty
+      || document.querySelector('[role="dialog"], dialog[open], form, [data-nav-item-menu], [data-table-options]')
+      || focused?.matches?.("input, textarea, select, [contenteditable=true]")) return;
+    interfaceLayoutSync.needsRender = false;
+    render();
+  }
+
+  async function synchronizeInterfaceLayout({ startup = false } = {}) {
+    if (isDatabaseDemoMode() || interfaceLayoutSync.running
+      || (!startup && document.visibilityState !== "visible")
+      || document.querySelector(".is-dragging, .is-resizing, .is-resizing-column")) return;
+    interfaceLayoutSync.running = true;
+    try {
+      const request = options => authRequest("/api/interface-layout", { signal: AbortSignal.timeout(15000), ...options });
+      let result = await request();
+      if (result.canInitialize && !result.initialized) {
+        result = await request({ method: "POST", body: JSON.stringify({ initialize: true, changes: interfaceLayoutSync.migration }) });
+      }
+      const changes = JSON.parse(JSON.stringify(interfaceLayoutSync.pending));
+      if (Object.keys(changes).length) {
+        result = await request({ method: "POST", body: JSON.stringify({ changes }) });
+        for (const [key, value] of Object.entries(changes)) {
+          if (JSON.stringify(interfaceLayoutSync.pending[key]) === JSON.stringify(value)) delete interfaceLayoutSync.pending[key];
+        }
+        storeInterfaceLayoutPending();
+      }
+      // A drag may have started while the request was in flight. Defer applying until it ends.
+      if (!document.querySelector(".is-dragging, .is-resizing, .is-resizing-column")) {
+        applyInterfaceLayout(result.preferences || {});
+        if (!startup) refreshInterfaceLayoutDom();
+      }
+      interfaceLayoutSync.ready = true;
+      interfaceLayoutSync.warned = false;
+    } catch (error) {
+      if (!interfaceLayoutSync.warned) {
+        interfaceLayoutSync.warned = true;
+        showDocumentGenerationNotice("Компоновка пока не синхронизирована. Сохранён локальный вариант; повторим автоматически после восстановления связи.", "warning");
+      }
+      console.warn("Синхронизация компоновки", error);
+    } finally { interfaceLayoutSync.running = false; }
   }
 
   function getCurrentAuthUser() {
@@ -13789,6 +13936,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const id = String(viewId || "").trim();
     if (!navItems.some((item) => item.id === id) || !canAccessView(id)) return;
     localStorage.setItem(START_VIEW_KEY, id);
+    queueInterfaceLayoutSave();
     closeNavItemMenu();
   }
 
@@ -13831,6 +13979,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function persistNavItemOrder(order = state.navItemOrder) {
     localStorage.setItem(NAV_ITEM_ORDER_KEY, JSON.stringify(order));
+    queueInterfaceLayoutSave();
   }
 
   function getOrderedNavItems() {
@@ -13872,6 +14021,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function persistDashboardStudentStatusOrder(order = state.dashboardStudentStatusOrder) {
     localStorage.setItem(DASHBOARD_STATUS_ORDER_KEY, JSON.stringify(order));
+    queueInterfaceLayoutSave();
   }
 
   function getOrderedDashboardStudentStatuses() {
@@ -13915,6 +14065,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function persistTabOrders(orders = state.tabOrders) {
     localStorage.setItem(TAB_ORDER_SETTINGS_KEY, JSON.stringify(orders || {}));
+    queueInterfaceLayoutSave();
   }
 
   // New tab sets should use this helper and data-orderable-tabs/data-orderable-tab attributes.
@@ -24766,6 +24917,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function updateTableSettings(configId, updater) {
     const current = state.tableSettings[configId] || {};
     state.tableSettings[configId] = updater({
+      ...current,
       order: Array.isArray(current.order) ? [...current.order] : [],
       widths: { ...(current.widths || {}) },
       pageSize: getTablePageSize(configId)
@@ -46510,8 +46662,8 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((button) => button.dataset.navItem)
       .filter(Boolean);
     if (!order.length) return;
-    state.navItemOrder = order;
-    persistNavItemOrder(order);
+    state.navItemOrder = mergeVisibleInterfaceOrder(state.navItemOrder, order);
+    persistNavItemOrder();
   }
 
   function getNavItemDragAfterElement(container, y) {
@@ -46541,6 +46693,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function resetNavItemOrder() {
     state.navItemOrder = [];
     localStorage.removeItem(NAV_ITEM_ORDER_KEY);
+    queueInterfaceLayoutSave();
     closeNavItemMenu();
     render();
   }
@@ -46642,6 +46795,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function resetDashboardStudentStatusOrder() {
     state.dashboardStudentStatusOrder = [];
     localStorage.removeItem(DASHBOARD_STATUS_ORDER_KEY);
+    queueInterfaceLayoutSave();
     closeNavItemMenu();
     render();
   }
@@ -46720,7 +46874,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((button) => String(button.dataset.orderableTab || "").trim())
       .filter(Boolean);
     if (!order.length) return;
-    state.tabOrders = { ...(state.tabOrders || {}), [groupId]: order };
+    state.tabOrders = { ...(state.tabOrders || {}), [groupId]: mergeVisibleInterfaceOrder(state.tabOrders?.[groupId], order) };
     persistTabOrders();
   }
 
@@ -75864,6 +76018,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function initializeApplication() {
     initializeSearchClearControls();
+    await synchronizeInterfaceLayout({ startup: true });
+    state.view = loadStartView();
+    state.statusFilter = getDefaultStatusFilter(state.view);
+    state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
+    state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
+    state.sort = state.view === "students"
+      ? getStudentStatusTableSort(state.statusFilter) : getDefaultTableSort(state.view);
     let sharedStateError = null;
     await initializeBrowserOfflineStorage();
     try {
@@ -75886,6 +76047,8 @@ MAX - https://bizvmax.ru/zifra_plus
     window.visualViewport?.addEventListener("resize", scheduleMainRegistryTableViewportFit, { passive: true });
     document.addEventListener("scroll", repositionOpenComboPanels, { passive: true, capture: true });
     render();
+    interfaceLayoutSync.needsRender = false;
+    window.setInterval(() => void synchronizeInterfaceLayout(), 5000);
     if (!isDatabaseDemoMode()) void probeLocalDocumentServices();
     if (sharedStateError) {
       window.setTimeout(() => {
