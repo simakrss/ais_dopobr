@@ -20,7 +20,8 @@ async function main() {
   if(process.argv.includes("--ocr")) {
     const page=await client.run("ocr",{operation:"render-page",payload:{fileName:"relay-test.pdf",mimeType:"application/pdf",page:1,base64:pdf.toString("base64")}});
     assert.ok(page.ok&&page.preview.base64);
-    const ocr=await client.run("ocr",{operation:"recognize",payload:{fileName:"relay-test.png",mimeType:"image/png",base64:page.preview.base64}});
+    const imageBytes=Buffer.from(page.preview.base64,"base64"), jpeg=imageBytes[0]===255&&imageBytes[1]===216;
+    const ocr=await client.run("ocr",{operation:"recognize",payload:{fileName:jpeg?"relay-test.jpg":"relay-test.png",mimeType:jpeg?"image/jpeg":"image/png",base64:page.preview.base64}});
     assert.equal(ocr.ok,true);assert.match(ocr.textPreview,/12345/);console.log("LIVE OCR and page preview OK");
   }
 }
