@@ -30726,6 +30726,7 @@ button.partner-kpi-card:hover {
 
 .partner-profile-summary {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 24px 18px;
   text-align: center;
@@ -30785,16 +30786,38 @@ button.partner-kpi-card:hover {
   font-size: 12px;
 }
 
+.partner-profile-summary > h3,
+.partner-profile-summary > p {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .partner-profile-photo-controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
+  min-width: 0;
   width: 100%;
   margin-top: 14px;
 }
 
 .partner-profile-photo-upload {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.35;
   cursor: pointer;
+}
+
+.partner-profile-photo-upload > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.partner-profile-photo-upload > .partner-icon {
+  flex-shrink: 0;
 }
 
 .partner-profile-photo-upload.is-disabled {
@@ -30813,12 +30836,17 @@ button.partner-kpi-card:hover {
 }
 
 .partner-profile-photo-controls > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
 }
 
 .partner-profile-photo-controls .partner-form-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 7px 9px;
   text-align: left;
 }

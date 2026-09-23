@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.535",
+    version: "1.7.536",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.536",
+      releasedAt: "2026-09-23",
+      changes: ["В профиле партнёра исправлена обрезка подписей и кнопки загрузки фотографии: содержимое помещается в ширину карточки, длинный текст переносится, включая узкие экраны."]
+    },
     {
       version: "1.7.535",
       releasedAt: "2026-09-23",
