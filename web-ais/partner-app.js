@@ -488,6 +488,26 @@
     `;
   }
 
+  function getSocialMessages(materials = state.socialMaterials) {
+    if (!materials) return [];
+    const coupon = materials.coupon || "";
+    const general = {
+      id: "general:training-center",
+      name: "Об учебном центре",
+      type: "",
+      landingUrl: "https://edu-plus.ru/",
+      message: [
+        "Новые знания — новые возможности!",
+        "Хотите развиваться в профессии, освоить новое направление или уверенно применять современные технологии? Начните с обучения!",
+        "Учебный центр «Цифровизация Плюс» приглашает на программы повышения квалификации и профессиональной переподготовки, дополнительные образовательные программы и вебинары.",
+        "Выберите обучение под ваши цели. Сделайте следующий шаг к профессиональному развитию — начните сегодня!",
+        "Подробнее о программах и запись: https://edu-plus.ru/",
+        coupon ? `🎁 Персональный купон: ${coupon}\nВведите его при оформлении заказа. Условия применения купона уточняйте в интернет-магазине.` : ""
+      ].filter(Boolean).join("\n\n")
+    };
+    return [general, ...(materials.programs || [])];
+  }
+
   function getFilteredSocialPrograms() {
     const words = state.socialSearch.trim().toLocaleLowerCase("ru-RU").split(/\s+/).filter(Boolean);
     return (state.socialMaterials?.programs || []).filter(program => (
@@ -499,17 +519,20 @@
   function renderSocialMaterials() {
     if (state.socialLoading && !state.socialMaterials) return `<section class="partner-panel partner-loading-inline" role="status"><span class="auth-spinner"></span>Подготовка сообщений с вашим купоном...</section>`;
     const programs = getFilteredSocialPrograms();
-    const program = programs.find(item => item.id === state.socialProgramId) || programs[0];
+    const general = getSocialMessages()[0];
+    const program = programs.find(item => item.id === state.socialProgramId) || general;
+    const isGeneral = Boolean(general && program === general);
     state.socialProgramId = program?.id || "";
     const coupon = state.socialMaterials?.coupon || "";
     const message = program ? state.socialDrafts[program.id] ?? program.message : "";
     return `<section class="partner-panel partner-social-panel">
-      <header class="partner-panel-head"><div>${icon("mail")}<span><h3>Информация для соцсетей</h3><p>Готовые сообщения о курсах с вашим персональным купоном</p></span></div>
+      <header class="partner-panel-head"><div>${icon("mail")}<span><h3>Информация для соцсетей</h3><p>Готовые сообщения об учебном центре и курсах с вашим персональным купоном</p></span></div>
         <button class="partner-secondary-button" data-action="refresh-social-materials" type="button" ${state.socialLoading ? "disabled" : ""}>${icon("refresh")}${state.socialLoading ? "Обновление…" : "Обновить"}</button></header>
       ${state.socialError ? `<div class="partner-error-panel" role="alert">${escapeHtml(state.socialError)}</div>` : ""}
       ${!coupon && !state.socialLoading ? `<div class="partner-error-panel" role="status">Персональный купон не назначен. Обратитесь к администратору: после заполнения поля «Персональный купон» в карточке сотрудника нажмите «Обновить».</div>` : ""}
       <div class="partner-social-layout">
         <aside class="partner-social-catalog">
+          ${general ? `<button class="${isGeneral ? "partner-primary-button" : "partner-secondary-button"}" data-action="select-social-general" type="button" aria-pressed="${isGeneral}">${icon("mail")}Об учебном центре</button>` : ""}
           <label class="partner-social-field"><span>Поиск курса</span><input type="search" data-social-search value="${escapeAttr(state.socialSearch)}" placeholder="Название программы"></label>
           <label class="partner-social-field"><span>Тип программы</span><select data-social-type><option value="">Все программы</option>${["ПРО","КПК","ППП","ДОП"].map(type => `<option value="${type}" ${state.socialType === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
           <label class="partner-social-field"><span>Курсы · ${programs.length}</span><select class="partner-social-programs" data-social-program size="12" aria-label="Выберите курс">${programs.map(item => `<option value="${escapeAttr(item.id)}" ${item.id === program?.id ? "selected" : ""}>${escapeHtml(item.type)} · ${escapeHtml(item.name)}</option>`).join("")}</select></label>
@@ -519,11 +542,11 @@
           ${program ? `<h3>${escapeHtml(program.name)}</h3>
             <p class="partner-social-coupon">Ваш купон: <strong>${escapeHtml(coupon || "не назначен")}</strong></p>
             <label class="partner-social-field"><span>Текст для публикации</span><textarea data-social-message rows="16" ${!coupon || state.socialLoading ? "readonly" : ""}>${escapeHtml(message)}</textarea></label>
-            <small>Можно отредактировать текст перед копированием. Изменения здесь не меняют промосообщение в реестре программ.</small>
+            <small>Можно отредактировать текст перед копированием. ${isGeneral ? "Купон подставляется из вашей карточки партнёра." : "Изменения здесь не меняют промосообщение в реестре программ."}</small>
             <div class="partner-social-actions">
               <button class="partner-primary-button" data-action="copy-social-message" type="button" ${!coupon || state.socialLoading ? "disabled" : ""}>${icon("copy")}Копировать сообщение</button>
               <button class="partner-secondary-button" data-action="reset-social-message" type="button">Восстановить текст</button>
-              ${program.landingUrl ? `<a class="partner-secondary-button" href="${escapeAttr(program.landingUrl)}" target="_blank" rel="noopener noreferrer">${icon("external")}Открыть курс</a>` : ""}
+              ${program.landingUrl ? `<a class="partner-secondary-button" href="${escapeAttr(program.landingUrl)}" target="_blank" rel="noopener noreferrer">${icon("external")}${isGeneral ? "Открыть сайт" : "Открыть курс"}</a>` : ""}
             </div>
             <p class="partner-social-copy-status" role="status" aria-live="polite">${escapeHtml(state.socialCopyStatus)}</p>` : renderEmpty("По выбранным условиям курсов не найдено.")}
         </div>
@@ -540,8 +563,8 @@
     try {
       const result = await authApi.request("api/partner/social-materials");
       // Keep a personal edit only while its source text and coupon have not changed.
-      const previous = new Map((state.socialMaterials?.programs || []).map(program => [program.id, program.message]));
-      state.socialDrafts = Object.fromEntries((result.programs || []).filter(program => (
+      const previous = new Map(getSocialMessages().map(program => [program.id, program.message]));
+      state.socialDrafts = Object.fromEntries(getSocialMessages(result).filter(program => (
         state.socialMaterials?.coupon === result.coupon && previous.get(program.id) === program.message
         && Object.prototype.hasOwnProperty.call(state.socialDrafts, program.id)
       )).map(program => [program.id, state.socialDrafts[program.id]]));
@@ -551,7 +574,7 @@
   }
 
   async function copySocialMessage() {
-    const program = (state.socialMaterials?.programs || []).find(item => item.id === state.socialProgramId);
+    const program = getSocialMessages().find(item => item.id === state.socialProgramId);
     if (!program || !state.socialMaterials?.coupon || state.socialLoading) return;
     const text = state.socialDrafts[program.id] ?? program.message;
     if (!text.trim()) { state.socialCopyStatus = "Текст сообщения пуст."; render(); return; }
@@ -988,6 +1011,7 @@
       if (state.materialsTab === "social") loadSocialMaterials();
     }
     if (action === "refresh-social-materials") loadSocialMaterials();
+    if (action === "select-social-general") { state.socialProgramId = "general:training-center"; state.socialCopyStatus = ""; render(); }
     if (action === "copy-social-message") copySocialMessage();
     if (action === "reset-social-message") { delete state.socialDrafts[state.socialProgramId]; state.socialCopyStatus = ""; render(); }
     if (action === "open-documents") loadDocuments("");

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.537",
+    version: "1.7.538",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.538",
+      releasedAt: "2026-09-23",
+      changes: ["В материалах партнёра для соцсетей добавлено общее мотивационное сообщение об учебном центре «Цифровизация Плюс» с персональным купоном и ссылкой edu-plus.ru: редактирование, восстановление текста и копирование. Сообщение доступно независимо от фильтров и наличия курсов."]
+    },
     {
       version: "1.7.537",
       releasedAt: "2026-09-23",
