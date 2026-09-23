@@ -2387,7 +2387,7 @@ async function handleAdminUsers(req, res, user) {
   }
   const login = employee ? employee.login : validateAuthLogin(body.login);
   const name = employee ? employee.name : String(body.name || "").trim();
-  const role = String(body.role || before?.role || employee?.access?.role || "manager");
+  const role = String(body.role || before?.role || (employee ? "partner" : "manager"));
   const requestedStatus = String(body.status || before?.status || employee?.access?.status || "active");
   const status = employee?.access?.status === "blocked" ? "blocked" : requestedStatus;
   let password = employee ? employee.password : String(body.password || "");
@@ -36849,7 +36849,7 @@ function publicAuthEmployee(employee = {}) {
     email: String(employee.email || ""),
     phone: String(employee.phone || ""),
     section: String(employee.section || employee.status || ""),
-    defaultRole: String(employee.access?.role || "partner"),
+    defaultRole: "partner",
     defaultStatus: String(employee.access?.status || "blocked")
   };
 }
@@ -36914,9 +36914,9 @@ function synchronizeAuthUsersWithEmployees(users = [], contracts = [], options =
         authSource: "employee",
         login: employee.login,
         name: employee.name,
-        role: employee.access.role,
+        role: "partner",
         status: employee.access.status,
-        employeeRoleOverride: "",
+        employeeRoleOverride: "partner",
         employeeStatusOverride: "",
         email: employee.email,
         phone: employee.phone,

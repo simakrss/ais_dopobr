@@ -630,7 +630,7 @@ function gateway_public_auth_employee(array $employee): array
         'email' => (string) ($employee['email'] ?? ''),
         'phone' => (string) ($employee['phone'] ?? ''),
         'section' => (string) ($employee['section'] ?? $employee['status'] ?? ''),
-        'defaultRole' => (string) ($employee['access']['role'] ?? 'partner'),
+        'defaultRole' => 'partner',
         'defaultStatus' => (string) ($employee['access']['status'] ?? 'blocked'),
     ];
 }
@@ -739,9 +739,9 @@ function gateway_sync_employee_auth_users(): array
                     'authSource' => 'employee',
                     'login' => (string) $employee['login'],
                     'name' => (string) $employee['name'],
-                    'role' => (string) $employee['access']['role'],
+                    'role' => 'partner',
                     'status' => (string) $employee['access']['status'],
-                    'employeeRoleOverride' => '',
+                    'employeeRoleOverride' => 'partner',
                     'employeeStatusOverride' => '',
                     'email' => (string) $employee['email'],
                     'phone' => (string) $employee['phone'],
@@ -1239,7 +1239,7 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
             $payload['name'] = (string) $employee['name'];
             $payload['role'] = (string) ($payload['role']
                 ?? $beforePrivate['role']
-                ?? $employee['access']['role']);
+                ?? 'partner');
             $requestedStatus = (string) ($payload['status']
                 ?? $beforePrivate['status']
                 ?? $employee['access']['status']);

@@ -80,7 +80,10 @@ const first = synchronizeAuthUsersWithEmployees([], [oldDuplicate, active, partn
   verifyPassword
 });
 assert.equal(first.stats.created, 3);
-assert.equal(first.users.find((user) => user.employeeId === active.id)?.role, "manager");
+assert.equal(first.users.find((user) => user.employeeId === active.id)?.role, "partner");
+assert.equal(first.users.find((user) => user.employeeId === active.id)?.employeeRoleOverride, "partner",
+  "роль нового сотрудника не должна повышаться при следующей синхронизации");
+assert.equal(publicAuthEmployee(directory.employees.find((row) => row.id === active.id)).defaultRole, "partner");
 assert.equal(first.users.find((user) => user.employeeId === active.id)?.status, "active");
 assert.equal(first.users.find((user) => user.employeeId === partner.id)?.role, "partner");
 assert.equal(first.users.find((user) => user.employeeId === partner.id)?.status, "active");
@@ -165,7 +168,7 @@ const reactivated = synchronizeAuthUsersWithEmployees(expiredFirst.users, [activ
   hashPassword,
   verifyPassword
 });
-assert.equal(reactivated.users[0].role, "manager");
+assert.equal(reactivated.users[0].role, "partner");
 assert.equal(reactivated.users[0].status, "active",
   "после появления действующего договора автоматически заблокированная запись должна активироваться");
 
@@ -207,6 +210,10 @@ const legacyManager = {
   email: "",
   phone: ""
 };
+const existingManagedManager = synchronizeAuthUsersWithEmployees([{ ...legacyManager, employeeId: active.id, authSource: "employee", employeeRoleOverride: "" }], [active], {
+  secret: "unit-test-secret", hashPassword, verifyPassword
+});
+assert.equal(existingManagedManager.users[0].role, "manager", "существующие роли не должны меняться из-за нового значения по умолчанию");
 const migrated = synchronizeAuthUsersWithEmployees([legacyManager], [active], {
   secret: "unit-test-secret",
   hashPassword,

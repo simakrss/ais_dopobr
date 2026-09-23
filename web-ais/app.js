@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.531",
+    version: "1.7.532",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.532",
+      releasedAt: "2026-09-23",
+      changes: ["Новые сотрудники по умолчанию получают роль «Сотрудник / партнёр» с входом в кабинет партнёра; существующие роли сохранены. В разделе «Пользователи и роли» список занимает доступную высоту окна, добавлены поиск, фильтры и сортировка. Параметры учётной записи редактируются в отдельном окне."]
+    },
     {
       version: "1.7.531",
       releasedAt: "2026-09-23",
@@ -7526,6 +7531,11 @@ MAX - https://bizvmax.ru/zifra_plus
     authUsersError: "",
     authUserEditorId: "",
     authUserEmployeeSelection: null,
+    authUserEditorDraft: null,
+    authUserEditorBaseline: null,
+    authUserSaving: false,
+    authUsersFilters: { query: "", role: "", status: "", source: "" },
+    authUsersSort: { key: "name", direction: "asc" },
     adminSettingsDirty: false,
     adminSettingsDraft: null,
     adminSettingsBaseline: "",
@@ -14413,6 +14423,13 @@ MAX - https://bizvmax.ru/zifra_plus
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
+    if (state.authUserEditorId) {
+      const unsaved = document.querySelector("[data-unsaved-changes-dialog]");
+      if (unsaved) unsaved.cancelUnsavedChangesDialog?.();
+      else closeAuthUserEditor();
+      restoreCancelledAisHistoryNavigation(currentSnapshot);
+      return;
+    }
     const attestationTasks = document.querySelector("[data-attestation-tasks]");
     if (attestationTasks && !attestationTasks.hidden) {
       const preview = document.querySelector("[data-generated-document-preview]");
@@ -14685,6 +14702,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${state.employeeExpenseEditor ? renderEmployeeExpenseEditor() : ""}
       ${state.documentTemplateDialogId ? renderDocumentTemplateDialog() : ""}
       ${state.profileOpen ? renderProfileDialog() : ""}
+      ${state.authUserEditorId && isAdminUser() ? renderAuthUserEditorDialog() : ""}
       ${state.releaseHistoryOpen && isAdminUser() ? renderReleaseHistoryDialog() : ""}
       ${state.databaseOperationHistory.open && isAdminUser() ? renderStudentDatabaseOperationHistoryDialog() : ""}
       ${state.databaseOperationResult ? renderDatabaseOperationResultDialog() : ""}
@@ -14796,6 +14814,7 @@ MAX - https://bizvmax.ru/zifra_plus
       mainRegistryViewportFitFrame = 0;
       fitMainRegistryTablesToViewport();
       fitDocumentWorkflowProgramsToViewport();
+      fitAuthUsersTableToViewport();
     });
   }
 
@@ -31550,13 +31569,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getAuthUserEditorRecord() {
-    const base = state.authUserEditorId === "new"
+    const base = state.authUserEditorDraft || (state.authUserEditorId === "new"
       ? { id: "", employeeId: "", login: "", name: "", email: "", phone: "", role: "manager", status: "active" }
-      : state.authUsers.find((user) => user.id === state.authUserEditorId) || null;
+      : state.authUsers.find((user) => user.id === state.authUserEditorId) || null);
     if (!base || state.authUserEmployeeSelection === null) return base;
     const employeeId = String(state.authUserEmployeeSelection || "");
     const employee = state.authEmployees.find((item) => item.id === employeeId);
-    if (!employee) return { ...base, employeeId: "" };
+    if (!employee) return { ...base, employeeId: "", role: base.role === "partner" ? "manager" : base.role };
     return {
       ...base,
       employeeId,
@@ -31564,7 +31583,7 @@ MAX - https://bizvmax.ru/zifra_plus
       name: employee.name,
       email: String(base.email || "") || employee.email,
       phone: String(base.phone || "") || employee.phone,
-      role: base.id ? base.role : employee.defaultRole,
+      role: base.id ? base.role : "partner",
       status: base.id ? base.status : employee.defaultStatus
     };
   }
@@ -31590,34 +31609,39 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderAuthUserManagementContent({ inline = false } = {}) {
-    const editor = getAuthUserEditorRecord();
     return `
-      <div class="user-management-content ${inline ? "is-inline" : ""}">
+      <div class="user-management-content ${inline ? "is-inline" : ""}" data-auth-users-list>
         ${state.authUsersError ? `<div class="user-management-message is-error">${escapeHtml(state.authUsersError)}</div>` : ""}
         ${!state.authUsersLoading ? renderAuthEmployeeSyncSummary() : ""}
+        ${renderAuthUsersToolbar()}
         ${state.authUsersLoading ? `
           <div class="user-management-message">Загрузка пользователей...</div>
         ` : `
-          <div class="user-management-table-wrap">
+          <div class="user-management-table-wrap" data-auth-users-table-wrap>
             <table class="data-table user-management-table">
               <thead>
                 <tr>
-                  <th>Логин</th>
-                  <th>Пользователь</th>
-                  <th>Роль</th>
-                  <th>Контакты</th>
-                  <th>Последний вход</th>
-                  <th>Статус</th>
+                  ${[["login", "Логин"], ["name", "Пользователь"], ["role", "Роль"], ["email", "Контакты"], ["lastLoginAt", "Последний вход"], ["status", "Статус"]].map(([key, label]) => `<th aria-sort="${state.authUsersSort.key === key ? (state.authUsersSort.direction === "asc" ? "ascending" : "descending") : "none"}"><button class="auth-users-sort" data-auth-users-sort="${key}" type="button">${label}<span aria-hidden="true">${state.authUsersSort.key === key ? (state.authUsersSort.direction === "asc" ? "↑" : "↓") : "↕"}</span></button></th>`).join("")}
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                ${state.authUsers.map((user) => `
+                ${renderAuthUsersRows()}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderAuthUsersRows() {
+    return getFilteredAuthUsers().map((user) => `
                   <tr class="${state.authUserEditorId === user.id ? "is-active" : ""}">
                     <td><strong>${escapeHtml(user.login)}</strong></td>
                     <td>
                       <span class="user-contact-stack">
-                        <span>${escapeHtml(user.name)}</span>
+                        <button class="auth-user-name" data-action="edit-auth-user" data-user-id="${escapeAttr(user.id)}" type="button">${escapeHtml(user.name)}</button>
                         <small>${user.employeeId ? "Карточка сотрудника" : "Ручная запись"}</small>
                       </span>
                     </td>
@@ -31632,16 +31656,168 @@ MAX - https://bizvmax.ru/zifra_plus
                     <td><span class="user-status-badge is-${user.status === "active" ? "active" : "blocked"}">${user.status === "active" ? "Активен" : "Заблокирован"}</span></td>
                     <td><button class="ghost-button compact-button" data-action="edit-auth-user" data-user-id="${escapeAttr(user.id)}" type="button">Изменить</button></td>
                   </tr>
-                `).join("") || `<tr><td colspan="7">Пользователи не найдены.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        `}
-        ${editor ? renderAuthUserEditor(editor) : `
-          <div class="user-editor-placeholder">Выберите пользователя для редактирования или добавьте новую учётную запись.</div>
-        `}
-      </div>
-    `;
+                `).join("") || `<tr><td colspan="7">Пользователи не найдены. Измените условия поиска или фильтры.</td></tr>`;
+  }
+
+  function getFilteredAuthUsers() {
+    const filters = state.authUsersFilters;
+    const normalize = (value) => String(value || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+    const words = normalize(filters.query).trim().split(/\s+/).filter(Boolean);
+    const sort = state.authUsersSort;
+    const value = (user) => sort.key === "role" ? getAuthRoleLabel(user.role)
+      : sort.key === "status" ? (user.status === "active" ? "Активен" : "Заблокирован") : user[sort.key];
+    return state.authUsers.filter((user) => {
+      if (filters.role && user.role !== filters.role) return false;
+      if (filters.status && user.status !== filters.status) return false;
+      if (filters.source && (user.employeeId ? "employee" : "manual") !== filters.source) return false;
+      const text = normalize([user.name, user.login, user.email, user.phone, getAuthRoleLabel(user.role)].join(" "));
+      return words.every((word) => text.includes(word));
+    }).sort((left, right) => {
+      let compared;
+      if (sort.key === "lastLoginAt") {
+        const a = Date.parse(left.lastLoginAt), b = Date.parse(right.lastLoginAt);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return Number.isFinite(a) ? -1 : Number.isFinite(b) ? 1 : String(left.id).localeCompare(String(right.id));
+        compared = a - b;
+      } else compared = String(value(left) || "").localeCompare(String(value(right) || ""), "ru", { numeric: true, sensitivity: "base" });
+      return compared * (sort.direction === "desc" ? -1 : 1) || String(left.id).localeCompare(String(right.id));
+    });
+  }
+
+  function renderAuthUsersToolbar() {
+    const filters = state.authUsersFilters;
+    const select = (key, label, options) => `<label><span>${label}</span><select data-auth-users-filter="${key}" aria-label="${label}"><option value="">Все</option>${options.map(([value, text]) => `<option value="${value}" ${filters[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
+    return `<div class="auth-users-toolbar">
+      <label class="auth-users-search"><span>Поиск сотрудников</span><span class="auth-users-search-control"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"></circle><path d="m15 15 6 6"></path></svg><input type="search" data-auth-users-filter="query" value="${escapeAttr(filters.query)}" placeholder="ФИО, логин, Email, телефон" aria-label="Поиск сотрудников"><button type="button" data-action="clear-auth-users-search" title="Очистить поиск" aria-label="Очистить поиск" ${filters.query ? "" : "hidden"}>×</button></span></label>
+      ${select("role", "Роль", [["partner", "Сотрудник / партнёр"], ["manager", "Менеджер"], ["admin", "Администратор"]])}
+      ${select("status", "Статус", [["active", "Активен"], ["blocked", "Заблокирован"]])}
+      ${select("source", "Источник", [["employee", "Карточка сотрудника"], ["manual", "Ручная запись"]])}
+      <div class="auth-users-filter-actions"><button class="ghost-button compact-button" data-action="reset-auth-users-filters" type="button">Сбросить фильтры</button><span data-auth-users-count role="status">Найдено: ${getFilteredAuthUsers().length} из ${state.authUsers.length}</span></div>
+    </div>`;
+  }
+
+  function refreshAuthUsersList() {
+    document.querySelectorAll("[data-auth-users-list]").forEach((list) => {
+      const body = list.querySelector("tbody");
+      if (body) body.innerHTML = renderAuthUsersRows();
+      list.querySelector("[data-auth-users-count]").textContent = `Найдено: ${getFilteredAuthUsers().length} из ${state.authUsers.length}`;
+      list.querySelector("[data-action='clear-auth-users-search']").hidden = !state.authUsersFilters.query;
+      list.querySelectorAll("[data-auth-users-sort]").forEach((button) => {
+        const active = button.dataset.authUsersSort === state.authUsersSort.key;
+        button.closest("th").setAttribute("aria-sort", active ? (state.authUsersSort.direction === "asc" ? "ascending" : "descending") : "none");
+        button.querySelector("span").textContent = active ? (state.authUsersSort.direction === "asc" ? "↑" : "↓") : "↕";
+      });
+      if (body) list.querySelector("[data-auth-users-table-wrap]").scrollTop = 0;
+    });
+    scheduleMainRegistryTableViewportFit();
+  }
+
+  function fitAuthUsersTableToViewport() {
+    const viewport = window.visualViewport;
+    const bottom = (Number(viewport?.offsetTop) || 0) + (Number(viewport?.height) || window.innerHeight);
+    document.querySelectorAll("[data-auth-users-table-wrap]").forEach((table) => {
+      const modal = table.closest(".user-management-modal");
+      const limit = modal ? Math.min(bottom, modal.getBoundingClientRect().bottom - 60) : bottom;
+      table.style.height = `${Math.max(150, Math.floor(limit - table.getBoundingClientRect().top - 24))}px`;
+    });
+  }
+
+  function renderAuthUserEditorDialog() {
+    const user = getAuthUserEditorRecord();
+    if (!user) return "";
+    return `<div class="modal-backdrop auth-user-editor-backdrop" data-action="close-auth-user-editor">
+      <section class="modal auth-user-editor-modal" role="dialog" aria-modal="true" aria-label="Параметры пользователя">
+        <header class="modal-head"><h2>${user.id ? "Параметры пользователя" : "Новый пользователь"}</h2><button class="icon-button" data-action="close-auth-user-editor" type="button" aria-label="Закрыть" ${state.authUserSaving ? "disabled" : ""}>×</button></header>
+        <div class="auth-user-editor-body">${state.authUsersError ? `<p class="user-management-message is-error" role="alert">${escapeHtml(state.authUsersError)}</p>` : ""}${renderAuthUserEditor(user)}</div>
+      </section></div>`;
+  }
+
+  function collectAuthUserEditorDraft(form) {
+    const data = new FormData(form);
+    return { id: String(form.dataset.userId || ""), ...Object.fromEntries(["employeeId", "login", "name", "email", "phone", "role", "status", "password"].map((key) => [key, String(data.get(key) || "")])) };
+  }
+
+  function openAuthUserEditor(id = "new") {
+    if (!isAdminUser() || state.authUserSaving) return;
+    state.authUserEditorId = id;
+    state.authUserEmployeeSelection = null;
+    state.authUserEditorDraft = null;
+    state.authUserEditorBaseline = null;
+    state.authUsersError = "";
+    render();
+    document.querySelector(".auth-user-editor-modal select:not([disabled]), .auth-user-editor-modal input:not([readonly]):not([disabled])")?.focus({ preventScroll: true });
+  }
+
+  async function closeAuthUserEditor() {
+    if (state.authUserSaving) return false;
+    const form = document.querySelector("form[data-action='save-auth-user']");
+    if (form && JSON.stringify(collectAuthUserEditorDraft(form)) !== state.authUserEditorBaseline) {
+      const decision = await chooseUnsavedChangesAction({ title: "Параметры пользователя не сохранены", message: "Сохранить изменения перед закрытием?" });
+      if (decision === "cancel") return false;
+      if (decision === "save") { form.requestSubmit(); return false; }
+    }
+    const id = state.authUserEditorId;
+    state.authUserEditorId = "";
+    state.authUserEditorDraft = null;
+    state.authUserEditorBaseline = null;
+    state.authUserEmployeeSelection = null;
+    state.authUsersError = "";
+    render();
+    document.querySelector(`[data-action='edit-auth-user'][data-user-id='${CSS.escape(id)}']`)?.focus({ preventScroll: true });
+    return true;
+  }
+
+  function bindAuthUserManagement() {
+    document.querySelectorAll("[data-auth-users-list]").forEach((list) => {
+      list.addEventListener("click", (event) => {
+        const edit = event.target.closest("[data-action='edit-auth-user']");
+        if (edit) openAuthUserEditor(edit.dataset.userId);
+        const sort = event.target.closest("[data-auth-users-sort]");
+        if (sort) {
+          const key = sort.dataset.authUsersSort;
+          state.authUsersSort = { key, direction: state.authUsersSort.key === key && state.authUsersSort.direction === "asc" ? "desc" : "asc" };
+          refreshAuthUsersList();
+        }
+        const action = event.target.closest("[data-action]")?.dataset.action;
+        if (action === "clear-auth-users-search" || action === "reset-auth-users-filters") {
+          if (action === "reset-auth-users-filters") state.authUsersFilters = { query: "", role: "", status: "", source: "" };
+          else state.authUsersFilters.query = "";
+          list.querySelectorAll("[data-auth-users-filter]").forEach((input) => { input.value = state.authUsersFilters[input.dataset.authUsersFilter]; });
+          refreshAuthUsersList();
+          if (action === "clear-auth-users-search") list.querySelector("[data-auth-users-filter='query']").focus();
+        }
+      });
+      list.querySelectorAll("[data-auth-users-filter]").forEach((input) => input.addEventListener(input.tagName === "INPUT" ? "input" : "change", () => {
+        state.authUsersFilters[input.dataset.authUsersFilter] = input.value;
+        refreshAuthUsersList();
+      }));
+    });
+    document.querySelectorAll("[data-action='create-auth-user']").forEach((button) => button.addEventListener("click", () => openAuthUserEditor()));
+    document.querySelectorAll("[data-action='close-auth-user-editor']").forEach((element) => element.addEventListener("click", (event) => {
+      if (element.matches("button") || event.target === element) closeAuthUserEditor();
+    }));
+    const form = document.querySelector("form[data-action='save-auth-user']");
+    if (!form) return;
+    if (state.authUserEditorBaseline === null) state.authUserEditorBaseline = JSON.stringify(collectAuthUserEditorDraft(form));
+    form.addEventListener("input", () => { state.authUserEditorDraft = collectAuthUserEditorDraft(form); });
+    form.addEventListener("change", (event) => {
+      state.authUserEditorDraft = collectAuthUserEditorDraft(form);
+      if (event.target.name === "employeeId") {
+        state.authUserEmployeeSelection = event.target.value;
+        state.authUserEditorDraft = getAuthUserEditorRecord();
+        state.authUserEmployeeSelection = null;
+        render();
+        document.querySelector("[data-action='select-auth-user-employee']")?.focus({ preventScroll: true });
+      }
+    });
+    form.addEventListener("submit", saveAuthUser);
+    form.closest("[role='dialog']").addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeAuthUserEditor(); }
+      if (event.key === "Tab") {
+        const items = [...form.closest("[role='dialog']").querySelectorAll("button, input, select")].filter((item) => !item.disabled && item.type !== "hidden" && item.offsetParent !== null);
+        const edge = event.shiftKey ? items[0] : items.at(-1);
+        if (document.activeElement === edge) { event.preventDefault(); (event.shiftKey ? items.at(-1) : items[0])?.focus(); }
+      }
+    });
   }
 
   function renderUserManagementDialog() {
@@ -31671,7 +31847,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const isNew = !user.id;
     const isCurrent = user.id && user.id === getCurrentAuthUser().id;
     const employee = getAuthEmployeeById(user.employeeId);
-    const linked = Boolean(employee);
+    const linked = Boolean(user.employeeId);
     const employeeLocked = Boolean(user.id && user.employeeId);
     const employeeSelectionDisabled = employeeLocked || user.role === "admin";
     const employeeOptions = state.authEmployees.map((item) => {
@@ -31691,11 +31867,12 @@ MAX - https://bizvmax.ru/zifra_plus
                 : "Ручная учётная запись не связана с карточкой сотрудника."}</p>
           </div>
         </div>
-        <div class="auth-user-editor-grid">
+        <fieldset class="auth-user-editor-grid" ${state.authUserSaving ? "disabled" : ""}>
           <label class="auth-user-employee-field">
             <span>Карточка сотрудника</span>
             <select name="employeeId" data-action="select-auth-user-employee" ${employeeSelectionDisabled ? "disabled" : ""}>
               <option value="">Без привязки — ручная учётная запись</option>
+              ${linked && !employee ? `<option value="${escapeAttr(user.employeeId)}" selected>${escapeHtml(user.name)} — карточка недоступна</option>` : ""}
               ${employeeOptions}
             </select>
             ${employeeLocked ? `<input name="employeeId" type="hidden" value="${escapeAttr(user.employeeId)}">` : ""}
@@ -31742,11 +31919,12 @@ MAX - https://bizvmax.ru/zifra_plus
             <span>${linked ? "Пароль СДО" : isNew ? "Пароль" : "Новый пароль"}</span>
             ${linked
               ? '<input type="text" value="••••••••" disabled aria-label="Пароль берётся из карточки сотрудника"><small>Берётся из карточки сотрудника и не показывается в интерфейсе.</small>'
-              : `<input name="password" type="password" value="" autocomplete="new-password" placeholder="${isNew && user.role === "manager" ? "По умолчанию 123" : "Оставьте пустым без изменения"}">`}
+              : `<input name="password" type="password" value="${escapeAttr(user.password || "")}" autocomplete="new-password" placeholder="${isNew && user.role === "manager" ? "По умолчанию 123" : "Оставьте пустым без изменения"}">`}
           </label>
-        </div>
+        </fieldset>
         <div class="account-section-actions">
-          <button class="primary-button" type="submit">Сохранить пользователя</button>
+          <button class="ghost-button" data-action="close-auth-user-editor" type="button" ${state.authUserSaving ? "disabled" : ""}>Отмена</button>
+          <button class="primary-button" type="submit" ${state.authUserSaving ? "disabled" : ""}>${state.authUserSaving ? "Сохранение…" : "Сохранить пользователя"}</button>
         </div>
       </form>
     `;
@@ -31863,6 +32041,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (clearEditor) {
       state.authUserEditorId = "";
       state.authUserEmployeeSelection = null;
+      state.authUserEditorDraft = null;
+      state.authUserEditorBaseline = null;
     }
     render();
     try {
@@ -31916,17 +32096,24 @@ MAX - https://bizvmax.ru/zifra_plus
     state.userManagementOpen = false;
     state.authUserEditorId = "";
     state.authUserEmployeeSelection = null;
+    state.authUserEditorDraft = null;
+    state.authUserEditorBaseline = null;
     state.authUsersError = "";
     render();
   }
 
   async function saveAuthUser(event) {
     event.preventDefault();
+    if (!isAdminUser() || state.authUserSaving) return false;
     const form = event.currentTarget;
+    state.authUserEditorDraft = collectAuthUserEditorDraft(form);
     const data = new FormData(form);
     const employeeId = String(data.get("employeeId") || "").trim();
     const button = form.querySelector("button[type='submit']");
     button.disabled = true;
+    state.authUserSaving = true;
+    form.querySelector("fieldset").disabled = true;
+    button.textContent = "Сохранение…";
     state.authUsersError = "";
     try {
       const payload = await authRequest("api/admin/users", {
@@ -31951,15 +32138,18 @@ MAX - https://bizvmax.ru/zifra_plus
       if (existingIndex >= 0) state.authUsers[existingIndex] = saved;
       else state.authUsers.push(saved);
       state.authUsers.sort((left, right) => String(left.login).localeCompare(String(right.login), "ru"));
-      state.authUserEditorId = saved.id;
+      state.authUserEditorId = "";
+      state.authUserEditorDraft = null;
+      state.authUserEditorBaseline = null;
       state.authUserEmployeeSelection = null;
       if (saved.id === getCurrentAuthUser().id) {
         authenticatedUser = { ...saved };
         window.AIS_AUTH_USER = authenticatedUser;
       }
-      render();
     } catch (error) {
       state.authUsersError = error.message;
+    } finally {
+      state.authUserSaving = false;
       render();
     }
   }
@@ -44433,6 +44623,10 @@ MAX - https://bizvmax.ru/zifra_plus
       closeContractStudentPicker();
       return true;
     }
+    if (state.authUserEditorId) {
+      closeAuthUserEditor();
+      return true;
+    }
     if (state.userManagementOpen) {
       closeUserManagement();
       return true;
@@ -44717,24 +44911,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (element.matches("button") || event.target === element) closeUserManagement();
       });
     });
-    document.querySelector("[data-action='create-auth-user']")?.addEventListener("click", () => {
-      state.authUserEditorId = "new";
-      state.authUserEmployeeSelection = null;
-      render();
-    });
-    document.querySelectorAll("[data-action='edit-auth-user']").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.authUserEditorId = button.dataset.userId || "";
-        state.authUserEmployeeSelection = null;
-        render();
-      });
-    });
-    document.querySelector("[data-action='select-auth-user-employee']")?.addEventListener("change", (event) => {
-      state.authUserEmployeeSelection = String(event.currentTarget.value || "");
-      render();
-      document.querySelector("[data-action='select-auth-user-employee']")?.focus({ preventScroll: true });
-    });
-    document.querySelector("form[data-action='save-auth-user']")?.addEventListener("submit", saveAuthUser);
+    bindAuthUserManagement();
     document.querySelector("[data-action='open-release-history']")?.addEventListener("click", () => {
       state.releaseHistoryOpen = true;
       render();
