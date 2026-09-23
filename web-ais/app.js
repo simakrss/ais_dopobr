@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.540",
+    version: "1.7.541",
     releasedAt: "2026-09-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.541",
+      releasedAt: "2026-09-23",
+      changes: ["Документы формируются и при недоступном локальном сервере: без PDF-конвертера доступен DOCX с подтверждением и скачиванием для проверки, недоступный редактор отключён. В облачном режиме и при недоступном локальном пути основная и дополнительные копии сохраняются напрямую на Яндекс Диск. Отмена сохраняется, настройки режима и путей не меняются."]
+    },
     {
       version: "1.7.540",
       releasedAt: "2026-09-23",
@@ -19040,7 +19045,7 @@ MAX - https://bizvmax.ru/zifra_plus
         preferLocalTemplate: getEffectiveLocalDocumentsMode(), outputFormat: "pdf", skipPhoto: true }, origin, taskId);
       token = preview.previewToken;
       throwIfDocumentGenerationCancelled(taskId);
-      await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: `${definition.title}.pdf`, outputFormat: "pdf", readOnly: true, signal: getDocumentGenerationSignal(taskId), generationTaskId: taskId });
+      await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: preview.fileName, outputFormat: preview.outputFormat, previewAvailable: preview.previewAvailable, editorAvailable: false, readOnly: true, signal: getDocumentGenerationSignal(taskId), generationTaskId: taskId });
     } catch (error) {
       if (!getDocumentGenerationSignal(taskId)?.aborted) throw error;
     } finally {
@@ -65210,6 +65215,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function isLocalDocumentsAvailable() {
     const capabilities = localDocumentServicesState.capabilities;
+    if (capabilities?.appServerAvailable === false) return false;
     if (
       capabilities?.appServerAvailable === true
       && typeof capabilities.localDocumentsAvailable === "boolean"
@@ -71655,10 +71661,9 @@ MAX - https://bizvmax.ru/zifra_plus
         studentName: String(record?.name || "")
       };
     }
-    const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
     const useLocalDocuments = getEffectiveLocalDocumentsMode();
     return {
-      saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
+      saveToYandexDisk: !useLocalDocuments,
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
       openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
@@ -71678,10 +71683,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getEmployeeDocumentStorageRequest(record, documentTemplate = {}) {
-    const recommendedSaveEnabled = Boolean(state.data.meta.yandexDiskAutoSave);
     const useLocalDocuments = getEffectiveLocalDocumentsMode();
     return {
-      saveToYandexDisk: recommendedSaveEnabled && !useLocalDocuments,
+      saveToYandexDisk: !useLocalDocuments,
       promptLocalSave: useLocalDocuments,
       useBrowserDownloads: false,
       openAfterGeneration: Boolean(documentTemplate.openAfterGeneration),
@@ -71724,8 +71728,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function readYandexDocumentSaveResult(response, requested) {
-    if (!requested) return null;
     const saved = response.headers.get("X-Yandex-Disk-Saved");
+    if (!requested && saved === null) return null;
     const decodeHeader = (name) => {
       const value = response.headers.get(name) || "";
       try {
@@ -71975,6 +71979,9 @@ MAX - https://bizvmax.ru/zifra_plus
       return { localSaveResult, yandexSaveResult, downloaded: false };
     }
     if (yandexSaveResult?.saved) {
+      if (localSaveResult && !localSaveResult.saved) {
+        showDocumentGenerationNotice("Локальная папка недоступна. Документ сохранён напрямую на Яндекс Диск.", "success");
+      }
       return { localSaveResult, yandexSaveResult, downloaded: false };
     }
     if (options.suppressDownloadFallback) {
@@ -72120,11 +72127,15 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error("Сервер не создал подтверждаемый предварительный просмотр. Перезапустите сервер приложения.");
       }
       const contentType = String(response.headers.get("Content-Type") || "").toLowerCase();
-      if (!contentType.includes("application/pdf")) {
+      const previewAvailable = contentType.includes("application/pdf");
+      if (!previewAvailable && !contentType.includes("application/vnd.openxmlformats-officedocument.wordprocessingml.document")) {
         throw new Error("Сервер вернул неподдерживаемый формат предварительного просмотра.");
       }
       return {
         previewToken,
+        previewAvailable,
+        editorAvailable: previewAvailable && response.headers.get("X-Document-Editor-Available") !== "false",
+        ...getGeneratedDocumentResponseDetails(response, generationRequest.fileName, generationRequest.outputFormat),
         blob: await response.blob()
       };
     });
@@ -72374,7 +72385,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const emailDescription = String(options.emailDescription || "").trim();
     const previewToken = String(options.previewToken || "").trim();
     const processingOrigin = String(options.processingOrigin || "").trim();
-    let previewUrl = URL.createObjectURL(new Blob([previewBlob], { type: "application/pdf" }));
+    const previewAvailable = options.previewAvailable !== false;
+    const editorAvailable = options.editorAvailable !== false && previewAvailable;
+    let previewUrl = URL.createObjectURL(previewAvailable ? new Blob([previewBlob], { type: "application/pdf" }) : previewBlob);
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -72383,27 +72396,29 @@ MAX - https://bizvmax.ru/zifra_plus
       backdrop.className = "modal-backdrop generated-document-preview-backdrop";
       backdrop.dataset.generatedDocumentPreview = "";
       backdrop.innerHTML = `
-        <section class="modal generated-document-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="generated-document-preview-title">
+        <section class="modal generated-document-preview-dialog${previewAvailable ? "" : " is-docx-confirmation"}" role="dialog" aria-modal="true" aria-labelledby="generated-document-preview-title">
           <header class="modal-head">
             <div>
               <p class="eyebrow">${escapeHtml(title)}</p>
-              <h2 id="generated-document-preview-title" data-generated-document-preview-heading>Предварительный просмотр</h2>
+              <h2 id="generated-document-preview-title" data-generated-document-preview-heading>${previewAvailable ? "Предварительный просмотр" : "Документ готов"}</h2>
             </div>
             <button class="icon-button" data-action="cancel-generated-document-preview" type="button" title="Закрыть" aria-label="Закрыть">×</button>
           </header>
           <div class="generated-document-preview-summary">
             <strong>${escapeHtml(fileName)}</strong>
-            <span data-generated-document-preview-description>${outputFormat === "docx"
+            <span data-generated-document-preview-description>${!previewAvailable
+              ? "PDF-конвертер недоступен. Документ сформирован в формате DOCX без изменения оформления. Скачайте файл для проверки; после подтверждения он будет сохранён в этом формате."
+              : outputFormat === "docx"
               ? "Предпросмотр показан в PDF. После подтверждения будет использован исходный файл DOCX."
               : "После подтверждения будет использован просмотренный файл PDF."}${emailDescription
                 ? `<br>Отправка по email: ${escapeHtml(emailDescription)}.`
-                : ""}</span>
+                : ""}${!editorAvailable ? "<br>Редактирование сейчас недоступно. Можно продолжить без редактирования." : ""}</span>
           </div>
-          <iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>
+          ${previewAvailable ? `<iframe class="generated-document-preview-frame" data-generated-document-preview-frame src="${escapeAttr(`${previewUrl}#toolbar=1&navpanes=0`)}" title="Предварительный просмотр документа ${escapeAttr(title)}"></iframe>` : `<div class="generated-document-preview-summary"><button class="ghost-button" data-action="download-generated-document-preview" type="button">Скачать DOCX для проверки</button></div>`}
           <footer class="modal-actions generated-document-preview-actions">
-            <small data-generated-document-preview-hint>Сохранение, скачивание и отправка начнутся только после подтверждения.</small>
+            <small data-generated-document-preview-hint>Сохранение в папку документов и отправка начнутся только после подтверждения.</small>
             <div class="generated-document-preview-buttons">
-              <button class="ghost-button" data-action="edit-generated-document-preview" type="button">Редактировать</button>
+              <button class="ghost-button" data-action="edit-generated-document-preview" type="button"${editorAvailable ? "" : ' disabled title="Сервис редактирования недоступен"'}>Редактировать</button>
               <button class="ghost-button" data-action="refresh-generated-document-editor" type="button" hidden disabled>Обновить сессию</button>
               <button class="primary-button" data-action="save-generated-document-editor" type="button" hidden disabled>Сохранить изменения</button>
               <button class="primary-button" data-action="confirm-generated-document-preview" type="button">Продолжить</button>
@@ -72884,6 +72899,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ?.addEventListener("click", requestClosePreview);
       cancelButton?.addEventListener("click", requestCancelEditorOrPreview);
       refreshButton?.addEventListener("click", refreshCurrentEditorSession);
+      backdrop.querySelector("[data-action='download-generated-document-preview']")?.addEventListener("click", () => downloadBlob(fileName, previewBlob));
       editButton?.addEventListener("click", async () => {
         if (!previewToken || !processingOrigin || editButton.disabled || editorStartPending) return;
         const startSequence = ++editorStartSequence;
@@ -72909,7 +72925,7 @@ MAX - https://bizvmax.ru/zifra_plus
         } finally {
           if (startSequence === editorStartSequence) editorStartPending = false;
           if (!settled && startSequence === editorStartSequence) {
-            editButton.disabled = false;
+            editButton.disabled = !editorAvailable;
             editButton.removeAttribute("aria-busy");
           }
         }
@@ -72921,7 +72937,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (options.readOnly) {
         editButton.hidden = true;
         continueButton.hidden = true;
-        if (description) description.textContent = "Только просмотр. Файл не сохраняется, письмо не отправляется.";
+        if (description) description.textContent = previewAvailable ? "Только просмотр. Файл не сохраняется, письмо не отправляется." : "PDF-просмотр недоступен. Скачайте DOCX для проверки. В папку документов файл не сохраняется, письмо не отправляется.";
         if (hint) hint.textContent = "Закройте просмотр, чтобы вернуться к списку.";
       }
       document.body.appendChild(backdrop);
@@ -73322,6 +73338,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function prepareDocumentStorageRequestForEmail(storageRequest, emailRequest) {
+    if (storageRequest && !storageRequest.useBrowserDownloads && !getEffectiveLocalDocumentsMode()
+      && (storageRequest.promptLocalSave || storageRequest.autoSaveLocal)) {
+      storageRequest = { ...storageRequest, promptLocalSave: false, autoSaveLocal: false, saveToYandexDisk: true };
+    }
     if (!storageRequest || !emailRequest || !storageRequest.promptLocalSave) return storageRequest;
     return {
       ...storageRequest,
@@ -73391,6 +73411,7 @@ MAX - https://bizvmax.ru/zifra_plus
       );
       if (emailRequest === false) return;
       let emailSkipped = false;
+      documentProcessingOrigin = await awaitDocumentGenerationStage(generationTaskId, () => resolveDocumentProcessingOrigin("documentConversion"));
       const generationRequest = {
         templateUrl,
         templatePath,
@@ -73406,7 +73427,6 @@ MAX - https://bizvmax.ru/zifra_plus
         preferLocalTemplate: getEffectiveLocalDocumentsMode(),
         outputFormat
       };
-      documentProcessingOrigin = await awaitDocumentGenerationStage(generationTaskId, () => resolveDocumentProcessingOrigin("documentConversion"));
       if (previewEnabled) {
         setDocumentGenerationStatus(generationTaskId, `Подготовка предварительного просмотра: ${documentTemplate.title}`);
         const preview = await requestGeneratedDocumentPreview(generationRequest, documentProcessingOrigin, generationTaskId);
@@ -73414,8 +73434,10 @@ MAX - https://bizvmax.ru/zifra_plus
         setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
         const confirmed = await showGeneratedDocumentPreview(preview.blob, {
           title: documentTemplate.title,
-          fileName,
-          outputFormat,
+          fileName: preview.fileName,
+          outputFormat: preview.outputFormat,
+          previewAvailable: preview.previewAvailable,
+          editorAvailable: preview.editorAvailable,
           emailDescription: emailRequest?.recipientDescription || "",
           previewToken: pendingPreviewToken,
           processingOrigin: documentProcessingOrigin,
@@ -73596,8 +73618,11 @@ MAX - https://bizvmax.ru/zifra_plus
         );
       }
       if (responseDetails.conversionFallback) {
+        const savedAt = storageResult.yandexSaveResult?.saved ? "сохранён на Яндекс Диск"
+          : storageResult.localSaveResult?.saved ? "сохранён локально"
+          : storageResult.downloaded ? "скачан" : "сформирован, но не сохранён";
         showDocumentGenerationNotice(
-          `PDF-конвертер временно недоступен. Файл «${responseDetails.fileName}» скачан в формате DOCX и доступен для открытия в Word.`,
+          `PDF-конвертер временно недоступен. Файл «${responseDetails.fileName}» ${savedAt} в формате DOCX и доступен для открытия в Word.`,
           "warning"
         );
       } else if (emailSkipped) {

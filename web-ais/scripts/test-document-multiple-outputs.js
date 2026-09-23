@@ -32,6 +32,8 @@ async function main() {
   const saves = [], sent = [];
   const context = {
     throwIfDocumentGenerationCancelled: () => {},
+    serverSettings: { openDocumentsLocally: true },
+    getLocalSystemDocumentsAvailability: async () => ({ available: true }),
     Buffer, documentWorkflow: workflow,
     normalizeGeneratedDocumentFormat: value => value === "docx" ? "docx" : "pdf",
     safeDocumentFileName: (value, format) => workflow.safeOutputFileName(value, format),
@@ -51,7 +53,7 @@ async function main() {
     sendFile: (...args) => sent.push(args)
   };
   vm.createContext(context);
-  for (const name of ["prepareAdditionalDocumentSaveTargets", "saveAdditionalGeneratedDocuments", "sendGeneratedDocumentResponse"]) {
+  for (const name of ["isUnavailableDocumentPathError", "isLocalDocumentStorageAvailable", "prepareAdditionalDocumentSaveTargets", "saveAdditionalGeneratedDocuments", "sendGeneratedDocumentResponse"]) {
     vm.runInContext(extract(server, name), context);
   }
   const targetRequest = (definition, overrides = {}) => ({

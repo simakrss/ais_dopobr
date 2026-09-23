@@ -58,7 +58,7 @@ async function main() {
     "Таймаут должен охватывать не только заголовки, но и чтение тела ответа"
   );
 
-  const storageContext = {};
+  const storageContext = { getEffectiveLocalDocumentsMode: () => true };
   vm.createContext(storageContext);
   vm.runInContext(
     `${extractFunction("function prepareDocumentStorageRequestForEmail", "async function downloadStudentDocumentFromTemplate")}; this.prepareDocumentStorageRequestForEmail = prepareDocumentStorageRequestForEmail;`,

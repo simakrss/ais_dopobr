@@ -14374,6 +14374,23 @@ body.card-window-moving {
   padding: 6px 40px 6px 8px;
 }
 
+.generated-document-preview-dialog.is-docx-confirmation {
+  width: min(780px, 100%);
+  height: auto;
+  grid-template-rows: auto;
+  overflow-y: auto;
+}
+
+.is-docx-confirmation .generated-document-preview-summary {
+  flex-wrap: wrap;
+  padding: 16px;
+}
+
+.is-docx-confirmation .generated-document-preview-summary strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .program-commission-source-panel .combo-input-wrap {
   /* This standalone search uses the native 2px input border. */
   --combo-clear-space: 26px;

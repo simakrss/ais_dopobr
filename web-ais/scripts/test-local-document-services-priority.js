@@ -47,13 +47,13 @@ async function testSupervisorTransientHealthTimeoutRecovery() {
     () => 4242,
     async () => {},
     { log: () => {} },
-    new Map(),
+    new Map([["app", { pid: 4242 }]]),
     () => false,
     async () => ({ open: true, pid: 4242 }),
     async () => true
   );
   const pid = await startServer(
-    { name: "Application server", port: 19081, scriptName: "app-server.js" },
+    { key: "app", name: "Application server", port: 19081, scriptName: "app-server.js" },
     { AIS_GATEWAY_SHARED_SECRET: "s".repeat(64) }
   );
   assert.equal(pid, 4242);
@@ -505,7 +505,7 @@ async function main() {
     const generationPipelineSource = appSource.slice(generationPipelineStart, generationPipelineEnd);
     assert.match(
       generationPipelineSource,
-      /documentProcessingOrigin = await resolveDocumentProcessingOrigin\("documentConversion"\)/u
+      /documentProcessingOrigin = await awaitDocumentGenerationStage\(generationTaskId, \(\) => resolveDocumentProcessingOrigin\("documentConversion"\)\)/u
     );
     assert.match(
       generationPipelineSource,

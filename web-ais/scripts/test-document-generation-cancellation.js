@@ -212,6 +212,8 @@ async function serverTests(temp) {
 
   // Keep a committed primary file but stop all subsequent copies and success responses.
   const saves = [];
+  c.isLocalDocumentStorageAvailable = async () => true;
+  c.isUnavailableDocumentPathError = () => false;
   c.normalizeGeneratedDocumentFormat = (value) => value;
   c.safeDocumentFileName = (value) => value;
   c.generatedDocumentContentType = () => "application/pdf";

@@ -1362,7 +1362,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Document-Generation-Id",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Document-Editor-Available, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
 };
 
 const MIME_TYPES = {
@@ -31300,17 +31300,28 @@ async function loadTemplateBytesForRequest(body) {
   const templateUrl = String(body?.templateUrl || "").trim();
   const templatePath = String(body?.templatePath || "").trim();
   if (!body?.preferLocalTemplate) return loadTemplateBytes(templateUrl, templatePath);
+  const localAvailable = await isLocalDocumentStorageAvailable();
   if (templateUrl) {
-    const localTemplatePath = resolveLocalTemplatePathFromWebDavSource(templateUrl);
-    // A missing local source must not silently fall back to an old bundled copy.
-    if (localTemplatePath) return loadLocalTemplateBytes(localTemplatePath);
+    const localTemplatePath = localAvailable ? resolveLocalTemplatePathFromWebDavSource(templateUrl) : "";
+    // Fall back to the same cloud template, never an old bundled copy.
+    if (localTemplatePath && localAvailable) {
+      try { return await loadLocalTemplateBytes(localTemplatePath); } catch (error) {
+        if (!isUnavailableDocumentPathError(error)) throw error;
+      }
+    }
+    return loadRemoteTemplateBytes(templateUrl);
   }
   if (templatePath) {
     const workflowDefinition = documentWorkflow.definitions.find((definition) => (
       path.resolve(ROOT, definition.templatePath) === path.resolve(ROOT, templatePath)
     ));
     if (!templateUrl && workflowDefinition?.localTemplateSource) {
-      return loadLocalTemplateBytes(resolveLocalDocumentsPath(workflowDefinition.localTemplateSource));
+      if (localAvailable) {
+        try { return await loadLocalTemplateBytes(resolveLocalDocumentsPath(workflowDefinition.localTemplateSource)); } catch (error) {
+          if (!isUnavailableDocumentPathError(error)) throw error;
+        }
+      }
+      return loadRemoteTemplateBytes(workflowDefinition.localTemplateSource);
     }
     return loadLocalTemplateBytes(templatePath);
   }
@@ -36230,6 +36241,15 @@ async function proxyOnlyOfficeWebSocket(req, socket, head) {
   proxyRequest.end();
 }
 
+function isUnavailableDocumentPathError(error) {
+  return ["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EIO", "ENODEV", "ENXIO", "EROFS", "ENOSPC", "EBUSY", "ENETUNREACH", "EHOSTUNREACH", "ETIMEDOUT"].includes(error?.code);
+}
+
+async function isLocalDocumentStorageAvailable() {
+  if (serverSettings.openDocumentsLocally === false) return false;
+  return Boolean((await getLocalSystemDocumentsAvailability()).available);
+}
+
 function prepareAdditionalDocumentSaveTargets(body, values) {
   if (!Array.isArray(body.additionalSaveTargets)) return [];
   if (body.additionalSaveTargets.length > 10) throw new Error("Можно сохранить не более 10 дополнительных копий.");
@@ -36262,9 +36282,12 @@ async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders)
   const formats = new Map([[normalizeGeneratedDocumentFormat(generated.outputFormat), Promise.resolve(generated.bytes)]]);
   if (generated.editableBytes?.length) formats.set("docx", Promise.resolve(generated.editableBytes));
   const completedPaths = new Set();
-  for (const [index, target] of targets.entries()) {
+  for (const [index, requestedTarget] of targets.entries()) {
     throwIfDocumentGenerationCancelled();
     try {
+      const target = generated.extraHeaders?.["X-Document-Conversion-Fallback"] === "true" && requestedTarget.outputFormat === "pdf"
+        ? { ...requestedTarget, outputFormat: "docx", fileName: documentWorkflow.safeOutputFileName(requestedTarget.fileName, "docx") }
+        : requestedTarget;
       if (!formats.has(target.outputFormat)) {
         if (target.outputFormat !== "pdf" || !formats.has("docx")) throw new Error("Редактируемая версия документа не найдена.");
         formats.set("pdf", formats.get("docx").then(async (bytes) => {
@@ -36276,8 +36299,17 @@ async function saveAdditionalGeneratedDocuments(generated, body, primaryHeaders)
       const pathLabel = `${target.autoSaveLocal ? "local" : "webdav"}:${target.studentFolder.replace(/\\/g, "/").replace(/\/+$/g, "")}/${target.fileName}`;
       const pathKey = target.autoSaveLocal ? pathLabel.toLocaleLowerCase("ru-RU") : pathLabel;
       if (!completedPaths.has(pathKey)) {
-        if (target.autoSaveLocal) await saveStudentDocumentLocally(bytes, target.fileName, target);
-        else await uploadStudentDocumentToYandexDisk(bytes, target.fileName, target);
+        let savedLocally = false;
+        if (target.autoSaveLocal && await isLocalDocumentStorageAvailable()) {
+          try {
+            await saveStudentDocumentLocally(bytes, target.fileName, target);
+            savedLocally = true;
+          } catch (error) {
+            throwIfDocumentGenerationCancelled();
+            if (!isUnavailableDocumentPathError(error)) throw error;
+          }
+        }
+        if (!savedLocally) await uploadStudentDocumentToYandexDisk(bytes, target.fileName, target);
         completedPaths.add(pathKey);
       }
       report.saved += 1;
@@ -36297,8 +36329,12 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
   const outputFormat = normalizeGeneratedDocumentFormat(generated.outputFormat);
   const outputFileName = safeDocumentFileName(generated.fileName || "документ", outputFormat);
   const extraHeaders = { ...(generated.extraHeaders || {}) };
+  let cloudFallback = false;
   if (body.autoSaveLocal || body.promptLocalSave) {
     try {
+      if (!await isLocalDocumentStorageAvailable()) {
+        throw Object.assign(new Error("Локальная папка документов недоступна или выбран облачный режим."), { code: "ENODEV" });
+      }
       const localSaveResult = body.autoSaveLocal
         ? await saveStudentDocumentLocally(result, outputFileName, body)
         : await promptAndSaveStudentDocumentLocally(
@@ -36327,9 +36363,10 @@ async function sendGeneratedDocumentResponse(res, generated, body = {}) {
       throwIfDocumentGenerationCancelled();
       extraHeaders["X-Local-Document-Saved"] = "false";
       extraHeaders["X-Local-Document-Error"] = encodeURIComponent(saveError.message);
+      cloudFallback = isUnavailableDocumentPathError(saveError);
     }
   }
-  if (body.saveToYandexDisk) {
+  if ((body.saveToYandexDisk || cloudFallback) && extraHeaders["X-Local-Document-Cancelled"] !== "true") {
     throwIfDocumentGenerationCancelled();
     try {
       const uploadedPath = await uploadStudentDocumentToYandexDisk(
@@ -36501,24 +36538,22 @@ async function handleContractDocument(req, res, authUser) {
       removeBlankInteriorPages: documentIdentity.includes("диплом о переподготовке")
     };
     if (body.previewOnly) {
-      let previewPdf = result;
+      let previewBytes = result;
+      let previewFormat = "pdf";
       if (outputFormat !== "pdf") {
-        if (requestedOutputFormat === "pdf") {
-          let conversionMessage = "PDF-конвертер недоступен.";
+        if (extraHeaders["X-Document-Conversion-Fallback"] === "true") {
+          previewFormat = "docx";
+        } else {
           try {
-            conversionMessage = decodeURIComponent(extraHeaders["X-Document-Conversion-Error"] || conversionMessage);
-          } catch {
-            // Используем понятное сообщение по умолчанию.
+            previewBytes = await convertDocxBytesToPdf(result);
+            if (documentIdentity.includes("диплом о переподготовке")) {
+              previewBytes = await removeBlankInteriorPdfPages(previewBytes);
+            }
+          } catch (conversionError) {
+            throwIfDocumentGenerationCancelled();
+            previewBytes = result;
+            previewFormat = "docx";
           }
-          throw new Error(`Не удалось подготовить предварительный просмотр: ${conversionMessage}`);
-        }
-        try {
-          previewPdf = await convertDocxBytesToPdf(result);
-          if (documentIdentity.includes("диплом о переподготовке")) {
-            previewPdf = await removeBlankInteriorPdfPages(previewPdf);
-          }
-        } catch (conversionError) {
-          throw new Error(`Не удалось подготовить предварительный просмотр: ${conversionError.message}`);
         }
       }
       throwIfDocumentGenerationCancelled();
@@ -36529,16 +36564,17 @@ async function handleContractDocument(req, res, authUser) {
       }
       const previewFileName = safeDocumentFileName(
         outputFileName.replace(/\.(?:pdf|docx)$/iu, ""),
-        "pdf"
+        previewFormat
       );
       sendFile(
         res,
         200,
-        previewPdf,
+        previewBytes,
         previewFileName,
-        generatedDocumentContentType("pdf"),
+        generatedDocumentContentType(previewFormat),
         {
           ...extraHeaders,
+          "X-Document-Editor-Available": String(previewFormat === "pdf" && generatedDocumentRequestBackend(req) !== "server"),
           "X-Document-Preview-Token": previewToken
         }
       );
