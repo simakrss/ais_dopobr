@@ -27664,6 +27664,12 @@ function parseStudentMailboxMessage(uid, bytes) {
 function parseStudentMailboxSearchBody(body = {}) {
   const mailboxId = normalizeMailboxId(body.mailboxId, "applications");
   const email = String(body.email || "").trim().slice(0, 320);
+  if (/[\r\n\u0000]/u.test(email)) throw new Error("Некорректный email для поиска писем.");
+  const chairEmails = String(body.entityType || "").toLowerCase() === "contract" ? []
+    : [...new Set((Array.isArray(body.chairEmails) ? body.chairEmails : []).map(value => String(value || "").trim().toLowerCase()))];
+  if (chairEmails.length > 10 || chairEmails.some(value => value.length > 320 || !/^[^\s<>,;"()\\@]+@[^\s<>,;"()\\@]+\.[^\s<>,;"()\\@]+$/u.test(value))) {
+    throw new Error("Проверьте Email председателя ИАК в карточке сотрудника.");
+  }
   const query = String(body.query || "").trim().slice(0, 300);
   const today = new Date();
   const defaultTo = today.toISOString().slice(0, 10);
@@ -27675,8 +27681,16 @@ function parseStudentMailboxSearchBody(body = {}) {
     ? String(body.dateTo)
     : defaultTo;
   if (dateFrom > dateTo) throw new Error("Дата начала периода не может быть позже даты окончания.");
-  if (!email && !query) throw new Error("Укажите email слушателя или текст для поиска писем.");
-  return { mailboxId, email, query, dateFrom, dateTo };
+  if (!email && !query && !chairEmails.length) throw new Error("Укажите email слушателя, председателя ИАК или текст для поиска писем.");
+  return { mailboxId, email, query, dateFrom, dateTo, chairEmails };
+}
+
+function studentMailboxMessageIsFromChair(message, emails) {
+  const from = String(message.from || "").toLowerCase();
+  // Prefer actual <addresses> over names containing an email-looking substring.
+  const bracketed = [...from.matchAll(/<([^<>]+)>/gu)].map(match => match[1].trim());
+  const addresses = bracketed.length ? bracketed : from.split(/[,;\s]+/u);
+  return addresses.some(address => emails.includes(address));
 }
 
 async function queryStudentMailboxMessages(body) {
@@ -27689,18 +27703,26 @@ async function queryStudentMailboxMessages(body) {
       `SINCE ${formatImapDate(filters.dateFrom)}`,
       `BEFORE ${formatImapDate(addDaysToIsoDate(filters.dateTo, 1))}`
     ];
-    if (filters.email) {
+    const search = async clause => parseImapSearchUids(await client.command(`UID SEARCH ${criteria.join(" ")}${clause ? ` ${clause}` : ""}`, 45000));
+    let studentUids = [], chairUids = [];
+    if (filters.email || filters.query) {
       const value = quoteImapValue(filters.email);
-      criteria.push(`OR FROM ${value} OR TO ${value} CC ${value}`);
+      studentUids = await search(filters.email ? `OR FROM ${value} OR TO ${value} CC ${value}` : "");
     }
-    const response = await client.command(`UID SEARCH ${criteria.join(" ")}`, 45000);
-    const allUids = parseImapSearchUids(response);
-    const uids = allUids.slice(-100).reverse();
+    if (filters.chairEmails.length) {
+      const clauses = filters.chairEmails.map(email => `FROM ${quoteImapValue(email)}`);
+      chairUids = await search(clauses.reduceRight((right, left) => `OR ${left} ${right}`));
+    }
+    const allUids = [...new Set([...studentUids, ...chairUids])];
+    // Keep each source's latest 100: a busy chair must not crowd out the student's letters.
+    const uids = [...new Set([...studentUids.slice(-100), ...chairUids.slice(-100)])].sort((a, b) => Number(b) - Number(a));
+    const studentUidSet = new Set(studentUids);
     const messages = await fetchImapMessagePreviews(client, uids, warnings);
     const queryKey = filters.query.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
     const rows = messages.filter((message) => {
+      if (!studentUidSet.has(message.uid) && !studentMailboxMessageIsFromChair(message, filters.chairEmails)) return false;
       if (!queryKey) return true;
-      return [message.subject, message.from, message.to, message.cc, message.text]
+      return [message.subject, message.from, message.to, message.cc, message.text, ...message.attachments.map(attachment => attachment.fileName)]
         .join("\n")
         .toLocaleLowerCase("ru-RU")
         .replace(/ё/g, "е")
@@ -27714,6 +27736,7 @@ async function queryStudentMailboxMessages(body) {
         uid: message.uid,
         subject: message.subject,
         from: message.from,
+        fromChair: studentMailboxMessageIsFromChair(message, filters.chairEmails),
         to: message.to,
         date: message.date,
         excerpt: message.text.slice(0, 500),

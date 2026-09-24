@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.545",
+    version: "1.7.546",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.546",
+      releasedAt: "2026-09-24",
+      changes: ["При загрузке документов из почты дополнительно показываются письма от председателя ИАК программы слушателя. Адреса берутся из карточек сотрудника, письма помечаются отдельно; можно отключить дополнительный поиск и выбрать нужные протоколы для сохранения."]
+    },
     {
       version: "1.7.545",
       releasedAt: "2026-09-24",
@@ -54110,6 +54115,20 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${result}${escapeHtml(source.slice(offset))}`;
   }
 
+  function getStudentMailboxChair(record) {
+    const source = getStudentContextProgram(record);
+    if (!source) return { name: "", emails: [], warning: "Программа слушателя не определена." };
+    const program = resolveProgramCommissionRecord(source);
+    const name = String(program.commissionChair || "").split(",")[0].trim();
+    if (!name) return { name, emails: [], warning: "В комиссии программы не указан председатель ИАК." };
+    const personKey = value => normalizeEmployeeActPersonName(value).replace(/ё/g, "е");
+    const emails = [...new Set((state.data.collections.contracts || [])
+      .filter(person => personKey(person.name) === personKey(name))
+      .flatMap(person => String(person.email || "").toLowerCase().split(/[;,\s]+/u))
+      .filter(email => /^[^\s<>,;"()\\@]+@[^\s<>,;"()\\@]+\.[^\s<>,;"()\\@]+$/u.test(email)))].slice(0, 10);
+    return { name, emails, warning: emails.length ? "" : "В карточке председателя ИАК не указан корректный Email." };
+  }
+
   async function openStudentMailboxDocuments(event) {
     const button = event.currentTarget;
     const isContract = button.dataset.mailboxEntityType === "contract";
@@ -54123,6 +54142,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const studentId = String(currentRecord?.id || button.dataset.studentId || "").trim();
     const studentName = String(currentRecord?.name || button.dataset.studentName || "").trim();
     const studentEmail = String(currentRecord?.email || button.dataset.studentEmail || "").trim();
+    const chair = isContract ? null : getStudentMailboxChair(currentRecord);
     const folder = isContract
       ? getContractDocumentsFolder(currentRecord)
       : getStudentYandexDocumentsFolder(currentRecord);
@@ -54152,6 +54172,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <label class="student-mailbox-query"><span>Текст или тема</span><input name="query" type="search" placeholder="Дополнительный поиск"></label>
           <button class="primary-button" type="submit">Найти письма</button>
         </form>
+        ${chair ? `<div class="student-mailbox-status"><label class="checkbox-line"><input type="checkbox" data-mailbox-include-chair ${chair.emails.length ? "checked" : "disabled"}><span>Также письма от председателя ИАК${chair.name ? `: ${escapeHtml(chair.name)}` : ""}</span></label><span>${escapeHtml(chair.warning || chair.emails.join(", "))}</span></div>` : ""}
         <div class="student-mailbox-toolbar">
           <label><input type="checkbox" data-student-mailbox-select-all> <span>Выбрать всё содержимое</span></label>
           <output data-student-mailbox-count>Письма ещё не загружены</output>
@@ -54183,6 +54204,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const importProgressTitle = backdrop.querySelector("[data-student-mailbox-progress-title]");
     const dialog = backdrop.querySelector(".student-mailbox-dialog");
     const selectAll = backdrop.querySelector("[data-student-mailbox-select-all]");
+    const includeChair = backdrop.querySelector("[data-mailbox-include-chair]");
     let messages = [];
     let busy = false;
     let importing = false;
@@ -54202,6 +54224,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       filters.querySelectorAll("input, select, button").forEach((control) => { control.disabled = importing; });
       selectAll.disabled = importing;
+      if (includeChair) includeChair.disabled = importing || !chair.emails.length;
       list.querySelectorAll("input[data-message-select], input[data-message-part]").forEach((control) => { control.disabled = importing; });
       backdrop.querySelectorAll("[data-action='close-student-mailbox']").forEach((control) => { control.disabled = importing; });
     };
@@ -54237,6 +54260,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="student-mailbox-message-content">
             <div class="student-mailbox-message-title"><strong>${escapeHtml(message.subject || "Без темы")}</strong><time>${escapeHtml(formatDateTimeRu(message.date))}</time></div>
             <p><b>От:</b> ${escapeHtml(message.from || "—")}</p>
+            ${message.fromChair ? '<p><b>Председатель ИАК программы</b> · Проверьте, к какому слушателю относятся вложения.</p>' : ""}
             <p><b>Кому:</b> ${escapeHtml(message.to || "—")}</p>
             ${message.excerpt ? `<details><summary>Текст письма</summary><pre>${renderStudentMailboxMessageText(message.excerpt)}</pre></details>` : ""}
             <div class="student-mailbox-import-items" aria-label="Содержимое для загрузки">
@@ -54262,6 +54286,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const loadMessages = async () => {
       if (busy) return;
       busy = true;
+      if (includeChair) includeChair.disabled = true;
       status.textContent = "Загрузка писем…";
       list.innerHTML = '<div class="student-mailbox-loading"><span class="loading-spinner" aria-hidden="true"></span><span>Получение писем из ящика…</span></div>';
       importButton.disabled = true;
@@ -54270,14 +54295,15 @@ MAX - https://bizvmax.ru/zifra_plus
         const response = await fetch(photoApiUrl("/api/students/mailbox-documents/query"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(Object.fromEntries(formData.entries()))
+          body: JSON.stringify({ ...Object.fromEntries(formData.entries()), entityType: isContract ? "contract" : "student", chairEmails: includeChair?.checked ? chair.emails : [] })
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || "Не удалось получить письма.");
         messages = Array.isArray(payload.messages) ? payload.messages : [];
         status.textContent = payload.truncated
-          ? `Показаны последние ${messages.length} писем из ${payload.total}. Уточните период поиска.`
+          ? `Показано ${messages.length} писем из ${payload.total}${includeChair?.checked ? " (до 100 по слушателю и до 100 от председателя)" : ""}. Уточните период поиска.`
           : `Найдено писем: ${messages.length}.`;
+        if (payload.warnings?.length) status.textContent += ` ${payload.warnings.join(" ")}`;
         renderMessages();
       } catch (error) {
         messages = [];
@@ -54286,9 +54312,11 @@ MAX - https://bizvmax.ru/zifra_plus
         updateSelection();
       } finally {
         busy = false;
+        if (includeChair) includeChair.disabled = !chair.emails.length;
       }
     };
     filters.addEventListener("submit", (submitEvent) => { submitEvent.preventDefault(); loadMessages(); });
+    includeChair?.addEventListener("change", loadMessages);
     selectAll.addEventListener("change", () => {
       list.querySelectorAll("input[data-message-part]").forEach((input) => { input.checked = selectAll.checked; });
       updateSelection();
