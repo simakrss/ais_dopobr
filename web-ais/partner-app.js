@@ -287,6 +287,7 @@
           </button>
           <div class="partner-account-menu" id="partner-account-menu" role="menu" aria-labelledby="partner-account-trigger" hidden>
             <button data-view="profile" type="button" role="menuitem" tabindex="-1">${icon("profile")}<span>Профиль</span></button>
+            <button data-pwa-install type="button" role="menuitem" tabindex="-1">${icon("download")}<span>Установить приложение</span></button>
             <button data-action="logout" type="button" role="menuitem" tabindex="-1">${icon("logout")}<span>Выйти</span></button>
           </div>
         </div>
@@ -937,7 +938,7 @@
     trigger.setAttribute("aria-expanded", String(open));
     if (open) {
       document.querySelector(".partner-tab-context-menu")?.remove();
-      const items = menu.querySelectorAll('[role="menuitem"]');
+      const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(item => item.getClientRects().length);
       if (focusIndex !== null && items.length) items[(focusIndex + items.length) % items.length].focus();
     } else if (restoreFocus) trigger.focus();
   }
@@ -957,7 +958,7 @@
     }
     if (menu.hidden || !menu.contains(event.target) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
     event.preventDefault();
-    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(item => item.getClientRects().length);
     const index = items.indexOf(document.activeElement);
     const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : index + (event.key === "ArrowUp" ? -1 : 1);
     items[(next + items.length) % items.length]?.focus();

@@ -37,6 +37,39 @@ details > summary {
   }
 }
 
+/* Installation is independent of authentication and does not cache user data. */
+.ais-app-installed [data-pwa-install] { display: none !important; }
+@media (display-mode: standalone) {
+  [data-pwa-install] { display: none !important; }
+}
+.pwa-login-install { width: 100%; margin-top: 16px; }
+.pwa-install-dialog {
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font: inherit;
+}
+.pwa-install-dialog::backdrop { background: rgba(20, 40, 35, .55); }
+.pwa-install-dialog header, .pwa-install-dialog footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.pwa-install-dialog footer { justify-content: flex-end; flex-wrap: wrap; margin-top: 20px; }
+.pwa-install-dialog h2 { margin: 0; font-size: 20px; }
+.pwa-install-dialog header .icon-button { flex: 0 0 36px; }
+.pwa-install-dialog p, .pwa-install-dialog li { line-height: 1.5; overflow-wrap: anywhere; }
+.pwa-install-dialog ol { padding-left: 22px; }
+.pwa-install-dialog li + li { margin-top: 10px; }
+.pwa-install-note { color: var(--muted); font-size: 13px; }
+.pwa-install-dialog [hidden] { display: none !important; }
+
 /* Application authentication and user accounts */
 .app-shell > .auth-screen {
   grid-column: 1 / -1;

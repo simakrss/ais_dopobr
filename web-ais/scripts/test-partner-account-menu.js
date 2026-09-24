@@ -21,10 +21,11 @@ async function testMenu() {
     closest: selector => selector === "#partner-account-trigger" ? trigger : null
   };
   const items = [0, 1].map(() => {
-    const item = { closest: () => null, focus: () => { document.activeElement = item; } };
+    const item = { getClientRects: () => [{}], closest: () => null, focus: () => { document.activeElement = item; } };
     return item;
   });
-  const menu = { hidden: true, querySelectorAll: () => items, contains: target => items.includes(target) };
+  const installedButton = { getClientRects: () => [], focus: () => assert.fail("Hidden install button must be skipped") };
+  const menu = { hidden: true, querySelectorAll: () => [items[0], installedButton, items[1]], contains: target => items.includes(target) };
   const context = {
     app: { querySelector: selector => selector === "#partner-account-menu" ? menu : trigger },
     document,
@@ -43,7 +44,8 @@ async function testMenu() {
   assert.match(html, /data-view="profile" type="button" role="menuitem"/);
   assert.match(html, /data-action="logout" type="button" role="menuitem"/);
   assert.match(html, /Тестовый &lt;партнёр&gt; &quot;Имя&quot;/);
-  assert.equal((html.match(/role="menuitem"/g) || []).length, 2);
+  assert.match(html, /data-pwa-install type="button" role="menuitem"/);
+  assert.equal((html.match(/role="menuitem"/g) || []).length, 3);
   context.setPartnerAccountMenu(true, { focusIndex: 0 });
   assert.equal(menu.hidden, false); assert.equal(expanded, "true");
   assert.equal(document.activeElement, items[0]); assert.equal(removed, 1);
@@ -81,7 +83,7 @@ async function testMenu() {
   const css = fs.readFileSync(path.join(root, "styles.css"), "utf8");
   assert.match(css, /\.partner-account-menu\[hidden\]\s*\{\s*display: none;/);
   assert.match(css, /\.partner-account-menu\s*\{[^}]*right: 0;/);
-  console.log("Partner account menu: safe header, two actions, focus/keyboard/wrapping, dismissal wiring, existing POST logout, responsive anchor: OK");
+  console.log("Partner account menu: safe header, install action, hidden-item skipping, focus/keyboard/wrapping, dismissal wiring, existing POST logout, responsive anchor: OK");
 }
 
 function serveFixture() {

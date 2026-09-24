@@ -25,6 +25,7 @@ $shortcutPath = Get-ChildItem -LiteralPath $repositoryRoot -Filter "*.lnk" -File
 $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
+  "pwa-assets.js",
   "app-server.js",
   "document-relay.js",
   "local-update.js",
@@ -67,6 +68,13 @@ function Test-DeployablePath([string]$PathValue) {
   )
   if ($privateTemplatePaths -contains $path) { return $false }
   $exactFiles = @(
+    "pwa-client.js",
+    "pwa-assets.js",
+    "manifest.webmanifest",
+    "pwa-icon-192.png",
+    "pwa-icon-512.png",
+    "pwa-icon-maskable.png",
+    "apple-touch-icon.png",
     ".htaccess",
     "app-server.js",
     "document-relay.js",

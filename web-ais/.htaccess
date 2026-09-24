@@ -1,6 +1,10 @@
 DirectoryIndex index.html
 Options -Indexes
 
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+</IfModule>
+
 <IfModule mod_alias.c>
   RedirectMatch 404 "(?i)^/(?:.*/)?(?:storage|scripts|services|tmp|\.runtime)(?:/|$)"
 </IfModule>
@@ -15,6 +19,7 @@ Options -Indexes
   RewriteRule ^updates/(?:latest\.json|files/[a-f0-9]{64}\.bin)$ - [L]
   RewriteRule ^updates/install-[0-9]+\.[0-9]+\.[0-9]+\.zip$ - [L]
   RewriteRule ^local-update-client\.js$ - [L]
+  RewriteRule ^(?:manifest\.webmanifest|pwa-client\.js|pwa-icon-(?:192|512|maskable)\.png|apple-touch-icon\.png)$ - [L]
   RewriteRule ^(?:pdf-preview\.js|pdfjs-core\.js|pdfjs-worker\.js|pdfjs-license\.html)$ - [L]
   RewriteRule ^$ - [L]
   RewriteRule ^(?:app\.js|auth-bootstrap\.js|favicon\.ico|field-html-links\.js|gateway\.php|index\.html|partner-app\.js|send-mail\.php|styles\.css)$ - [L]

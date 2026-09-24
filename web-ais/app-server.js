@@ -60,6 +60,7 @@ async function promoteCodexTrainingEndDateAssets() {
 
 const SERVER_CODE_ROOT = __dirname;
 const localUpdate = require("./local-update.js");
+const pwaAssets = require("./pwa-assets.js");
 let localUpdateActiveRequests = 0;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
@@ -40241,6 +40242,7 @@ async function handleServerEmail(req, res, authUser) {
 }
 
 const PUBLIC_STATIC_PATHS = new Set([
+  "/pwa-client.js",
   "/pdf-preview.js",
   "/pdfjs-core.js",
   "/pdfjs-worker.js",
@@ -40263,6 +40265,16 @@ const PUBLIC_STATIC_PATHS = new Set([
 async function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const publicPath = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
+  if (Object.hasOwn(pwaAssets, publicPath)) {
+    const asset = pwaAssets[publicPath];
+    const bytes = Buffer.from(asset.base64, "base64");
+    res.writeHead(200, {
+      "Content-Type": asset.type, "Content-Length": bytes.length,
+      "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"
+    });
+    res.end(req.method === "HEAD" ? undefined : bytes);
+    return;
+  }
   if (!PUBLIC_STATIC_PATHS.has(publicPath)) {
     sendError(res, 404, "Not found");
     return;

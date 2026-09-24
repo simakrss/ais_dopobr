@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.547",
+    version: "1.7.548",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.548",
+      releasedAt: "2026-09-24",
+      changes: ["АИС можно установить как приложение со значком системы и отдельным окном. Кнопка установки доступна на экране входа и в личном кабинете, добавлены инструкции для телефонов и компьютеров. Работа с сервером и правила доступа сохранены; офлайн-копия персональных данных не создаётся."]
+    },
     {
       version: "1.7.547",
       releasedAt: "2026-09-24",
@@ -31055,6 +31060,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <footer class="modal-actions account-modal-actions">
             <button class="danger-button" data-action="logout" type="button">Выйти из системы</button>
+            <button class="ghost-button" data-pwa-install type="button">Установить приложение</button>
             <button class="ghost-button" data-action="close-profile" type="button">Закрыть</button>
           </footer>
         </section>
