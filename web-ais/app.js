@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.546",
+    version: "1.7.547",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.547",
+      releasedAt: "2026-09-24",
+      changes: ["Браузер файлов слушателя и сотрудника адаптирован для телефонов: окно учитывает доступную высоту экрана, файл открывается в отдельной области просмотра с кнопкой «К файлам». Исправлены лишние минимальные высоты, расположение кнопок и изменение размеров при повороте устройства; на компьютере сохранён двухпанельный вид."]
+    },
     {
       version: "1.7.546",
       releasedAt: "2026-09-24",
@@ -54554,6 +54559,14 @@ MAX - https://bizvmax.ru/zifra_plus
     const upButton = backdrop.querySelector("[data-action='student-webdav-up']");
     const fileInput = backdrop.querySelector("[data-student-webdav-file-input]");
     const dropzone = backdrop.querySelector("[data-student-webdav-dropzone]");
+    const compactViewport = window.matchMedia("(max-width: 760px), (max-width: 1024px) and (max-height: 520px)");
+    let refreshPreviewLayout = () => {};
+    const syncBrowserLayout = () => {
+      dropzone.classList.toggle("is-preview-expanded", compactViewport.matches && Boolean(preview.querySelector("[data-student-webdav-preview-body]")));
+      dialog.classList.toggle("is-file-preview", dropzone.classList.contains("is-preview-expanded"));
+      refreshPreviewLayout();
+    };
+    compactViewport.addEventListener("change", syncBrowserLayout);
     let currentPath = "";
     let currentEntries = [];
     let loading = false;
@@ -54575,6 +54588,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const close = () => {
       previewRequestToken += 1;
       releaseActivePreviewObjectUrl();
+      compactViewport.removeEventListener("change", syncBrowserLayout);
+      previewResizeObserver?.disconnect();
       backdrop.remove();
     };
     backdrop.closeStudentWebDavBrowser = close;
@@ -54642,6 +54657,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
     async function showPreview(entry) {
       if (!entry || entry.isDirectory) return;
+      if (compactViewport.matches) dropzone.classList.add("is-preview-expanded");
+      dialog.classList.toggle("is-file-preview", dropzone.classList.contains("is-preview-expanded"));
       selectedEntryPath = entry.path;
       markSelectedEntry();
       const requestToken = ++previewRequestToken;
@@ -54720,9 +54737,10 @@ MAX - https://bizvmax.ru/zifra_plus
         const button = preview.querySelector("[data-action='student-webdav-preview-expand']");
         if (!button) return;
         const expanded = dropzone.classList.contains("is-preview-expanded");
-        button.textContent = expanded ? "🗗" : "⛶";
+        button.textContent = compactViewport.matches ? "← К файлам" : expanded ? "🗗" : "⛶";
         button.title = expanded ? "Показать список файлов" : "Развернуть предпросмотр";
         button.setAttribute("aria-label", button.title);
+        button.setAttribute("aria-expanded", String(expanded));
       };
 
       const mediaStage = preview.querySelector("[data-student-webdav-media-stage]");
@@ -54838,12 +54856,20 @@ MAX - https://bizvmax.ru/zifra_plus
       preview.querySelector("[data-action='student-webdav-preview-expand']")
         ?.addEventListener("click", () => {
           dropzone.classList.toggle("is-preview-expanded");
+          dialog.classList.toggle("is-file-preview", dropzone.classList.contains("is-preview-expanded"));
           updateExpandButton();
           window.requestAnimationFrame(() => applyPreviewScale({ fit: previewFitMode }));
+          if (compactViewport.matches && !dropzone.classList.contains("is-preview-expanded")) {
+            list.querySelector(`[data-webdav-browser-entry="${CSS.escape(selectedEntryPath)}"]`)?.focus({ preventScroll: true });
+          }
         });
       preview.querySelector("[data-action='student-webdav-download']")
         ?.addEventListener("click", () => downloadEntry(entry));
       updateExpandButton();
+      refreshPreviewLayout = () => {
+        updateExpandButton();
+        window.requestAnimationFrame(() => applyPreviewScale({ fit: previewFitMode }));
+      };
 
       const imageStage = preview.querySelector("[data-student-webdav-image-stage]");
       const previewImage = preview.querySelector("[data-student-webdav-preview-image]");
@@ -55022,6 +55048,9 @@ MAX - https://bizvmax.ru/zifra_plus
           : null;
         selectedEntryPath = initialSelection?.path || "";
         initialSelectedFileName = "";
+        dropzone.classList.remove("is-preview-expanded");
+        dialog.classList.remove("is-file-preview");
+        refreshPreviewLayout = () => {};
         previewRequestToken += 1;
         releaseActivePreviewObjectUrl();
         renderPath();
@@ -55118,6 +55147,8 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
 
+    const previewResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => refreshPreviewLayout()) : null;
+    previewResizeObserver?.observe(preview);
     await loadDirectory(initialPath);
     backdrop.querySelector("[data-action='close-student-webdav-browser']")?.focus();
   }
