@@ -13,14 +13,16 @@ const managerEnd = appSource.indexOf("  function getProgramOperationalDocumentOp
 assert.ok(managerStart >= 0 && managerEnd > managerStart, "Не найден менеджер документов WebDAV");
 const managerSource = appSource.slice(managerStart, managerEnd);
 
-assert.match(managerSource, /const response = await fetch\(fileUrl\);/u);
-assert.match(managerSource, /URL\.createObjectURL\(new Blob\(\[pdfBlob\], \{ type: "application\/pdf" \}\)\)/u);
-assert.match(managerSource, /const nextSource = `\$\{previewPdfObjectUrl\}#\$\{fragment\}`;/u);
-assert.match(managerSource, /URL\.revokeObjectURL\(activePreviewObjectUrl\);/u);
-assert.match(managerSource, /const close = \(\) => \{[\s\S]*releaseActivePreviewObjectUrl\(\);[\s\S]*backdrop\.remove\(\);/u);
-assert.match(managerSource, /previewRequestToken \+= 1;\s*releaseActivePreviewObjectUrl\(\);\s*renderPath\(\);/u);
-assert.doesNotMatch(managerSource, /iframe[^>]+src="\$\{escapeAttr\(pdfSource\)\}"/u);
-assert.doesNotMatch(managerSource, /const nextSource = `\$\{fileUrl\}#\$\{fragment\}`;/u);
+assert.match(managerSource, /await fetch\(fileUrl, \{ signal: pdfFetchController.signal \}\)/u);
+assert.match(managerSource, /window\.AisPdfPreview\.mount\(previewPdf, pdfBlob,/u);
+assert.match(managerSource, /externalControls: true/u);
+assert.match(managerSource, /onRender: \(\) => \{[\s\S]*?previewPdf.dataset.previewReady = "true";[\s\S]*?markMediaLoaded\(\)/u);
+assert.match(managerSource, /activePdfViewer\?\.setView\(\{ zoom: previewScale, rotation: previewRotation \}\)/u);
+assert.match(managerSource, /pdfFetchController\?\.abort\(\)/u);
+assert.match(managerSource, /activePdfViewer\?\.destroy\(\)/u);
+assert.match(managerSource, /const close = \(\) => \{[\s\S]*releasePdfPreview\(\);[\s\S]*backdrop\.remove\(\);/u);
+assert.match(managerSource, /previewRequestToken \+= 1;\s*releasePdfPreview\(\);\s*renderPath\(\);/u);
+assert.doesNotMatch(managerSource, /<iframe|#\$\{fragment\}|toolbar=1/u);
 assert.match(htaccessSource, /Header always set X-Frame-Options "DENY"/u);
 
 console.log("student WebDAV PDF preview checks: OK");

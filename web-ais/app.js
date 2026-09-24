@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.548",
+    version: "1.7.549",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.549",
+      releasedAt: "2026-09-24",
+      changes: ["PDF в браузере файлов слушателя и сотрудника отображаются собственным просмотрщиком АИС, без встроенного PDF-плагина браузера. На телефонах доступны страницы, масштаб и поворот; загрузка отменяется при смене файла или закрытии окна. Готовность просмотра определяется по отрисованной странице."]
+    },
     {
       version: "1.7.548",
       releasedAt: "2026-09-24",
@@ -54584,16 +54589,18 @@ MAX - https://bizvmax.ru/zifra_plus
     let previewPanY = 0;
     let previewRotation = 0;
     let previewFitMode = true;
-    let activePreviewObjectUrl = "";
+    let activePdfViewer = null;
+    let pdfFetchController = null;
 
-    const releaseActivePreviewObjectUrl = () => {
-      if (!activePreviewObjectUrl) return;
-      URL.revokeObjectURL(activePreviewObjectUrl);
-      activePreviewObjectUrl = "";
+    const releasePdfPreview = () => {
+      pdfFetchController?.abort();
+      pdfFetchController = null;
+      activePdfViewer?.destroy();
+      activePdfViewer = null;
     };
     const close = () => {
       previewRequestToken += 1;
-      releaseActivePreviewObjectUrl();
+      releasePdfPreview();
       compactViewport.removeEventListener("change", syncBrowserLayout);
       previewResizeObserver?.disconnect();
       backdrop.remove();
@@ -54668,7 +54675,7 @@ MAX - https://bizvmax.ru/zifra_plus
       selectedEntryPath = entry.path;
       markSelectedEntry();
       const requestToken = ++previewRequestToken;
-      releaseActivePreviewObjectUrl();
+      releasePdfPreview();
       const fileUrl = getStudentWebDavDocumentFileUrl(browserRootFolder, entry.path);
       const previewKind = getPreviewKind(entry);
       const modified = formatStudentWebDavModifiedAt(entry.modifiedAt);
@@ -54680,7 +54687,6 @@ MAX - https://bizvmax.ru/zifra_plus
       previewPanY = 0;
       previewRotation = 0;
       previewFitMode = true;
-      let previewPdfObjectUrl = "";
 
       let content = '<div class="student-webdav-browser-preview-empty">Предпросмотр для этого формата недоступен. Файл можно скачать.</div>';
       if (previewKind === "image") {
@@ -54700,7 +54706,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <span class="loading-spinner" aria-hidden="true"></span>
               <span>Загрузка PDF...</span>
             </div>
-            <iframe data-student-webdav-preview-pdf data-preview-source="" title="${escapeAttr(entry.name)}"></iframe>
+            <div class="student-webdav-browser-pdf-viewer" data-student-webdav-preview-pdf aria-label="${escapeAttr(entry.name)}"></div>
           </div>
         `;
       } else if (canPreview) {
@@ -54799,26 +54805,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         const text = preview.querySelector("[data-student-webdav-preview-text]");
         if (text) text.style.fontSize = `${Math.round(13 * previewScale * 10) / 10}px`;
-        const pdf = preview.querySelector("[data-student-webdav-preview-pdf]");
-        if (pdf) {
-          const pdfStage = preview.querySelector("[data-student-webdav-pdf-stage]");
-          const normalizedRotation = ((previewRotation % 360) + 360) % 360;
-          const quarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
-          if (pdfStage) {
-            pdf.style.width = quarterTurn ? `${Math.max(1, pdfStage.clientHeight)}px` : "100%";
-            pdf.style.height = quarterTurn ? `${Math.max(1, pdfStage.clientWidth)}px` : "100%";
-          }
-          pdf.style.transform = `rotate(${previewRotation}deg)`;
-          if (!previewPdfObjectUrl) return;
-          const fragment = fit ? "toolbar=1&navpanes=0&view=FitH" : `toolbar=1&navpanes=0&zoom=${Math.round(previewScale * 100)}`;
-          const nextSource = `${previewPdfObjectUrl}#${fragment}`;
-          if (pdf.dataset.previewSource !== nextSource) {
-            pdf.dataset.previewSource = nextSource;
-            pdf.dataset.previewReady = "true";
-            setMediaLoading("Загрузка PDF...");
-            pdf.src = nextSource;
-          }
-        }
+        activePdfViewer?.setView({ zoom: previewScale, rotation: previewRotation });
       };
 
       const changeScale = (delta) => {
@@ -54892,27 +54879,30 @@ MAX - https://bizvmax.ru/zifra_plus
       const previewPdf = preview.querySelector("[data-student-webdav-preview-pdf]");
       if (previewPdf) {
         setMediaLoading("Загрузка PDF...");
-        previewPdf.addEventListener("load", () => {
-          if (previewPdf.dataset.previewReady === "true") markMediaLoaded();
-        });
-        previewPdf.addEventListener("error", () => {
-          if (previewPdf.dataset.previewReady === "true") markMediaLoadError("Не удалось загрузить PDF.");
-        });
+        pdfFetchController = new AbortController();
         try {
-          const response = await fetch(fileUrl);
+          const response = await fetch(fileUrl, { signal: pdfFetchController.signal });
           if (!response.ok) {
             const payload = await response.json().catch(() => ({}));
             throw new Error(payload.error || `Не удалось загрузить PDF: ошибка ${response.status}.`);
           }
           const pdfBlob = await response.blob();
           if (!pdfBlob.size) throw new Error("PDF-файл пуст.");
+          await import(new URL("pdf-preview.js?v=20260924-file-pdf-v2", APP_BASE_URL).href);
           if (
             requestToken !== previewRequestToken
             || selectedEntryPath !== entry.path
             || !backdrop.isConnected
           ) return;
-          activePreviewObjectUrl = URL.createObjectURL(new Blob([pdfBlob], { type: "application/pdf" }));
-          previewPdfObjectUrl = activePreviewObjectUrl;
+          activePdfViewer = window.AisPdfPreview.mount(previewPdf, pdfBlob, {
+            fileName: entry.name, baseUrl: APP_BASE_URL.href, externalControls: true,
+            onRender: () => {
+              if (requestToken !== previewRequestToken || !backdrop.isConnected) return;
+              previewPdf.dataset.previewReady = "true";
+              markMediaLoaded();
+            },
+            onError: markMediaLoadError
+          });
           applyPreviewScale({ fit: previewFitMode });
         } catch (error) {
           if (requestToken !== previewRequestToken || selectedEntryPath !== entry.path) return;
@@ -55058,7 +55048,7 @@ MAX - https://bizvmax.ru/zifra_plus
         dialog.classList.remove("is-file-preview");
         refreshPreviewLayout = () => {};
         previewRequestToken += 1;
-        releaseActivePreviewObjectUrl();
+        releasePdfPreview();
         renderPath();
         renderEntries();
         preview.innerHTML = '<div class="student-webdav-browser-preview-empty">Выберите файл для просмотра</div>';
@@ -72271,7 +72261,7 @@ MAX - https://bizvmax.ru/zifra_plus
   async function requestGeneratedDocumentPreview(generationRequest, processingOrigin, generationTaskId = "") {
     // Load the renderer while the server is generating; never delay the document request.
     if (typeof window !== "undefined" && typeof APP_BASE_URL !== "undefined") {
-      import(new URL("pdf-preview.js?v=20260923-mobile-pdf-v1", APP_BASE_URL).href)
+      import(new URL("pdf-preview.js?v=20260924-file-pdf-v2", APP_BASE_URL).href)
         .then(() => window.AisPdfPreview.preload(APP_BASE_URL.href)).catch(() => null);
     }
     return fetchWithTimeout(documentProcessingApiUrl(
@@ -72614,7 +72604,7 @@ MAX - https://bizvmax.ru/zifra_plus
         pdfViewer?.destroy(); pdfViewer = null;
         pdfHost.hidden = false;
         try {
-          await import(new URL("pdf-preview.js?v=20260923-mobile-pdf-v1", APP_BASE_URL).href);
+          await import(new URL("pdf-preview.js?v=20260924-file-pdf-v2", APP_BASE_URL).href);
           if (settled || current !== pdfViewerSequence) return;
           pdfViewer = window.AisPdfPreview.mount(pdfHost, previewBlob, {fileName, baseUrl: APP_BASE_URL.href});
         } catch {

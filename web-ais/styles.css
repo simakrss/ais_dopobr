@@ -11558,6 +11558,7 @@ body.card-window-moving {
   min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
   background: #e9edeb;
@@ -11593,7 +11594,7 @@ body.card-window-moving {
 }
 
 .student-webdav-browser-image-stage.is-loading img,
-.student-webdav-browser-pdf-stage.is-loading iframe {
+.student-webdav-browser-pdf-stage.is-loading .student-webdav-browser-pdf-viewer {
   opacity: 0;
 }
 
@@ -11612,18 +11613,14 @@ body.card-window-moving {
   transition: opacity 0.16s ease;
 }
 
-.student-webdav-browser-preview-body iframe {
+.student-webdav-browser-pdf-viewer {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
-  min-height: 320px;
-  border: 1px solid var(--line);
-  background: #fff;
-}
-
-.student-webdav-browser-pdf-stage iframe {
+  min-width: 0;
   min-height: 0;
-  transform-origin: center;
-  transition: opacity 0.16s ease;
+  overflow: hidden;
 }
 
 .student-webdav-browser-preview-loading {
@@ -13850,6 +13847,7 @@ body.card-window-moving {
 .pdf-preview-toolbar button, .pdf-preview-toolbar a { min-height: 36px; min-width: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--accent); font: inherit; cursor: pointer; text-decoration: none; }
 .pdf-preview-toolbar button:disabled { opacity: .4; cursor: default; }
 .pdf-preview-toolbar [data-pdf-page] { min-width: 44px; text-align: center; }
+.pdf-preview-toolbar [hidden] { display: none !important; }
 .pdf-preview-status { padding: 6px 10px; font-size: 12px; }
 .pdf-preview-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px; }
 .pdf-preview-scroll canvas { display: block; margin: 0 auto; background: white; box-shadow: 0 1px 5px #0002; }
