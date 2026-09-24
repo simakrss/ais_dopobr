@@ -1340,6 +1340,7 @@ body.is-session-expired {
 
 .account-modal-actions {
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .admin-users-panel .section-head p:not(.eyebrow) {

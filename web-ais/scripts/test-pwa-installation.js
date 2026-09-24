@@ -94,6 +94,16 @@ for (const version of ["1.7.547", "1.7.548"]) update.validateEnvelope(sign(versi
       if (process.env.UI_SCREENSHOT && viewport.width===390) await page.screenshot({path:process.env.UI_SCREENSHOT});
       await page.keyboard.press("Escape"); assert.equal(await page.locator(".pwa-install-dialog").isVisible(),false);
     }
+    const profileFooter = read("app.js").match(/<footer class="modal-actions account-modal-actions">[\s\S]*?<\/footer>/)[0];
+    await page.setViewportSize({width:320,height:568});
+    await page.evaluate(html => {
+      const fixture = document.createElement("div"); fixture.id="profile-footer-test";
+      fixture.style.cssText="width:296px;margin:12px"; fixture.innerHTML=html; document.body.append(fixture);
+    }, profileFooter);
+    for (const button of await page.locator("#profile-footer-test button").all()) {
+      const box=await button.boundingBox(); assert.ok(box.x>=12 && box.x+box.width<=308, "Profile action must fit on a phone");
+    }
+    await page.locator("#profile-footer-test").evaluate(el=>el.remove());
     await page.evaluate(() => {
       window.installCalls = 0;
       const event = new Event("beforeinstallprompt",{cancelable:true});
