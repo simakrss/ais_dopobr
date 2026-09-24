@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.543",
-    releasedAt: "2026-09-23"
+    version: "1.7.544",
+    releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.544",
+      releasedAt: "2026-09-24",
+      changes: ["В экзаменационной ведомости для итоговой аттестации используется оценка из карточки слушателя, в том числе когда в учебном плане указан зачёт. Если оценка не заполнена, результат не подставляется автоматически."]
+    },
     {
       version: "1.7.543",
       releasedAt: "2026-09-23",
@@ -36571,8 +36576,9 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!discipline) return "";
       const attestation = String(row.attestation || "").trim();
       const normalized = attestation.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-      const grade = normalized === "зачет" ? "Зачтено"
-        : normalized === "экзамен" ? String(record?.finalGrade || "").trim() : attestation;
+      const grade = isFinalAttestationPlanRow(row) || normalized === "экзамен"
+        ? String(record?.finalGrade ?? "").trim()
+        : normalized === "зачет" ? "Зачтено" : attestation;
       return [discipline, grade].map((value) => value.replace(/[\t\r\n\u000b]+/g, " ")).join("\t");
     }).filter(Boolean).join("\n");
   }

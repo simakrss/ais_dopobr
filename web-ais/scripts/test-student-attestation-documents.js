@@ -20,7 +20,7 @@ const state = { data: { collections: {
 const plan = [
   { discipline: "Тестовая дисциплина", attestation: "Зачёт" },
   { discipline: "Практическая подготовка", attestation: "Практикум" },
-  { discipline: "Итоговая аттестация", attestation: "Экзамен" }
+  { discipline: "Итоговая аттестация", attestation: "Зачет" }
 ];
 const c = vm.createContext({ state, getEducationDocumentTrainingPlanRows: () => plan,
   PROGRAM_COMMISSION_FIELD_KEYS: ["commissionChair", "commissionMember1", "commissionMember2", "secretary"],
@@ -36,7 +36,7 @@ vm.runInContext([
   "normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById",
   "applyProgramCommissionSetToProgram", "resolveProgramCommissionRecord", "normalizeEmployeeActPersonName",
   "formatEmployeeContractShortName", "getStudentAttestationDocumentUnavailableReason", "getAttestationChairRecipient",
-  "formatStudentGradeSheetDisciplines", "prepareStudentAttestationDocumentRecord", "renderEducationDocumentActions",
+  "isFinalAttestationPlanRow", "formatStudentGradeSheetDisciplines", "prepareStudentAttestationDocumentRecord", "renderEducationDocumentActions",
   "isGetSqlQueryFormula", "evaluateContractTemplateField", "getContractFormulaDocumentReferences",
   "normalizeContractTemplateField", "normalizeContractTemplateDocumentFields", "findContractTemplateFormulaCycle", "validateContractTemplateFormulaGraph"
 ].map(extract).join("\n"), c);
@@ -68,6 +68,18 @@ assert.equal(extra["ИО"], "Петр Петрович");
 assert.equal(extra["Email"], "chair@example.test");
 assert.equal(extra["Ссылка"], "https://example.test/report");
 assert.equal(extra["Перечень дисциплин"], "Тестовая дисциплина\tЗачтено\nПрактическая подготовка\tПрактикум\nИтоговая аттестация\tОтлично");
+// A final assessment may be marked as a credit in the plan, but its saved grade is authoritative.
+for (const attestation of ["Зачет", "Зачёт", "Экзамен", ""]) {
+  plan[2].attestation = attestation;
+  for (const finalGrade of ["Отлично", "Хорошо", "Удовлетворительно", "4", "Зачтено", "Не зачтено", ""]) {
+    const disciplines = c.prepareStudentAttestationDocumentRecord({...student, finalGrade}, "studentGradeSheet")
+      .workflowSourceValues["Перечень дисциплин"].split("\n");
+    assert.equal(disciplines[2], `Итоговая аттестация\t${finalGrade}`, `Final grade must survive plan attestation: ${attestation}`);
+    assert.equal(disciplines[0], "Тестовая дисциплина\tЗачтено", "Ordinary credits must keep their existing result");
+    assert.equal(disciplines[1], "Практическая подготовка\tПрактикум", "Other assessment types must remain unchanged");
+  }
+}
+plan[2].attestation = "Зачет";
 assert.equal(c.prepareStudentAttestationDocumentRecord(student, "education"), student);
 assert.equal(student.workflowSourceValues, undefined, "Card data is not mutated");
 assert.equal(c.prepareStudentAttestationDocumentRecord({...student, group:"ТЕСТ-09"}, "studentGradeSheet").workflowSourceValues["Номер группы"], "ТЕСТ-09");
