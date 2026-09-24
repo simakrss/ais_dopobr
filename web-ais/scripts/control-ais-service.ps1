@@ -555,12 +555,13 @@ function Request-AisWorkerStart {
     Write-Warning "Не найдена фоновая задача $workerTaskName. Служба установлена неполностью."
     return $false
   }
+  if (Stop-AisStaleDockerProbeWorkers 30) {
+    Start-Sleep -Milliseconds 500
+    $workerTask = Get-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+  }
   if ([string]$workerTask.State -eq "Running") {
     Write-Host "Рабочий процесс АИС уже выполняется."
     return $true
-  }
-  if (Stop-AisStaleDockerProbeWorkers 30) {
-    Start-Sleep -Milliseconds 500
   }
   $managedWorkers = @(Get-AisManagedWorkerProcesses)
   if ($managedWorkers.Count -gt 0) {

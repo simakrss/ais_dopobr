@@ -387,7 +387,7 @@ assert.match(
 );
 assert.match(
   controllerSource,
-  /function Request-AisWorkerStart[\s\S]*?Stop-AisStaleDockerProbeWorkers\s+30[\s\S]*?Get-AisManagedWorkerProcesses[\s\S]*?Start-ScheduledTask/u
+  /function Request-AisWorkerStart[\s\S]*?Stop-AisStaleDockerProbeWorkers\s+30[\s\S]*?workerTask\.State[\s\S]*?Get-AisManagedWorkerProcesses[\s\S]*?Start-ScheduledTask/u
 );
 assert.match(controllerSource, /\[Ожидание\] Прошло/u);
 assert.match(controllerSource, /function Start-AisTrayDirect/u);
