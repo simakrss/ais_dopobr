@@ -26,7 +26,7 @@ const context = {
   ],
   PROGRAM_DUPLICATE_FIELD_KEYS: [
     "name", "nameEnglish", "shortName", "status", "price", "type", "hours", "landingCode",
-    "promoMessage1", "emailMessageTemplate", "commissionSetId"
+    "promoMessage1", "emailMessageTemplate", "commissionSetId", "productId"
   ],
   PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS: [
     "discipline", "description", "theoryHours", "practiceHours",
@@ -195,6 +195,8 @@ assert.equal(programDraft.sitePrototype.programId, sourceProgram.id);
 assert.equal(programDraft.sitePrototype.landingCode, sourceProgram.landingCode);
 assert.equal(programDraft.sitePrototype.name, sourceProgram.name);
 assert.equal(programDraft.siteTemplateId, "", "A duplicate must not inherit the source's own prototype selection");
+assert.equal(programDraft.productId, "", "A duplicate must clear the shop product code even when it is a configurable field");
+assert.equal(programDraft.siteProductPending, true, "A duplicate must not auto-select the original product on a shared landing");
 assert.equal(programDraft.shortName, "Копия 3 — Охрана труда");
 assert.match(programDraft.name, /\(72 ч\)$/u, "Суффикс с часами должен остаться в конце названия.");
 assert.equal(programDraft.status, sourceProgram.status);
@@ -218,7 +220,7 @@ assert.equal(programDraft.authorSource, "Иванов И.И.");
   "promoMessage1Provided", "promoMessage1Touched", "databaseSync",
   "databaseSyncSourceRow", "databaseSyncFormulaFields",
   "databaseFixedValueOverrides", "__syncComment", "providedFields",
-  "productId", "landingPosition", "defaultAuthorPaymentPercent"
+  "landingPosition", "defaultAuthorPaymentPercent"
 ].forEach((fieldName) => {
   assert.equal(
     Object.prototype.hasOwnProperty.call(programDraft, fieldName),

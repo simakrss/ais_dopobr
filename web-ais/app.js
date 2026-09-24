@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.544",
+    version: "1.7.545",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.545",
+      releasedAt: "2026-09-24",
+      changes: ["При дублировании программы очищается код товара. Действие «Добавить вариант» создаёт отдельный товар для существующего лендинга и дополняет его ценовым блоком, учебным планом и всеми страницами образцов документов, сохраняя прежние варианты. Повторный запуск восстанавливает связь без дублирования."]
+    },
     {
       version: "1.7.544",
       releasedAt: "2026-09-24",
@@ -9886,6 +9891,8 @@ MAX - https://bizvmax.ru/zifra_plus
       url: String(source.siteSync?.landing?.url || source.sitePublication?.landing?.url || source.promoSite || source.landingUrl || "")
     };
     normalized.siteTemplateId = "";
+    normalized.productId = "";
+    normalized.siteProductPending = true;
     return normalized;
   }
 
@@ -34676,6 +34683,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <div class="program-site-controls">
         <div class="program-site-actions">
           ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" disabled>Создать на сайте</button>
+          <button class="ghost-button compact-button" data-action="add-program-site-variant" type="button" disabled>Добавить вариант</button>
           <button class="ghost-button compact-button" data-action="resume-program-site" type="button" hidden disabled>Продолжить публикацию</button>` : ""}
           <button type="button" class="ghost-button compact-button" data-action="sync-program-with-sites" disabled>Синхронизировать с сайтом</button>
         </div>
@@ -34689,14 +34697,22 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function updateProgramSiteActions(form, result = null) {
     const allowed = isAdminUser() && !isDatabaseDemoMode();
-    const publication = state.data.collections.programs.find(item => String(item.id) === String(form.dataset.id))?.sitePublication;
+    const program = state.data.collections.programs.find(item => String(item.id) === String(form.dataset.id));
+    const publication = program?.sitePublication;
     const resume = result?.exists === true && publication?.stage === "prepared"
       && Number(publication.landing?.id) === Number(result.landing?.id);
     const create = form.querySelector('[data-action="create-program-on-site"]');
     const sync = form.querySelector('[data-action="sync-program-with-sites"]');
     const continuation = form.querySelector('[data-action="resume-program-site"]');
+    const variant = form.querySelector('[data-action="add-program-site-variant"]');
+    if (variant) {
+      const linked = Boolean(String(program?.productId || "").trim() || program?.siteSync?.product?.id || publication?.product?.id);
+      variant.disabled = !allowed || result?.exists !== true || linked;
+      variant.title = linked ? "Для нового товара сначала дублируйте программу" : "Создать отдельный товар и добавить его на существующий лендинг с образцами документов";
+    }
     if (create) { create.disabled = !allowed || result?.exists !== false; create.title = result?.exists ? "Лендинг уже существует. Используйте синхронизацию." : result ? "Создать программу по выбранному прототипу" : "Сначала нужно проверить наличие лендинга."; }
     if (sync) { sync.disabled = !allowed || result?.exists !== true; sync.title = result?.exists ? "Обновить существующий лендинг и товар" : "Синхронизация доступна после создания лендинга."; }
+    if (sync && result?.needsNewProduct) { sync.disabled = true; sync.title = "У копии пока нет товара. Используйте «Добавить вариант»."; }
     if (continuation) { continuation.hidden = !resume; continuation.disabled = !allowed || !resume; }
   }
 
@@ -34741,10 +34757,86 @@ MAX - https://bizvmax.ru/zifra_plus
       links.innerHTML = renderProgramSiteLink(result.landing.url, "Лендинг — edu-plus.ru")
         + (result.product ? renderProgramSiteLink(result.product.editUrl, "Карточка товара — zifra-plus.ru")
           : result.products.map(product => renderProgramSiteLink(product.editUrl, `Товар №${product.id}: ${product.title}`)).join(""));
-      status.textContent = result.warning || (result.product ? "Карточка товара открывается в административной панели магазина (нужен вход)." : "У лендинга несколько товаров. При синхронизации выберите нужный вариант.");
+      status.textContent = result.warning || (result.needsNewProduct ? "Для копии программы нужен отдельный товар. Нажмите «Добавить вариант» — прежние товары не изменятся." : result.product ? "Карточка товара открывается в административной панели магазина (нужен вход)." : "У лендинга несколько товаров. При синхронизации выберите нужный вариант.");
       return result;
     } catch (error) { if (status.isConnected && links.dataset.requestId === requestId) { updateProgramSiteActions(form); status.textContent = error.message; } return null; }
     finally { if (links.dataset.requestId === requestId) links.dataset.loading = "false"; }
+  }
+
+  async function openProgramSiteVariant() {
+    if (!isAdminUser() || isDatabaseDemoMode() || isSettingsDraftSessionActive() || document.querySelector("[data-program-site-dialog]")) return;
+    const card = document.querySelector("#recordForm[data-config='programs']");
+    if (!card) return;
+    const programId = await saveRecordFormBeforeContinuation(card, {flush: true});
+    if (!programId) return;
+    const dialog = document.createElement("dialog");
+    dialog.className = "modal program-site-dialog";
+    dialog.dataset.programSiteDialog = "";
+    dialog.setAttribute("aria-label", "Добавить вариант на лендинг");
+    dialog.innerHTML = `<header class="modal-head"><h2>Добавить вариант на лендинг</h2><button class="icon-button" type="button" data-variant-close aria-label="Закрыть">×</button></header>
+      <div class="program-site-body"><div data-variant-preview></div>
+      <p class="muted">Будет создан и опубликован отдельный товар. На лендинг добавятся новый ценовой блок, учебный план и изображения всех страниц документа об образовании. Прежние варианты, образцы, название страницы, описание и отзывы сохранятся.</p>
+      <div class="program-site-progress" data-site-progress hidden><progress aria-label="Добавление варианта"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time data-site-progress-time>0:00</time></div>
+      <p role="status" aria-live="polite" data-variant-status></p>
+      <label class="program-site-review"><input type="checkbox" data-variant-reviewed><span>Параметры проверены. Создать товар и добавить вариант на указанный лендинг.</span></label>
+      <div class="program-site-actions"><button class="primary-button" type="button" data-variant-apply disabled>Создать товар и добавить вариант</button><button class="ghost-button" type="button" data-variant-refresh>Обновить проверку</button></div></div>`;
+    document.body.appendChild(dialog); dialog.showModal();
+    const progress = createProgramSiteProgress(dialog);
+    const status = dialog.querySelector("[data-variant-status]");
+    const preview = dialog.querySelector("[data-variant-preview]");
+    const apply = dialog.querySelector("[data-variant-apply]");
+    const reviewed = dialog.querySelector("[data-variant-reviewed]");
+    let busy = false, plan = null, completed = false;
+    const setBusy = value => {
+      busy = value;
+      dialog.querySelectorAll("button,input").forEach(control => { control.disabled = value; });
+      if (!value) apply.disabled = completed || !plan || !reviewed.checked;
+    };
+    const load = async () => {
+      if (busy || completed) return;
+      setBusy(true); plan = null; reviewed.checked = false;
+      status.textContent = "Проверка программы, лендинга и шаблона документа…";
+      try {
+        plan = await programSiteRequest("preview-variant", {programId, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
+        preview.innerHTML = `<dl class="program-site-sync-summary"><dt>Новый товар</dt><dd>${escapeHtml(plan.model.productName)}</dd><dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.model.price)} ₽</dd><dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd><dt>Лендинг</dt><dd>${escapeHtml(plan.landing.title)} ${renderProgramSiteLink(plan.landing.url, "Открыть")}</dd><dt>Существующие варианты</dt><dd>${escapeHtml(plan.existingOffers)} — сохраняются</dd></dl>`;
+        status.textContent = plan.alreadyAdded ? "Вариант уже добавлен. Повторное подтверждение восстановит связь с карточкой без дублирования товара." : "Проверьте параметры и подтвердите добавление.";
+      } catch (error) { status.textContent = error.message; }
+      finally { setBusy(false); }
+    };
+    reviewed.addEventListener("change", () => { apply.disabled = busy || completed || !plan || !reviewed.checked; });
+    apply.addEventListener("click", async () => {
+      if (busy || completed || !plan || !reviewed.checked) return;
+      setBusy(true); progress.start("Подготовка нового варианта…");
+      let failed = false;
+      try {
+        if (!await ensureRecordLockForSave(card)) throw new Error("Восстановите блокировку карточки и повторите проверку.");
+        const requestId = crypto.randomUUID(); progress.watch(requestId);
+        const result = await programSiteRequest("add-variant", {programId, hash: plan.hash, requestId, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
+        const current = state.data.collections.programs.find(item => item.id === programId);
+        if (!current) throw new Error("Вариант создан, но программа не найдена в базе. Проверьте карточку.");
+        current.siteSync = result; current.productId = String(result.product.id); current.siteProductPending = false;
+        current.landingUrl = result.landing.url;
+        const productInput = card.elements.productId;
+        if (productInput) { productInput.value = current.productId; productInput.dispatchEvent(new Event("input", {bubbles: true})); }
+        persist(); progress.local("Сохранение кода нового товара в общей базе…");
+        if (!await flushSharedApplicationState()) throw new Error("Вариант создан. Код товара пока не сохранён в общей базе — дождитесь восстановления связи и сохраните карточку.");
+        try {
+          const snapshot = JSON.parse(card.dataset.initialSnapshot);
+          if (Array.isArray(snapshot)) card.dataset.initialSnapshot = JSON.stringify(snapshot.map(item => item.name === "productId" ? {...item, value: current.productId} : item));
+        } catch { /* Preserve unrelated unsaved edits. */ }
+        completed = true;
+        status.textContent = `Товар №${result.product.id} создан. Вариант добавлен на лендинг; прежние товары и образцы сохранены.`;
+        preview.insertAdjacentHTML("beforeend", `<div class="program-site-actions">${renderProgramSiteLink(result.product.editUrl, "Новый товар")}${(result.certificates || []).map(image => renderProgramSiteLink(image.url, image.label || "Образец документа")).join("")}</div>`);
+        void refreshProgramSiteLinks();
+      } catch (error) { failed = true; status.textContent = error.message; }
+      finally { progress.stop(failed); plan = null; setBusy(false); }
+    });
+    dialog.querySelector("[data-variant-refresh]").addEventListener("click", load);
+    const close = () => { if (!busy) { progress.dispose(); dialog.close(); dialog.remove(); } };
+    dialog.querySelector("[data-variant-close]").addEventListener("click", close);
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    dialog.addEventListener("keydown", event => { if (event.key === "Escape") event.stopPropagation(); });
+    await load();
   }
 
   function renderProgramSiteCatalogCombo(kind = "image") {
@@ -35046,7 +35138,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (sampleInput.checked && !plan.model.updateSamples) { plan = null; throw new Error("Обновите локальную копию системы: сервер ещё не поддерживает обновление образцов документов."); }
         promoParameters = {...promoSource, type: plan.model.type, price: plan.model.price};
         preview.innerHTML = `<div class="program-site-sync-product-row"><label><span>Товар, который нужно обновить</span><select data-sync-product aria-label="Товар программы"><option value="">Выберите товар</option>${plan.products.map(item => `<option value="${item.id}" ${item.id === plan.product?.id ? "selected" : ""}>№${item.id} · ${escapeHtml(item.title)} · ${escapeHtml(item.price)} ₽</option>`).join("")}</select></label><div class="program-site-actions">${renderProgramSiteLink(plan.landing.url, "Лендинг")}${renderProgramSiteLink(plan.product?.editUrl, "Карточка товара")}</div></div>
-          <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}</dd>
+          <dl class="program-site-sync-summary"><dt>Название лендинга</dt><dd>${plan.model.isVariant ? `${escapeHtml(plan.landing.title)} — без изменения` : `${escapeHtml(plan.landing.title)} → ${escapeHtml(plan.model.name)}`}</dd>
           <dt>Название товара</dt><dd>${escapeHtml(plan.product?.title || "—")} → ${escapeHtml(plan.model.productName)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.product?.price ?? "—")} → ${escapeHtml(plan.model.price)} ₽</dd>
           <dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}${plan.model.oldPriceAdjusted ? " · автоматически: стоимость × 1,25" : ""}</dd>
           <dt>Скидка</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? Math.round(100 * (1 - Number(plan.model.price) / Number(plan.model.oldPrice))) : 0}%</dd>
@@ -35054,8 +35146,8 @@ MAX - https://bizvmax.ru/zifra_plus
           ${plan.model.date ? `<dt>Дата и время вебинара</dt><dd>${escapeHtml(plan.model.date.split("-").reverse().join("."))} в ${escapeHtml(plan.model.time)} (Москва)</dd>` : ""}
           ${plan.model.slug ? `<dt>Адрес лендинга</dt><dd>${escapeHtml(plan.landing.url)} → ${escapeHtml(plan.model.landingUrl)}</dd><dt>Адрес товара</dt><dd>${escapeHtml(plan.product?.url || "—")} → https://zifra-plus.ru/product/${escapeHtml(plan.model.slug)}/</dd>` : ""}
           ${plan.model.joinUrl ? `<dt>Подключение SberJazz</dt><dd>${escapeHtml(plan.model.joinUrl)}</dd>` : ""}
-          <dt>Образцы документов</dt><dd>${plan.model.updateSamples ? "Сформировать заново и заменить на лендинге, включая все страницы приложения" : "Без изменений"}</dd></dl>
-          ${plan.landing.offers.length > 1 ? `<p class="program-site-notice">Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице.${plan.model.updateSamples ? " Образцы на всей странице будут заменены документами этой программы." : ""}</p>` : ""}
+          <dt>Образцы документов</dt><dd>${plan.model.updateSamples ? "Обновить документы этой программы, включая все страницы приложения; образцы добавленных вариантов сохраняются" : "Без изменений"}</dd></dl>
+          ${plan.landing.offers.length > 1 ? `<p class="program-site-notice">${plan.model.isVariant ? "Обновится выбранный вариант; название, общие сведения и изображения остальных вариантов сохранятся." : "Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице. Образцы добавленных вариантов сохраняются."}</p>` : ""}
           <details class="program-site-sync-help"><summary>Что обновится</summary><p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения записей не меняются. "}Описание, автор и отзывы сохраняются. ${plan.model.updateSamples ? "Образцы документов будут сформированы по текущим данным; прежние файлы останутся в медиатеке. " : "Образцы документов сохраняются. "}${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
           ${webinar ? '<p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение.</p>' : ""}
           <p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p></details>
@@ -45587,6 +45679,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", openProgramSiteGenerator);
     document.querySelector("[data-action='sync-program-with-sites']")
       ?.addEventListener("click", openProgramSiteSync);
+    document.querySelector("[data-action='add-program-site-variant']")
+      ?.addEventListener("click", openProgramSiteVariant);
     bindProgramSiteAddressChanges(document.querySelector("#recordForm[data-config='programs']"));
     if (document.querySelector('[data-program-tab-panel="site"]:not([hidden])')) void refreshProgramSiteLinks();
     document.querySelector("#recordForm[data-config='programs'] [name='type']")?.addEventListener("change", event => {
@@ -47312,7 +47406,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceName = (state.data.collections.programs || []).find((record) => record.id === sourceId)?.name || "программы";
     if (!await confirmRecordDuplication({
       title: "Дублировать образовательную программу?",
-      message: `Создать копию программы «${sourceName}» вместе с учебным планом? Код лендинга сохранится. Новая программа попадёт в базу только после сохранения.`
+      message: `Создать копию программы «${sourceName}» вместе с учебным планом? Код лендинга сохранится, код товара в магазине очистится. Для общего лендинга можно будет добавить новый вариант с отдельным товаром и образцами документов. Новая программа попадёт в базу только после сохранения.`
     })) return;
     if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);

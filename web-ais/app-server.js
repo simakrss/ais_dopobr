@@ -40620,7 +40620,7 @@ async function route(req, res) {
         return;
       }
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
-      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code", "preview-variant", "add-variant"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
       if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
         || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
@@ -40636,7 +40636,7 @@ async function route(req, res) {
         return;
       }
       const body = await readJsonBody(req, 64 * 1024);
-      if (["prepare", "publish", "sync"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
+      if (["prepare", "publish", "sync", "add-variant"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
       // Use the saved authoritative program, never a client-supplied price or link.
       const shared = await readSharedApplicationStateDocument({ allowCache: false });
       if (shared.offline || shared.pendingCount || shared.syncPending) {
@@ -40660,6 +40660,14 @@ async function route(req, res) {
       };
       if (action === "landing-code") {
         sendJson(res, 200, await programSiteGenerator.suggestLandingCode(program, call));
+        return;
+      }
+      if (["preview-variant", "add-variant"].includes(action)) {
+        const result = action === "preview-variant"
+          ? await programSiteGenerator.previewVariant(program, call, prepareCertificate)
+          : await programSiteGenerator.addVariant(program, call, body.hash, prepareCertificate, reportProgress);
+        progressJob?.finish("completed");
+        sendJson(res, 200, result);
         return;
       }
       if (["resolve", "preview-sync", "sync"].includes(action)) {

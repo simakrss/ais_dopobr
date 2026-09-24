@@ -47,12 +47,18 @@ function get_field_objects($id,$format=false) {
         if($name==='blok_ceny') { $field['type']='repeater';$field['sub_fields']=array_map(function($key){return array('name'=>$key,'key'=>'field_'.$key,'type'=>'text');},array_keys($value[0])); }
         if (array_key_exists($name, ais_pg_certificate_slots())) $field['type'] = 'image';
         if ($name === 'slajder') { $field['type'] = 'repeater'; $field['sub_fields'] = array(array('name'=>'izobrazhenie_slajda','key'=>'field_izobrazhenie_slajda','type'=>'image')); }
+        if ($name === 'programmy_obucheniya') {
+            $field['type'] = 'repeater';
+            $field['sub_fields'] = array_map(function ($key) { return array('name'=>$key,'key'=>'field_'.$key,'type'=>'text'); }, array('zagolovok_programmy_obucheniya','ssylka_na_programmu_kursa','nazvanie_knopki_skachat'));
+            $field['sub_fields'][] = array('name'=>'moduli_programmy','key'=>'field_moduli_programmy','type'=>'repeater','sub_fields'=>array_map(function ($key) {return array('name'=>$key,'key'=>'field_'.$key,'type'=>'text');},array('nazvanie_modulya','opisanie_modulya','chasy_vsego','chasy_1','chasy_2','kontrol')));
+        }
         $result[]=$field;
     }
     return $result;
 }
 function update_field($key,$value,$id) {
     if(!empty($GLOBALS['drop_write'])) return false;
+    if(($GLOBALS['drop_field'] ?? '') === $key) return false;
     foreach(get_field_objects($id) as $field) if($field['key']===$key) {$GLOBALS['fields'][$id][$field['name']]=ais_pg_acf_value($field,$value);$GLOBALS['writes']++;return true;}
     throw new RuntimeException('Unknown ACF field');
 }

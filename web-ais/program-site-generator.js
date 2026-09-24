@@ -462,12 +462,17 @@ async function resolveSiteProducts(program, call, landing, target, requestedProd
   const products = await Promise.all(ids.map(id => call("shop", `/sync-product/${id}`)));
   const explicit = Number(requestedProductId || 0);
   if (explicit && !ids.includes(explicit)) fail("Выбранный товар не связан с этим лендингом.", 409);
-  const remembered = Number(program.siteSync?.product?.id || program.sitePublication?.product?.id || 0);
+  const key = crypto.createHash("sha256").update(`ais-program:${program.id}`).digest("hex");
+  const ownVariant = landing.variants?.[key];
+  const needsNewProduct = program.siteProductPending === true && !ownVariant?.productId
+    && !String(program.productId || "").trim() && !program.siteSync?.product?.id && !program.sitePublication?.product?.id;
+  if (needsNewProduct && explicit) fail("У копии программы должен быть отдельный товар. Используйте «Добавить вариант».", 409);
+  const remembered = Number(program.productId || ownVariant?.productId || program.siteSync?.product?.id || program.sitePublication?.product?.id || 0);
   const matches = offers.filter(offer => Number(offer.hours) === Number(program.hours));
   const matchIds = [...new Set(matches.map(offer => Number(offer.productId)))];
-  const selected = explicit || (ids.includes(remembered) ? remembered : ids.length === 1 ? ids[0] : matchIds.length === 1 ? matchIds[0] : 0);
+  const selected = needsNewProduct ? 0 : explicit || (ids.includes(remembered) ? remembered : ids.length === 1 ? ids[0] : matchIds.length === 1 ? matchIds[0] : 0);
   const product = products.find(item => Number(item.id) === selected) || null;
-  return {ok: true, target, landing, products, product};
+  return {ok: true, target, landing, products, product, needsNewProduct};
 }
 
 async function resolveSite(program, call, requestedProductId = 0) {
@@ -491,7 +496,72 @@ async function inspectSite(program, call) {
   catch (error) { resolved = {products: [], product: null, warning: error.message}; }
   return {ok: true, exists: true, landing: {id: landing.id, status: landing.status, url: landing.url, editUrl: landing.editUrl,
     title: landing.title, previewImageUrl: landing.previewImageUrl || ""}, products: resolved.products.map(({id, title, url, editUrl}) => ({id, title, url, editUrl})),
-    product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl}, warning: resolved.warning || ""};
+    product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl},
+    needsNewProduct: resolved.needsNewProduct === true, warning: resolved.warning || ""};
+}
+
+async function buildVariantPlan(program, call, prepareCertificate) {
+  if (String(program.productId || "").trim() || program.siteSync?.product?.id || program.sitePublication?.product?.id) {
+    fail("Программа уже связана с товаром. Для нового варианта сначала создайте копию программы.", 409);
+  }
+  const target = syncTarget(program);
+  const landing = await call("edu", "/resolve-site", target);
+  const type = programType(program);
+  if (landing.status !== "publish" || landing.postType !== PROGRAM_TYPES[type].postType) fail("Выберите опубликованный лендинг того же вида образовательной программы.");
+  const capabilities = await Promise.all([call("edu", "/health"), call("shop", "/health")]);
+  if (capabilities.some(site => !site.programVariants)) fail("Обновите служебные модули сайтов для добавления вариантов.", 409);
+  const key = crypto.createHash("sha256").update(`ais-program:${program.id}`).digest("hex");
+  const landingSlug = landing.slug;
+  if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(landingSlug || "")) fail("Не удалось определить адрес существующего лендинга.");
+  const productSlug = `${landingSlug.slice(0, 56).replace(/[-_]+$/, "")}-${Number(program.hours)}-${key.slice(0, 8)}`;
+  const template = {title: landing.title, fields: landing.fields};
+  const model = normalizeProgram({...program, promoSite: "", landingCode: productSlug});
+  model.landingUrl = landing.url;
+  model.landingSlug = landingSlug;
+  model.descriptionHtml = String(landing.fields?.opisanie_o_programme || landing.fields?.opisanie_dokumenta || "");
+  const certificate = await prepareCertificate({...program, siteSampleLandingUrl: landing.url});
+  if (!/^[a-f0-9]{64}$/.test(certificate?.hash || "") || typeof certificate.generate !== "function") fail("Не удалось подготовить образцы документов.");
+  const operationHash = payloadHash(model, landing.id, certificate.hash);
+  const payload = {key, hash: operationHash, model, landingId: landing.id, version: landing.version, certificateHash: certificate.hash};
+  await call("edu", "/check-variant", payload);
+  const productTemplateId = prototypeProductId(template);
+  const hash = crypto.createHash("sha256").update(JSON.stringify({...payload, productTemplateId})).digest("hex");
+  return {plan: {ok: true, hash, model, landing: {id: landing.id, title: landing.title, url: landing.url},
+    existingOffers: landing.offers.length, alreadyAdded: Boolean(landing.variants?.[key]?.complete)}, payload, certificate, productTemplateId,
+    imageUrl: landing.previewImageUrl || ""};
+}
+
+async function previewVariant(program, call, prepareCertificate) {
+  return (await buildVariantPlan(program, call, prepareCertificate)).plan;
+}
+
+async function addVariant(program, call, expectedHash, prepareCertificate, report = () => {}) {
+  report("Проверка нового варианта и существующего лендинга");
+  const {plan, payload, certificate, productTemplateId, imageUrl} = await buildVariantPlan(program, call, prepareCertificate);
+  if (!expectedHash || expectedHash !== plan.hash) fail("Данные программы или лендинга изменились. Обновите проверку перед добавлением варианта.", 409);
+  const images = await certificate.generate(report);
+  report("Загрузка новых образцов документов без удаления прежних");
+  const assets = await call("edu", "/variant-assets", {...payload, images});
+  if (!Array.isArray(assets.images) || assets.images.length !== images.length || assets.images.some((image, index) =>
+    image.language !== images[index].language || !Number.isSafeInteger(Number(image.id)) || Number(image.id) < 1)) fail("Сайт не подтвердил все страницы новых образцов.", 502);
+  payload.certificatePages = assets.images.map(({id, language}) => ({id, language}));
+  await call("edu", "/check-variant", payload);
+  report("Создание отдельного товара в магазине");
+  const product = await call("shop", "/prepare-product", {...plan.model, hash: payload.hash, productTemplateId, imageUrl});
+  if (!Number.isSafeInteger(Number(product.id)) || Number(product.id) < 1) fail("Магазин не подтвердил код нового товара.", 502);
+  payload.productId = Number(product.id);
+  await call("edu", "/check-variant", payload);
+  report("Публикация нового товара и добавление варианта на лендинг");
+  const published = await call("shop", "/publish", {key: payload.key, hash: payload.hash});
+  if (Number(published.id) !== Number(product.id) || published.status !== "publish") fail("Магазин не подтвердил публикацию нового товара. Обновите проверку и повторите с теми же параметрами.", 502);
+  let landing;
+  try { landing = await call("edu", "/attach-variant", payload); }
+  catch (error) { fail(`Новый товар №${product.id} создан, но добавление на лендинг не подтверждено. Обновите проверку и повторите: будет использован тот же товар. ${error.message}`, 409); }
+  const publishedProduct = await call("shop", "/enable-redirect", {key: payload.key, hash: payload.hash});
+  if (Number(landing.id) !== Number(payload.landingId) || landing.status !== "publish" || Number(publishedProduct.id) !== Number(product.id)
+    || publishedProduct.status !== "publish" || publishedProduct.redirectEnabled !== true) fail("Сайты не подтвердили добавление варианта и переход на лендинг. Обновите проверку и повторите с теми же параметрами.", 502);
+  return {ok: true, isVariant: true, type: plan.model.type, landing, product: publishedProduct, syncedAt: new Date().toISOString(),
+    certificates: assets.images.map((image, index) => ({...image, label: images[index].label}))};
 }
 
 async function buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate) {
@@ -499,6 +569,7 @@ async function buildSyncPlan(program, call, productId, imageSourceId, prepareCer
   const imageSource = await loadImageSource(imageSourceId, call);
   if (imageSource) model.imageSource = imageSource;
   const resolved = await resolveSite(program, call, productId);
+  model.isVariant = Object.values(resolved.landing.variants || {}).some(variant => Number(variant.productId) === Number(resolved.product?.id));
   let currentSlug = resolved.landing.slug;
   if (!currentSlug) { try { currentSlug = new URL(resolved.landing.url).pathname.split("/").filter(Boolean).at(-1); } catch {} }
   // An unchanged promo address must not force a rename of a legacy shop product.
@@ -568,4 +639,4 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
     ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewVariant, addVariant, previewSync, synchronize};
