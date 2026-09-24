@@ -73,6 +73,18 @@ function main() {
   const xml = entries.find(entry => entry.name === "word/document.xml").content.toString();
   assert.ok(xml.includes(expected), "The diploma itself contains the scope");
   assert.ok(xml.includes("QUALIFICATION_ONLY"), "The qualification remains in its own field");
+  const trainingPlanRow = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)]
+    .map(match => match[0])
+    .find(rowXml => rowXml.includes("Модуль"));
+  assert.ok(trainingPlanRow, "The generated diploma contains a training-plan row");
+  const trainingPlanCells = [...trainingPlanRow.matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)]
+    .map(match => match[0]);
+  const numberCell = trainingPlanCells[0] || "";
+  assert.match(numberCell, /<w:vAlign\b[^>]*w:val="center"/u, "The number cell keeps vertical centering from the template");
+  assert.match(numberCell, /<w:jc\b[^>]*w:val="center"/u, "The number remains horizontally centered");
+  assert.match(numberCell, /<w:t\b[^>]*>1\.<\/w:t>/u, "The number is written as ordinary centered text");
+  assert.doesNotMatch(numberCell, /<w:numPr\b/u, "Automatic list labels must not shift the visible number above the cell centre");
+  assert.doesNotMatch(numberCell, /<w:ind\b/u, "The former list indentation is removed with automatic numbering");
   for (const name of ["word/styles.xml", "word/fontTable.xml", "word/settings.xml"]) {
     assert.deepEqual(entries.find(entry => entry.name === name).content, server.readDocxZipEntries(bytes).find(entry => entry.name === name).content);
   }

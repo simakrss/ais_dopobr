@@ -4852,10 +4852,19 @@ function getWordTableCellFirstParagraphXml(cellXml) {
   return /<w:p\b[\s\S]*?<\/w:p>/.exec(String(cellXml || ""))?.[0] || "<w:p></w:p>";
 }
 
-function buildWordTableCellValueXml(cellXml, value) {
+function removeWordParagraphAutomaticNumbering(paragraphXml) {
+  return String(paragraphXml || "")
+    .replace(/<w:numPr\b[\s\S]*?<\/w:numPr>/g, "")
+    .replace(/<w:ind\b[^>]*\/>/g, "")
+    .replace(/<w:ind\b[^>]*>[\s\S]*?<\/w:ind>/g, "");
+}
+
+function buildWordTableCellValueXml(cellXml, value, options = {}) {
   const openTag = getWordTableCellOpenTag(cellXml);
   const cellProperties = getWordTableCellPropertiesXml(cellXml);
-  const sourceParagraphXml = getWordTableCellFirstParagraphXml(cellXml);
+  const sourceParagraphXml = options.removeAutomaticNumbering
+    ? removeWordParagraphAutomaticNumbering(getWordTableCellFirstParagraphXml(cellXml))
+    : getWordTableCellFirstParagraphXml(cellXml);
   const lines = splitDocumentFieldParagraphLines(value);
   const paragraphsXml = (lines.length ? lines : [""])
     .map((line) => buildWordParagraphFromLine(sourceParagraphXml, line))
@@ -4893,13 +4902,18 @@ function buildEducationTrainingPlanTableRow(rowXml, row, rowIndex, fieldCellInde
   const gradeIndex = disciplineIndex + 2 < cells.length ? disciplineIndex + 2 : -1;
   const cellValues = new Map();
   if (numberIndex >= 0) {
-    cellValues.set(numberIndex, /<w:numPr\b/.test(cells[numberIndex].xml) ? "" : row.number || String(rowIndex + 1));
+    const number = String(row.number || rowIndex + 1).replace(/[.)]+$/u, "");
+    cellValues.set(numberIndex, `${number}.`);
   }
   cellValues.set(disciplineIndex, row.discipline || "");
   if (hoursIndex >= 0) cellValues.set(hoursIndex, row.hours || "");
   if (gradeIndex >= 0) cellValues.set(gradeIndex, row.grade || "");
   const nextCells = cells.map((cell, index) => (
-    cellValues.has(index) ? buildWordTableCellValueXml(cell.xml, cellValues.get(index)) : cell.xml
+    cellValues.has(index)
+      ? buildWordTableCellValueXml(cell.xml, cellValues.get(index), {
+          removeAutomaticNumbering: index === numberIndex
+        })
+      : cell.xml
   ));
   return replaceWordTableRowCells(rowXml, nextCells);
 }
