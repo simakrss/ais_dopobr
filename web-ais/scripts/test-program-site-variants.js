@@ -1,5 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
+const fs = require("node:fs"), path = require("node:path");
 const pg = require("../program-site-generator");
 const program = {id:"copied-program", name:"Программа — новый вариант (144 ч)", type:"КПК", hours:144, price:6500,
   oldPrice:8000, landingCode:"shared-course", siteProductPending:true, productId:"",
@@ -40,6 +41,9 @@ async function call(site,endpoint,body) {
   assert.fail(endpoint);
 }
 (async()=>{
+  const gateway=fs.readFileSync(path.join(__dirname,"../gateway.php"),"utf8");
+  const routes=gateway.match(/function gateway_tunnel_handles[\s\S]*?\n}/)[0];
+  assert.match(routes,/\$method === 'POST' && in_array\(\$path, \[[^\]]*'\/api\/program-sites\/preview-variant'[^\]]*'\/api\/program-sites\/add-variant'/,"Hosted sample preview and generation must use the local rendering worker");
   let resolved=await pg.resolveSite(program,call);
   assert.equal(resolved.product,null,"A copied program cannot target the original product even with equal hours");
   assert.equal(resolved.needsNewProduct,true);

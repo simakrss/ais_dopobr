@@ -2008,7 +2008,7 @@ function gateway_tunnel_handles(string $method, string $path): bool
     // Poll the same local worker that prepares/publishes the program.
     if ($method === 'GET' && $path === '/api/program-sites/progress') return true;
     // Sample certificates require the same local PDF and image services as issued documents.
-    if ($method === 'POST' && in_array($path, ['/api/program-sites/prepare', '/api/program-sites/publish'], true)) {
+    if ($method === 'POST' && in_array($path, ['/api/program-sites/prepare', '/api/program-sites/publish', '/api/program-sites/preview-variant', '/api/program-sites/add-variant'], true)) {
         return true;
     }
     if (

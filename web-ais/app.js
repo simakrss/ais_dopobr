@@ -34617,7 +34617,7 @@ MAX - https://bizvmax.ru/zifra_plus
   async function programSiteRequest(action, body) {
     const reading = ["templates", "health"].includes(action);
     const response = await fetch(photoApiUrl(`/api/program-sites/${action}`), {
-      method: reading ? "GET" : "POST", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(180000),
+      method: reading ? "GET" : "POST", credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(action === "add-variant" ? 300000 : 180000),
       ...(reading ? {} : {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
     });
     const result = await response.json().catch(() => ({}));
