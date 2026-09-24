@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.549",
+    version: "1.7.550",
     releasedAt: "2026-09-24"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.550",
+      releasedAt: "2026-09-24",
+      changes: ["Исправлена горизонтальная прокрутка реестра выданных документов на телефонах: область таблицы ограничена шириной панели, последний столбец доступен при свёрнутых и раскрытых фильтрах. Сохранены пользовательский порядок столбцов и вид таблицы на компьютере."]
+    },
     {
       version: "1.7.549",
       releasedAt: "2026-09-24",

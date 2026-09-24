@@ -4907,6 +4907,8 @@ tr.is-table-value-filtered-out {
   max-width: 100%;
   min-width: 0;
   display: grid;
+  /* Keep the scroll viewport inside the panel even when its toolbar is wider. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   overflow: hidden;
 }
