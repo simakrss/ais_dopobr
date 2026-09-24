@@ -55,6 +55,14 @@ assert.match(hostSource, /subst\.exe/u);
 assert.match(hostSource, /--skip-docker/u);
 assert.match(hostSource, /Docker Desktop\.exe/u);
 assert.match(hostSource, /Wait-DockerEngine/u);
+assert.match(hostSource, /function Invoke-ProcessWithTimeout/u);
+assert.match(hostSource, /function Stop-ProcessTree/u);
+assert.match(
+  hostSource,
+  /function Test-DockerEngine[\s\S]*?Invoke-ProcessWithTimeout[\s\S]*?TimedOut/u
+);
+assert.match(hostSource, /taskkill\.exe[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
+assert.doesNotMatch(hostSource, /&\s*\$DockerPath\s+info/u);
 assert.match(hostSource, /codex-runtimes/u);
 assert.match(hostSource, /dependencies[\s\S]{0,30}node[\s\S]{0,30}bin/u);
 assert.match(hostSource, /Get-Service\s+-Name\s+"AisDopobrWeb"/u);
@@ -351,6 +359,25 @@ assert.match(controllerSource, /setup-ais-windows-service\.ps1/u);
 assert.match(controllerSource, /Test-AisPortListener/u);
 assert.match(controllerSource, /8081,\s*19081/u);
 assert.match(controllerSource, /Get-AisManagedNodeProcesses/u);
+assert.match(controllerSource, /Get-AisManagedWorkerProcesses/u);
+assert.match(controllerSource, /Get-AisExpectedWorkerScriptPaths/u);
+assert.match(controllerSource, /Join-Path\s+\$programDataRoot\s+"ais-service-host\.ps1"/u);
+assert.match(controllerSource, /PSObject\.Properties\["serviceHostScript"\]/u);
+assert.match(controllerSource, /function Stop-AisManagedWorkerProcessTrees/u);
+assert.match(controllerSource, /function Stop-AisStaleDockerProbeWorkers/u);
+assert.match(
+  controllerSource,
+  /function Get-AisStaleDockerProbeWorkers[\s\S]*?ParentProcessId[\s\S]*?Test-AisDockerInfoProbeCommandLine[\s\S]*?MinimumAgeSeconds/u
+);
+assert.match(
+  controllerSource,
+  /function Stop-AisStaleDockerProbeWorkers[\s\S]*?currentProbe[\s\S]*?ParentProcessId[\s\S]*?Get-AisProcessCreationTime[\s\S]*?Stop-AisManagedWorkerProcessTreeById/u
+);
+assert.match(
+  controllerSource,
+  /function Stop-AisService[\s\S]*?Stop-ScheduledTask[\s\S]*?Stop-AisManagedWorkerProcessTrees/u
+);
+assert.match(controllerSource, /WorkerProcesses\s*=\s*@\(Get-AisManagedWorkerProcesses\)/u);
 assert.match(controllerSource, /Invoke-AisProtectedCleanup/u);
 assert.match(controllerSource, /tray-ready\.json/u);
 assert.match(controllerSource, /worker-launch\.log/u);
@@ -358,7 +385,10 @@ assert.match(
   controllerSource,
   /function Write-AisStartupLogProgress[\s\S]*?\$maxProgressBytes\s*=\s*\[long\]\(64 \* 1024\)[\s\S]*?Большой журнал сокращён/u
 );
-assert.match(controllerSource, /function Request-AisWorkerStart[\s\S]*?Start-ScheduledTask/u);
+assert.match(
+  controllerSource,
+  /function Request-AisWorkerStart[\s\S]*?Stop-AisStaleDockerProbeWorkers\s+30[\s\S]*?Get-AisManagedWorkerProcesses[\s\S]*?Start-ScheduledTask/u
+);
 assert.match(controllerSource, /\[Ожидание\] Прошло/u);
 assert.match(controllerSource, /function Start-AisTrayDirect/u);
 assert.match(controllerSource, /Stop-IncompatibleAisTrayProcesses/u);
@@ -510,6 +540,83 @@ if ($failed) { exit 1 }`;
     Buffer.from(parseProbe, "utf16le").toString("base64")
   ], { cwd: appRoot, encoding: "utf8", timeout: 30000 });
   assert.equal(parseResult.status, 0, `${parseResult.stdout}\n${parseResult.stderr}`);
+
+  const dockerTimeoutProbe = `$source = Get-Content -LiteralPath '${paths.host.replace(/'/gu, "''")}' -Raw -Encoding UTF8
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+foreach ($name in @("Quote-ProcessArgument", "Stop-ProcessTree", "Invoke-ProcessWithTimeout")) {
+  $functionAst = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true)
+  if (-not $functionAst) { throw "Missing function: $name" }
+  Invoke-Expression $functionAst.Extent.Text
+}
+$resolvedAppRoot = '${appRoot.replace(/'/gu, "''")}'
+$utf8 = New-Object Text.UTF8Encoding($false)
+$powerShellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\\v1.0\\powershell.exe"
+$stopwatch = [Diagnostics.Stopwatch]::StartNew()
+$result = Invoke-ProcessWithTimeout -FilePath $powerShellPath -Arguments @(
+  "-NoLogo", "-NoProfile", "-Command", "Start-Sleep -Seconds 30"
+) -TimeoutMilliseconds 700
+$stopwatch.Stop()
+if (-not $result.TimedOut) { throw "The hanging Docker probe simulation did not time out." }
+if ($null -ne $result.ExitCode) { throw "A timed-out probe unexpectedly returned an exit code." }
+if ($stopwatch.Elapsed.TotalSeconds -gt 12) {
+  throw "The timeout cleanup took too long: $($stopwatch.Elapsed.TotalSeconds) sec."
+}`;
+  const dockerTimeoutResult = spawnSync("powershell.exe", [
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+    Buffer.from(dockerTimeoutProbe, "utf16le").toString("base64")
+  ], { cwd: appRoot, encoding: "utf8", timeout: 15000 });
+  assert.equal(
+    dockerTimeoutResult.status,
+    0,
+    `${dockerTimeoutResult.stdout}\n${dockerTimeoutResult.stderr}`
+  );
+
+  const managedWorkerMatchProbe = `$source = Get-Content -LiteralPath '${paths.controller.replace(/'/gu, "''")}' -Raw -Encoding UTF8
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+foreach ($name in @("Test-AisManagedWorkerCommandLine", "Test-AisDockerInfoProbeCommandLine")) {
+  $functionAst = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true)
+  if (-not $functionAst) { throw "Missing function: $name" }
+  Invoke-Expression $functionAst.Extent.Text
+}
+$expected = "C:\\AIS Root\\scripts\\ais-service-host.ps1"
+$matching = 'powershell.exe "-NoProfile" "-File" "' + $expected + '" "-AppRoot" "C:\\AIS Root"'
+if (-not (Test-AisManagedWorkerCommandLine $matching $expected)) {
+  throw "The exact managed worker command line was not recognized."
+}
+$different = 'powershell.exe -NoProfile -File "' + $expected + '.backup" -AppRoot "C:\\AIS Root"'
+if (Test-AisManagedWorkerCommandLine $different $expected) {
+  throw "A different worker script was treated as an AIS managed worker."
+}
+$mentionedOnly = 'powershell.exe -NoProfile -File "C:\\Tools\\inspect.ps1" "' + $expected + '"'
+if (Test-AisManagedWorkerCommandLine $mentionedOnly $expected) {
+  throw "A worker path mentioned only as data was treated as the launched script."
+}
+$dockerProbe = '"C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe" info --format {{.ServerVersion}}'
+if (-not (Test-AisDockerInfoProbeCommandLine $dockerProbe)) {
+  throw "The exact Docker engine probe command line was not recognized."
+}
+if (Test-AisDockerInfoProbeCommandLine 'docker.exe ps --format {{.ServerVersion}}') {
+  throw "An unrelated Docker command was treated as the engine probe."
+}`;
+  const managedWorkerMatchResult = spawnSync("powershell.exe", [
+    "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+    Buffer.from(managedWorkerMatchProbe, "utf16le").toString("base64")
+  ], { cwd: appRoot, encoding: "utf8", timeout: 10000 });
+  assert.equal(
+    managedWorkerMatchResult.status,
+    0,
+    `${managedWorkerMatchResult.stdout}\n${managedWorkerMatchResult.stderr}`
+  );
 
   const hiddenPowerShellProbe = `$source = Get-Content -LiteralPath '${paths.host.replace(/'/gu, "''")}' -Raw -Encoding UTF8
 $tokens = $null

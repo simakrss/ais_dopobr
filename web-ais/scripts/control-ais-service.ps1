@@ -322,7 +322,7 @@ function Test-AisPortListener([int]$Port) {
     Select-Object -First 1)
 }
 
-function Get-AisManagedNodeProcesses {
+function Get-AisExpectedAppRoots {
   $roots = New-Object Collections.Generic.List[string]
   $roots.Add([IO.Path]::GetFullPath($appRoot))
   if (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf) {
@@ -341,6 +341,11 @@ function Get-AisManagedNodeProcesses {
       Write-Warning "Не удалось прочитать конфигурацию службы для проверки процессов: $($_.Exception.Message)"
     }
   }
+  return @($roots | Select-Object -Unique)
+}
+
+function Get-AisManagedNodeProcesses {
+  $roots = @(Get-AisExpectedAppRoots)
   $expectedPaths = @($roots | ForEach-Object {
     $rootPath = $_
     @("scripts\start-lan-system.js", "app-server.js", "local-server.js") | ForEach-Object {
@@ -355,10 +360,159 @@ function Get-AisManagedNodeProcesses {
   })
 }
 
+function Test-AisManagedWorkerCommandLine([string]$CommandLine, [string]$ExpectedScriptPath) {
+  if (
+    [string]::IsNullOrWhiteSpace($CommandLine) -or
+    [string]::IsNullOrWhiteSpace($ExpectedScriptPath)
+  ) {
+    return $false
+  }
+  $normalizedCommandLine = $CommandLine.Replace("/", "\")
+  $normalizedScriptPath = [IO.Path]::GetFullPath($ExpectedScriptPath).Replace("/", "\")
+  $escapedScriptPath = [regex]::Escape($normalizedScriptPath)
+  $pattern = '(?i)(?:^|\s)"?-file"?(?:\s+|:)(?:"' + $escapedScriptPath + '"|' + `
+    $escapedScriptPath + ')(?:\s|$)'
+  return [regex]::IsMatch($normalizedCommandLine, $pattern)
+}
+
+function Get-AisExpectedWorkerScriptPaths {
+  $expectedPaths = New-Object Collections.Generic.List[string]
+  foreach ($rootPath in @(Get-AisExpectedAppRoots)) {
+    $candidate = [IO.Path]::GetFullPath([IO.Path]::Combine($rootPath, "scripts\ais-service-host.ps1"))
+    if (-not $expectedPaths.Contains($candidate)) { $expectedPaths.Add($candidate) }
+  }
+  $protectedCandidate = [IO.Path]::GetFullPath((Join-Path $programDataRoot "ais-service-host.ps1"))
+  if (-not $expectedPaths.Contains($protectedCandidate)) { $expectedPaths.Add($protectedCandidate) }
+  if (Test-Path -LiteralPath $serviceConfigPath -PathType Leaf) {
+    try {
+      $serviceConfig = Get-Content -LiteralPath $serviceConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($serviceConfig.PSObject.Properties["serviceHostScript"]) {
+        $configuredPath = [string]$serviceConfig.serviceHostScript
+        if (-not [string]::IsNullOrWhiteSpace($configuredPath)) {
+          $configuredPath = [IO.Path]::GetFullPath($configuredPath)
+          if (-not $expectedPaths.Contains($configuredPath)) { $expectedPaths.Add($configuredPath) }
+        }
+      }
+    } catch {
+      Write-Warning "Не удалось прочитать путь рабочего сценария из конфигурации службы: $($_.Exception.Message)"
+    }
+  }
+  return @($expectedPaths | Select-Object -Unique)
+}
+
+function Get-AisManagedWorkerProcesses {
+  $expectedPaths = @(Get-AisExpectedWorkerScriptPaths)
+  return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $processName = [string]$_.Name
+    if ($processName -notin @("powershell.exe", "pwsh.exe")) { return $false }
+    $commandLine = [string]$_.CommandLine
+    return @($expectedPaths | Where-Object {
+      Test-AisManagedWorkerCommandLine $commandLine $_
+    }).Count -gt 0
+  })
+}
+
+function Test-AisDockerInfoProbeCommandLine([string]$CommandLine) {
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+  $normalizedCommandLine = $CommandLine.Replace("/", "\")
+  return [regex]::IsMatch(
+    $normalizedCommandLine,
+    '(?i)(?:^|\\)docker\.exe"?\s+info\s+--format\s+"?\{\{\.ServerVersion\}\}"?(?:\s|$)'
+  )
+}
+
+function Get-AisProcessCreationTime($ProcessInfo) {
+  if ($null -eq $ProcessInfo -or $null -eq $ProcessInfo.CreationDate) { return $null }
+  try {
+    return [datetime]$ProcessInfo.CreationDate
+  } catch {
+    return $null
+  }
+}
+
+function Stop-AisManagedWorkerProcessTreeById([int]$ProcessId, [string]$Message) {
+  if ($ProcessId -le 0 -or $ProcessId -eq $PID) { return $false }
+  $stillManaged = @(Get-AisManagedWorkerProcesses | Where-Object {
+    [int]$_.ProcessId -eq $ProcessId
+  }).Count -gt 0
+  if (-not $stillManaged) { return $false }
+  if (-not [string]::IsNullOrWhiteSpace($Message)) { Write-Host $Message }
+  $taskkillPath = Join-Path $systemDirectory "taskkill.exe"
+  & $taskkillPath /PID $ProcessId /T /F *> $null
+  return $true
+}
+
+function Stop-AisManagedWorkerProcessTrees {
+  foreach ($candidate in @(Get-AisManagedWorkerProcesses)) {
+    $processId = [int]$candidate.ProcessId
+    [void](Stop-AisManagedWorkerProcessTreeById $processId `
+      "Остановка рабочего процесса АИС (PID $processId)...")
+  }
+}
+
+function Get-AisStaleDockerProbeWorkers([int]$MinimumAgeSeconds = 30) {
+  $managedWorkers = @(Get-AisManagedWorkerProcesses)
+  if ($managedWorkers.Count -eq 0) { return @() }
+  $workersById = @{}
+  foreach ($worker in $managedWorkers) {
+    $workersById[[int]$worker.ProcessId] = $worker
+  }
+  $now = Get-Date
+  return @(Get-CimInstance Win32_Process -Filter "Name='docker.exe'" -ErrorAction SilentlyContinue |
+    Where-Object {
+      $parentProcessId = [int]$_.ParentProcessId
+      if (-not $workersById.ContainsKey($parentProcessId)) { return $false }
+      if (-not (Test-AisDockerInfoProbeCommandLine ([string]$_.CommandLine))) { return $false }
+      $createdAt = Get-AisProcessCreationTime $_
+      return $null -ne $createdAt -and ($now - $createdAt).TotalSeconds -ge $MinimumAgeSeconds
+    } | ForEach-Object {
+      [pscustomobject]@{
+        Worker = $workersById[[int]$_.ParentProcessId]
+        Probe = $_
+      }
+    })
+}
+
+function Stop-AisStaleDockerProbeWorkers([int]$MinimumAgeSeconds = 30) {
+  $stoppedAny = $false
+  foreach ($candidate in @(Get-AisStaleDockerProbeWorkers $MinimumAgeSeconds)) {
+    $workerProcessId = [int]$candidate.Worker.ProcessId
+    $probeProcessId = [int]$candidate.Probe.ProcessId
+
+    $currentWorker = @(Get-AisManagedWorkerProcesses | Where-Object {
+      [int]$_.ProcessId -eq $workerProcessId
+    } | Select-Object -First 1)
+    if ($currentWorker.Count -eq 0) { continue }
+
+    $currentProbe = Get-CimInstance Win32_Process -Filter "ProcessId=$probeProcessId" -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if (
+      -not $currentProbe -or
+      [string]$currentProbe.Name -ine "docker.exe" -or
+      [int]$currentProbe.ParentProcessId -ne $workerProcessId -or
+      -not (Test-AisDockerInfoProbeCommandLine ([string]$currentProbe.CommandLine))
+    ) {
+      continue
+    }
+    $createdAt = Get-AisProcessCreationTime $currentProbe
+    if ($null -eq $createdAt -or ((Get-Date) - $createdAt).TotalSeconds -lt $MinimumAgeSeconds) {
+      continue
+    }
+
+    $message = "Обнаружена зависшая проверка Docker (PID $probeProcessId); " + `
+      "устаревший рабочий процесс АИС (PID $workerProcessId) будет перезапущен."
+    if (Stop-AisManagedWorkerProcessTreeById $workerProcessId $message) {
+      $stoppedAny = $true
+    }
+  }
+  return $stoppedAny
+}
+
 function Get-AisStopResidue {
   return [pscustomobject]@{
     Ports = @(@(8081, 19081) | Where-Object { Test-AisPortListener $_ })
     Processes = @(Get-AisManagedNodeProcesses)
+    WorkerProcesses = @(Get-AisManagedWorkerProcesses)
   }
 }
 
@@ -403,6 +557,14 @@ function Request-AisWorkerStart {
   }
   if ([string]$workerTask.State -eq "Running") {
     Write-Host "Рабочий процесс АИС уже выполняется."
+    return $true
+  }
+  if (Stop-AisStaleDockerProbeWorkers 30) {
+    Start-Sleep -Milliseconds 500
+  }
+  $managedWorkers = @(Get-AisManagedWorkerProcesses)
+  if ($managedWorkers.Count -gt 0) {
+    Write-Host "Рабочий процесс АИС уже запущен (PID $(@($managedWorkers.ProcessId) -join ', '))."
     return $true
   }
   Write-Host "Запуск рабочего процесса АИС..."
@@ -728,6 +890,9 @@ function Start-AisService {
 function Stop-AisService {
   $service = Get-AisService
   if (-not $service) {
+    Stop-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    Stop-AisManagedWorkerProcessTrees
     if (Test-Path -LiteralPath $legacyStopPath -PathType Leaf) {
       Write-Host "Служба не установлена; останавливается прежний локальный запуск с сохранением Docker."
       & $powerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $legacyStopPath -KeepDocker
@@ -751,18 +916,31 @@ function Stop-AisService {
   }
   Stop-ScheduledTask -TaskName $workerTaskName -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
+  Stop-AisManagedWorkerProcessTrees
+  Start-Sleep -Milliseconds 500
   $residue = Get-AisStopResidue
-  if ($residue.Ports.Count -gt 0 -or $residue.Processes.Count -gt 0) {
+  if (
+    $residue.Ports.Count -gt 0 -or
+    $residue.Processes.Count -gt 0 -or
+    $residue.WorkerProcesses.Count -gt 0
+  ) {
     Write-Host "Обнаружены оставшиеся компоненты АИС; выполняется повторная защищённая очистка..."
     Invoke-AisProtectedCleanup
     Start-Sleep -Milliseconds 500
     $residue = Get-AisStopResidue
   }
-  if ($residue.Ports.Count -gt 0 -or $residue.Processes.Count -gt 0) {
+  if (
+    $residue.Ports.Count -gt 0 -or
+    $residue.Processes.Count -gt 0 -or
+    $residue.WorkerProcesses.Count -gt 0
+  ) {
     $details = New-Object Collections.Generic.List[string]
     if ($residue.Ports.Count -gt 0) { $details.Add("порты $($residue.Ports -join ', ')") }
     if ($residue.Processes.Count -gt 0) {
       $details.Add("процессы PID $(@($residue.Processes.ProcessId) -join ', ')")
+    }
+    if ($residue.WorkerProcesses.Count -gt 0) {
+      $details.Add("рабочие процессы PID $(@($residue.WorkerProcesses.ProcessId) -join ', ')")
     }
     throw "Служба Windows остановлена, но компоненты АИС ещё работают ($($details -join '; ')). Откройте окно журнала запуска."
   }

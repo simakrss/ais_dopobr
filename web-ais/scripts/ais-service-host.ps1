@@ -206,11 +206,120 @@ function Find-DockerCli {
     Select-Object -First 1
 }
 
-function Test-DockerEngine([string]$DockerPath) {
+function Stop-ProcessTree([Diagnostics.Process]$Process, [int]$TimeoutMilliseconds = 5000) {
+  if ($null -eq $Process) { return }
+  try {
+    $processId = [int]$Process.Id
+  } catch {
+    return
+  }
+
+  $taskkillPath = Join-Path ([Environment]::SystemDirectory) "taskkill.exe"
+  if (Test-Path -LiteralPath $taskkillPath -PathType Leaf) {
+    $killInfo = New-Object Diagnostics.ProcessStartInfo
+    $killInfo.FileName = $taskkillPath
+    $killInfo.Arguments = "/PID $processId /T /F"
+    $killInfo.UseShellExecute = $false
+    $killInfo.CreateNoWindow = $true
+    $killInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $killInfo.RedirectStandardOutput = $true
+    $killInfo.RedirectStandardError = $true
+    $killProcess = New-Object Diagnostics.Process
+    $killProcess.StartInfo = $killInfo
+    try {
+      if ($killProcess.Start()) {
+        $killOutputTask = $killProcess.StandardOutput.ReadToEndAsync()
+        $killErrorTask = $killProcess.StandardError.ReadToEndAsync()
+        if (-not $killProcess.WaitForExit($TimeoutMilliseconds)) {
+          try { $killProcess.Kill() } catch { }
+          [void]$killProcess.WaitForExit(1000)
+        }
+        [void]$killOutputTask.Wait(1000)
+        [void]$killErrorTask.Wait(1000)
+      }
+    } catch {
+      # A direct kill below still prevents the probe itself from holding startup forever.
+    } finally {
+      $killProcess.Dispose()
+    }
+  }
+
+  try {
+    $Process.Refresh()
+    if (-not $Process.HasExited) {
+      $Process.Kill()
+      [void]$Process.WaitForExit($TimeoutMilliseconds)
+    }
+  } catch {
+    # The process may already have exited after taskkill.
+  }
+}
+
+function Invoke-ProcessWithTimeout(
+  [string]$FilePath,
+  [string[]]$Arguments,
+  [int]$TimeoutMilliseconds
+) {
+  if ([string]::IsNullOrWhiteSpace($FilePath)) {
+    throw "Не указан путь к запускаемому процессу."
+  }
+  if ($TimeoutMilliseconds -lt 1) {
+    throw "Тайм-аут процесса должен быть больше нуля."
+  }
+
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $FilePath
+  $startInfo.Arguments = (@($Arguments) | ForEach-Object {
+    Quote-ProcessArgument ([string]$_)
+  }) -join " "
+  $startInfo.WorkingDirectory = $resolvedAppRoot
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $startInfo.StandardOutputEncoding = $utf8
+  $startInfo.StandardErrorEncoding = $utf8
+
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $startInfo
+  try {
+    if (-not $process.Start()) {
+      throw "Не удалось запустить процесс: $FilePath"
+    }
+    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+      Stop-ProcessTree $process
+      [void]$standardOutputTask.Wait(2000)
+      [void]$standardErrorTask.Wait(2000)
+      return [pscustomobject]@{
+        TimedOut = $true
+        ExitCode = $null
+      }
+    }
+    $process.WaitForExit()
+    [void]$standardOutputTask.GetAwaiter().GetResult()
+    [void]$standardErrorTask.GetAwaiter().GetResult()
+    return [pscustomobject]@{
+      TimedOut = $false
+      ExitCode = [int]$process.ExitCode
+    }
+  } finally {
+    $process.Dispose()
+  }
+}
+
+function Test-DockerEngine([string]$DockerPath, [int]$TimeoutSeconds = 8) {
   if ([string]::IsNullOrWhiteSpace($DockerPath)) { return $false }
   try {
-    & $DockerPath info --format "{{.ServerVersion}}" *> $null
-    return $LASTEXITCODE -eq 0
+    $timeoutMilliseconds = [Math]::Max(1, $TimeoutSeconds) * 1000
+    $result = Invoke-ProcessWithTimeout $DockerPath @("info", "--format", "{{.ServerVersion}}") $timeoutMilliseconds
+    if ($result.TimedOut) {
+      Write-ServiceStep "Проверка Docker превысила $TimeoutSeconds сек. Зависший процесс docker.exe остановлен вместе с дочерними процессами."
+      return $false
+    }
+    return $result.ExitCode -eq 0
   } catch {
     return $false
   }
@@ -231,7 +340,9 @@ function Find-DockerDesktop {
 }
 
 function Wait-DockerEngine([string]$DockerPath, [int]$TimeoutSeconds = 90) {
-  if (Test-DockerEngine $DockerPath) { return $true }
+  $effectiveTimeoutSeconds = [Math]::Max(1, $TimeoutSeconds)
+  $deadline = (Get-Date).AddSeconds($effectiveTimeoutSeconds)
+  if (Test-DockerEngine $DockerPath ([Math]::Min(8, $effectiveTimeoutSeconds))) { return $true }
   $desktopPath = Find-DockerDesktop
   if (-not $desktopPath) { return $false }
   if (-not (Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue)) {
@@ -241,10 +352,14 @@ function Wait-DockerEngine([string]$DockerPath, [int]$TimeoutSeconds = 90) {
   } else {
     Write-ServiceStep "Ожидание готовности Docker Desktop..."
   }
-  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    if (Test-DockerEngine $DockerPath) { return $true }
-    Start-Sleep -Seconds 2
+    $remainingSeconds = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+    if ($remainingSeconds -le 0) { break }
+    if (Test-DockerEngine $DockerPath ([Math]::Min(8, $remainingSeconds))) { return $true }
+    $remainingMilliseconds = [int][Math]::Floor(($deadline - (Get-Date)).TotalMilliseconds)
+    if ($remainingMilliseconds -gt 0) {
+      Start-Sleep -Milliseconds ([Math]::Min(2000, $remainingMilliseconds))
+    }
   }
   return $false
 }
