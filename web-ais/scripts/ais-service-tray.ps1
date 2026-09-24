@@ -93,6 +93,8 @@ $script:startItem = $null
 $script:stopItem = $null
 $script:restartItem = $null
 $script:exitItem = $null
+$script:aboutForm = $null
+$script:aboutStatus = $null
 
 function Write-TrayError([string]$Message) {
   try {
@@ -324,6 +326,131 @@ function Open-LogDirectory {
   }
 }
 
+function Get-AisReleaseInformation([string]$Root) {
+  $release = [ordered]@{ Version = "Не определена"; ReleaseDate = "Не определена" }
+  try {
+    # Read the same release declaration as the web interface, without executing JavaScript.
+    $source = [IO.File]::ReadAllText((Join-Path $Root "app.js"), [Text.Encoding]::UTF8)
+    $declaration = [regex]::Match($source, '(?s)\bconst\s+APPLICATION_RELEASE\s*=\s*Object\.freeze\(\s*\{(?<body>.*?)\}\s*\)')
+    if ($declaration.Success) {
+      $body = $declaration.Groups["body"].Value
+      $version = [regex]::Match($body, 'version\s*:\s*["''](?<value>\d+\.\d+\.\d+)["'']')
+      if ($version.Success) { $release.Version = $version.Groups["value"].Value }
+      $date = [regex]::Match($body, 'releasedAt\s*:\s*["''](?<value>\d{4}-\d{2}-\d{2})["'']')
+      $parsedDate = [datetime]::MinValue
+      if ($date.Success -and [datetime]::TryParseExact(
+        $date.Groups["value"].Value, "yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None, [ref]$parsedDate
+      )) {
+        $release.ReleaseDate = $parsedDate.ToString("dd.MM.yyyy")
+      }
+    }
+  } catch {
+    Write-TrayError "Не удалось прочитать сведения о версии АИС: $($_.Exception.Message)"
+  }
+  return [pscustomobject]$release
+}
+
+function New-AisAboutForm {
+  $release = Get-AisReleaseInformation $resolvedAppRoot
+  $form = New-Object Windows.Forms.Form
+  $form.Text = "О системе — АИС Допобразование"
+  $form.Font = [Drawing.Font]::new("Segoe UI", 10)
+  $form.AutoScaleMode = [Windows.Forms.AutoScaleMode]::Dpi
+  $form.FormBorderStyle = [Windows.Forms.FormBorderStyle]::FixedDialog
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.StartPosition = [Windows.Forms.FormStartPosition]::CenterScreen
+  $form.AutoSize = $true
+  $form.AutoSizeMode = [Windows.Forms.AutoSizeMode]::GrowAndShrink
+  $form.Padding = [Windows.Forms.Padding]::new(20)
+  $form.BackColor = [Drawing.Color]::White
+  $form.Icon = $script:stateIcons.running
+
+  $layout = New-Object Windows.Forms.TableLayoutPanel
+  $layout.AutoSize = $true
+  $layout.Dock = [Windows.Forms.DockStyle]::Fill
+  $layout.ColumnCount = 2
+  [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute, 160))
+  [void]$layout.ColumnStyles.Add([Windows.Forms.ColumnStyle]::new([Windows.Forms.SizeType]::Absolute, 420))
+  $form.Controls.Add($layout)
+
+  $title = New-Object Windows.Forms.Label
+  $title.Text = "АИС Допобразование"
+  $title.Font = [Drawing.Font]::new("Segoe UI", 15, [Drawing.FontStyle]::Bold)
+  $title.AutoSize = $true
+  $title.Margin = [Windows.Forms.Padding]::new(0, 0, 0, 18)
+  $layout.Controls.Add($title, 0, 0)
+  $layout.SetColumnSpan($title, 2)
+
+  $rows = [ordered]@{
+    "Версия" = $release.Version
+    "Дата выпуска" = $release.ReleaseDate
+    "Состояние" = $script:statusItem.Text -replace '^Состояние:\s*', ''
+    "Служба Windows" = $serviceName
+    "Компьютер" = [Environment]::MachineName
+    "Локальный адрес" = $localUrl
+    "Сайт" = "https://edu-plus.ru/lms/"
+    "Папка установки" = $resolvedAppRoot
+  }
+  $rowIndex = 1
+  foreach ($entry in $rows.GetEnumerator()) {
+    $label = New-Object Windows.Forms.Label
+    $label.Text = $entry.Key
+    $label.AutoSize = $true
+    $label.Margin = [Windows.Forms.Padding]::new(0, 4, 12, 8)
+    $layout.Controls.Add($label, 0, $rowIndex)
+
+    $value = New-Object Windows.Forms.TextBox
+    $value.Text = [string]$entry.Value
+    $value.ReadOnly = $true
+    $value.BorderStyle = [Windows.Forms.BorderStyle]::None
+    $value.BackColor = $form.BackColor
+    $value.Dock = [Windows.Forms.DockStyle]::Fill
+    $value.Margin = [Windows.Forms.Padding]::new(0, 4, 0, 8)
+    if ($entry.Key -eq "Папка установки") {
+      $value.Multiline = $true
+      $value.Height = 60
+    }
+    if ($entry.Key -eq "Состояние") { $value.Name = "aboutStatus" }
+    $layout.Controls.Add($value, 1, $rowIndex)
+    $rowIndex += 1
+  }
+
+  $closeButton = New-Object Windows.Forms.Button
+  $closeButton.Text = "Закрыть"
+  $closeButton.AutoSize = $true
+  $closeButton.Padding = [Windows.Forms.Padding]::new(12, 4, 12, 4)
+  $closeButton.Margin = [Windows.Forms.Padding]::new(0, 12, 0, 0)
+  $closeButton.Anchor = [Windows.Forms.AnchorStyles]::Right
+  $closeButton.add_Click({ param($sender, $eventArgs) $sender.FindForm().Close() })
+  $layout.Controls.Add($closeButton, 1, $rowIndex)
+  $form.AcceptButton = $closeButton
+  $form.CancelButton = $closeButton
+  return $form
+}
+
+function Show-AisAbout {
+  try {
+    if ($null -ne $script:aboutForm -and -not $script:aboutForm.IsDisposed) {
+      $script:aboutForm.Activate()
+      return
+    }
+    Update-TrayState
+    $script:aboutForm = New-AisAboutForm
+    $script:aboutStatus = $script:aboutForm.Controls.Find("aboutStatus", $true)[0]
+    $script:aboutForm.add_FormClosed({
+      $script:aboutStatus = $null
+      $script:aboutForm = $null
+    })
+    $script:aboutForm.Show()
+    $script:aboutForm.Activate()
+  } catch {
+    Write-TrayError $_.Exception.ToString()
+    Show-TrayMessage "Не удалось открыть сведения о системе" $_.Exception.Message ([Windows.Forms.ToolTipIcon]::Error)
+  }
+}
+
 function Complete-HealthProbe {
   if ($null -eq $script:healthTask -or -not $script:healthTask.IsCompleted) { return }
   try {
@@ -366,6 +493,9 @@ function Set-TrayVisual(
   $script:notifyIcon.Icon = $script:stateIcons[$State]
   $script:notifyIcon.Text = $ToolTip
   $script:statusItem.Text = "Состояние: $StatusText"
+  if ($null -ne $script:aboutStatus -and -not $script:aboutStatus.IsDisposed) {
+    $script:aboutStatus.Text = $StatusText
+  }
 
   $isPending = $ServiceStatus -in @("StartPending", "StopPending", "ContinuePending", "PausePending")
   $script:startItem.Enabled = (-not $isPending) -and ((-not $Installed) -or $ServiceStatus -eq "Stopped")
@@ -427,6 +557,9 @@ function Stop-TrayResources {
   if ($script:cleanupStarted) { return }
   $script:cleanupStarted = $true
   Remove-TrayReadyMarker
+  if ($null -ne $script:aboutForm) {
+    try { $script:aboutForm.Close() } catch { }
+  }
 
   if ($null -ne $script:pollTimer) {
     try { $script:pollTimer.Stop() } catch { }
@@ -502,6 +635,7 @@ namespace AisDopobr.Tray
   $script:restartItem = New-Object Windows.Forms.ToolStripMenuItem "Перезапустить"
   $terminalItem = New-Object Windows.Forms.ToolStripMenuItem "Окно терминала запуска"
   $folderItem = New-Object Windows.Forms.ToolStripMenuItem "Открыть папку журналов"
+  $aboutItem = New-Object Windows.Forms.ToolStripMenuItem "О системе"
   $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход"
   $script:exitItem.Enabled = $false
 
@@ -511,6 +645,7 @@ namespace AisDopobr.Tray
   $script:restartItem.add_Click({ Invoke-ControlAction "Restart" })
   $terminalItem.add_Click({ Open-LogTerminal })
   $folderItem.add_Click({ Open-LogDirectory })
+  $aboutItem.add_Click({ Show-AisAbout })
   $script:exitItem.add_Click({
     $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
     if ($null -eq $service -or [string]$service.Status -ne "Stopped") {
@@ -531,6 +666,7 @@ namespace AisDopobr.Tray
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
   [void]$script:contextMenu.Items.Add($terminalItem)
   [void]$script:contextMenu.Items.Add($folderItem)
+  [void]$script:contextMenu.Items.Add($aboutItem)
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
   [void]$script:contextMenu.Items.Add($script:exitItem)
 
