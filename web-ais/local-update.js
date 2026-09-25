@@ -103,7 +103,7 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
   if (release.components !== undefined && (!Array.isArray(release.components) || release.components.length > 100)) throw Error("Некорректный список компонентов.");
-  const requiredComponents=COMPONENTS.filter(name=>!["scripts/ais-msi-update.cs","local-update-windows.js"].includes(name)||compareVersions(release.version,"1.7.554")>=0);
+  const requiredComponents=COMPONENTS.filter(name=>name!=="local-update-windows.js"||compareVersions(release.version,"1.7.554")>=0);
   if (compareVersions(release.version, "1.7.551") >= 0 && requiredComponents.some(name => !release.components?.some(file => file.path === name))) throw Error("Неполный комплект компонентов обновления.");
   const seen = new Set(); let total = 0;
   for (const file of releaseFiles(release)) {

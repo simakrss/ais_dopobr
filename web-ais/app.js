@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.554",
+    version: "1.7.555",
     releasedAt: "2026-09-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.555",
+      releasedAt: "2026-09-25",
+      changes: ["Подписанный пакет обновления совместим с проверкой файлов в уже установленных версиях. Нативный MSI собирается на компьютере издателя, исходники его сборки не требуются на компьютерах пользователей."]
+    },
     {
       version: "1.7.554",
       releasedAt: "2026-09-25",

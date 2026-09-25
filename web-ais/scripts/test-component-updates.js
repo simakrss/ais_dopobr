@@ -3,7 +3,7 @@ const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("n
 const up=require("../local-update"),win=require("../windows-update-service"),root=path.resolve(__dirname,"..");
 const keys=crypto.generateKeyPairSync("ed25519"),key=keys.publicKey.export({type:"spki",format:"der"}).toString("base64");
 const sign=r=>{const b=Buffer.from(JSON.stringify(r));return{payload:b.toString("base64"),signature:crypto.sign(null,b,keys.privateKey).toString("base64")};};
-const release={protocol:1,version:"1.7.551",build:"test-components",commit:"b".repeat(40),files:[],components:[]};
+const release={protocol:1,version:"1.7.555",build:"test-components",commit:"b".repeat(40),files:[],components:[]};
 for(const [names,list]of [[up.FILES,release.files],[up.COMPONENTS,release.components]])for(const name of names){
   const bytes=fs.readFileSync(up.safeTarget(root,name));list.push({path:name,sha256:up.hash(bytes),size:bytes.length});
   if(name.endsWith(".js")||name.endsWith(".cjs"))new vm.Script(bytes.toString("utf8"),{filename:name});
@@ -22,6 +22,14 @@ for(const bad of ["../evil.ps1","storage/settings.json",".runtime/key","services
 const oldSource=cp.execFileSync("git",["show","b89ceaac:web-ais/local-update.js"],{cwd:path.dirname(root),encoding:"utf8"});
 const context={require,module:{exports:{}},Buffer,SharedArrayBuffer,Int32Array,Atomics,process,console};vm.runInNewContext(oldSource,context);
 assert.equal(context.module.exports.validateEnvelope(sign(release),key).version,release.version);
+// The deployed 1.7.553 validates components too. Publisher-only C# must not
+// enlarge its client allowlist; the service arrives inside the signed MSI.
+const fromGit=name=>cp.execFileSync("git",["show","54554950:web-ais/"+name],{cwd:path.dirname(root),encoding:"utf8"});
+const oldComponents={module:{exports:{}}};vm.runInNewContext(fromGit("local-update-components.js"),oldComponents);
+const rootRequire=require("node:module").createRequire(path.join(root,"local-update.js"));
+const oldRequire=Object.assign(name=>name==="./local-update-components.js"?oldComponents.module.exports:rootRequire(name),{cache:require.cache,resolve:rootRequire.resolve});
+const deployed={...context,require:oldRequire,module:{exports:{}}};vm.runInNewContext(fromGit("local-update.js"),deployed);
+assert.equal(deployed.module.exports.validateEnvelope(sign(release),key).version,release.version);
 for(const f of release.files)if(f.path.endsWith(".js"))new vm.Script(fs.readFileSync(path.join(root,f.path),"utf8"));
 const setup=fs.readFileSync(path.join(root,"scripts/enable-component-updates.ps1"),"utf8");
 assert.doesNotMatch(setup,/Register-ScheduledTask|Start-Process|Copy-Item/);
