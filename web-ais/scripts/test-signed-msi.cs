@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using AisDopobrWebService;
 internal static class MsiTests
@@ -44,11 +45,21 @@ internal static class MsiTests
                 string manifest=Path.Combine(Path.GetDirectoryName(args[1]),"latest.json");
                 descriptor=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(manifest));
                 SignedMsiUpdate.VerifyPackage(args[1],descriptor); checks++;
-                byte[] changed=File.ReadAllBytes(args[1]);changed[changed.Length-1]^=1;
-                Reject(()=>SignedMsiUpdate.VerifyBytes(changed,descriptor),"Tampered bytes accepted");
                 string scratch=Path.Combine(Path.GetTempPath(),"ais-msi-tamper-"+Guid.NewGuid().ToString("N")+".msi");
                 try {
-                    File.WriteAllBytes(scratch,changed);
+                    File.Copy(args[1],scratch);
+                    // Mutate an authenticated MSI table, not unused compound-file
+                    // padding (which Authenticode deliberately does not authenticate).
+                    uint database,view;
+                    Check(MsiOpenDatabase(scratch,new IntPtr(1),out database)==0,"Open test MSI for mutation");
+                    try {
+                        Check(MsiDatabaseOpenView(database,"UPDATE `Property` SET `Value`='1.7.999' WHERE `Property`='ProductVersion'",out view)==0,"Open mutation query");
+                        try {Check(MsiViewExecute(view,0)==0,"Mutate product version");}finally{MsiCloseHandle(view);}
+                        Check(MsiDatabaseCommit(database)==0,"Commit test mutation");
+                    }finally{MsiCloseHandle(database);}
+                    byte[] changed=File.ReadAllBytes(scratch);
+                    Reject(()=>SignedMsiUpdate.VerifyBytes(changed,descriptor),"Tampered bytes accepted");
+                    descriptor["size"]=changed.Length;
                     using(var sha=SHA256.Create())descriptor["sha256"]=BitConverter.ToString(sha.ComputeHash(changed)).Replace("-","").ToLowerInvariant();
                     Reject(()=>SignedMsiUpdate.VerifyPackage(scratch,descriptor),"Tampered MSI accepted with matching replacement hash");
                 } finally {File.Delete(scratch);}
@@ -56,4 +67,9 @@ internal static class MsiTests
             Console.WriteLine("PASS: "+checks+" native MSI security checks (no service changes)");return 0;
         } catch(Exception ex) { Console.Error.WriteLine(ex);return 1; }
     }
+    [DllImport("msi.dll",CharSet=CharSet.Unicode)]private static extern uint MsiOpenDatabase(string file,IntPtr persist,out uint database);
+    [DllImport("msi.dll",CharSet=CharSet.Unicode)]private static extern uint MsiDatabaseOpenView(uint database,string sql,out uint view);
+    [DllImport("msi.dll")]private static extern uint MsiViewExecute(uint view,uint record);
+    [DllImport("msi.dll")]private static extern uint MsiDatabaseCommit(uint database);
+    [DllImport("msi.dll")]private static extern uint MsiCloseHandle(uint handle);
 }
