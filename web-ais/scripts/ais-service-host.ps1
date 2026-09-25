@@ -434,14 +434,21 @@ try {
 }
 Write-ServiceStep "Рабочая папка: $resolvedAppRoot"
 Write-ServiceStep "Проверка обновлений GitHub и edu-plus.ru/lms..."
-try {
+$componentUpdate = $null
+$componentUpdatePath = Join-Path $programDataRoot 'component-update-status.json'
+if (Test-Path -LiteralPath $componentUpdatePath) {
+  try { $componentUpdate = Get-Content -LiteralPath $componentUpdatePath -Raw | ConvertFrom-Json } catch { }
+}
+if ($componentUpdate -and $componentUpdate.phase -eq 'restarting') {
+  Write-ServiceStep 'Запускается подписанный выпуск: повторное изменение файлов через Git/FTP отложено.'
+} else { try {
   $syncExitCode = Invoke-HiddenPowerShellScript $startupUpdatePath "UPDATE"
   if ($syncExitCode -ne 0) {
     Write-ServiceStep "Синхронизация завершилась с кодом $syncExitCode. Запуск продолжается на локальной версии."
   }
 } catch {
   Write-ServiceStep "Синхронизация сейчас недоступна: $($_.Exception.Message). Запуск продолжается на локальной версии."
-}
+} }
 if (-not (Test-AisServiceRunning)) {
   Write-ServiceStep "Служба остановлена во время обновления; запуск серверов отменён."
   exit 0

@@ -27,6 +27,8 @@ $resolvedAppRoot = [IO.Path]::GetFullPath($resolvedAppRoot)
 $logDirectory = Join-Path $resolvedAppRoot "tmp\lan-system"
 $faviconPath = Join-Path $resolvedAppRoot "favicon.ico"
 $trayReadyPath = Join-Path $logDirectory "tray-ready.json"
+$loadedTrayHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$loadedIconHash = if (Test-Path -LiteralPath $faviconPath) { (Get-FileHash -LiteralPath $faviconPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" }
 
 function Quote-ProcessArgument([string]$Value) {
   if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
@@ -112,7 +114,9 @@ function Write-TrayReadyMarker([string]$State, [string]$ServiceStatus) {
   try {
     [void][IO.Directory]::CreateDirectory($logDirectory)
     $document = [ordered]@{
-      schemaVersion = 1
+      schemaVersion = 2
+      scriptHash = $loadedTrayHash
+      iconHash = $loadedIconHash
       processId = $PID
       state = $State
       serviceStatus = $ServiceStatus
@@ -635,6 +639,9 @@ namespace AisDopobr.Tray
   $script:restartItem = New-Object Windows.Forms.ToolStripMenuItem "Перезапустить"
   $terminalItem = New-Object Windows.Forms.ToolStripMenuItem "Окно терминала запуска"
   $folderItem = New-Object Windows.Forms.ToolStripMenuItem "Открыть папку журналов"
+  $updateItem = New-Object Windows.Forms.ToolStripMenuItem "Проверить обновления"
+  $enableUpdatesItem = New-Object Windows.Forms.ToolStripMenuItem "Включить обновление компонентов…"
+  $enableUpdatesItem.Visible = -not [bool](Get-ScheduledTask -TaskName 'AisDopobrComponentUpdate' -ErrorAction SilentlyContinue)
   $aboutItem = New-Object Windows.Forms.ToolStripMenuItem "О системе"
   $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход"
   $script:exitItem.Enabled = $false
@@ -645,6 +652,20 @@ namespace AisDopobr.Tray
   $script:restartItem.add_Click({ Invoke-ControlAction "Restart" })
   $terminalItem.add_Click({ Open-LogTerminal })
   $folderItem.add_Click({ Open-LogDirectory })
+  $updateItem.add_Click({
+    try {
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $hostKey = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([Environment]::MachineName.ToLowerInvariant())) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+      $dir = Join-Path $resolvedAppRoot ('.runtime/local-updates/' + $hostKey.Substring(0,16))
+      [void][IO.Directory]::CreateDirectory($dir)
+      [IO.File]::WriteAllText((Join-Path $dir 'check-request.json'), ('{"requestedAt":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + '}'), $utf8)
+      Show-TrayMessage 'Обновление АИС' 'Запрошена проверка новой версии. Перед установкой появится предупреждение.'
+    } catch { Write-TrayError $_.Exception.Message }
+  })
+  $enableUpdatesItem.add_Click({
+    $scriptPath = Join-Path $resolvedAppRoot 'scripts/enable-component-updates.ps1'
+    [void](Start-HiddenPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',$scriptPath,'-AppRoot',$resolvedAppRoot))
+  })
   $aboutItem.add_Click({ Show-AisAbout })
   $script:exitItem.add_Click({
     $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
@@ -666,6 +687,8 @@ namespace AisDopobr.Tray
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
   [void]$script:contextMenu.Items.Add($terminalItem)
   [void]$script:contextMenu.Items.Add($folderItem)
+  [void]$script:contextMenu.Items.Add($updateItem)
+  [void]$script:contextMenu.Items.Add($enableUpdatesItem)
   [void]$script:contextMenu.Items.Add($aboutItem)
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
   [void]$script:contextMenu.Items.Add($script:exitItem)

@@ -13,7 +13,7 @@ const mockFs = { ...fs,
   unlinkSync(file) { unlinks.push(file); return fs.unlinkSync(file); }
 };
 const context = vm.createContext({
-  module: { exports: {} }, require: (name) => name === "node:fs" ? mockFs : require(name),
+  module: { exports: {} }, require: (name) => name === "node:fs" ? mockFs : require(name.startsWith('./') ? path.join(__dirname,'..',name) : name),
   process, Buffer, fetch, AbortSignal, setTimeout, clearTimeout,
   setInterval: (handler) => { heartbeat = handler; return { unref() {} }; }, clearInterval() {},
   Atomics: { wait: (_buffer, _index, _value, ms) => delays.push(ms) },

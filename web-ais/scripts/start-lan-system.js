@@ -849,6 +849,7 @@ function startDocumentServices(commonEnvironment) {
 
   try {
     console.log("Starting OCR and OnlyOffice containers...");
+    let buildReady = true;
     try {
       console.log("Проверка и автоматическая установка OCR: библиотеки и кириллические модели. При первой установке требуется интернет...");
       execFileSync(
@@ -863,6 +864,7 @@ function startDocumentServices(commonEnvironment) {
         },
       );
     } catch (_error) {
+      buildReady = false;
       console.log("Обновить OCR не удалось. Проверяется имеющийся движок; недостающие компоненты будут повторно установлены при следующем запуске.");
     }
     try {
@@ -880,7 +882,7 @@ function startDocumentServices(commonEnvironment) {
       verifyOcrContainer(dockerPath);
       ensureOnlyOfficeDocumentFonts(dockerPath);
       console.log("OCR and OnlyOffice containers are running from local images.");
-      return "running";
+      return buildReady ? "running" : "pending-update";
     } catch (_error) {
       console.log("Движок OCR не прошёл проверку. Выполняется автоматическое восстановление контейнера...");
     }
@@ -1108,6 +1110,10 @@ function shutdown(exitCode = 0) {
 
 async function main() {
   ensureDirectories();
+  if (argumentsLower.has("--refresh-document-services")) {
+    const result = startDocumentServices({ONLYOFFICE_JWT_SECRET:getOnlyOfficeSecret()});
+    process.exit(result === "running" ? 0 : 1);
+  }
   const launcherLock = await acquireLauncherGuard();
   if (!launcherLock.acquired) {
     const ownerSuffix = launcherLock.ownerPid > 0 ? ` (PID ${launcherLock.ownerPid})` : "";
@@ -1124,6 +1130,7 @@ async function main() {
   const updaterModule = require("../local-update.js");
   const updateHooks = {
     async idle() {
+      if (managedChildren.has("documentServicesUpdate")) return false;
       try {
         const response = await fetch("http://127.0.0.1:19081/api/local-update/runtime", {
           headers:{"x-ais-gateway-token":commonEnvironment.AIS_GATEWAY_SHARED_SECRET},signal:AbortSignal.timeout(5000)
@@ -1167,6 +1174,8 @@ async function main() {
   const offlineState = readOfflineStateStatus();
   const status = {
     startedAt: new Date().toISOString(),
+    version: updaterModule.version(appRoot),
+    supervisorHash: updaterModule.hash(fs.readFileSync(__filename)),
     computerName: os.hostname(),
     launcherPid: process.pid,
     appServerPid: 0,
@@ -1256,6 +1265,27 @@ async function main() {
       } catch(error) {console.error("Не удалось перезагрузить модуль обновлений: "+error.message);}
     }
   }, 5000);
+  // Docker can become available after login. Refresh the delivered service code
+  // without blocking the supervisor event loop; never rebuild during user jobs.
+  setInterval(async () => {
+    if(shuttingDown || monitorBusy || localUpdater.maintenance() || status.documentServices === "running"
+      || managedChildren.has("documentServicesUpdate") || !await updateHooks.idle())return;
+    const log=fs.openSync(path.join(logRoot,"document-services-update.log"),"a");
+    let child;
+    try{child=spawn(process.execPath,[__filename,"--refresh-document-services"],{
+      cwd:appRoot,windowsHide:true,env:{...process.env,...commonEnvironment},stdio:["ignore",log,log]
+    });}finally{fs.closeSync(log);}
+    managedChildren.set("documentServicesUpdate",child);
+    child.once("error",error=>{
+      managedChildren.delete("documentServicesUpdate");
+      status.documentServices="pending-update";writeStatus(status);
+      console.error("Обновление OCR/PDF: "+error.message);
+    });
+    child.once("exit",code=>{
+      managedChildren.delete("documentServicesUpdate");
+      status.documentServices=code===0?"running":"pending-update";writeStatus(status);
+    });
+  },300000);
 }
 
 process.on("SIGINT", () => shutdown(0));

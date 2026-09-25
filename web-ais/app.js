@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.550",
-    releasedAt: "2026-09-24"
+    version: "1.7.551",
+    releasedAt: "2026-09-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.551",
+      releasedAt: "2026-09-25",
+      changes: ["Подписанное автообновление включает все программные компоненты, OCR/PDF, службы Windows, значок и меню трея. Добавлены проверка запуска нового супервизора и трея, защищённый установщик компонентов и проверка обновлений из меню значка. Настройки и документы сохраняются."]
+    },
     {
       version: "1.7.550",
       releasedAt: "2026-09-24",

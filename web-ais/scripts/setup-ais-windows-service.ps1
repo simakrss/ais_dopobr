@@ -807,6 +807,10 @@ $configuration = [ordered]@{
 }
 $configuration | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $serviceConfigPath -Encoding UTF8
 
+Write-InstallStep "Включение подписанных обновлений службы и трея..."
+& $powerShellPath -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pathInfo.ServiceAppRoot 'scripts\enable-component-updates.ps1') -AppRoot $pathInfo.ServiceAppRoot -Elevated
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось включить обновление компонентов службы.' }
+
 if ($StartService) {
   Write-InstallStep "Запуск службы..."
   Start-Service -Name $serviceName

@@ -3,7 +3,7 @@
 (() => {
   let libraryPromise;
   function preload(baseUrl = document.baseURI) {
-    libraryPromise ||= import(new URL("pdfjs-core.js", baseUrl).href).catch(e => { libraryPromise = null; throw e; });
+    libraryPromise ||= import(new URL("pdfjs-core.js", baseUrl).href).then(() => globalThis.pdfjsLib).catch(e => { libraryPromise = null; throw e; });
     return libraryPromise;
   }
   function mount(host, blob, {fileName = "Документ.pdf", baseUrl = document.baseURI, externalControls = false, onRender = () => {}, onError = () => {}} = {}) {

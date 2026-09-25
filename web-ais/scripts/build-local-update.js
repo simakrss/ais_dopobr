@@ -13,17 +13,18 @@ if(process.argv.includes("--init-signing-key")) {
 }
 if(!fs.existsSync(keyFile)){console.log("SKIP: на этом компьютере нет ключа публикации обновлений.");process.exit(0);}
 const git=(...args)=>cp.execFileSync("git",["-C",repo,...args],{encoding:"utf8",windowsHide:true,stdio:["ignore","pipe","pipe"]}).trim();
-const files=update.FILES.map(name=>"web-ais/"+name);
+const allPaths=[...update.FILES,...update.COMPONENTS];
+const files=allPaths.map(name=>"web-ais/"+name);
 if(git("diff","HEAD","--name-only","--",...files))throw Error("Пакет не опубликован: в файлах программы есть незакоммиченные изменения.");
 for(const name of files)if(!git("ls-files","--",name))throw Error("Непроверенный файл пакета: "+name);
 const key=crypto.createPrivateKey(fs.readFileSync(keyFile));
 if(crypto.createPublicKey(key).export({format:"der",type:"spki"}).toString("base64")!==update.PUBLIC_KEY)throw Error("Ключ подписи не соответствует доверенному ключу программы.");
 const out=path.join(root,"updates");fs.mkdirSync(path.join(out,"files"),{recursive:true});
 const build=fs.readFileSync(path.join(root,"index.html"),"utf8").match(/const build = "([a-z0-9-]+)"/)[1];
-const release={protocol:1,version:update.version(root),build,commit:git("rev-parse","HEAD"),createdAt:new Date().toISOString(),files:[]};
-for(const name of update.FILES){
+const release={protocol:1,version:update.version(root),build,commit:git("rev-parse","HEAD"),createdAt:new Date().toISOString(),files:[],components:[]};
+for(const name of allPaths){
   const bytes=fs.readFileSync(update.safeTarget(root,name)),sha256=update.hash(bytes);
-  release.files.push({path:name,sha256,size:bytes.length});
+  (update.FILES.includes(name)?release.files:release.components).push({path:name,sha256,size:bytes.length});
   const target=path.join(out,"files",sha256+".bin");
   if(!fs.existsSync(target))fs.writeFileSync(target,bytes,{flag:"wx"});
   else if(update.hash(fs.readFileSync(target))!==sha256)throw Error("Повреждён пакет публикации.");
@@ -33,7 +34,7 @@ if(previous){
   const old=update.validateEnvelope(previous);
   if(update.compareVersions(release.version,old.version)<0)throw Error("Публикация более старой версии запрещена.");
   if(release.version===old.version){
-    if(JSON.stringify(release.files)!==JSON.stringify(old.files)||release.build!==old.build)throw Error("Изменённые файлы требуют повышения версии приложения.");
+    if(JSON.stringify(update.releaseFiles(release))!==JSON.stringify(update.releaseFiles(old))||release.build!==old.build)throw Error("Изменённые файлы требуют повышения версии приложения.");
     console.log("READY: "+old.version);process.exit(0);
   }
 }
@@ -41,4 +42,4 @@ const payload=Buffer.from(JSON.stringify(release));
 const envelope={payload:payload.toString("base64"),signature:crypto.sign(null,payload,key).toString("base64")};
 update.validateEnvelope(envelope);
 update.atomicJson(path.join(out,"latest.json"),envelope);
-console.log("READY: "+release.version+", файлов: "+release.files.length);
+console.log("READY: "+release.version+", файлов: "+update.releaseFiles(release).length);

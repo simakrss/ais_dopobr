@@ -5,6 +5,7 @@
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const BASE = "https://edu-plus.ru/lms/updates/";
 const PUBLIC_KEY = "MCowBQYDK2VwAyEARDRUcPC/vPdxq9MOFlSfwBJUJNEz58fA8Jxhiuz9sCE=";
+const COMPONENTS = require("./local-update-components.js");
 const FILES = Object.freeze([
   "app.js", "app-server.js", "auth-bootstrap.js", "index.html", "styles.css", "favicon.ico",
   "field-html-links.js", "document-workflow.js", "demo-mode-privacy.js", "local-server.js",
@@ -14,13 +15,14 @@ const FILES = Object.freeze([
   "program-site-generator.js", "program-site-certificates.js", "program-site-progress.js",
   "server-cli.js", "student-import-worker.js", "scripts/start-lan-system.js",
   "scripts/sync-student-database.ps1", "scripts/query-student-applications.ps1",
-  "scripts/generate-program-payment-registry.js"
+  "scripts/generate-program-payment-registry.js", "local-update-components.js", "windows-update-service.js"
 ]);
 const BLOCKING = new Set(["draining", "installing", "restarting", "rollback", "recovery-error"]);
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hostKey = crypto.createHash("sha256").update(os.hostname().toLowerCase()).digest("hex").slice(0, 16);
-const allowedPath = name => typeof name === "string" && (FILES.includes(name) || /^(?:[a-z][a-z0-9-]*\.(?:js|css|html)|scripts\/[a-z][a-z0-9-]*\.(?:js|ps1))$/.test(name));
+const allowedPath = name => typeof name === "string" && (FILES.includes(name) || COMPONENTS.includes(name) || /^(?:[a-z][a-z0-9-]*\.(?:js|css|html)|scripts\/[a-z][a-z0-9-]*\.(?:js|ps1))$/.test(name));
+const releaseFiles = release => [...release.files, ...(release.components || [])];
 const runtimeDir = root => path.join(root, ".runtime", "local-updates", hostKey);
 function readJson(file, fallback = null) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; } }
 const FILE_BUSY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
@@ -93,12 +95,15 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
   const release = JSON.parse(bytes.toString("utf8"));
   if (release.protocol !== 1 || !/^\d+\.\d+\.\d+$/.test(release.version) || !/^[a-z0-9-]{5,100}$/.test(release.build) || !/^[a-f0-9]{40}$/.test(release.commit)) throw Error("Неподдерживаемое обновление.");
   // Verify historical manifests during publishing too; the relay first ships in 1.7.542.
-  const requiredFiles = FILES.filter(name => (name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0)
+  const requiredFiles = FILES.filter(name => (!["local-update-components.js", "windows-update-service.js"].includes(name) || compareVersions(release.version, "1.7.551") >= 0)
+    && (name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0)
     && (!(name === "pdf-preview.js" || name.startsWith("pdfjs-")) || compareVersions(release.version, "1.7.543") >= 0)
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
+  if (release.components !== undefined && (!Array.isArray(release.components) || release.components.length > 100)) throw Error("Некорректный список компонентов.");
+  if (compareVersions(release.version, "1.7.551") >= 0 && COMPONENTS.some(name => !release.components?.some(file => file.path === name))) throw Error("Неполный комплект компонентов обновления.");
   const seen = new Set(); let total = 0;
-  for (const file of release.files) {
+  for (const file of releaseFiles(release)) {
     if (!allowedPath(file.path) || seen.has(file.path) || !/^[a-f0-9]{64}$/.test(file.sha256)
       || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 32*1024*1024) throw Error("Некорректный состав обновления.");
     seen.add(file.path); total += file.size;
@@ -117,6 +122,13 @@ async function download(url, maxBytes, fetcher = fetch) {
 }
 function readStatus(root) {
   const status = readJson(path.join(runtimeDir(root), "status.json"), {phase:"idle"});
+  if(process.platform==="win32"){
+    const windows=require("./windows-update-service.js");
+    const native=windows.configured(root)?windows.state():null;
+    if(native && native.version===version(root) && Date.now()-native.updatedAt<1200000 && ["restarting","error"].includes(native.phase)){
+      return {...status,...native,targetVersion:native.version,canRetry:native.phase==="error" && status.canRetry===true};
+    }
+  }
   // A durable journal is deliberately NOT expired: interrupted installs fail closed.
   if (fs.existsSync(path.join(runtimeDir(root), "journal.json")) && !BLOCKING.has(status.phase)) return {...status,phase:"recovery-error",label:"Восстановление прерванного обновления. Перезапустите систему."};
   if (status.phase !== "recovery-error" && BLOCKING.has(status.phase) && Date.now() - Number(status.updatedAt || 0) > 120000 && !fs.existsSync(path.join(runtimeDir(root), "journal.json"))) {
@@ -203,7 +215,7 @@ async function install(root, release, stage, hooks) {
     atomicJson(path.join(lock,"owner.json"),{host:hostKey,pid:process.pid});
     if(fs.existsSync(path.join(dir,"journal.json")))throw Error("Сначала восстановите прерванное обновление.");
     fs.mkdirSync(path.join(dir,"backups"),{recursive:true});
-    for(const file of release.files) {
+    for(const file of releaseFiles(release)) {
       const target=safeTarget(root,file.path), bytes=fs.readFileSync(path.join(stage,file.sha256));
       if(bytes.length!==file.size||hash(bytes)!==file.sha256)throw Error("Не совпала контрольная сумма: "+file.path);
       if(file.path.endsWith(".js"))new (require("node:vm").Script)(bytes.toString("utf8"),{filename:file.path});
@@ -223,7 +235,7 @@ async function install(root, release, stage, hooks) {
     hooks.report({phase:"restarting",label:"Перезапуск и проверка локальной системы"});
     await hooks.restart();
     if(version(root)!==release.version)throw Error("Новая версия не подтверждена.");
-    atomicJson(path.join(dir,"installed.json"),{version:release.version,commit:release.commit});
+    atomicJson(path.join(dir,"installed.json"),{version:release.version,commit:release.commit,componentsComplete:!!release.components});
     fs.unlinkSync(path.join(dir,"journal.json"));
   } catch(error) {
     if(fs.existsSync(path.join(dir,"journal.json"))) {
@@ -239,6 +251,11 @@ async function install(root, release, stage, hooks) {
   }
 }
 function createUpdater(root, hooks, options={}) {
+  // Defaults also activate components when an older supervisor hot-loads this module.
+  if(process.platform==="win32" && !options.fetcher){
+    const native=require("./windows-update-service.js");
+    hooks={needsActivation:release=>native.needsActivation(release,root),activate:(release,report)=>native.activate(release,report,root),...hooks};
+  }
   const dir=runtimeDir(root), fetcher=options.fetcher||fetch;
   const pollMs=options.pollMs??2000, warningMs=options.warningMs??30000, drainMs=options.drainMs??4000;
   const runningVersion=version(root);
@@ -255,22 +272,30 @@ function createUpdater(root, hooks, options={}) {
     if(running||disposed)return;
     // A durable recovery journal must never be bypassed by retry or background polling.
     if(state.phase==="recovery-error" || fs.existsSync(path.join(dir,"journal.json")))return;
+    const manualCheck=readJson(path.join(dir,"check-request.json"));
+    if(manualCheck?.requestedAt>Number(state.checkedAt||0) && manualCheck.requestedAt>Date.now()-60000){
+      nextCheck=0;fs.unlinkSync(path.join(dir,"check-request.json"));
+    }
     const retry=readJson(path.join(dir,"retry-request.json"));
     if(state.phase==="error" && state.errorId && retry?.errorId===state.errorId && retry.requestedAt>=state.updatedAt)nextCheck=0;
     if(Date.now()<nextCheck)return;
     running=true; nextCheck=Date.now()+300000+Math.floor(Math.random()*30000);
     try {
       const bytes=await download(BASE+"latest.json?check="+Date.now(),250000,fetcher);
-      const release=validateEnvelope(JSON.parse(bytes.toString("utf8")),options.publicKey||PUBLIC_KEY);
+      const envelope=JSON.parse(bytes.toString("utf8"));
+      const release=validateEnvelope(envelope,options.publicKey||PUBLIC_KEY);
+      const files=releaseFiles(release);
       const local=version(root), installed=readJson(path.join(dir,"installed.json"));
       // A shared/Yandex-synced folder may already contain new files while Node is
       // still executing the previous release. It still needs a coordinated restart.
-      if(compareVersions(release.version,runningVersion)<=0 || compareVersions(release.version,local)<0
+      const incomplete=release.components && installed?.componentsComplete!==true && release.components.some(file=>{const target=safeTarget(root,file.path);return !fs.existsSync(target)||hash(fs.readFileSync(target))!==file.sha256;});
+      const activationNeeded=hooks.needsActivation ? await hooks.needsActivation(release) : false;
+      if((compareVersions(release.version,runningVersion)<=0 && !incomplete && !activationNeeded) || compareVersions(release.version,local)<0
         || (installed && compareVersions(release.version,installed.version)<0)) {failures=0;report({phase:"idle",version:local,label:"Установлена актуальная версия",checkedAt:Date.now()});return;}
       const stage=path.join(dir,"staging",release.version); fs.mkdirSync(stage,{recursive:true});
-      report({phase:"downloading",targetVersion:release.version,label:"Загрузка обновления в фоновом режиме",completed:0,total:release.files.length});
+      report({phase:"downloading",targetVersion:release.version,label:"Загрузка обновления в фоновом режиме",completed:0,total:files.length});
       let completed=0;
-      for(const file of release.files) {
+      for(const file of files) {
         const target=safeTarget(root,file.path), cache=path.join(stage,file.sha256);
         let content=fs.existsSync(cache)?fs.readFileSync(cache):null;
         if(!content||hash(content)!==file.sha256) {
@@ -304,10 +329,12 @@ function createUpdater(root, hooks, options={}) {
       while(!(await hooks.idle())) {if(Date.now()>deadline)throw Error("Операции ещё выполняются. Установка отложена.");await wait(2000);}
       // A window may have opened a card during the last countdown tick.
       if(!clientsReady(root))throw Error("Есть незавершённая работа. Установка отложена.");
-      report({phase:"installing",label:"Установка обновления",completed:0,total:release.files.length});
+      report({phase:"installing",label:"Установка обновления",completed:0,total:files.length});
       await install(root,release,stage,{...hooks,report});
+      atomicJson(path.join(dir,"release.json"),envelope);
+      if(hooks.activate)await hooks.activate(release,report);
       updated=true;failures=0;
-      report({phase:"complete",version:release.version,build:release.build,label:"Обновление установлено. Перезагрузка интерфейса",completed:release.files.length,total:release.files.length});
+      report({phase:"complete",version:release.version,build:release.build,label:"Обновление установлено. Перезагрузка интерфейса",completed:files.length,total:files.length});
     } catch(error) {
       failures++;
       if(FILE_BUSY_CODES.has(error.code) && failures<=3)nextCheck=Date.now()+(options.retryMs??60000);
@@ -329,4 +356,4 @@ function createUpdater(root, hooks, options={}) {
   }
   return {check,recover,maintenance:()=>maintenance,didUpdate:()=>updated,dispose(){disposed=true;clearInterval(heartbeat);},checkNow(){nextCheck=0;return check();}};
 }
-module.exports={BASE,PUBLIC_KEY,FILES,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,requestUpdateRetry,retryFileOperation,updateErrorInfo,restore,install,createUpdater};
+module.exports={BASE,PUBLIC_KEY,FILES,COMPONENTS,releaseFiles,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,requestUpdateRetry,retryFileOperation,updateErrorInfo,restore,install,createUpdater};

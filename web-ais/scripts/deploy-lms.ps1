@@ -29,6 +29,8 @@ $runtimeMirrorFiles = @(
   "app-server.js",
   "document-relay.js",
   "local-update.js",
+  "local-update-components.js",
+  "windows-update-service.js",
   "document-workflow.js",
   "program-site-generator.js",
   "program-site-progress.js",
@@ -96,6 +98,8 @@ function Test-DeployablePath([string]$PathValue) {
     "program-site-certificates.js",
     "local-document-save-dialog.js",
     "local-update.js",
+    "local-update-components.js",
+    "windows-update-service.js",
     "local-update-client.js",
     "local-server.js",
     "gateway.php",
@@ -629,7 +633,9 @@ if (-not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -n
   if ($LASTEXITCODE -ne 0) { throw 'Не удалось подготовить подписанный пакет локального обновления.' }
   $envelope = Get-Content -LiteralPath (Join-Path $appRoot 'updates/latest.json') -Raw | ConvertFrom-Json
   $release = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json
-  $updateResults = foreach ($file in $release.files) {
+  $releaseFiles = @($release.files)
+  if ($release.PSObject.Properties['components']) { $releaseFiles += @($release.components) }
+  $updateResults = foreach ($file in $releaseFiles) {
     if ([string]$file.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Некорректный файл подписанного пакета.' }
     $relative = "updates/files/$($file.sha256).bin"
     Publish-FileTarget $relative "$remoteRoot/$relative" 'signed update payload'
@@ -643,7 +649,7 @@ if (-not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -n
     $bootstrapTemp = "$bootstrapPath.$([Guid]::NewGuid().ToString('N')).tmp"
     $archive = [IO.Compression.ZipFile]::Open($bootstrapTemp, [IO.Compression.ZipArchiveMode]::Create)
     try {
-      foreach ($file in $release.files) {
+      foreach ($file in $releaseFiles) {
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $appRoot $file.path), $file.path, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
       }
       [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $appRoot 'updates/latest.json'), 'update-manifest.json', [IO.Compression.CompressionLevel]::Optimal) | Out-Null

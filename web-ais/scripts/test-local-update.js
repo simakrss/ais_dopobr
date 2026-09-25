@@ -107,6 +107,14 @@ async function main(){
   // Files changed by an external folder sync; the old process still needs restarting.
   for(const file of shared.release.files)fs.writeFileSync(path.join(shared.root,file.path),shared.contents.get(file.sha256));
   await sharedUpdater.checkNow();sharedUpdater.dispose();assert.equal(sharedRestarts,1);
+  const partial=fixture();
+  for(const file of partial.release.files)fs.writeFileSync(path.join(partial.root,file.path),partial.contents.get(file.sha256));
+  const extra=Buffer.from('# new OCR component');const extraFile={path:'services/ocr/server.py',size:extra.length,sha256:up.hash(extra)};
+  partial.release.components=[extraFile];partial.contents.set(extraFile.sha256,extra);Object.assign(partial.envelope,sign(partial.release));
+  let componentRestarts=0;
+  const components=up.createUpdater(partial.root,{idle:async()=>true,restart:async()=>{componentRestarts++;}},{publicKey,fetcher:partial.fetcher,pollMs:1,warningMs:1,drainMs:1});
+  await components.checkNow();components.dispose();assert.equal(componentRestarts,1,'Same-version bootstrap must finish components');
+  assert.equal(fs.readFileSync(path.join(partial.root,extraFile.path),'utf8'),extra.toString());
   const retry=fixture();let deny=true,retryRestarts=0;
   const retryUpdater=up.createUpdater(retry.root,{idle:async()=>true,restart:async()=>{retryRestarts++;}},
     {publicKey,fetcher:async url=>{if(deny)throw Object.assign(Error("EPERM: rename private status.json"),{code:"EPERM"});return retry.fetcher(url);},pollMs:1,warningMs:1,drainMs:1});
