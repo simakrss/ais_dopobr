@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.552",
+    version: "1.7.553",
     releasedAt: "2026-09-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.553",
+      releasedAt: "2026-09-25",
+      changes: ["Отключён механизм автоматической замены защищённых компонентов Windows после блокировки антивирусом. Обновление файлов приложения сохранено. Исключения антивируса не требуются; заблокированные файлы не восстанавливаются."]
+    },
     {
       version: "1.7.552",
       releasedAt: "2026-09-25",

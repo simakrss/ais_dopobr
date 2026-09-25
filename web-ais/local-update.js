@@ -124,13 +124,6 @@ async function download(url, maxBytes, fetcher = fetch) {
 }
 function readStatus(root) {
   const status = readJson(path.join(runtimeDir(root), "status.json"), {phase:"idle"});
-  if(process.platform==="win32"){
-    const windows=require("./windows-update-service.js");
-    const native=windows.configured(root)?windows.state():null;
-    if(native && native.version===version(root) && Date.now()-native.updatedAt<1200000 && ["restarting","error"].includes(native.phase)){
-      return {...status,...native,targetVersion:native.version,canRetry:native.phase==="error" && status.canRetry===true};
-    }
-  }
   // A durable journal is deliberately NOT expired: interrupted installs fail closed.
   if (fs.existsSync(path.join(runtimeDir(root), "journal.json")) && !BLOCKING.has(status.phase)) return {...status,phase:"recovery-error",label:"Восстановление прерванного обновления. Перезапустите систему."};
   if (status.phase !== "recovery-error" && BLOCKING.has(status.phase) && Date.now() - Number(status.updatedAt || 0) > 120000 && !fs.existsSync(path.join(runtimeDir(root), "journal.json"))) {
@@ -253,11 +246,8 @@ async function install(root, release, stage, hooks) {
   }
 }
 function createUpdater(root, hooks, options={}) {
-  // Defaults also activate components when an older supervisor hot-loads this module.
-  if(process.platform==="win32" && !options.fetcher){
-    const native=require("./windows-update-service.js");
-    hooks={needsActivation:release=>native.needsActivation(release,root),activate:(release,report)=>native.activate(release,report,root),...hooks};
-  }
+  // Protected Windows binaries are not changed automatically: the elevated
+  // updater was withdrawn after antivirus blocked it. Never bypass that block.
   const dir=runtimeDir(root), fetcher=options.fetcher||fetch;
   const pollMs=options.pollMs??2000, warningMs=options.warningMs??30000, drainMs=options.drainMs??4000;
   const runningVersion=version(root);

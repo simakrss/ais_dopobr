@@ -640,8 +640,6 @@ namespace AisDopobr.Tray
   $terminalItem = New-Object Windows.Forms.ToolStripMenuItem "Окно терминала запуска"
   $folderItem = New-Object Windows.Forms.ToolStripMenuItem "Открыть папку журналов"
   $updateItem = New-Object Windows.Forms.ToolStripMenuItem "Проверить обновления"
-  $enableUpdatesItem = New-Object Windows.Forms.ToolStripMenuItem "Включить обновление компонентов…"
-  $enableUpdatesItem.Visible = -not [bool](Get-ScheduledTask -TaskName 'AisDopobrComponentUpdate' -ErrorAction SilentlyContinue)
   $aboutItem = New-Object Windows.Forms.ToolStripMenuItem "О системе"
   $script:exitItem = New-Object Windows.Forms.ToolStripMenuItem "Выход"
   $script:exitItem.Enabled = $false
@@ -661,10 +659,6 @@ namespace AisDopobr.Tray
       [IO.File]::WriteAllText((Join-Path $dir 'check-request.json'), ('{"requestedAt":' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + '}'), $utf8)
       Show-TrayMessage 'Обновление АИС' 'Запрошена проверка новой версии. Перед установкой появится предупреждение.'
     } catch { Write-TrayError $_.Exception.Message }
-  })
-  $enableUpdatesItem.add_Click({
-    $scriptPath = Join-Path $resolvedAppRoot 'scripts/enable-component-updates.ps1'
-    [void](Start-HiddenPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',$scriptPath,'-AppRoot',$resolvedAppRoot))
   })
   $aboutItem.add_Click({ Show-AisAbout })
   $script:exitItem.add_Click({
@@ -688,7 +682,6 @@ namespace AisDopobr.Tray
   [void]$script:contextMenu.Items.Add($terminalItem)
   [void]$script:contextMenu.Items.Add($folderItem)
   [void]$script:contextMenu.Items.Add($updateItem)
-  [void]$script:contextMenu.Items.Add($enableUpdatesItem)
   [void]$script:contextMenu.Items.Add($aboutItem)
   [void]$script:contextMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
   [void]$script:contextMenu.Items.Add($script:exitItem)

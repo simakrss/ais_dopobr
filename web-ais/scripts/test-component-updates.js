@@ -10,10 +10,10 @@ for(const [names,list]of [[up.FILES,release.files],[up.COMPONENTS,release.compon
 }
 assert.equal(new Set(up.releaseFiles(release).map(f=>f.path)).size,up.releaseFiles(release).length);
 assert.equal(up.validateEnvelope(sign(release),key).components.length,up.COMPONENTS.length);
-assert.equal(win.verify(sign(release),key).protectedFiles.length,Object.keys(win.PROTECTED).length);
-const tampered=sign(release);tampered.signature="AAAA";assert.throws(()=>win.verify(tampered,key),/signature/);
+assert.equal(win.configured(root),false);assert.equal(win.needsActivation(release,root),false);
+const tampered=sign(release);tampered.signature="AAAA";assert.throws(()=>up.validateEnvelope(tampered,key),/Подпись/);
 const missing=structuredClone(release);missing.components=missing.components.filter(f=>f.path!=="scripts/ais-windows-service.cs");
-assert.throws(()=>up.validateEnvelope(sign(missing),key),/Неполный/);assert.throws(()=>win.verify(sign(missing),key),/Missing/);
+assert.throws(()=>up.validateEnvelope(sign(missing),key),/Неполный/);
 for(const bad of ["../evil.ps1","storage/settings.json",".runtime/key","services/ocr/../../settings.json"]){
   const r=structuredClone(release);r.components.push({path:bad,size:1,sha256:"a".repeat(64)});assert.throws(()=>up.validateEnvelope(sign(r),key));
 }
@@ -24,13 +24,7 @@ const context={require,module:{exports:{}},Buffer,SharedArrayBuffer,Int32Array,A
 assert.equal(context.module.exports.validateEnvelope(sign(release),key).version,release.version);
 for(const f of release.files)if(f.path.endsWith(".js"))new vm.Script(fs.readFileSync(path.join(root,f.path),"utf8"));
 const setup=fs.readFileSync(path.join(root,"scripts/enable-component-updates.ps1"),"utf8");
-assert.match(setup,/-UserId 'SYSTEM'/);assert.match(setup,/GRGX/);assert.match(setup,/FileSystemRights\]::Write/);
+assert.doesNotMatch(setup,/Register-ScheduledTask|Start-Process|Copy-Item/);
 const tray=fs.readFileSync(path.join(root,"scripts/ais-service-tray.ps1"),"utf8");assert.match(tray,/scriptHash = \$loadedTrayHash/);assert.match(tray,/iconHash = \$loadedIconHash/);
-const configuredPaths={serviceAppRoot:'D:/installation',sourceAppRoot:'Y:/installation'};
-const mockFs={...fs,readFileSync:()=>JSON.stringify(configuredPaths),realpathSync:{native:p=>p==='Y:/installation'?'//server/shared/installation':p}};
-const aliasContext={module:{exports:{}},require:n=>n==='node:fs'?mockFs:require(n),process:{platform:'win32',env:{}},Buffer,__dirname:root};
-vm.runInNewContext(fs.readFileSync(path.join(root,'windows-update-service.js'),'utf8'),aliasContext);
-assert.equal(aliasContext.module.exports.configured('Y:/installation'),true);
-assert.equal(aliasContext.module.exports.configured('D:/installation'),true);
-assert.equal(aliasContext.module.exports.configured('D:/other-installation'),false);
-console.log(`PASS: ${up.releaseFiles(release).length} signed components, legacy bootstrap, syntax, scope/signature checks, protected service and tray verification`);
+assert.doesNotMatch(fs.readFileSync(path.join(root,'windows-update-service.js'),'utf8'),/child_process|execFile|schtasks|runProtected/);
+console.log(`PASS: ${up.releaseFiles(release).length} signed components, legacy bootstrap, syntax, scope/signature checks; elevated updater withdrawn`);
