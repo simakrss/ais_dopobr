@@ -17,6 +17,7 @@ Options -Indexes
   RewriteRule ^data(?:/|$) - [R=404,L]
   RewriteRule ^api(?:/|$) gateway.php [QSA,L]
   RewriteRule ^updates/(?:latest\.json|files/[a-f0-9]{64}\.bin)$ - [L]
+  RewriteRule ^updates/windows/(?:latest\.json|[a-f0-9]{64}\.msi)$ - [L]
   RewriteRule ^updates/install-[0-9]+\.[0-9]+\.[0-9]+\.zip$ - [L]
   RewriteRule ^local-update-client\.js$ - [L]
   RewriteRule ^(?:manifest\.webmanifest|pwa-client\.js|pwa-icon-(?:192|512|maskable)\.png|apple-touch-icon\.png)$ - [L]
