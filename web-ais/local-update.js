@@ -23,7 +23,9 @@ const BLOCKING = new Set(["draining", "installing", "restarting", "rollback", "r
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hostKey = crypto.createHash("sha256").update(os.hostname().toLowerCase()).digest("hex").slice(0, 16);
-const allowedPath = name => typeof name === "string" && (FILES.includes(name) || COMPONENTS.includes(name) || /^(?:[a-z][a-z0-9-]*\.(?:js|css|html)|scripts\/[a-z][a-z0-9-]*\.(?:js|ps1))$/.test(name));
+// Retain read/rollback support for the short-lived 1.7.554 source-code entry;
+// current manifests omit it so the deployed 1.7.553 allowlist can bootstrap.
+const allowedPath = name => typeof name === "string" && (FILES.includes(name) || COMPONENTS.includes(name) || name === "scripts/ais-msi-update.cs" || /^(?:[a-z][a-z0-9-]*\.(?:js|css|html)|scripts\/[a-z][a-z0-9-]*\.(?:js|ps1))$/.test(name));
 const releaseFiles = release => [...release.files, ...(release.components || [])];
 const runtimeDir = root => path.join(root, ".runtime", "local-updates", hostKey);
 function readJson(file, fallback = null) { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; } }
