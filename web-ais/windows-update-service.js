@@ -36,7 +36,12 @@ function configured(root){
   if(process.platform!=="win32")return false;
   const config=read(path.join(protectedRoot(),"service-config.json"));if(!config?.serviceAppRoot)return false;
   if(!root)return true;
-  try{return fs.realpathSync.native(root).toLowerCase()===fs.realpathSync.native(config.serviceAppRoot).toLowerCase();}catch{return false;}
+  try{
+    const actual=fs.realpathSync.native(root).toLowerCase();
+    return [config.serviceAppRoot,config.sourceAppRoot].filter(Boolean).some(candidate=>{
+      try{return actual===fs.realpathSync.native(candidate).toLowerCase();}catch{return false;}
+    });
+  }catch{return false;}
 }
 function needsActivation(release,root){
   if(!configured(root)||!release.components)return false;

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.551",
+    version: "1.7.552",
     releasedAt: "2026-09-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.552",
+      releasedAt: "2026-09-25",
+      changes: ["Обновление службы учитывает запуск через сетевой диск Y: и локальный путь той же установки. При обновлении механизма заново загружаются его служебные модули; настройки путей не изменяются."]
+    },
     {
       version: "1.7.551",
       releasedAt: "2026-09-25",

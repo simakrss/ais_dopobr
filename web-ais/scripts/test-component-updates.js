@@ -26,4 +26,11 @@ for(const f of release.files)if(f.path.endsWith(".js"))new vm.Script(fs.readFile
 const setup=fs.readFileSync(path.join(root,"scripts/enable-component-updates.ps1"),"utf8");
 assert.match(setup,/-UserId 'SYSTEM'/);assert.match(setup,/GRGX/);assert.match(setup,/FileSystemRights\]::Write/);
 const tray=fs.readFileSync(path.join(root,"scripts/ais-service-tray.ps1"),"utf8");assert.match(tray,/scriptHash = \$loadedTrayHash/);assert.match(tray,/iconHash = \$loadedIconHash/);
+const configuredPaths={serviceAppRoot:'D:/installation',sourceAppRoot:'Y:/installation'};
+const mockFs={...fs,readFileSync:()=>JSON.stringify(configuredPaths),realpathSync:{native:p=>p==='Y:/installation'?'//server/shared/installation':p}};
+const aliasContext={module:{exports:{}},require:n=>n==='node:fs'?mockFs:require(n),process:{platform:'win32',env:{}},Buffer,__dirname:root};
+vm.runInNewContext(fs.readFileSync(path.join(root,'windows-update-service.js'),'utf8'),aliasContext);
+assert.equal(aliasContext.module.exports.configured('Y:/installation'),true);
+assert.equal(aliasContext.module.exports.configured('D:/installation'),true);
+assert.equal(aliasContext.module.exports.configured('D:/other-installation'),false);
 console.log(`PASS: ${up.releaseFiles(release).length} signed components, legacy bootstrap, syntax, scope/signature checks, protected service and tray verification`);

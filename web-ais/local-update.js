@@ -5,6 +5,8 @@
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const BASE = "https://edu-plus.ru/lms/updates/";
 const PUBLIC_KEY = "MCowBQYDK2VwAyEARDRUcPC/vPdxq9MOFlSfwBJUJNEz58fA8Jxhiuz9sCE=";
+// The old supervisor hot-loads this file; its dependency cache must advance too.
+for(const dependency of ["./local-update-components.js","./windows-update-service.js"])delete require.cache[require.resolve(dependency)];
 const COMPONENTS = require("./local-update-components.js");
 const FILES = Object.freeze([
   "app.js", "app-server.js", "auth-bootstrap.js", "index.html", "styles.css", "favicon.ico",

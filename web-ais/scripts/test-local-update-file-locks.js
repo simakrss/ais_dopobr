@@ -12,8 +12,10 @@ const mockFs = { ...fs,
   },
   unlinkSync(file) { unlinks.push(file); return fs.unlinkSync(file); }
 };
+const codeRequire=require('node:module').createRequire(path.join(__dirname,'../local-update.js'));
+const mockRequire=Object.assign(name=>name==='node:fs'?mockFs:codeRequire(name),{resolve:codeRequire.resolve,cache:require.cache});
 const context = vm.createContext({
-  module: { exports: {} }, require: (name) => name === "node:fs" ? mockFs : require(name.startsWith('./') ? path.join(__dirname,'..',name) : name),
+  module: { exports: {} }, require: mockRequire,
   process, Buffer, fetch, AbortSignal, setTimeout, clearTimeout,
   setInterval: (handler) => { heartbeat = handler; return { unref() {} }; }, clearInterval() {},
   Atomics: { wait: (_buffer, _index, _value, ms) => delays.push(ms) },
