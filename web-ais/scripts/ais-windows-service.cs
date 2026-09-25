@@ -34,6 +34,9 @@ namespace AisDopobrWebService
         private readonly ManualResetEvent consoleExit = new ManualResetEvent(false);
 
         private Timer workerTimer;
+#if SIGNED_MSI_UPDATES
+        private SignedMsiUpdate componentUpdater;
+#endif
         private volatile bool stopping;
         private int stopStarted;
         private string lastSchedulerFailure;
@@ -91,6 +94,13 @@ namespace AisDopobrWebService
 
             ValidateConfiguration();
             OpenLog();
+#if SIGNED_MSI_UPDATES
+            // Only the publisher-signed MSI build includes the native updater.
+            if (!consoleMode) {
+                try { componentUpdater = new SignedMsiUpdate(appRoot, WriteLog); }
+                catch (Exception ex) { WriteLog("UPDATE", "MSI updates unavailable: " + ex.Message); }
+            }
+#endif
             WriteLog(
                 "SERVICE",
                 "Starting " + WindowsServiceName + ". Interactive worker task: " + workerTaskName + ".");
@@ -241,6 +251,9 @@ namespace AisDopobrWebService
             }
 
             stopping = true;
+#if SIGNED_MSI_UPDATES
+            if (componentUpdater != null) componentUpdater.Dispose();
+#endif
             WriteLog("SERVICE", "Stopping " + WindowsServiceName + " (" + reason + ").");
 
             Timer timer = Interlocked.Exchange(ref workerTimer, null);

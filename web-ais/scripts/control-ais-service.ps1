@@ -629,13 +629,24 @@ function Get-AisTrayProcess([int]$ExpectedProcessId = 0) {
     } | Select-Object -First 1)
 }
 
+function Test-AisTrayMarkerVersion($Marker) {
+  if (-not $Marker -or -not $Marker.PSObject.Properties['scriptHash'] -or
+      -not $Marker.PSObject.Properties['iconHash']) { return $false }
+  try {
+    $scriptHash = (Get-FileHash -LiteralPath $trayPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $iconPath = Join-Path $appRoot 'favicon.ico'
+    $iconHash = if (Test-Path -LiteralPath $iconPath) { (Get-FileHash -LiteralPath $iconPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { '' }
+    return $Marker.scriptHash -eq $scriptHash -and $Marker.iconHash -eq $iconHash
+  } catch { return $false }
+}
+
 function Test-AisTrayReady([bool]$RequireRunning) {
   if (Test-Path -LiteralPath $trayReadyPath -PathType Leaf) {
     try {
       $marker = Get-Content -LiteralPath $trayReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
       $trayProcessId = [int]$marker.processId
       $trayProcess = Get-AisTrayProcess $trayProcessId
-      if ($trayProcess -and (-not $RequireRunning -or [string]$marker.state -eq "running")) {
+      if ($trayProcess -and (Test-AisTrayMarkerVersion $marker) -and (-not $RequireRunning -or [string]$marker.state -eq "running")) {
         return $true
       }
     } catch { }
@@ -650,7 +661,8 @@ function Test-AisTrayReady([bool]$RequireRunning) {
   } catch {
     return $false
   }
-  return (-not $RequireRunning) -or (Test-AisHealth)
+  # A legacy process cannot confirm the loaded script/menu/icon version.
+  return $false
 }
 
 function Wait-AisTrayReady([bool]$RequireRunning, [int]$Timeout = 20) {
@@ -673,10 +685,12 @@ function Wait-AisTrayReady([bool]$RequireRunning, [int]$Timeout = 20) {
 function Stop-IncompatibleAisTrayProcesses {
   $expectedTrayPath = [IO.Path]::GetFullPath($trayPath).Replace("/", "\").ToLowerInvariant()
   $readyProcessId = 0
+  $readyVersionMatches = $false
   if (Test-Path -LiteralPath $trayReadyPath -PathType Leaf) {
     try {
       $marker = Get-Content -LiteralPath $trayReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
       $readyProcessId = [int]$marker.processId
+      $readyVersionMatches = Test-AisTrayMarkerVersion $marker
     } catch { }
   }
   $trayProcesses = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
@@ -689,7 +703,7 @@ function Stop-IncompatibleAisTrayProcesses {
   foreach ($process in $trayProcesses) {
     $commandLine = ([string]$process.CommandLine).Replace("/", "\").ToLowerInvariant()
     $isCurrent = $commandLine.IndexOf($expectedTrayPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-    if ($isCurrent -and [int]$process.ProcessId -eq $readyProcessId) { continue }
+    if ($isCurrent -and [int]$process.ProcessId -eq $readyProcessId -and $readyVersionMatches) { continue }
     try {
       Write-Host "Завершение устаревшего процесса значка АИС (PID $($process.ProcessId))..."
       Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop

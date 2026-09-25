@@ -6,6 +6,9 @@ param(
   [switch]$ListDeployable,
   [switch]$ValidateProfile,
   [switch]$TunnelRuntime,
+  # Locate the existing local FTP shortcut without copying or exposing its secrets.
+  [string]$ProfileDirectory = "",
+  [switch]$WindowsComponents,
   # Explicit, separately approved installation only; never part of -All.
   [switch]$ProgramSites,
   [switch]$DocumentRelay
@@ -19,7 +22,8 @@ $OutputEncoding = $utf8
 
 $appRoot = Split-Path -Parent $PSScriptRoot
 $repositoryRoot = Split-Path -Parent $appRoot
-$shortcutPath = Get-ChildItem -LiteralPath $repositoryRoot -Filter "*.lnk" -File |
+$profileRoot = if ([string]::IsNullOrWhiteSpace($ProfileDirectory)) { $repositoryRoot } else { [IO.Path]::GetFullPath($ProfileDirectory) }
+$shortcutPath = Get-ChildItem -LiteralPath $profileRoot -Filter "*.lnk" -File |
   Where-Object { $_.Name -like "*vh458.timeweb.ru*" } |
   Select-Object -First 1 -ExpandProperty FullName
 $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
@@ -30,6 +34,7 @@ $runtimeMirrorFiles = @(
   "document-relay.js",
   "local-update.js",
   "local-update-components.js",
+  "local-update-windows.js",
   "windows-update-service.js",
   "document-workflow.js",
   "program-site-generator.js",
@@ -99,6 +104,7 @@ function Test-DeployablePath([string]$PathValue) {
     "local-document-save-dialog.js",
     "local-update.js",
     "local-update-components.js",
+    "local-update-windows.js",
     "windows-update-service.js",
     "local-update-client.js",
     "local-server.js",
@@ -634,6 +640,22 @@ if (-not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -n
   $envelope = Get-Content -LiteralPath (Join-Path $appRoot 'updates/latest.json') -Raw | ConvertFrom-Json
   $release = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json
   $releaseFiles = @($release.files)
+  $nativePublisherReady = (Test-Path -LiteralPath 'Cert:\CurrentUser\My\65F97E8E8A4FD85B23624BDAA1F97541AC87ECEB') -and
+    (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'AisDopobrPublisher\wix3141\candle.exe'))
+  if ($WindowsComponents -or $nativePublisherReady) {
+    & (Join-Path $PSScriptRoot 'build-windows-components.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Signed MSI build failed.' }
+    $windowsManifest = Join-Path $appRoot 'updates/windows/latest.json'
+    $windowsRelease = Get-Content -LiteralPath $windowsManifest -Raw | ConvertFrom-Json
+    if ([version]$windowsRelease.version -gt [version]$release.version -or $windowsRelease.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Windows release descriptor mismatch.' }
+    $windowsRelative = "updates/windows/$($windowsRelease.sha256).msi"
+    $windowsFile = Join-Path $appRoot $windowsRelative
+    if ((Get-Item -LiteralPath $windowsFile).Length -ne $windowsRelease.size -or
+        (Get-FileHash -LiteralPath $windowsFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $windowsRelease.sha256 -or
+        (Get-AuthenticodeSignature -LiteralPath $windowsFile).Status -ne 'Valid') { throw 'Signed MSI verification failed.' }
+    Publish-FileTarget $windowsRelative "$remoteRoot/$windowsRelative" 'Authenticode signed Windows Installer' | Format-Table -AutoSize
+    Publish-FileTarget 'updates/windows/latest.json' "$remoteRoot/updates/windows/latest.json" 'Windows component descriptor' | Format-Table -AutoSize
+  }
   if ($release.PSObject.Properties['components']) { $releaseFiles += @($release.components) }
   $updateResults = foreach ($file in $releaseFiles) {
     if ([string]$file.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Некорректный файл подписанного пакета.' }

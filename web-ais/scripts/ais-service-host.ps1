@@ -435,11 +435,13 @@ try {
 Write-ServiceStep "Рабочая папка: $resolvedAppRoot"
 Write-ServiceStep "Проверка обновлений GitHub и edu-plus.ru/lms..."
 $componentUpdate = $null
-$componentUpdatePath = Join-Path $programDataRoot 'component-update-status.json'
+$componentUpdatePath = Join-Path $programDataRoot 'signed-msi-status.json'
 if (Test-Path -LiteralPath $componentUpdatePath) {
   try { $componentUpdate = Get-Content -LiteralPath $componentUpdatePath -Raw | ConvertFrom-Json } catch { }
 }
-if ($componentUpdate -and $componentUpdate.phase -eq 'restarting') {
+if ($componentUpdate -and (
+    ($componentUpdate.phase -eq 'installing' -and $componentUpdate.updatedAt -gt ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - 180000)) -or
+    ($componentUpdate.PSObject.Properties['completedAt'] -and $componentUpdate.completedAt -gt ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - 180000)))) {
   Write-ServiceStep 'Запускается подписанный выпуск: повторное изменение файлов через Git/FTP отложено.'
 } else { try {
   $syncExitCode = Invoke-HiddenPowerShellScript $startupUpdatePath "UPDATE"

@@ -3,7 +3,7 @@
 module.exports = Object.freeze([
   "manifest.webmanifest", "apple-touch-icon.png", "pwa-icon-192.png", "pwa-icon-512.png", "pwa-icon-maskable.png",
   "docker-compose.onlyoffice.yml",
-  "scripts/ais-service-host.ps1", "scripts/ais-service-tray.ps1", "scripts/ais-windows-service.cs",
+  "scripts/ais-service-host.ps1", "scripts/ais-service-tray.ps1", "scripts/ais-windows-service.cs", "scripts/ais-msi-update.cs", "local-update-windows.js",
   "scripts/ais-hidden-process.vbs", "scripts/control-ais-service.ps1", "scripts/show-ais-service-log.ps1",
   "scripts/setup-ais-windows-service.ps1", "scripts/install-ais-service.ps1", "scripts/enable-component-updates.ps1",
   "scripts/bootstrap-local-system.ps1", "scripts/sync-and-deploy-startup.ps1",

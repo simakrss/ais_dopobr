@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.553",
+    version: "1.7.554",
     releasedAt: "2026-09-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.554",
+      releasedAt: "2026-09-25",
+      changes: ["Обновление защищённых компонентов переработано на подписанный MSI с проверкой издателя и версии. Установка согласуется с завершением операций АИС; заблокированный JavaScript-механизм не используется."]
+    },
     {
       version: "1.7.553",
       releasedAt: "2026-09-25",

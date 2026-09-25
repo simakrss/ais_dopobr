@@ -6,7 +6,7 @@ const fs = require("node:fs"), path = require("node:path"), os = require("node:o
 const BASE = "https://edu-plus.ru/lms/updates/";
 const PUBLIC_KEY = "MCowBQYDK2VwAyEARDRUcPC/vPdxq9MOFlSfwBJUJNEz58fA8Jxhiuz9sCE=";
 // The old supervisor hot-loads this file; its dependency cache must advance too.
-for(const dependency of ["./local-update-components.js","./windows-update-service.js"])delete require.cache[require.resolve(dependency)];
+for(const dependency of ["./local-update-components.js","./windows-update-service.js","./local-update-windows.js"]){try{delete require.cache[require.resolve(dependency)];}catch{}}
 const COMPONENTS = require("./local-update-components.js");
 const FILES = Object.freeze([
   "app.js", "app-server.js", "auth-bootstrap.js", "index.html", "styles.css", "favicon.ico",
@@ -103,7 +103,8 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
   if (release.components !== undefined && (!Array.isArray(release.components) || release.components.length > 100)) throw Error("Некорректный список компонентов.");
-  if (compareVersions(release.version, "1.7.551") >= 0 && COMPONENTS.some(name => !release.components?.some(file => file.path === name))) throw Error("Неполный комплект компонентов обновления.");
+  const requiredComponents=COMPONENTS.filter(name=>!["scripts/ais-msi-update.cs","local-update-windows.js"].includes(name)||compareVersions(release.version,"1.7.554")>=0);
+  if (compareVersions(release.version, "1.7.551") >= 0 && requiredComponents.some(name => !release.components?.some(file => file.path === name))) throw Error("Неполный комплект компонентов обновления.");
   const seen = new Set(); let total = 0;
   for (const file of releaseFiles(release)) {
     if (!allowedPath(file.path) || seen.has(file.path) || !/^[a-f0-9]{64}$/.test(file.sha256)
@@ -129,6 +130,14 @@ function readStatus(root) {
   if (status.phase !== "recovery-error" && BLOCKING.has(status.phase) && Date.now() - Number(status.updatedAt || 0) > 120000 && !fs.existsSync(path.join(runtimeDir(root), "journal.json"))) {
     return {...status, phase:"error", label:"Обновление прервано до установки. Работа продолжается на прежней версии."};
   }
+  // The native service state is advisory and bounded. Only its active MSI window
+  // can extend maintenance; antivirus/failure/stale state never blocks indefinitely.
+  try {
+    const native=require("./local-update-windows.js").state(root),age=Date.now()-Number(native?.updatedAt||0);
+    if(native&&age>=0&&age<180000&&native.phase==="installing")return {...status,phase:"restarting",label:native.label,updatedAt:native.updatedAt};
+    if(native&&age>=0&&age<3600000&&native.phase==="error"&&["idle","complete"].includes(status.phase))
+      return {...status,phase:"error",label:native.label,errorId:`windows-msi-${native.updatedAt}`,canRetry:false,retryAt:null};
+  } catch { }
   return status;
 }
 function writeLease(root, id, ready, release = false) {
@@ -246,8 +255,11 @@ async function install(root, release, stage, hooks) {
   }
 }
 function createUpdater(root, hooks, options={}) {
-  // Protected Windows binaries are not changed automatically: the elevated
-  // updater was withdrawn after antivirus blocked it. Never bypass that block.
+  // The signed native service owns MSI validation and installation. JavaScript
+  // only grants a short-lived idle-window handshake; the withdrawn updater stays off.
+  if(process.platform==="win32"&&options.windowsComponents!==false){
+    try { hooks={...require("./local-update-windows.js").createHooks(root,module.exports),...hooks}; } catch { }
+  }
   const dir=runtimeDir(root), fetcher=options.fetcher||fetch;
   const pollMs=options.pollMs??2000, warningMs=options.warningMs??30000, drainMs=options.drainMs??4000;
   const runningVersion=version(root);
