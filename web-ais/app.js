@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.560",
+    version: "1.7.561",
     releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.561",
+      releasedAt: "2026-09-26",
+      changes: ["Из просмотра письма можно вернуться к предпросмотру документа. Правки документа, темы и текста письма сохраняются при переходах; повторное формирование и отправка при возврате не запускаются."]
+    },
     {
       version: "1.7.560",
       releasedAt: "2026-09-26",
@@ -73286,6 +73291,7 @@ MAX - https://bizvmax.ru/zifra_plus
           if (settled || editorSession !== sessionToSave) return false;
           const previousPreviewUrl = previewUrl;
           previewBlob = saved.blob;
+          options.onPreviewUpdated?.(saved.blob);
           previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
           sessionToSave.editRevision = saved.editRevision;
           setPreviewMode(
@@ -73526,8 +73532,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const title = String(options.title || "Документ").trim() || "Документ";
     const fileName = String(options.fileName || "документ").trim() || "документ";
-    let subject = String(emailRequest?.subject || "").trim();
-    let message = String(emailRequest?.message || "").trim();
+    let subject = String(emailRequest?.subject || "");
+    let message = String(emailRequest?.message || "");
     const recipientDescription = String(emailRequest?.recipientDescription || "").trim();
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -73584,6 +73590,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <footer class="modal-actions generated-document-email-actions">
             <small>«Продолжить» — сохранить документ и отправить письмо. «Пропустить» — сохранить документ без отправки.</small>
+            ${options.canReturnToDocument ? '<button class="ghost-button" data-action="back-generated-document-email-preview" type="button" title="Вернуться к документу; правки письма сохранятся">← К предпросмотру документа</button>' : ""}
             <button class="ghost-button" data-action="edit-generated-document-email" type="button">Редактировать</button>
             <button class="primary-button" data-action="apply-generated-document-email" type="button" hidden>Применить изменения</button>
             <button class="ghost-button" data-action="skip-generated-document-email-preview" type="button" title="Продолжить сохранение документа без отправки письма">Пропустить</button>
@@ -73716,6 +73723,19 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       subjectInput?.addEventListener("input", markEmailEditorDirty);
       messageInput?.addEventListener("input", markEmailEditorDirty);
+      backdrop.querySelector("[data-action='back-generated-document-email-preview']")
+        ?.addEventListener("click", () => {
+          // Navigation keeps even an unfinished draft; validation belongs to confirmation.
+          finish({
+            backToDocument: true,
+            emailRequest: {
+              ...emailRequest,
+              subject: subjectInput ? subjectInput.value : subject,
+              message: messageInput ? messageInput.value : message
+            },
+            editing: workspace?.classList.contains("is-editing") === true
+          });
+        });
       backdrop.querySelector("[data-action='skip-generated-document-email-preview']")
         ?.addEventListener("click", () => finish({ skipEmail: true }));
       backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")
@@ -73724,8 +73744,10 @@ MAX - https://bizvmax.ru/zifra_plus
           if (reviewedEmailRequest) finish(reviewedEmailRequest);
         });
       document.body.appendChild(backdrop);
+      if (options.editing) setEditing(true);
       requestAnimationFrame(() => {
-        backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")?.focus({ preventScroll: true });
+        if (options.editing) messageInput?.focus({ preventScroll: true });
+        else backdrop.querySelector("[data-action='confirm-generated-document-email-preview']")?.focus({ preventScroll: true });
       });
       if (options.signal?.aborted) abortEmailPreview();
     });
@@ -73959,30 +73981,36 @@ MAX - https://bizvmax.ru/zifra_plus
         setDocumentGenerationStatus(generationTaskId, `Подготовка предварительного просмотра: ${documentTemplate.title}`);
         const preview = await requestGeneratedDocumentPreview(generationRequest, documentProcessingOrigin, generationTaskId);
         pendingPreviewToken = preview.previewToken;
-        setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
-        const confirmed = await showGeneratedDocumentPreview(preview.blob, {
-          title: documentTemplate.title,
-          fileName: preview.fileName,
-          outputFormat: preview.outputFormat,
-          previewAvailable: preview.previewAvailable,
-          editorAvailable: preview.editorAvailable,
-          emailDescription: emailRequest?.recipientDescription || "",
-          previewToken: pendingPreviewToken,
-          processingOrigin: documentProcessingOrigin,
-          generationTaskId,
-          signal: getDocumentGenerationSignal(generationTaskId)
-        });
-        throwIfDocumentGenerationCancelled(generationTaskId);
-        if (!confirmed) {
-          await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
-          pendingPreviewToken = "";
-          return { generated: false, cancelled: true, previewed: true };
-        }
-        if (emailRequest) {
+        let emailEditing = false;
+        while (true) {
+          throwIfDocumentGenerationCancelled(generationTaskId);
+          setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение: ${documentTemplate.title}`);
+          const confirmed = await showGeneratedDocumentPreview(preview.blob, {
+            title: documentTemplate.title,
+            fileName: preview.fileName,
+            outputFormat: preview.outputFormat,
+            previewAvailable: preview.previewAvailable,
+            editorAvailable: preview.editorAvailable,
+            emailDescription: emailRequest?.recipientDescription || "",
+            previewToken: pendingPreviewToken,
+            processingOrigin: documentProcessingOrigin,
+            generationTaskId,
+            signal: getDocumentGenerationSignal(generationTaskId),
+            onPreviewUpdated: (blob) => { preview.blob = blob; }
+          });
+          throwIfDocumentGenerationCancelled(generationTaskId);
+          if (!confirmed) {
+            await cancelGeneratedDocumentPreview(pendingPreviewToken, documentProcessingOrigin);
+            pendingPreviewToken = "";
+            return { generated: false, cancelled: true, previewed: true };
+          }
+          if (!emailRequest) break;
           setDocumentGenerationStatus(generationTaskId, `Ожидается подтверждение письма: ${documentTemplate.title}`);
           const reviewedEmailRequest = await showGeneratedDocumentEmailPreview(emailRequest, {
             title: documentTemplate.title,
-            fileName,
+            fileName: preview.fileName || fileName,
+            canReturnToDocument: true,
+            editing: emailEditing,
             signal: getDocumentGenerationSignal(generationTaskId)
           });
           throwIfDocumentGenerationCancelled(generationTaskId);
@@ -73996,12 +74024,18 @@ MAX - https://bizvmax.ru/zifra_plus
               emailPreviewed: true
             };
           }
+          if (reviewedEmailRequest.backToDocument === true) {
+            emailRequest = reviewedEmailRequest.emailRequest;
+            emailEditing = reviewedEmailRequest.editing;
+            continue;
+          }
           if (reviewedEmailRequest.skipEmail === true) {
             emailSkipped = true;
             emailRequest = null;
           } else {
             emailRequest = reviewedEmailRequest;
           }
+          break;
         }
       }
       throwIfDocumentGenerationCancelled(generationTaskId);

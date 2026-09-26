@@ -25,13 +25,16 @@ function fixture() {
   class Element {
     constructor() {
       this.controls = new Map(); this.events = new Map(); this.dataset = {};
-      this.classList = { toggle() {}, contains: () => false, add() {}, remove() {} };
+      const classes = new Set();
+      this.classList = { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name), add() {}, remove() {} };
       this.isConnected = true; this.disabled = false;
     }
     querySelector(selector) {
       if (!this.controls.has(selector)) {
         const element = new Element();
-        element.value = selector.includes("subject-input") ? email.subject : email.message;
+        element.value = selector.includes("subject-input")
+          ? /data-generated-document-email-subject-input[^>]*value="([^"]*)"/.exec(this.innerHTML || "")?.[1] || ""
+          : /<textarea[^>]*>([\s\S]*?)<\/textarea>/.exec(this.innerHTML || "")?.[1] || "";
         this.controls.set(selector, element);
       }
       return this.controls.get(selector);
@@ -78,7 +81,7 @@ function fixture() {
     getAdditionalDocumentStorageRequests: () => [], getEffectiveLocalDocumentsMode: () => true,
     prepareStudentDocumentEmailRequest: () => ({ ...email }),
     resolveDocumentProcessingOrigin: async () => "https://example.test",
-    requestGeneratedDocumentPreview: async () => ({ blob: "synthetic-pdf", previewToken: "fixture-token" }),
+    requestGeneratedDocumentPreview: async () => { calls.push("generate-preview"); return { blob: "synthetic-pdf", previewToken: "fixture-token", fileName: "Тест.pdf" }; },
     showGeneratedDocumentPreview: async () => true,
     cancelGeneratedDocumentPreview: async () => calls.push("cancel-preview"),
     prepareStudentDocumentStorageRequest: async () => ({ promptLocalSave: true }),
@@ -161,7 +164,59 @@ async function tests() {
     assert.equal(test.calls.includes("saved"), false);
     assert.equal(test.calls.some((call) => call.sent), false);
   }
-  console.log("Document email skip: real preview/pipeline, save without SMTP/status, next document, close and abort: OK");
+  for (const kind of ["contract", "education", "employeeContract", "studentAttestationProtocol", "workflow"]) {
+    for (const decision of ["confirm", "skip", "cancel-document", "abort-document"]) {
+      const test = fixture(), views = [];
+      let documentDecision;
+      test.c.showGeneratedDocumentPreview = async (blob, options) => {
+        views.push({ blob, options });
+        assert.equal(options.previewToken, "fixture-token");
+        assert.equal(test.calls.includes("saved"), false);
+        assert.equal(test.calls.some((call) => call.sent || call.request), false);
+        if (views.length === 3 && decision.endsWith("-document")) {
+          if (decision === "abort-document") test.abort.abort();
+          return false;
+        }
+        options.onPreviewUpdated(`edited-pdf-${views.length}`);
+        if (views.length > 1) return new Promise((resolve) => { documentDecision = resolve; });
+        return true;
+      };
+      const operation = test.run(kind);
+      await waitForDialog(test);
+      assert.match(test.modal.innerHTML, /data-action="back-generated-document-email-preview"/);
+      for (let round = 1; round <= 2; round++) {
+        test.modal.querySelector("[data-action='edit-generated-document-email']").click();
+        const subject = test.modal.querySelector("[data-generated-document-email-subject-input]");
+        const message = test.modal.querySelector("[data-generated-document-email-message-input]");
+        subject.value = round === 1 ? "" : "Исправленная тема";
+        message.value = round === 1 ? "  Незаконченный текст\n" : "Исправленное письмо";
+        subject.events.get("input")(); message.events.get("input")();
+        test.modal.querySelector(action("back")).click();
+        assert.equal(test.modal, null);
+        for (let i = 0; i < 20 && views.length < round + 1; i++) await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(views[round].blob, `edited-pdf-${round}`, "Reopen the latest edited document");
+        if (round === 2 && decision.endsWith("-document")) break;
+        documentDecision(true);
+        await waitForDialog(test);
+        assert.equal(test.modal.querySelector("[data-generated-document-email-subject-input]").value, subject.value);
+        assert.equal(test.modal.querySelector("[data-generated-document-email-message-input]").value, message.value);
+        assert.equal(test.modal.querySelector("[data-generated-document-email-workspace]").classList.contains("is-editing"), true);
+      }
+      if (!decision.endsWith("-document")) test.modal.querySelector(action(decision)).click();
+      const result = await operation;
+      assert.equal(test.calls.filter((call) => call === "generate-preview").length, 1, "Back must not regenerate");
+      assert.equal(test.calls.some((call) => call.alert || call === "unsaved-dialog"), false);
+      assert.equal(result.cancelled === true, decision.endsWith("-document"));
+      assert.equal(test.calls.filter((call) => call.request?.endsWith("/finalize")).length, decision.endsWith("-document") ? 0 : 1);
+      assert.equal(test.calls.filter((call) => call.sent).length, decision === "confirm" ? 1 : 0);
+      if (decision === "confirm") {
+        assert.equal(test.calls.find((call) => call.sent).sent.subject, "Исправленная тема");
+        assert.equal(test.calls.find((call) => call.sent).sent.message, "Исправленное письмо");
+      }
+      assert.equal(test.modal, null);
+    }
+  }
+  console.log("Document email: skip, repeated back, edited document/draft retained, single generation/finalize, close and abort: OK");
 }
 
 if (process.argv.includes("--serve")) {

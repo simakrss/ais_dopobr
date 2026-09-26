@@ -124,8 +124,8 @@ assert.match(editorMode, /cancelButton\.classList\.remove\("icon-button", "form-
 assert.match(editorMode, /cancelButton\.setAttribute\("aria-label", "Отменить изменения и вернуться к предварительному просмотру"\)/u);
 
 assert.match(stylesSource, /button\.icon-button\.form-cancel-button\s*\{[^}]*flex:\s*0 0 32px;[^}]*width:\s*32px;[^}]*min-width:\s*32px;[^}]*justify-self:\s*end;/su);
-assert.match(stylesSource, /\.generated-document-email-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) repeat\(3, auto\);/su);
-assert.match(stylesSource, /\.generated-document-email-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/su);
+assert.match(stylesSource, /\.generated-document-email-actions\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/su);
+assert.match(stylesSource, /\.generated-document-email-actions button\.icon-button\.form-cancel-button\s*\{[^}]*width:\s*32px;/su);
 assert.match(stylesSource, /\.partner-registration-actions\s*\{[^}]*flex-direction:\s*column;/su);
 
 const authBuild = /const AUTH_BUILD = "([^"]+)"/u.exec(authSource)?.[1] || "";

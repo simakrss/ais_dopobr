@@ -14041,14 +14041,25 @@ body.card-window-moving {
 }
 
 .generated-document-email-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
 }
 
 .generated-document-email-actions small {
+  flex: 1 0 100%;
   color: var(--muted);
   font-size: 12px;
+}
+
+.generated-document-email-actions button {
+  width: auto;
+  max-width: 100%;
+}
+
+.generated-document-email-actions [data-action="back-generated-document-email-preview"] {
+  margin-right: auto;
 }
 
 .student-document-choice-body {
@@ -25928,16 +25939,15 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .generated-document-email-actions {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
     gap: 6px;
   }
 
-  .generated-document-email-actions small {
-    grid-column: 1 / -1;
+  .generated-document-email-actions [data-action="back-generated-document-email-preview"] {
+    flex: 1 0 100%;
   }
 
   .generated-document-email-actions button {
-    width: 100%;
+    flex: 1 1 auto;
     min-width: 0;
     padding-inline: 7px;
   }
