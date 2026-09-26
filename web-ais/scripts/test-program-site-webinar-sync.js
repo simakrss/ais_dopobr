@@ -5,7 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const pg = require("../program-site-generator");
 const join = "https://salutejazz.ru/calls/new?psw=AbCd_123&name=%D0%90#join";
-const program = {id:"sync-test",type:"ПРО",name:"Webinar",price:500,oldPrice:800,hours:2,landingCode:"old_code",promoSite:"https://edu-plus.ru/new_code",webinarJoinUrl:join,
+const program = {id:"sync-test",type:"ПРО",name:"Webinar",price:500,oldPrice:800,hours:2,landingCode:"old_code",promoSite:"https://edu-plus.ru/new_code",gradeReportUrl:join,webinarJoinUrl:"https://salutejazz.ru/calls/outdated-generator-link",
   sitePublication:{landing:{id:42},product:{id:12}},siteSync:{landing:{id:42},product:{id:12}}};
 const landing = {id:42,slug:"old_code",status:"publish",postType:"other-course",url:"https://edu-plus.ru/other_course/old_code/",version:"landing-v1",offers:[{productId:12,hours:2}],fields:{}};
 const product = {id:12,slug:"old_code",status:"publish",url:"https://zifra-plus.ru/product/old_code/",version:"product-v1"};
@@ -21,17 +21,18 @@ async function call(site,endpoint,payload) {
 async function main() {
   assert.deepEqual(pg.syncTarget({...program,landingCode:"new_code"}),{landingId:42});
   assert.deepEqual(pg.syncTarget({...program,siteSync:{landing:{id:43}}}),{landingId:43},"Latest sync ID wins over publication address");
-  assert.equal(pg.normalizeSyncProgram(program).joinUrl,join);
+  assert.equal(pg.normalizeSyncProgram(program).joinUrl,join,"Grade report URL wins over the old generator URL");
+  assert.equal(pg.normalizeSyncProgram({...program,webinarJoinUrl:"invalid"}).joinUrl,join,"Unused generator URL cannot block sync");
   assert.equal(pg.normalizeSyncProgram(program).slug,"new_code");
-  assert.equal(pg.normalizeSyncProgram({...program,webinarJoinUrl:""}).joinUrl,undefined);
+  for (const gradeReportUrl of ["", "   ", null, undefined]) assert.equal(pg.normalizeSyncProgram({...program,gradeReportUrl}).joinUrl,undefined,"Empty report field never falls back to an outdated generator URL");
   assert.equal(pg.normalizeSyncProgram({...program,promoSite:"https://edu-plus.ru/?p=42"}).slug,undefined,"Legacy ID URLs do not rename posts");
-  for(const type of ["ДОП","КПК","ППП"]) assert.equal(pg.normalizeSyncProgram({...program,type,webinarJoinUrl:"invalid"}).joinUrl,undefined);
-  for(const webinarJoinUrl of ["javascript:alert(1)","http://salutejazz.ru/calls/1","https://user:pass@salutejazz.ru/calls/1"]) assert.throws(()=>pg.normalizeSyncProgram({...program,webinarJoinUrl}));
+  for(const type of ["ДОП","КПК","ППП"]) assert.equal(pg.normalizeSyncProgram({...program,type,gradeReportUrl:"invalid"}).joinUrl,undefined);
+  for(const gradeReportUrl of ["javascript:alert(1)","http://salutejazz.ru/calls/1","https://user:pass@salutejazz.ru/calls/1"]) assert.throws(()=>pg.normalizeSyncProgram({...program,gradeReportUrl}));
   const plan = await pg.previewSync(program,call,12);
   assert.equal(plan.model.landingUrl,"https://edu-plus.ru/other_course/new_code/");
-  const untouched = await pg.previewSync({...program,promoSite:landing.url,webinarJoinUrl:""},call,12);
+  const untouched = await pg.previewSync({...program,promoSite:landing.url,gradeReportUrl:""},call,12);
   assert.equal(untouched.model.slug,undefined); assert.equal(untouched.model.joinUrl,undefined,"Unchanged legacy program still supports price-only sync");
-  for(const change of [{webinarJoinUrl:"https://salutejazz.ru/calls/changed"},{promoSite:"https://edu-plus.ru/different_code"}]) {
+  for(const change of [{gradeReportUrl:"https://salutejazz.ru/calls/changed"},{promoSite:"https://edu-plus.ru/different_code"}]) {
     calls.length = 0;
     await assert.rejects(pg.synchronize({...program,...change},call,12,plan.hash),/изменились/);
     assert.ok(calls.every(item=>item.endpoint !== "/sync-existing"));
@@ -51,11 +52,31 @@ async function main() {
   // Retrying after a partial rename still addresses the same original landing.
   assert.deepEqual(pg.syncTarget({...program,siteSync:{landing:{id:42,url:landing.url},product:{id:12,url:result.product.url}}}),{landingId:42});
 
+  const pricing = {changePrices:false};
+  const bulk = await pg.previewBulkSync(program,call,pricing);
+  assert.equal(bulk.model.joinUrl,join,"Bulk uses the same authoritative source");
+  calls.length=0;
+  await assert.rejects(pg.synchronizeBulkItem({...program,gradeReportUrl:"https://salutejazz.ru/calls/changed"},call,pricing,bulk.bulk.quote),/изменились/);
+  assert.ok(!calls.some(item=>item.endpoint === "/sync-existing"),"Changed report URL invalidates a bulk quote before writes");
+  const bulkResult = await pg.synchronizeBulkItem(program,call,pricing,bulk.bulk.quote);
+  assert.equal(bulkResult.gradeReportUrl,join);
+  for(const item of calls.filter(item=>item.endpoint === "/sync-existing")) assert.equal(item.payload.model.joinUrl,join);
+
   const app=fs.readFileSync(path.join(__dirname,"../app.js"),"utf8");
   const syncStart=app.indexOf("  async function openProgramSiteSync(");
   const syncEnd=app.indexOf("  function renderProgramGeneratorFields(",syncStart);
   const source=app.slice(syncStart,syncEnd);
   assert.match(source,/data-sync-jazz/); assert.match(source,/if \(jazzInput\) \{[\s\S]*?saveRecordFormBeforeContinuation/);
+  assert.match(source,/card\.elements\.gradeReportUrl\?\.value \?\? program\.gradeReportUrl/);
+  assert.doesNotMatch(source,/webinarJoinUrl/);
+  const fieldEvents = [];
+  const fieldCard={elements:Object.fromEntries(["webinarDate","webinarTime","gradeReportUrl","webinarJoinUrl"].map(key=>[key,{value:key === "webinarJoinUrl" ? program.webinarJoinUrl : "",dispatchEvent:()=>fieldEvents.push(key)}]))};
+  const inputContext={card:fieldCard,Event,jazzInput:{value:join},dateInput:{value:"2026-10-01",checkValidity:()=>true},timeInput:{value:"18:00",checkValidity:()=>true}};
+  vm.createContext(inputContext);
+  vm.runInContext(source.slice(source.indexOf("        if (jazzInput) {"),source.indexOf("        const savedId =")),inputContext);
+  assert.equal(fieldCard.elements.gradeReportUrl.value,join,"Editing the sync dialog updates the report field");
+  assert.equal(fieldCard.elements.webinarJoinUrl.value,program.webinarJoinUrl,"Creation parameters are not silently rewritten");
+  assert.deepEqual(fieldEvents,["webinarDate","webinarTime","gradeReportUrl"]);
   assert.match(source,/\[jazzInput, dateInput, timeInput, sampleInput\]\.forEach\(input => input\?\.addEventListener\("input", \(\) => \{\s*plan = null; apply.disabled = true;/);
   const saveStart=source.indexOf("        current.siteSync = result;");
   const saveEnd=source.indexOf('        status.textContent = "Информация о программе успешно',saveStart);
@@ -73,6 +94,6 @@ async function main() {
   assert.equal(card.elements.gradeReportUrl.value,join); assert.equal(card.elements.landingCode.value,"new_code");
   assert.equal(card.elements.name.value,"unsaved-name");
   assert.equal(JSON.parse(card.dataset.initialSnapshot)[2].value,"saved-name","Other unsaved fields are not marked clean");
-  console.log("PASS: PRO sync parameters, stable post identity, unchanged promo preservation, preflight ordering, stale-plan safety, partial retry and saved card fields");
+  console.log("PASS: report-field webinar URL in individual/bulk sync, no stale fallback, validation, dialog field mapping, preflight ordering, stale-plan safety, partial retry and saved card fields");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -450,7 +450,9 @@ function normalizeSyncProgram(program) {
     ...(sourceOldPrice < price ? {oldPriceAdjusted: true} : {}),
     ...schedule,
     ...(slug ? {slug} : {}),
-    ...(type === "ПРО" && text(program.webinarJoinUrl, 2000) ? {joinUrl: normalizeJoinUrl(program.webinarJoinUrl)} : {}),
+    // Existing webinars use the registry's grade-report field as the source of truth.
+    // Never fall back to an outdated link saved by the initial site generator.
+    ...(type === "ПРО" && text(program.gradeReportUrl, 2000) ? {joinUrl: normalizeJoinUrl(program.gradeReportUrl)} : {}),
     duration: text(program.duration, 200), studyForm: text(program.studyForm, 300),
     descriptionHtml: "", speakerHtml: "",
     startLabel: text(program.siteStartLabel, 200)};

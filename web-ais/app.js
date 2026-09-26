@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.558",
+    version: "1.7.559",
     releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.559",
+      releasedAt: "2026-09-26",
+      changes: ["При обычной и групповой синхронизации вебинаров ссылка подключения берётся из поля «Ссылка на отчет по оценкам». Изменение ссылки в окне синхронизации сохраняется в это же поле; прежняя ссылка из параметров создания сайта больше не подставляется."]
+    },
     {
       version: "1.7.558",
       releasedAt: "2026-09-26",
@@ -35422,7 +35427,7 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.dataset.programSiteDialog = "";
     dialog.setAttribute("aria-label", "Синхронизация программы с сайтами");
     dialog.innerHTML = `<header class="modal-head"><h2>Синхронизация с сайтами</h2><button type="button" class="icon-button" data-sync-close aria-label="Закрыть">×</button></header>
-      <div class="program-site-body">${progressMarkup}${webinar ? `<div class="form-grid program-site-fields program-site-sync-webinar"><label><span>Дата вебинара</span><input data-sync-date type="date" value="${escapeAttr(card.elements.webinarDate?.value ?? program.webinarDate ?? "")}"></label><label><span>Время (Москва)</span><input data-sync-time type="time" value="${escapeAttr(card.elements.webinarTime?.value ?? program.webinarTime ?? "")}"></label><div class="program-site-sync-jazz"><label><span>Ссылка подключения SberJazz</span><input data-sync-jazz type="url" value="${escapeAttr(card.elements.webinarJoinUrl?.value ?? program.webinarJoinUrl ?? "")}" placeholder="https://salutejazz.ru/calls/…" title="Пустое поле сохраняет прежнее подключение"></label><a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" class="ghost-button compact-button" title="Создать ссылку SberJazz">Создать ↗</a></div></div>` : ""}${renderProgramSiteImagePicker()}<div data-sync-catalog-progress>${progressMarkup}</div><button type="button" class="ghost-button" data-sync-catalog-retry hidden>Повторить загрузку изображений</button><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
+      <div class="program-site-body">${progressMarkup}${webinar ? `<div class="form-grid program-site-fields program-site-sync-webinar"><label><span>Дата вебинара</span><input data-sync-date type="date" value="${escapeAttr(card.elements.webinarDate?.value ?? program.webinarDate ?? "")}"></label><label><span>Время (Москва)</span><input data-sync-time type="time" value="${escapeAttr(card.elements.webinarTime?.value ?? program.webinarTime ?? "")}"></label><div class="program-site-sync-jazz"><label><span>Ссылка подключения — из отчёта по оценкам</span><input data-sync-jazz type="url" value="${escapeAttr(card.elements.gradeReportUrl?.value ?? program.gradeReportUrl ?? "")}" placeholder="https://salutejazz.ru/calls/…" title="Из поля «Ссылка на отчет по оценкам». Правка сохраняется в это же поле; пустая ссылка не меняет подключение на сайте."></label><a href="https://salutejazz.ru/calls" target="_blank" rel="noopener noreferrer" class="ghost-button compact-button" title="Создать ссылку SberJazz">Создать ↗</a></div></div>` : ""}${renderProgramSiteImagePicker()}<div data-sync-catalog-progress>${progressMarkup}</div><button type="button" class="ghost-button" data-sync-catalog-retry hidden>Повторить загрузку изображений</button><div data-sync-preview></div><p role="status" aria-live="polite" data-sync-status></p>
       <div class="program-site-actions"><button class="primary-button" type="button" data-sync-apply disabled>Обновить сайт и магазин</button><button class="ghost-button" type="button" data-sync-refresh>Обновить проверку</button></div></div>`;
     document.body.appendChild(dialog);
     dialog.showModal();
@@ -35463,7 +35468,7 @@ MAX - https://bizvmax.ru/zifra_plus
       try {
         if (jazzInput) {
           if ((dateInput.value || timeInput.value) && (!dateInput.value || !timeInput.value || !dateInput.checkValidity() || !timeInput.checkValidity())) throw new Error("Укажите корректные дату и время вебинара (Москва).");
-          for (const [key, source] of [["webinarDate", dateInput], ["webinarTime", timeInput], ["webinarJoinUrl", jazzInput]]) {
+          for (const [key, source] of [["webinarDate", dateInput], ["webinarTime", timeInput], ["gradeReportUrl", jazzInput]]) {
             const input = card.elements[key];
             if (!input) throw new Error("Параметры вебинара недоступны. Обновите карточку программы.");
             if (input.value !== source.value) {
@@ -35492,7 +35497,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <dt>Образцы документов</dt><dd>${plan.model.updateSamples ? "Обновить документы этой программы, включая все страницы приложения; образцы добавленных вариантов сохраняются" : "Без изменений"}</dd></dl>
           ${plan.landing.offers.length > 1 ? `<p class="program-site-notice">${plan.model.isVariant ? "Обновится выбранный вариант; название, общие сведения и изображения остальных вариантов сохранятся." : "Лендинг общий: цена обновится только у выбранного товара, название и общие сведения — на всей странице. Образцы добавленных вариантов сохраняются."}</p>` : ""}
           <details class="program-site-sync-help"><summary>Что обновится</summary><p class="muted">${plan.model.imageSource ? `Изображение записи на двух сайтах будет заменено из лендинга «${escapeHtml(plan.model.imageSource.title)}». ` : "Изображения записей не меняются. "}Описание, автор и отзывы сохраняются. ${plan.model.updateSamples ? "Образцы документов будут сформированы по текущим данным; прежние файлы останутся в медиатеке. " : "Образцы документов сохраняются. "}${plan.model.slug ? "Адреса страниц обновятся по полю «На промо сайте». " : "Адреса страниц сохраняются. "}${plan.model.joinUrl ? "Связанные файлы подключения и переходы SberJazz будут обновлены. " : "Подключение сохраняется. "}Состояние публикации не меняется.</p>
-          ${webinar ? '<p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Новая ссылка обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение.</p>' : ""}
+          ${webinar ? '<p class="muted">Дата и время обновятся в описаниях на сайтах и промосообщениях. Ссылка берётся из поля «Ссылка на отчет по оценкам»; правка в этом окне сохраняется в то же поле. Она обновит файлы подключения и переходы магазина. Пустое поле ссылки сохраняет прежнее подключение.</p>' : ""}
           <p class="muted">После успешной синхронизации в обоих промосообщениях обновятся цена и, для ПРО, дата и время из параметров вебинара. Остальной текст сохраняется.</p></details>
           ${plan.product?.status === "draft" ? `<p class="program-site-notice">Товар — черновик: регистрация для посетителей откроется после публикации страницы и товара. Синхронизация не публикует их.</p>` : ""}`;
         preview.querySelector("[data-sync-product]").addEventListener("change", event => { void load(Number(event.target.value)); });
@@ -35509,8 +35514,8 @@ MAX - https://bizvmax.ru/zifra_plus
       try {
         if (!await ensureRecordLockForSave(card)) throw new Error("Восстановите блокировку карточки и повторите проверку.");
         const latest = state.data.collections.programs.find(item => item.id === programId);
-        if (promoParameters?.type === "ПРО" && ["webinarDate", "webinarTime"].some(key => String(latest?.[key] || "") !== String(promoParameters[key] || ""))) {
-          throw new Error("Дата или время вебинара изменились. Нажмите «Обновить проверку» перед синхронизацией.");
+        if (promoParameters?.type === "ПРО" && ["webinarDate", "webinarTime", "gradeReportUrl"].some(key => String(latest?.[key] || "") !== String(promoParameters[key] || ""))) {
+          throw new Error("Дата, время или ссылка подключения вебинара изменились. Нажмите «Обновить проверку» перед синхронизацией.");
         }
         progress.phase("Обновление сайта, магазина и файлов подключения…");
         const requestId = crypto.randomUUID();

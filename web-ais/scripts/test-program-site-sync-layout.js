@@ -23,14 +23,15 @@ assert.match(css, /@media \(max-width: 420px\) \{\s*\.program-site-sync-dialog \
 assert.match(css, /\[data-sync-catalog-progress\]:has\(> \[hidden\]\) \{ display: none; \}/);
 for (const type of ["ПРО", "КПК", "ППП", "ДОП"]) {
   const webinar = type === "ПРО";
-  const program = {type, webinarDate: "2026-10-12", webinarTime: "18:00", webinarJoinUrl: "https://salutejazz.ru/calls/example?value=\"<>"};
-  const card = {elements: {webinarDate: {value: "2026-10-13"}, webinarTime: {value: "19:00"}, webinarJoinUrl: {value: program.webinarJoinUrl}}};
+  const program = {type, webinarDate: "2026-10-12", webinarTime: "18:00", gradeReportUrl: "https://salutejazz.ru/calls/saved", webinarJoinUrl: "https://salutejazz.ru/calls/outdated"};
+  const card = {elements: {webinarDate: {value: "2026-10-13"}, webinarTime: {value: "19:00"}, gradeReportUrl: {value: 'https://salutejazz.ru/calls/edited?value="<>'}, webinarJoinUrl: {value: program.webinarJoinUrl}}};
   const html = new Function("webinar", "card", "program", "escapeAttr", "progressMarkup", "renderProgramSiteImagePicker", `return ${markup};`)(webinar, card, program, escape, '<div data-site-progress hidden></div>', () => '<div class="program-site-image-picker"></div>');
   for (const attribute of ["data-sync-close", "data-sync-preview", "data-sync-status", "data-sync-catalog-progress", "data-sync-catalog-retry hidden", "data-sync-apply disabled", "data-sync-refresh"]) assert.ok(html.includes(attribute), attribute);
   if (webinar) {
     assert.match(html, /data-sync-date type="date" value="2026-10-13"/);
     assert.match(html, /data-sync-time type="time" value="19:00"/);
-    assert.ok(html.includes(escape(program.webinarJoinUrl)), "Keep escaped, unsaved form values");
+    assert.ok(html.includes(escape(card.elements.gradeReportUrl.value)), "Keep escaped, unsaved report-field value");
+    assert.ok(!html.includes(program.webinarJoinUrl), "Never show the outdated generator link");
     assert.match(html, /program-site-sync-webinar[\s\S]*data-sync-date[\s\S]*data-sync-time[\s\S]*program-site-sync-jazz[\s\S]*data-sync-jazz/);
     assert.match(html, /https:\/\/salutejazz.ru\/calls" target="_blank" rel="noopener noreferrer"/);
   } else assert.doesNotMatch(html, /data-sync-date|data-sync-time|data-sync-jazz/);
@@ -47,7 +48,7 @@ for (const type of ["ПРО", "КПК", "ППП", "ДОП"]) {
   assert.match(preview, /Образцы документов<\/dt><dd>Без изменений/);
   plan.model.updateSamples = true;
   const refreshing = new Function("plan", "webinar", "escapeHtml", "renderProgramSiteLink", `return ${review};`)(plan, webinar, escape, renderLink);
-  assert.match(refreshing, /Сформировать заново и заменить на лендинге, включая все страницы приложения/);
-  assert.match(refreshing, /Образцы на всей странице будут заменены документами этой программы/);
+  assert.match(refreshing, /Обновить документы этой программы, включая все страницы приложения; образцы добавленных вариантов сохраняются/);
+  assert.match(refreshing, /Образцы добавленных вариантов сохраняются/);
 }
 console.log("PASS: compact sync-only layout, responsive field rows, visible change review/warnings, collapsed help, all program types and preserved draft values/actions");
