@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.559",
+    version: "1.7.560",
     releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.560",
+      releasedAt: "2026-09-26",
+      changes: ["Синхронизация ПРО обновляет ссылки SaluteJazz/SberJazz в ранее созданных HTML-файлах, привязанных к товару, даже без служебной метки АИС. Содержимое и права скачивания сохраняются, перед изменением создаётся резервная копия. Общие и чужие файлы защищены от перезаписи."]
+    },
     {
       version: "1.7.559",
       releasedAt: "2026-09-26",

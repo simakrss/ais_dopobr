@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.7
+ * Version: 1.7.8
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -894,6 +894,74 @@ function ais_pg_variant($action, $data) {
         return ais_pg_result($id);
     } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
 }
+function ais_pg_webinar_download_slug($file) {
+    if (!is_string($file)) return '';
+    $parts = wp_parse_url($file);
+    if (!$parts || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])) return '';
+    if (isset($parts['host']) && (strtolower($parts['host']) !== 'zifra-plus.ru' || !in_array(strtolower($parts['scheme'] ?? ''), array('http', 'https'), true))) return '';
+    if (!isset($parts['host']) && isset($parts['scheme'])) return '';
+    return preg_match('~^/wp-content/uploads/dae-uploads/webinars/([a-z0-9][a-z0-9_-]{1,79})\.html$~D', $parts['path'] ?? '', $match) ? $match[1] : '';
+}
+function ais_pg_legacy_webinar_html($content, $url) {
+    $url = ais_pg_join_url($url);
+    // Keep existing markup/text. Change meeting URLs only, not arbitrary links,
+    // file names or JavaScript code. Percent-escape delimiters in JS/plain text.
+    $safe_url = strtr($url, array('"'=>'%22', "'"=>'%27', '<'=>'%3C', '>'=>'%3E', '\\'=>'%5C', '`'=>'%60'));
+    $pattern = '~https?://(?:salutejazz\.ru|jazz\.sber\.ru)/(?:\#/)?calls/[^\s<>"\'\\\\`]+~iu';
+    if (!preg_match_all($pattern, $content, $matches, PREG_OFFSET_CAPTURE)) throw new RuntimeException('В привязанном HTML-файле не найдена ссылка подключения SaluteJazz/SberJazz. Файл не изменён.');
+    foreach (array_reverse($matches[0]) as $match) {
+        list($old, $offset) = $match;
+        if (html_entity_decode($old, ENT_QUOTES | ENT_HTML5, 'UTF-8') === $url) continue;
+        $prefix = substr($content, 0, $offset);
+        $script = strripos($prefix, '<script'); $script_end = strripos($prefix, '</script');
+        $in_script = $script !== false && ($script_end === false || $script > $script_end);
+        $replacement = $in_script ? $safe_url : htmlspecialchars($safe_url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $content = substr_replace($content, $replacement, $offset, strlen($old));
+    }
+    return $content;
+}
+function ais_pg_assert_legacy_webinar_owner($id, $slug) {
+    global $wpdb;
+    // Download bindings, including old aliases, are ownership evidence. Do not
+    // mutate a shared legacy file on behalf of only one of its products.
+    $file_like = '%' . $wpdb->esc_like('/dae-uploads/webinars/' . $slug . '.html') . '%';
+    $alias_like = '%' . $wpdb->esc_like('"' . $slug . '"') . '%';
+    $other = $wpdb->get_var($wpdb->prepare("SELECT post_id FROM {$wpdb->postmeta} WHERE post_id <> %d AND ((meta_key IN ('_downloadable_files','_ais_download_file','_ais_webinar_file') AND meta_value LIKE %s) OR (meta_key = '_ais_webinar_legacy_slugs' AND meta_value LIKE %s)) LIMIT 1", $id, $file_like, $alias_like));
+    if ($wpdb->last_error) throw new RuntimeException('Не удалось проверить привязку файла подключения к другим товарам. Повторите синхронизацию.');
+    if ($other) throw new RuntimeException('Этот файл подключения привязан также к другому товару. Чтобы не изменить чужую трансляцию, назначьте отдельный файл этой программе.');
+}
+function ais_pg_sync_legacy_webinar_file($id, $files, $slug, $expected_hash, $url) {
+    $file = $files['dir'] . '/' . $slug . '.html';
+    $root = dirname(rtrim(ABSPATH, '/\\')) . '/ais-webinar-files';
+    $locks = $root . '/public-locks';
+    if (is_link($root) || is_link($locks)) throw new RuntimeException('Папка блокировок подключения является символической ссылкой.');
+    if (!wp_mkdir_p($locks)) throw new RuntimeException('Не удалось заблокировать прежний файл подключения.');
+    $lock = fopen($locks . '/' . $slug . '.lock', 'c');
+    if (!$lock) throw new RuntimeException('Не удалось открыть блокировку файла подключения.');
+    $temp = false;
+    try {
+        if (!flock($lock, LOCK_EX | LOCK_NB)) throw new RuntimeException('Файл подключения сейчас занят. Повторите синхронизацию.');
+        clearstatcache(true, $file);
+        if (is_link($file) || !is_file($file) || filesize($file) > 65536) throw new RuntimeException('Прежний файл подключения недоступен для безопасного обновления.');
+        $before = file_get_contents($file);
+        if ($before === false || !hash_equals($expected_hash, hash('sha256', $before))) throw new RuntimeException('Файл подключения изменился. Обновите проверку перед синхронизацией.');
+        ais_pg_assert_legacy_webinar_owner($id, $slug);
+        $after = ais_pg_legacy_webinar_html($before, $url);
+        if ($after === $before) return;
+        $backup_dir = $root . '/legacy-backups/' . (int) $id;
+        foreach (array($root, dirname($backup_dir), $backup_dir, $files['dir'], dirname($files['dir'])) as $dir) if (is_link($dir)) throw new RuntimeException('Папка файла подключения является символической ссылкой.');
+        if (!wp_mkdir_p($backup_dir)) throw new RuntimeException('Не удалось создать резервную копию файла подключения.');
+        $backup = $backup_dir . '/' . $slug . '-' . $expected_hash . '.html.bak';
+        if (is_link($backup) || (file_exists($backup) && (!is_file($backup) || hash_file('sha256', $backup) !== $expected_hash))) throw new RuntimeException('Не удалось подтвердить резервную копию файла подключения.');
+        if (!file_exists($backup) && (file_put_contents($backup, $before, LOCK_EX) !== strlen($before) || !chmod($backup, 0600))) throw new RuntimeException('Не удалось сохранить резервную копию файла подключения.');
+        $temp = tempnam($files['dir'], '.ais-sync-');
+        if (!$temp || file_put_contents($temp, $after, LOCK_EX) !== strlen($after) || !chmod($temp, 0644) || !rename($temp, $file)) throw new RuntimeException('Не удалось обновить прежний HTML-файл подключения. Повторите синхронизацию.');
+        $temp = false;
+    } finally {
+        if ($temp && is_file($temp)) unlink($temp);
+        flock($lock, LOCK_UN); fclose($lock);
+    }
+}
 function ais_pg_webinar_file_locations($id, $extra_slug = '') {
     $key = get_post_meta($id, '_ais_generator_key', true) ?: get_post_meta($id, '_ais_webinar_file_key', true);
     if (!$key) $key = hash('sha256', 'ais-shop-product:' . (int) $id);
@@ -903,6 +971,9 @@ function ais_pg_webinar_file_locations($id, $extra_slug = '') {
     $dir = rtrim($uploads['basedir'], '/\\') . '/dae-uploads/webinars';
     $slugs = get_post_meta($id, '_ais_webinar_slug_aliases', true) ?: array();
     if (!is_array($slugs) || count($slugs) > 50) throw new RuntimeException('Проверьте список прежних файлов вебинара.');
+    $legacy = get_post_meta($id, '_ais_webinar_legacy_slugs', true) ?: array();
+    if (!is_array($legacy) || count($legacy) > 50) throw new RuntimeException('Проверьте список привязанных прежних файлов вебинара.');
+    $linked = $legacy; $slugs = array_merge($slugs, $legacy);
     foreach (array(get_post_field('post_name', $id), $extra_slug) as $slug) if ($slug) $slugs[] = $slug;
     $known = array_filter(array(get_post_meta($id, '_ais_download_file', true), get_post_meta($id, '_ais_webinar_file', true)));
     $product = wc_get_product($id);
@@ -911,15 +982,15 @@ function ais_pg_webinar_file_locations($id, $extra_slug = '') {
         if (!is_object($download)) continue;
         $file = $download->get_file();
         $own = $download->get_id() === substr($key, 0, 32) || in_array($file, $known, true);
-        if (preg_match('~^https://zifra-plus\.ru/wp-content/uploads/dae-uploads/webinars/([a-z0-9][a-z0-9_-]{1,79})\.html$~D', $file, $match)) {
-            $path = $dir . '/' . $match[1] . '.html';
-            if (is_file($path) && !is_link($path) && filesize($path) <= 65536
-                && strpos((string) file_get_contents($path), '<!-- AIS webinar ' . $key . ' -->') !== false) $own = true;
-            if ($own) $slugs[] = $match[1];
+        $slug = ais_pg_webinar_download_slug($file);
+        if ($slug) {
+            // The actual WooCommerce download binding also proves provenance of
+            // older hand-made files, even when they have no AIS marker or ID.
+            $slugs[] = $slug; $linked[] = $slug; $own = true;
         }
         if ($own) $selected[] = $index;
     }
-    foreach ($known as $file) if (preg_match('~^https://zifra-plus\.ru/wp-content/uploads/dae-uploads/webinars/([a-z0-9][a-z0-9_-]{1,79})\.html$~D', $file, $match)) $slugs[] = $match[1];
+    foreach ($known as $file) if ($slug = ais_pg_webinar_download_slug($file)) { $slugs[] = $slug; $linked[] = $slug; }
     $slugs = array_values(array_unique($slugs));
     if (count($slugs) > 50) throw new RuntimeException('Слишком много прежних файлов вебинара.');
     foreach ($slugs as $slug) if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9_-]{1,79}$/D', $slug)) throw new RuntimeException('Некорректное имя файла вебинара.');
@@ -929,12 +1000,15 @@ function ais_pg_webinar_file_locations($id, $extra_slug = '') {
         $file = $private_dir . '/connection.' . $extension;
         if (file_exists($file) || is_link($file)) $private[] = $file;
     }
-    return array('key' => $key, 'dir' => $dir, 'slugs' => $slugs, 'private' => $private, 'downloadIndexes' => $selected);
+    return array('key' => $key, 'dir' => $dir, 'slugs' => $slugs, 'private' => $private, 'downloadIndexes' => $selected, 'linkedSlugs' => array_values(array_unique($linked)));
 }
 function ais_pg_webinar_files_version($id) {
     $state = array();
-    foreach (array('_ais_webinar_join_url', '_ais_webinar_file', '_ais_download_file', '_ais_webinar_file_key', '_ais_webinar_slug_aliases', '_ais_landing_url', '_ais_landing_redirect', '_ais_redirect_rule_ids') as $key) $state[$key] = get_post_meta($id, $key, true);
-    if ($state['_ais_webinar_file'] || $state['_ais_webinar_file_key']) {
+    foreach (array('_ais_webinar_join_url', '_ais_webinar_file', '_ais_download_file', '_ais_webinar_file_key', '_ais_webinar_slug_aliases', '_ais_webinar_legacy_slugs', '_ais_landing_url', '_ais_landing_redirect', '_ais_redirect_rule_ids') as $key) $state[$key] = get_post_meta($id, $key, true);
+    $product = wc_get_product($id);
+    $has_bound_file = false;
+    foreach ($product ? $product->get_downloads('edit') : array() as $download) if (is_object($download) && ais_pg_webinar_download_slug($download->get_file())) $has_bound_file = true;
+    if ($state['_ais_webinar_file'] || $state['_ais_webinar_file_key'] || $has_bound_file || $state['_ais_webinar_legacy_slugs']) {
         $locations = ais_pg_webinar_file_locations($id);
         $files = array_merge($locations['private'], array_map(function ($slug) use ($locations) { return $locations['dir'] . '/' . $slug . '.html'; }, $locations['slugs']));
         foreach ($files as $file) $state['files'][$file] = is_file($file) && !is_link($file) && filesize($file) <= 65536 ? hash_file('sha256', $file) : 'missing-or-invalid';
@@ -964,8 +1038,15 @@ function ais_pg_sync_links_plan($data, $snapshot) {
         }
         foreach ($files['slugs'] as $alias) {
             $file = $files['dir'] . '/' . $alias . '.html';
-            if (is_link($file) || (file_exists($file) && (!is_file($file) || filesize($file) > 65536
-                || strpos((string) file_get_contents($file), '<!-- AIS webinar ' . $files['key'] . ' -->') === false))) throw new RuntimeException('Файл подключения с таким именем создан не этой программой. Он не изменён; проверьте код лендинга.');
+            if (!file_exists($file) && !is_link($file)) continue;
+            if (is_link($file) || !is_file($file) || filesize($file) > 65536) throw new RuntimeException('Файл подключения недоступен для безопасного обновления.');
+            $content = file_get_contents($file);
+            if ($content === false) throw new RuntimeException('Не удалось прочитать файл подключения.');
+            if (strpos($content, '<!-- AIS webinar ' . $files['key'] . ' -->') !== false) continue;
+            if (strpos($content, '<!-- AIS webinar ') !== false || !in_array($alias, $files['linkedSlugs'], true)) throw new RuntimeException('Файл подключения с таким именем не привязан к этому товару или принадлежит другой программе. Он не изменён; проверьте скачиваемые файлы товара.');
+            ais_pg_assert_legacy_webinar_owner($id, $alias);
+            ais_pg_legacy_webinar_html($content, $join);
+            $files['legacy'][$alias] = hash('sha256', $content);
         }
         foreach ($files['private'] as $file) if (is_link($file) || !is_file($file) || filesize($file) > 65536) throw new RuntimeException('Прежний файл подключения недоступен для безопасного обновления.');
     }
@@ -974,7 +1055,10 @@ function ais_pg_sync_links_plan($data, $snapshot) {
 function ais_pg_sync_webinar_files($product, $plan, $name) {
     $files = $plan['files'];
     if (!$files) return;
-    foreach ($files['slugs'] as $slug) ais_pg_public_webinar_file($files['key'], $slug, $name, $plan['joinUrl']);
+    foreach ($files['slugs'] as $slug) {
+        if (isset($files['legacy'][$slug])) ais_pg_sync_legacy_webinar_file($product->get_id(), $files, $slug, $files['legacy'][$slug], $plan['joinUrl']);
+        else ais_pg_public_webinar_file($files['key'], $slug, $name, $plan['joinUrl']);
+    }
     $url = 'https://zifra-plus.ru/wp-content/uploads/dae-uploads/webinars/' . $plan['slug'] . '.html';
     // Old private HTML/TXT copies remain usable for already issued links.
     foreach ($files['private'] as $file) {
@@ -1003,6 +1087,7 @@ function ais_pg_sync_webinar_files($product, $plan, $name) {
     $product->set_downloads($downloads); $product->set_downloadable(true);
     $product->update_meta_data('_ais_webinar_file_key', $files['key']);
     $product->update_meta_data('_ais_webinar_slug_aliases', $files['slugs']);
+    $product->update_meta_data('_ais_webinar_legacy_slugs', array_keys($files['legacy'] ?? array()));
     $product->update_meta_data('_ais_webinar_join_url', $plan['joinUrl']);
     $product->update_meta_data('_ais_download_file', $url); $product->update_meta_data('_ais_webinar_file', $url);
 }
@@ -1282,7 +1367,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.7', 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.8', 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

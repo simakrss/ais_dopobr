@@ -16,6 +16,11 @@ register_shutdown_function(function () use ($test_dir) {
     foreach (array_unique($private_dirs) as $dir) rmdir($dir);
     foreach (glob($test_dir . '/ais-webinar-files/public-locks/*.lock') as $file) unlink($file);
     if (is_dir($test_dir . '/ais-webinar-files/public-locks')) rmdir($test_dir . '/ais-webinar-files/public-locks');
+    foreach (glob($test_dir . '/ais-webinar-files/legacy-backups/*') as $dir) {
+        foreach (glob($dir . '/*.bak') as $file) unlink($file);
+        rmdir($dir);
+    }
+    if (is_dir($test_dir . '/ais-webinar-files/legacy-backups')) rmdir($test_dir . '/ais-webinar-files/legacy-backups');
     foreach (glob($test_dir . '/wordpress/wp-content/uploads/dae-uploads/webinars/*.html') as $file) unlink($file);
     foreach (array('wp-content/uploads/dae-uploads/webinars', 'wp-content/uploads/dae-uploads', 'wp-content/uploads', 'wp-content') as $suffix) {
         $dir = $test_dir . '/wordpress/' . $suffix;
@@ -126,6 +131,7 @@ function wc_get_container() { return new class { function get($class) { return n
 function wc_get_logger() { return new class { function error($message, $context) { $GLOBALS['test_log'][] = array($message, $context); } }; }
 class WC_Product_Simple {
     public $id=0;
+    function get_id() { return $this->id; }
     public $save_count=0;
     public $values=array(); public $meta=array();
     function is_type($type) { return $type==='simple'; }
@@ -177,13 +183,23 @@ function wp_update_post($data, $return_error = false) {
 function is_wp_error($value) { return $value instanceof WP_Error; }
 class WP_Error { public $code; public $message; public $data; function __construct($code, $message, $data) { $this->code=$code; $this->message=$message; $this->data=$data; } }
 class MockWpDb {
-    public $prefix = 'fixture_'; public $options = 'fixture_options'; public $locked = false; public $deny = false;
-    function prepare($sql, ...$args) { return $sql; }
+    public $prefix = 'fixture_'; public $options = 'fixture_options'; public $postmeta = 'fixture_postmeta'; public $last_error = ''; public $locked = false; public $deny = false; public $args = array();
+    function prepare($sql, ...$args) { $this->args = $args; return $sql; }
     function esc_like($value) { return addcslashes($value, '_%'); }
     function query($value) { return 0; }
     function get_var($sql) {
         if (strpos($sql, 'GET_LOCK') !== false) { $this->locked = !$this->deny; return $this->deny ? 0 : 1; }
         if (strpos($sql, 'RELEASE_LOCK') !== false) { $this->locked = false; return 1; }
+        if (strpos($sql, 'SELECT post_id FROM fixture_postmeta') === 0) {
+            $fragment = stripslashes(trim($this->args[1], '%')); $alias = stripslashes(trim($this->args[2], '%'));
+            foreach ($GLOBALS['test_products'] as $id=>$product) {
+                if ($id === $this->args[0]) continue;
+                foreach ($product->get_downloads('edit') ?: array() as $download) if (strpos($download->get_file(), $fragment) !== false) return $id;
+                foreach (array('_ais_download_file','_ais_webinar_file') as $key) if (strpos((string) get_post_meta($id,$key), $fragment) !== false) return $id;
+                if (strpos(serialize(get_post_meta($id,'_ais_webinar_legacy_slugs')), $alias) !== false) return $id;
+            }
+            return null;
+        }
         throw new RuntimeException('Unexpected SQL');
     }
 }
