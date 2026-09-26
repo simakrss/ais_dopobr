@@ -40655,7 +40655,7 @@ async function route(req, res) {
         return;
       }
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
-      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code", "preview-variant", "add-variant", "set-variant-visibility"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code", "preview-variant", "add-variant", "set-variant-visibility", "preview-bulk-sync", "sync-bulk-item"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
       if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
         || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
@@ -40671,7 +40671,7 @@ async function route(req, res) {
         return;
       }
       const body = await readJsonBody(req, 64 * 1024);
-      if (["prepare", "publish", "sync", "add-variant"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
+      if (["prepare", "publish", "sync", "add-variant", "sync-bulk-item"].includes(action) && body.requestId) progressJob = programSiteProgress.start(authUser.id, body.requestId);
       // Use the saved authoritative program, never a client-supplied price or link.
       const shared = await readSharedApplicationStateDocument({ allowCache: false });
       if (shared.offline || shared.pendingCount || shared.syncPending) {
@@ -40683,6 +40683,19 @@ async function route(req, res) {
       if (!savedProgram && (action !== "resolve" || body.programId)) { progressJob?.finish("failed"); sendError(res, 404, "Сохранённая программа не найдена. Обновите карточку."); return; }
       const program = programSiteGenerator.withTrainingPlan(savedProgram || {}, shared.document.data);
       const reportProgress = label => progressJob?.report(label);
+      if (["preview-bulk-sync", "sync-bulk-item"].includes(action)) {
+        if (action === "sync-bulk-item") {
+          const locks = await readSharedRecordLocksDocument();
+          const lock = activeSharedRecordLocks(locks.document).find(item => item.entityType === "programs" && String(item.entityId) === String(program.id));
+          if (!body.clientId || !lock || lock.clientId !== body.clientId || String(lock.ownerLogin) !== String(authUser.login)) {
+            const error = new Error("Для обновления программы требуется действующая блокировка этой записи."); error.statusCode = 423; throw error;
+          }
+        }
+        const result = action === "preview-bulk-sync"
+          ? await programSiteGenerator.previewBulkSync(program, call, body.pricing)
+          : await programSiteGenerator.synchronizeBulkItem(program, call, body.pricing, body.quote, reportProgress);
+        progressJob?.finish("completed"); sendJson(res, 200, result); return;
+      }
       const prepareCertificate = async sampleProgram => {
         reportProgress("Загрузка актуального шаблона документа об образовании");
         return programSiteCertificates.prepare(sampleProgram, shared.document.data, body.preferLocalTemplate === true, {
@@ -40743,7 +40756,7 @@ async function route(req, res) {
       sendJson(res, 200, result);
     } catch (error) {
       progressJob?.finish("failed");
-      sendJson(res, Number(error.statusCode) || 400, {error: error.message, ...(progressJob ? {stage: progressJob.label()} : {})});
+      sendJson(res, Number(error.statusCode) || 400, {error: error.message, ...(error.siteChanged ? {siteChanged:true} : {}), ...(progressJob ? {stage: progressJob.label()} : {})});
     }
     return;
   }

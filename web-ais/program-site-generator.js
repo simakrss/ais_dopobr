@@ -28,9 +28,10 @@ function withTrainingPlan(program, data) {
   }))};
 }
 
-function fail(message, statusCode = 400) {
+function fail(message, statusCode = 400, details = {}) {
   const error = new Error(message);
   error.statusCode = statusCode;
+  Object.assign(error, details);
   throw error;
 }
 
@@ -615,6 +616,74 @@ async function previewSync(program, call, productId = 0, imageSourceId = 0, prep
   return (await buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate)).plan;
 }
 
+function bulkStableHash(value) {
+  const stable = item => Array.isArray(item) ? item.map(stable) : item && typeof item === "object"
+    ? Object.fromEntries(Object.keys(item).sort().filter(key => item[key] !== undefined).map(key => [key, stable(item[key])])) : item;
+  return crypto.createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
+}
+function bulkDecimal(value, label) {
+  const source = String(value ?? "").trim().replace(",", ".");
+  if (!/^-?\d+(?:\.\d{1,2})?$/.test(source) || source.length > 16) fail(`${label}: укажите число, не более двух знаков после запятой.`);
+  const negative = source.startsWith("-");
+  const [whole, fraction = ""] = source.replace(/^-/, "").split(".");
+  return (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"))) * (negative ? -1n : 1n);
+}
+function normalizeBulkPricing(options = {}) {
+  if (!options || typeof options !== "object" || typeof options.changePrices !== "boolean") fail("Укажите режим изменения цен.");
+  if (!options.changePrices) return {changePrices: false};
+  const percent = bulkDecimal(options.percent, "Процент");
+  if (percent < -10000n || percent > 100000n) fail("Процент должен быть от −100 до 1000.");
+  const direction = options.direction;
+  if (!["up", "down", "nearest", "none"].includes(direction)) fail("Выберите направление округления.");
+  const step = direction === "none" ? 1n : bulkDecimal(options.step, "Шаг округления");
+  if (step <= 0n || step > 1000000000n) fail("Шаг округления должен быть от 0,01 до 10 000 000 ₽.");
+  const normalized = {changePrices:true,percent:Number(percent)/100,step:Number(step)/100,direction};
+  if (options.manualPrice !== undefined) {
+    const manual = bulkDecimal(options.manualPrice, "Ручная цена");
+    if (manual < 0n || manual > 1000000000n) fail("Ручная цена должна быть от 0 до 10 000 000 ₽.");
+    normalized.manualPrice = Number(manual)/100;
+  }
+  return normalized;
+}
+function calculateBulkPrice(price, options) {
+  const settings = normalizeBulkPricing(options);
+  const cents = bulkDecimal(price, "Цена");
+  if (cents < 0n || cents > 1000000000n) fail("Цена должна быть от 0 до 10 000 000 ₽.");
+  if (!settings.changePrices) return Number(cents)/100;
+  if (settings.manualPrice !== undefined) return settings.manualPrice;
+  const step = bulkDecimal(settings.step, "Шаг округления");
+  const numerator = cents * (10000n + bulkDecimal(settings.percent, "Процент"));
+  const denominator = 10000n * step;
+  let units = numerator / denominator;
+  const remainder = numerator % denominator;
+  if ((settings.direction === "up" && remainder > 0n) || (["nearest", "none"].includes(settings.direction) && remainder * 2n >= denominator)) units++;
+  const result = units * step;
+  if (result > 1000000000n) fail("Расчётная цена превышает 10 000 000 ₽.");
+  return Number(result)/100;
+}
+async function previewBulkSync(program, call, options) {
+  const settings = normalizeBulkPricing(options);
+  const price = calculateBulkPrice(program.price, settings);
+  const effective = {...program, price};
+  const plan = await previewSync(effective, call);
+  if (!plan.product || !plan.hash) fail("Неоднозначная связь с товаром. Укажите код товара в карточке программы.", 409);
+  // A sibling variant may change the common page's version during this batch.
+  // Its changes must not invalidate this unchanged offer; its own product/offer,
+  // landing identity, desired model and authoritative AIS record remain guarded.
+  const ownOffers = plan.landing.offers.filter(offer => Number(offer.productId) === Number(plan.product.id));
+  const quote = bulkStableHash({source:bulkStableHash(program),settings,model:plan.model,productId:plan.product.id,
+    productVersion:plan.product.version,landingId:plan.landing.id,landingStatus:plan.landing.status,landingSlug:plan.landing.slug,ownOffers});
+  return {...plan, bulk:{settings,quote,sourceHash:bulkStableHash(program),basePrice:Number(program.price),baseOldPrice:Number(program.oldPrice || 0),price,oldPrice:plan.model.oldPrice}};
+}
+async function synchronizeBulkItem(program, call, options, quote, report = () => {}) {
+  if (typeof quote !== "string" || !/^[a-f0-9]{64}$/.test(quote)) fail("Сначала выполните предварительный расчёт.");
+  report("Проверка программы и подтверждённого расчёта цен");
+  const plan = await previewBulkSync(program, call, options);
+  if (quote !== plan.bulk.quote) fail("Программа, цена или связь с сайтом изменились. Повторите предварительную проверку этой строки.", 409);
+  const result = await synchronize({...program,price:plan.bulk.price}, call, plan.product.id, plan.hash, 0, report);
+  return {...result,price:plan.bulk.price,oldPrice:plan.bulk.oldPrice,bulkSourceHash:plan.bulk.sourceHash};
+}
+
 async function synchronize(program, call, productId, expectedHash, imageSourceId = 0, report = () => {}, prepareCertificate = null) {
   report("Повторная проверка данных программы и двух сайтов");
   const {plan, certificate} = await buildSyncPlan(program, call, productId, imageSourceId, prepareCertificate);
@@ -645,7 +714,7 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
   let landing;
   report("Обновление лендинга на edu-plus.ru");
   try { landing = await call("edu", "/sync-existing", {...payload, version: plan.landing.version}); }
-  catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409); }
+  catch (error) { fail(`Магазин обновлён, но обновление лендинга не подтверждено. Обновите проверку и повторите синхронизацию для завершения. ${error.message}`, 409, {siteChanged:true}); }
   return {ok: true, landing, product, type: plan.model.type, syncedAt: new Date().toISOString(),
     ...(certificates ? {certificates} : {}),
     ...(plan.model.oldPriceAdjusted ? {oldPrice: plan.model.oldPrice} : {}),
@@ -653,4 +722,4 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
     ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, setVariantVisibility, previewVariant, addVariant, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, setVariantVisibility, previewVariant, addVariant, previewSync, synchronize, normalizeBulkPricing, calculateBulkPrice, bulkStableHash, previewBulkSync, synchronizeBulkItem};

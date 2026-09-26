@@ -31769,6 +31769,20 @@ dialog.program-site-dialog:not([open]) { display: none; }
 dialog.program-site-dialog[open] { display: block; }
 dialog.program-site-dialog::backdrop { background: #122a3280; }
 .program-site-body { display: grid; gap: 12px; padding: 16px; overflow-wrap: anywhere; }
+dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-width: calc(100vw - 28px); }
+.program-site-bulk-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.program-site-bulk-table { overflow: auto; max-height: min(48vh, 560px); border: 1px solid var(--line); border-radius: 8px; }
+.program-site-bulk-table table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 13px; }
+.program-site-bulk-table th { position: sticky; top: 0; background: var(--panel); z-index: 1; text-align: left; }
+.program-site-bulk-table td, .program-site-bulk-table th { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.program-site-bulk-table td:nth-child(2) { min-width: 220px; }
+.program-site-bulk-table td:last-child { min-width: 240px; }
+.program-site-bulk-table small { display: block; color: var(--muted); margin-top: 4px; }
+.program-site-bulk-table input[type="number"] { min-width: 110px; }
+@media (max-width: 650px) {
+  .program-site-bulk-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .program-site-bulk-dialog .program-site-body { padding: 10px; }
+}
 .program-site-body > p, .program-site-body [data-site-result] > p, .program-site-body h3 { margin: 0; }
 .program-site-body label { display: grid; gap: 5px; min-width: 0; }
 .program-site-body input:not([type="checkbox"]), .program-site-body select, .program-site-body textarea {

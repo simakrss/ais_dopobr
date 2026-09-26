@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.556",
+    version: "1.7.557",
     releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.557",
+      releasedAt: "2026-09-26",
+      changes: ["Групповое обновление существующих лендингов и товаров программ АИС: предварительный расчёт изменения цен на процент с округлением, ручная цена для каждой программы, подтверждение, индикатор, остановка и отчёт. После изменения цен появляется напоминание обновить приказ о наборе и коммерческие предложения."]
+    },
     {
       version: "1.7.556",
       releasedAt: "2026-09-26",
@@ -23857,6 +23862,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ${configId === "students" ? `
           <button class="primary-button" data-action="open-student-bulk-operations" data-mobile-label="Гр. операции" type="button" title="Групповые операции" ${selected.length ? "" : "disabled"}>Групповые операции</button>
         ` : ""}
+        ${configId === "programs" && isAdminUser() ? '<button class="primary-button" data-action="bulk-program-sites" type="button">Обновить программы на сайтах</button>' : ""}
         ${configId === "generalExpenses" ? `
           <button class="ghost-button" data-action="bulk-duplicate-general-expenses" data-config="${configId}" type="button" title="Дублировать выбранные общие расходы с текущей датой" ${selectedRows.length ? "" : "disabled"}>
             Дублировать
@@ -34677,7 +34683,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(reading ? {} : {headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || "Не удалось связаться с сайтами.");
+    if (!response.ok) throw Object.assign(new Error(result.error || "Не удалось связаться с сайтами."), {siteChanged:result.siteChanged === true});
     return result;
   }
 
@@ -35199,6 +35205,202 @@ MAX - https://bizvmax.ru/zifra_plus
       if (value !== current[key]) fields[key] = value;
     }
     return fields;
+  }
+
+  function programBulkPriceChanged(plan) {
+    if (!plan?.bulk) return false;
+    const offer = plan.landing.offers.find(item => Number(item.productId) === Number(plan.product.id));
+    return [plan.bulk.basePrice,plan.product.price,offer?.price].some(value => value != null && Number(value) !== Number(plan.bulk.price))
+      || Number(plan.bulk.baseOldPrice) !== Number(plan.bulk.oldPrice);
+  }
+
+  function showProgramPriceUpdateReminder(count) {
+    if (!count || document.querySelector("[data-program-price-reminder]")) return;
+    const dialog = document.createElement("dialog");
+    dialog.className = "modal program-site-dialog";
+    dialog.dataset.programPriceReminder = "";
+    dialog.setAttribute("aria-label", "После изменения цен");
+    dialog.innerHTML = `<header class="modal-head"><h2>Цены обновлены</h2><button class="icon-button" type="button" aria-label="Закрыть">×</button></header>
+      <div class="program-site-body"><p>Изменены цены программ: ${count}.</p><p><strong>Необходимо обновить приказ о наборе и коммерческие предложения.</strong></p><p class="muted">Эти документы автоматически не изменялись.</p><div class="program-site-actions"><button class="primary-button" type="button">Понятно</button></div></div>`;
+    const close = () => { dialog.close(); dialog.remove(); };
+    dialog.querySelectorAll("button").forEach(button => button.addEventListener("click", close));
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    document.body.appendChild(dialog); dialog.showModal();
+  }
+
+  async function openProgramSiteBulkSync() {
+    if (!isAdminUser() || isDatabaseDemoMode() || isSettingsDraftSessionActive() || document.querySelector("#recordForm, [data-program-site-dialog]")) return;
+    const selectedIds = new Set(getSelected("programs").map(String));
+    const records = state.data.collections.programs.filter(item => ["ПРО", "ДОП", "ППП", "КПК"].includes(String(item.type).toUpperCase()));
+    if (!records.length) { alert("В АИС нет образовательных программ для обновления."); return; }
+    const dialog = document.createElement("dialog");
+    dialog.className = "modal program-site-dialog program-site-bulk-dialog";
+    dialog.dataset.programSiteDialog = "";
+    dialog.setAttribute("aria-label", "Групповое обновление программ на сайтах");
+    dialog.innerHTML = `<header class="modal-head"><h2>Обновить программы на сайтах</h2><button class="icon-button" data-bulk-close type="button" aria-label="Закрыть">×</button></header>
+      <div class="program-site-body"><div class="program-site-bulk-settings">
+      <label>Программы<select data-bulk-scope><option value="all">Все программы АИС (${records.length})</option><option value="selected" ${selectedIds.size ? "" : "disabled"}>Выбранные в таблице (${selectedIds.size})</option></select></label>
+      <label>Вид программы<select data-bulk-type><option value="">Все виды</option>${["ПРО","ДОП","КПК","ППП"].map(type => `<option>${type}</option>`).join("")}</select></label>
+      <label class="program-site-review"><input type="checkbox" data-bulk-change-prices><span>Изменить цены</span></label>
+      <label>Изменение, %<input type="number" min="-100" max="1000" step="0.01" value="10" data-bulk-percent disabled></label>
+      <label>Округление<select data-bulk-direction disabled><option value="up">В большую сторону</option><option value="nearest">До ближайшего</option><option value="down">В меньшую сторону</option><option value="none">Без округления (до копеек)</option></select></label>
+      <label>Шаг, ₽<input type="number" min="0.01" max="10000000" step="0.01" value="500" data-bulk-step disabled></label></div>
+      <p class="muted">Расчёт от цены в АИС. Например: 4 200 ₽ + 10%, вверх до 500 ₽ → 5 000 ₽. В колонке «Новая цена» можно задать индивидуальную цену — она применяется без дополнительного округления. Старая цена сохраняется; если она меньше новой, устанавливается новая × 1,25.</p>
+      <p class="muted">Обновляются существующие лендинги и товары по сохранённым данным АИС, включая даты вебинаров и ссылки. Новые страницы не создаются. Изображения, образцы документов, отзывы и скрытие вариантов сохраняются. Неоднозначные связи пропускаются.</p>
+      <div class="program-site-actions"><button class="ghost-button" type="button" data-bulk-preview>Проверить / пересчитать</button><button class="ghost-button" type="button" data-bulk-stop hidden>Остановить после текущей операции</button><span data-bulk-count role="status" aria-live="polite"></span></div>
+      <div class="program-site-progress" data-site-progress hidden><progress aria-label="Обновление программ"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time data-site-progress-time>0:00</time></div>
+      <div class="program-site-bulk-table"><table><thead><tr><th><input type="checkbox" data-bulk-all checked aria-label="Выбрать все программы"></th><th>Программа</th><th>В АИС, ₽</th><th>На сайтах, ₽</th><th>Новая цена, ₽</th><th>Старая цена, ₽</th><th>Результат проверки / обновления</th></tr></thead><tbody data-bulk-rows></tbody></table></div>
+      <p class="program-site-notice" data-bulk-reminder hidden>После изменения цен необходимо обновить приказ о наборе и коммерческие предложения. Эти документы автоматически не изменяются.</p>
+      <p data-bulk-status role="status" aria-live="polite">Сначала проверьте программы и расчёт. До подтверждения цены и сайты не меняются.</p>
+      <label class="program-site-review"><input type="checkbox" data-bulk-confirm disabled><span>Проверено: обновить отмеченные программы на edu-plus.ru и zifra-plus.ru, сохранить цены и промосообщения в АИС.</span></label>
+      <div class="program-site-actions"><button class="primary-button" type="button" data-bulk-apply disabled>Обновить выбранные программы</button><button class="ghost-button" type="button" data-bulk-report>Скачать отчёт</button></div></div>`;
+    document.body.appendChild(dialog); dialog.showModal();
+    const q = selector => dialog.querySelector(selector);
+    const progress = createProgramSiteProgress(dialog), tbody = q("[data-bulk-rows]"), status = q("[data-bulk-status]");
+    const money = value => value == null || value === "" ? "—" : Number(value).toLocaleString("ru-RU", {maximumFractionDigits:2});
+    let rows = [], busy = false, stop = false, started = false, announced = 0;
+    const changed = new Set();
+    const pricing = row => ({changePrices:q("[data-bulk-change-prices]").checked,percent:q("[data-bulk-percent]").value,
+      direction:q("[data-bulk-direction]").value,step:q("[data-bulk-step]").value,...(row?.manualPrice !== undefined ? {manualPrice:row.manualPrice} : {})});
+    const ready = row => row.selected && (row.phase === "ready" || row.phase === "pending-save");
+    const update = () => {
+      const count = rows.filter(ready).length;
+      q("[data-bulk-apply]").disabled = busy || !count || !q("[data-bulk-confirm]").checked;
+      q("[data-bulk-confirm]").disabled = busy || !count;
+      q("[data-bulk-count]").textContent = `Всего: ${rows.length} · Готовы: ${count} · Обновлены: ${rows.filter(row => row.phase === "done").length} · Ошибки: ${rows.filter(row => ["error","conflict","pending-save"].includes(row.phase)).length}`;
+      q("[data-bulk-all]").checked = rows.filter(row => row.phase !== "done").every(row => row.selected);
+      q("[data-bulk-all]").indeterminate = rows.some(row => row.selected && row.phase !== "done") && !q("[data-bulk-all]").checked;
+    };
+    const drawRow = row => {
+      const plan = row.plan, target = row.manualPrice ?? plan?.bulk.price ?? "";
+      row.element.innerHTML = `<td><input type="checkbox" data-bulk-selected ${row.selected ? "checked" : ""} ${busy || row.phase === "done" ? "disabled" : ""} aria-label="Выбрать программу"></td>
+        <td>${escapeHtml(row.name)}<small>${escapeHtml(row.type)}${plan ? ` · товар №${plan.product.id}` : ""}</small></td>
+        <td>${money(plan?.bulk.basePrice ?? row.basePrice)}</td><td>${plan ? `${money(plan.product.price)} / ${money(plan.landing.offers.find(offer => Number(offer.productId) === Number(plan.product.id))?.price)}` : "—"}</td>
+        <td><input type="number" min="0" max="10000000" step="0.01" data-bulk-price value="${escapeAttr(target)}" aria-label="Новая цена: ${escapeAttr(row.name)}" ${busy || row.result || row.phase === "done" || !pricing().changePrices ? "disabled" : ""}>${row.manualPrice !== undefined ? '<button type="button" class="ghost-button compact-button" data-bulk-auto '+(busy || row.result || row.phase === "done" ? 'disabled' : '')+'>По общему правилу</button>' : ""}</td>
+        <td>${money(plan?.bulk.oldPrice)}</td><td>${escapeHtml(row.message || "Не проверена")}</td>`;
+      row.element.querySelector("[data-bulk-selected]").addEventListener("change", event => { row.selected = event.target.checked; q("[data-bulk-confirm]").checked = false; update(); });
+      row.element.querySelector("[data-bulk-price]").addEventListener("change", event => {
+        row.manualPrice = event.target.value; row.plan = null; row.phase = "new"; row.message = "Ручная цена: требуется пересчёт";
+        q("[data-bulk-confirm]").checked = false; drawRow(row); update();
+      });
+      row.element.querySelector("[data-bulk-auto]")?.addEventListener("click", () => {
+        delete row.manualPrice; row.plan = null; row.phase = "new"; row.message = "Требуется пересчёт";
+        q("[data-bulk-confirm]").checked = false; drawRow(row); update();
+      });
+    };
+    const setBusy = value => {
+      busy = value;
+      dialog.querySelectorAll("button,input,select").forEach(control => { control.disabled = value; });
+      q("[data-bulk-stop]").hidden = !value; q("[data-bulk-stop]").disabled = stop;
+      if (!value) {
+        dialog.querySelectorAll(".program-site-bulk-settings input,.program-site-bulk-settings select").forEach(control => { control.disabled = started; });
+        for (const key of ["percent","direction","step"]) q(`[data-bulk-${key}]`).disabled = started || !pricing().changePrices || (key === "step" && pricing().direction === "none");
+      }
+      rows.forEach(drawRow); update();
+    };
+    const rebuild = () => {
+      rows = records.filter(item => (!q("[data-bulk-type]").value || item.type === q("[data-bulk-type]").value) && (q("[data-bulk-scope]").value === "all" || selectedIds.has(String(item.id))))
+        .map(item => ({id:String(item.id),name:item.name,type:item.type,basePrice:item.price,selected:true,phase:"new",element:document.createElement("tr")}));
+      tbody.replaceChildren(...rows.map(row => row.element)); q("[data-bulk-confirm]").checked = false; setBusy(false);
+    };
+    for (const key of ["scope","type"]) q(`[data-bulk-${key}]`).addEventListener("change", rebuild);
+    for (const key of ["change-prices","percent","direction","step"]) q(`[data-bulk-${key}]`).addEventListener("change", () => {
+      rows.forEach(row => { row.plan = null; row.phase = "new"; row.message = "Параметры изменены: требуется пересчёт"; });
+      q("[data-bulk-confirm]").checked = false; setBusy(false);
+    });
+    q("[data-bulk-all]").addEventListener("change", event => { rows.filter(row => row.phase !== "done").forEach(row => { row.selected = event.target.checked; drawRow(row); }); q("[data-bulk-confirm]").checked = false; update(); });
+    q("[data-bulk-confirm]").addEventListener("change", update);
+    q("[data-bulk-stop]").addEventListener("click", () => { stop = true; q("[data-bulk-stop]").disabled = true; status.textContent = "Остановка после завершения уже начатых запросов. Выполненные изменения сохранятся."; });
+    q("[data-bulk-preview]").addEventListener("click", async () => {
+      if (busy) return;
+      stop = false; q("[data-bulk-confirm]").checked = false; setBusy(true); progress.start("Проверка программ и расчёт цен…");
+      let cursor = 0, checked = 0;
+      const queue = rows.filter(row => row.selected && row.phase !== "done" && !row.result);
+      try {
+        if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) throw Error("Сначала дождитесь сохранения общей базы.");
+        const worker = async () => {
+          while (!stop && cursor < queue.length) {
+            const row = queue[cursor++]; row.phase = "checking"; row.message = "Проверка сайтов…"; drawRow(row);
+            try {
+              row.plan = await programSiteRequest("preview-bulk-sync", {programId:row.id,pricing:pricing(row)});
+              if (!row.plan?.bulk?.quote) throw Error("Сервер ещё не обновлён. Дождитесь новой версии АИС.");
+              row.phase = "ready"; row.message = "Готова к обновлению";
+            } catch (error) { row.plan = null; row.phase = "error"; row.message = error.message; }
+            checked++; drawRow(row); update(); progress.phase(`Проверено ${checked} из ${queue.length}`);
+          }
+        };
+        await Promise.all(Array.from({length:Math.min(3,queue.length)},worker));
+        const bindings = new Map();
+        for (const row of rows.filter(item => item.plan)) {
+          const id = row.plan.product.id;
+          if (!bindings.has(id)) bindings.set(id, []); bindings.get(id).push(row);
+        }
+        for (const group of bindings.values()) if (group.length > 1) for (const row of group) if (row.phase !== "done") {
+          row.phase = "conflict"; row.message = "Один товар привязан к нескольким программам АИС. Уточните коды товаров в карточках.";
+        }
+        status.textContent = stop ? "Проверка остановлена. Можно проверить оставшиеся строки или применить уже проверенные." : "Проверьте цены, снимите лишние галочки и подтвердите обновление. Строки с ошибками пропускаются.";
+      } catch (error) { status.textContent = error.message; }
+      finally { progress.stop(stop); setBusy(false); }
+    });
+    q("[data-bulk-apply]").addEventListener("click", async () => {
+      if (busy || q("[data-bulk-apply]").disabled) return;
+      const queue = rows.filter(ready); started = true; stop = false; q("[data-bulk-confirm]").checked = false;
+      setBusy(true); progress.start("Обновление выбранных программ…");
+      let completed = 0;
+      try {
+        for (const row of queue) {
+          if (stop) break;
+          let locked = false;
+          try {
+            if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) { stop = true; throw Error("Общая база не сохранена. Очередь остановлена."); }
+            locked = await acquireRecordLock(recordLockEntityType("programs"),row.id,{promptTakeover:false});
+            if (!locked) throw Error("Программа редактируется в другой сессии; пропущена.");
+            row.phase = "updating"; row.message = "Обновление сайтов…"; drawRow(row);
+            if (!row.result) {
+              const requestId = crypto.randomUUID(); progress.watch(requestId);
+              row.result = await programSiteRequest("sync-bulk-item", {programId:row.id,pricing:row.plan.bulk.settings,quote:row.plan.bulk.quote,clientId:recordLockClientId,requestId});
+              if (programBulkPriceChanged(row.plan)) changed.add(row.id);
+            }
+            const current = state.data.collections.programs.find(item => String(item.id) === row.id);
+            if (!current) throw Error("Сайты обновлены, но программа не найдена в АИС.");
+            const result = row.result;
+            const fields = {...getProgramPromoSyncFields(current,{...current,type:row.plan.model.type,price:result.price}),price:String(result.price),oldPrice:String(result.oldPrice)};
+            if (result.landingCode) fields.landingCode = result.landingCode;
+            if (result.gradeReportUrl && current.type === "ПРО") fields.gradeReportUrl = result.gradeReportUrl;
+            Object.assign(current,fields,{siteSync:result});
+            if (result.landing?.url) current.landingUrl = result.landing.url;
+            for (const key of ["promoMessage1","promoMessage2"]) if (Object.hasOwn(fields,key)) current[`${key}Touched`] = true;
+            if (!row.audited) {
+              addAudit("Групповое обновление сайтов","Программы",`${row.name}: ${money(row.plan.bulk.basePrice)} → ${money(result.price)} ₽`,{entityType:"programs",entityId:row.id,entityLabel:row.name});
+              row.audited = true;
+            }
+            persist(); progress.local("Сохранение цены и промосообщений в АИС…");
+            if (!await flushSharedApplicationStateThroughGeneration(sharedStateChangeGeneration)) { stop = true; throw Error("Сайты обновлены; сохранение в общей базе не подтверждено. Повтор продолжит только сохранение, без повторного изменения цены."); }
+            row.phase = "done"; row.selected = false; row.message = "Обновлены оба сайта и АИС";
+          } catch (error) {
+            if (error.siteChanged && programBulkPriceChanged(row.plan)) changed.add(row.id);
+            row.phase = row.result ? "pending-save" : "error"; row.message = error.message;
+          }
+          finally { if (locked) await releaseRecordLock(); completed++; drawRow(row); update(); progress.local(`Обработано ${completed} из ${queue.length}`); }
+        }
+        status.textContent = stop ? "Очередь остановлена. Выполненные строки повторно не применяются." : "Обработка завершена. Для ошибок выполните повторную проверку; готовые строки повторно не применяются.";
+      } finally {
+        progress.stop(stop); setBusy(false);
+        q("[data-bulk-reminder]").hidden = !changed.size;
+        if (changed.size > announced) { announced = changed.size; showProgramPriceUpdateReminder(changed.size); }
+      }
+    });
+    q("[data-bulk-report]").addEventListener("click", () => {
+      const safe = value => '"'+String(value ?? "").replace(/^([=+@\-\t\r])/,"'$1").replace(/"/g,'""')+'"';
+      const lines = [["Программа","Вид","Цена в АИС до","Новая цена","Результат"],...rows.map(row => [row.name,row.type,row.plan?.bulk.basePrice ?? row.basePrice,row.result?.price ?? row.plan?.bulk.price ?? row.manualPrice ?? "",row.message || "Не проверена"])];
+      const url = URL.createObjectURL(new Blob(["\uFEFF"+lines.map(line => line.map(safe).join(";")).join("\r\n")],{type:"text/csv;charset=utf-8"}));
+      const link = document.createElement("a"); link.href = url; link.download = "Обновление программ на сайтах.csv"; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
+    });
+    const close = () => { if (!busy) { progress.dispose(); dialog.close(); dialog.remove(); render(); } };
+    q("[data-bulk-close]").addEventListener("click",close);
+    dialog.addEventListener("cancel",event => { event.preventDefault(); close(); });
+    dialog.addEventListener("keydown",event => { if (event.key === "Escape") event.stopPropagation(); });
+    rebuild();
   }
 
   async function openProgramSiteSync() {
@@ -46545,6 +46747,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
 
     document.querySelector("[data-action='open-student-bulk-operations']")?.addEventListener("click", openStudentBulkOperationsDialog);
+    document.querySelector("[data-action='bulk-program-sites']")?.addEventListener("click", openProgramSiteBulkSync);
 
     document.querySelectorAll("[data-action='bulk-duplicate-general-expenses']").forEach((button) => {
       button.addEventListener("click", () => bulkDuplicateGeneralExpenses());
