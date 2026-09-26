@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.5
+ * Version: 1.7.7
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -720,6 +720,23 @@ function ais_pg_mutate($action, $data) {
         $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock));
     }
 }
+function ais_pg_variant_price_note() {
+    return "Скидка до [skidki-pp-pk]\nРассрочка без переплат";
+}
+function ais_pg_offer_product_id($value) {
+    if (!is_string($value)) return 0;
+    $url = wp_parse_url(html_entity_decode($value, ENT_QUOTES, 'UTF-8'));
+    if (!$url || !in_array($url['scheme'] ?? '', array('https', 'http'), true) || strtolower($url['host'] ?? '') !== 'zifra-plus.ru'
+        || isset($url['user']) || isset($url['pass']) || isset($url['port'])) return 0;
+    parse_str($url['query'] ?? '', $query);
+    $id = $query['add-to-cart'] ?? '';
+    return is_scalar($id) && preg_match('/^[1-9]\d*$/D', (string) $id) ? (int) $id : 0;
+}
+function ais_pg_hidden_offers($id) {
+    $hidden = get_post_meta($id, '_ais_hidden_landing_offers', true) ?: array();
+    if (!is_array($hidden)) throw new RuntimeException('Повреждены настройки видимости вариантов.');
+    return array_values(array_unique(array_filter(array_map('intval', $hidden), function ($id) { return $id > 0; })));
+}
 function ais_pg_sync_landing($id) {
     $post = get_post($id);
     if (!$post || !in_array($post->post_type, array('other-course', 'courses-pk', 'courses-pp'), true)
@@ -727,21 +744,50 @@ function ais_pg_sync_landing($id) {
     if (!function_exists('get_field_objects')) throw new RuntimeException('На сайте недоступен ACF.');
     $fields = array();
     foreach (get_field_objects($id, false) ?: array() as $field) $fields[$field['name']] = ais_pg_acf_value($field, $field['value']);
-    $offers = array();
+    $offers = array(); $hidden = ais_pg_hidden_offers($id);
     foreach ($fields['blok_ceny'] ?? array() as $index => $row) {
-        $url = wp_parse_url(html_entity_decode((string) ($row['ssylka_na_registraciyu'] ?? ''), ENT_QUOTES, 'UTF-8'));
-        if (!$url || !in_array($url['scheme'] ?? '', array('https', 'http'), true) || strtolower($url['host'] ?? '') !== 'zifra-plus.ru'
-            || isset($url['user']) || isset($url['pass']) || isset($url['port'])) continue;
-        parse_str($url['query'] ?? '', $query);
-        $product_id = $query['add-to-cart'] ?? '';
-        if (!is_scalar($product_id) || !preg_match('/^[1-9]\d*$/D', (string) $product_id)) continue;
-        $offers[] = array('index' => $index, 'productId' => (int) $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '');
+        $product_id = ais_pg_offer_product_id($row['ssylka_na_registraciyu'] ?? '');
+        if (!$product_id) continue;
+        $offers[] = array('index' => $index, 'productId' => $product_id, 'hours' => $row['kolichestvo_chasov'] ?? '', 'price' => $row['stoimost_kursa'] ?? '', 'hidden' => in_array($product_id, $hidden, true));
     }
     $variants = get_post_meta($id, '_ais_program_variants', true) ?: array();
     if (!is_array($variants)) throw new RuntimeException('Повреждены привязки вариантов лендинга.');
-    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_name, $post->post_modified_gmt, $post->post_status, $post->post_content, $post->post_excerpt ?? '', $fields, get_post_thumbnail_id($id), $variants)));
+    $version = hash('sha256', wp_json_encode(array($post->post_title, $post->post_name, $post->post_modified_gmt, $post->post_status, $post->post_content, $post->post_excerpt ?? '', $fields, get_post_thumbnail_id($id), $variants, $hidden)));
     $image = function_exists('wp_get_attachment_image_url') ? wp_get_attachment_image_url(get_post_thumbnail_id($id), 'medium_large') : '';
-    return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'previewImageUrl' => $image ?: '', 'fields' => $fields, 'offers' => $offers, 'variants' => $variants, 'version' => $version));
+    return array_merge(ais_pg_result($id), array('title' => $post->post_title, 'previewImageUrl' => $image ?: '', 'fields' => $fields, 'offers' => $offers, 'variants' => $variants, 'version' => $version, 'variantVisibility' => true));
+}
+
+function ais_pg_set_variant_visibility($data) {
+    if (ais_pg_role() !== 'edu') throw new RuntimeException('Видимость меняется только на сайте программ.');
+    if (!is_int($data['landingId'] ?? null) || $data['landingId'] < 1 || !is_int($data['productId'] ?? null) || $data['productId'] < 1
+        || !is_bool($data['hidden'] ?? null)) throw new RuntimeException('Проверьте вариант и его видимость.');
+    global $wpdb;
+    $id = $data['landingId'];
+    $lock = 'ais_pg_sync_' . substr(hash('sha256', $wpdb->prefix . ':' . $id), 0, 45);
+    if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $lock)) !== '1') throw new RuntimeException('Лендинг уже обновляется. Повторите через несколько секунд.');
+    try {
+        $snapshot = ais_pg_sync_landing($id);
+        if (!is_string($data['version'] ?? null) || !hash_equals($snapshot['version'], $data['version'])) throw new RuntimeException('Лендинг изменился. Обновите список вариантов.');
+        if (!in_array($data['productId'], array_column($snapshot['offers'], 'productId'), true)) throw new RuntimeException('Товар не связан с этим лендингом.');
+        $before = ais_pg_hidden_offers($id);
+        $hidden = array_values(array_diff($before, array($data['productId'])));
+        if ($data['hidden']) $hidden[] = $data['productId'];
+        sort($hidden, SORT_NUMERIC);
+        if ($hidden !== $before) {
+            update_post_meta($id, '_ais_hidden_landing_offers', $hidden);
+            if (ais_pg_hidden_offers($id) !== $hidden) {
+                update_post_meta($id, '_ais_hidden_landing_offers', $before);
+                throw new RuntimeException('Сайт не подтвердил видимость варианта. Повторите проверку.');
+            }
+            if (function_exists('acf_flush_value_cache')) acf_flush_value_cache($id);
+            if (function_exists('clean_post_cache')) clean_post_cache($id);
+            // Invalidate common page caches without changing any product or ACF row.
+            if (function_exists('wp_cache_post_change')) wp_cache_post_change($id);
+            if (function_exists('rocket_clean_post')) rocket_clean_post($id);
+            do_action('litespeed_purge_post', $id);
+        }
+        return array('ok' => true, 'landingId' => $id, 'productId' => $data['productId'], 'hidden' => $data['hidden'], 'version' => ais_pg_sync_landing($id)['version']);
+    } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
 }
 
 function ais_pg_variant_plan($data) {
@@ -767,7 +813,7 @@ function ais_pg_variant_plan($data) {
         if (($definitions[$field]['type'] ?? '') !== 'repeater' || !is_array($snapshot['fields'][$field] ?? null)) throw new RuntimeException('На лендинге нет таблицы цен или галереи документов. Проверьте ACF.');
     }
     $price_fields = array_column($definitions['blok_ceny']['sub_fields'] ?? array(), 'name');
-    foreach (array('stoimost_kursa', 'kolichestvo_chasov', 'staraya_cena', 'skidka', 'ssylka_na_registraciyu') as $field) {
+    foreach (array('stoimost_kursa', 'kolichestvo_chasov', 'staraya_cena', 'skidka', 'ssylka_na_registraciyu', 'primechanie_ceny') as $field) {
         if (!in_array($field, $price_fields, true) || !array_key_exists($field, $snapshot['fields']['blok_ceny'][0] ?? array())) throw new RuntimeException('В ценовом блоке отсутствует поле ' . $field . '.');
     }
     $gallery_fields = array_filter($definitions['slajder']['sub_fields'] ?? array(), function ($field) { return $field['name'] === 'izobrazhenie_slajda' && $field['type'] === 'image'; });
@@ -812,7 +858,7 @@ function ais_pg_variant($action, $data) {
         $row = array_merge($rows[0], array('stoimost_kursa' => $price, 'kolichestvo_chasov' => (string) $model['hours'],
             'staraya_cena' => $old > (float) $price ? (string) $old : '', 'skidka' => $old > (float) $price ? (string) round(100 * (1 - (float) $price / $old)) : '0',
             'ssylka_na_registraciyu' => 'https://zifra-plus.ru/checkout/?add-to-cart=' . $data['productId']));
-        if (array_key_exists('primechanie_ceny', $row)) $row['primechanie_ceny'] = sanitize_text_field($model['name']);
+        if (array_key_exists('primechanie_ceny', $row)) $row['primechanie_ceny'] = ais_pg_variant_price_note();
         $rows[] = $row;
         $patch = array('blok_ceny' => $rows, 'slajder' => array_merge($snapshot['fields']['slajder'], array_map(function ($page) { return array('izobrazhenie_slajda' => (int) $page['id']); }, $data['certificatePages'])));
         $plan_index = null;
@@ -1157,7 +1203,7 @@ function ais_pg_sync_existing($data, $check_only = false) {
                 if ($updated !== $value) $patch[$name] = $updated;
             }
             if (isset($snapshot['_variant'])) {
-                if (array_key_exists('primechanie_ceny', $rows[$offer['index']])) $rows[$offer['index']]['primechanie_ceny'] = sanitize_text_field($model['name']);
+                // Preserve the two-line default and any manually edited price note.
                 $patch = array('blok_ceny' => $rows);
             }
             if (isset($snapshot['_sampleFields'])) $patch = array_merge($patch, $snapshot['_sampleFields']);
@@ -1230,12 +1276,13 @@ function ais_pg_dispatch($request) {
             $data = $request->get_json_params() ?: array();
             if ($action === 'resolve-site') return ais_pg_resolve_site($data);
             if ($action === 'landing-code') return ais_pg_landing_code($data);
+            if ($action === 'set-variant-visibility') return ais_pg_set_variant_visibility($data);
             if ($action === 'sync-certificate-assets') return ais_pg_sync_certificate_assets($data);
             if (in_array($action, array('check-variant', 'variant-assets', 'attach-variant'), true)) return ais_pg_variant($action, $data);
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.6', 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.7', 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -1263,13 +1310,56 @@ function ais_pg_dispatch($request) {
 }
 add_action('rest_api_init', function () {
     foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)', 'image-source/(?P<id>\d+)', 'sync-product/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
-    foreach (array('prepare-product', 'configure-product', 'prepare-landing', 'certificate-assets', 'sync-certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing', 'check-variant', 'variant-assets', 'attach-variant') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
+    foreach (array('prepare-product', 'configure-product', 'prepare-landing', 'certificate-assets', 'sync-certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing', 'check-variant', 'variant-assets', 'attach-variant', 'set-variant-visibility') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });
+// Filter at load time so both get_field() and have_rows() omit hidden rows.
+// Admin/REST/CLI always see complete raw ACF data for edits and synchronization.
+function ais_pg_visible_variant_rows($value, $post_id, $field) {
+    $name = $field['name'] ?? '';
+    if (!is_array($value) || !is_numeric($post_id) || ais_pg_role() !== 'edu'
+        || !in_array($name, array('blok_ceny', 'programmy_obucheniya', 'slajder'), true)
+        || (function_exists('is_admin') && is_admin()) || (defined('REST_REQUEST') && REST_REQUEST) || (defined('WP_CLI') && WP_CLI)) return $value;
+    try { $hidden = ais_pg_hidden_offers((int) $post_id); } catch (Throwable $error) { return $value; }
+    if (!$hidden) return $value;
+    $key = function ($name) use ($field) {
+        foreach ($field['sub_fields'] ?? array() as $sub) if ($sub['name'] === $name) return $sub['key'];
+        return $name;
+    };
+    $variants = get_post_meta((int) $post_id, '_ais_program_variants', true) ?: array();
+    $plans = array(); $images = array(); $visible_images = array();
+    foreach (is_array($variants) ? $variants : array() as $variant) {
+        $ids = array_column($variant['certificatePages'] ?? array(), 'id');
+        if (in_array((int) ($variant['productId'] ?? 0), $hidden, true)) {
+            if (isset($variant['planIndex'])) $plans[] = (int) $variant['planIndex'];
+            $images = array_merge($images, $ids);
+        } else $visible_images = array_merge($visible_images, $ids);
+    }
+    $images = array_diff($images, $visible_images);
+    $visible = array();
+    foreach ($value as $index => $row) {
+        if (!is_array($row)) { $visible[] = $row; continue; }
+        if ($name === 'blok_ceny' && in_array(ais_pg_offer_product_id($row[$key('ssylka_na_registraciyu')] ?? $row['ssylka_na_registraciyu'] ?? ''), $hidden, true)) continue;
+        if ($name === 'programmy_obucheniya' && in_array((int) $index, $plans, true)) continue;
+        if ($name === 'slajder' && in_array((int) ($row[$key('izobrazhenie_slajda')] ?? $row['izobrazhenie_slajda'] ?? 0), array_map('intval', $images), true)) continue;
+        $visible[] = $row;
+    }
+    return $visible;
+}
+add_filter('acf/load_value', 'ais_pg_visible_variant_rows', 20, 3);
+function ais_pg_format_variant_price_note($value, $post_id, $field) {
+    if (ais_pg_role() !== 'edu' || !preg_match('/(?:^|_)primechanie_ceny$/D', $field['name'] ?? '') || $value !== ais_pg_variant_price_note()) return $value;
+    // The stored value has exactly two text lines; HTML gets an explicit break.
+    return do_shortcode(str_replace("\n", "<br>\n", $value));
+}
+add_filter('acf/format_value', 'ais_pg_format_variant_price_note', 25, 3);
 // Repair displayed links in older generated pages too, without mutating their
 // content, publication status, reviews or unrelated manually maintained pages.
 function ais_pg_render_registration_links($value, $post_id, $name = '') {
     if (!is_numeric($post_id) || !get_post_meta((int) $post_id, '_ais_generator_key', true)) return $value;
     if (ais_pg_role() === 'edu') {
+        // Filtering can leave one visible offer of a multi-product landing. It
+        // must keep its own product URL, not inherit the hidden original product.
+        if (ais_pg_hidden_offers((int) $post_id)) return $value;
         $offers = get_field('blok_ceny', (int) $post_id, false);
         if (is_array($offers) && count($offers) > 1) return $value;
     }

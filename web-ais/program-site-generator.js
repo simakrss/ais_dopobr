@@ -495,9 +495,22 @@ async function inspectSite(program, call) {
   try { resolved = await resolveSiteProducts(program, call, landing, target); }
   catch (error) { resolved = {products: [], product: null, warning: error.message}; }
   return {ok: true, exists: true, landing: {id: landing.id, status: landing.status, url: landing.url, editUrl: landing.editUrl,
-    title: landing.title, previewImageUrl: landing.previewImageUrl || ""}, products: resolved.products.map(({id, title, url, editUrl}) => ({id, title, url, editUrl})),
+    title: landing.title, previewImageUrl: landing.previewImageUrl || "", version: landing.version, variantVisibility: landing.variantVisibility === true},
+    products: resolved.products.map(({id, title, url, editUrl}) => ({id, title, url, editUrl, hidden: landing.offers.some(offer => Number(offer.productId) === Number(id) && offer.hidden === true)})),
     product: resolved.product && {id: resolved.product.id, url: resolved.product.url, editUrl: resolved.product.editUrl},
     needsNewProduct: resolved.needsNewProduct === true, warning: resolved.warning || ""};
+}
+
+async function setVariantVisibility(program, call, productId, hidden, version, landingId) {
+  if (!Number.isSafeInteger(productId) || productId < 1 || typeof hidden !== "boolean" || typeof version !== "string" || !version) fail("Проверьте вариант и его видимость.");
+  const landing = await call("edu", "/resolve-site", syncTarget(program));
+  if (landing.variantVisibility !== true) fail("Обновите служебный модуль edu-plus.ru для управления видимостью вариантов.", 409);
+  if (landing.id !== landingId || landing.version !== version) fail("Лендинг изменился. Обновите список вариантов.", 409);
+  if (!landing.offers.some(offer => Number(offer.productId) === productId)) fail("Товар не связан с этим лендингом.", 409);
+  // This operation intentionally never calls the shop, updates prices or creates products.
+  const result = await call("edu", "/set-variant-visibility", {landingId: landing.id, productId, hidden, version});
+  if (result.ok !== true || result.landingId !== landing.id || result.productId !== productId || result.hidden !== hidden) fail("Сайт не подтвердил видимость варианта. Обновите список.", 502);
+  return result;
 }
 
 async function buildVariantPlan(program, call, prepareCertificate) {
@@ -527,6 +540,7 @@ async function buildVariantPlan(program, call, prepareCertificate) {
   const productTemplateId = prototypeProductId(template);
   const hash = crypto.createHash("sha256").update(JSON.stringify({...payload, productTemplateId})).digest("hex");
   return {plan: {ok: true, hash, model, landing: {id: landing.id, title: landing.title, url: landing.url},
+    priceNote: "Скидка до [skidki-pp-pk]\nРассрочка без переплат",
     existingOffers: landing.offers.length, alreadyAdded: Boolean(landing.variants?.[key]?.complete)}, payload, certificate, productTemplateId,
     imageUrl: landing.previewImageUrl || ""};
 }
@@ -639,4 +653,4 @@ async function synchronize(program, call, productId, expectedHash, imageSourceId
     ...(plan.model.joinUrl ? {gradeReportUrl: plan.model.joinUrl} : {})};
 }
 
-module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, previewVariant, addVariant, previewSync, synchronize};
+module.exports = {SITES, API_PATH, KEY_FILE, PROGRAM_TYPES, programType, withTrainingPlan, normalizeJoinUrl, landingCodeFromName, landingCodeFromPromoSite, suggestLandingCode, normalizeProgram, validateTemplateId, validateImageSourceId, loadImageSource, updateWebinarSchedule, signature, readKeys, createClient, buildLandingFields, prototypeProductId, payloadHash, prepare, publish, syncTarget, normalizeSyncProgram, resolveSite, inspectSite, setVariantVisibility, previewVariant, addVariant, previewSync, synchronize};

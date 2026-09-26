@@ -54,6 +54,12 @@
 
 ## Проверки без рабочих данных
 
+### Примечание цены и видимость вариантов (1.7.7)
+
+При добавлении варианта `primechanie_ceny` содержит две строки: `Скидка до [skidki-pp-pk]` и `Рассрочка без переплат`. Синхронизация сохраняет это примечание, в том числе отредактированное вручную. При отображении стандартного текста вычисляется шорткод и добавляется перенос строки.
+
+В карточке программы → «Сайт» → «Видимость вариантов» администратор выбирает товар и сохраняет галочку «Показывать вариант на лендинге». Состояние хранится отдельно в `_ais_hidden_landing_offers`; ценовые строки и товар не удаляются. У добавленных генератором вариантов также временно исключаются связанные учебный план и страницы образцов. [Фильтр ACF load_value](https://www.advancedcustomfields.com/resources/acf-load_value/) действует только на отображение посетителям; редактор WordPress и REST API видят все строки. Обычная синхронизация не сбрасывает скрытие. Изменение защищено версией снимка и блокировкой лендинга; магазин при этом не вызывается. Для прежних вариантов без привязки учебного плана и образцов скрывается только их ценовой блок.
+
 ```text
 node web-ais/scripts/test-program-site-generator.js
 node web-ais/scripts/test-program-site-certificates.js
@@ -61,6 +67,9 @@ php web-ais/scripts/test-program-site-wordpress.php
 node web-ais/scripts/test-program-site-sync.js
 node web-ais/scripts/test-program-site-prototype.js
 php web-ais/scripts/test-program-site-sync.php
+php web-ais/scripts/test-program-site-visibility.php
+node web-ais/scripts/test-program-site-visibility.js
+node web-ais/scripts/test-program-site-visibility-ui.js
 node web-ais/scripts/test-program-site-sync.js --serve
 ```
 

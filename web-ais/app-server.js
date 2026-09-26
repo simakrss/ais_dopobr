@@ -40655,7 +40655,7 @@ async function route(req, res) {
         return;
       }
       const reading = req.method === "GET" && ["health", "templates"].includes(action);
-      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code", "preview-variant", "add-variant"].includes(action);
+      const writing = req.method === "POST" && ["prepare", "publish", "resolve", "preview-sync", "sync", "landing-code", "preview-variant", "add-variant", "set-variant-visibility"].includes(action);
       if (!reading && !writing) { sendError(res, 405, "Недопустимая операция."); return; }
       if (writing && (!isTrustedBrowserOrigin(req) || String(req.headers.origin || "") === "null"
         || !/^application\/json(?:;|$)/i.test(String(req.headers["content-type"] || "")))) {
@@ -40695,6 +40695,10 @@ async function route(req, res) {
       };
       if (action === "landing-code") {
         sendJson(res, 200, await programSiteGenerator.suggestLandingCode(program, call));
+        return;
+      }
+      if (action === "set-variant-visibility") {
+        sendJson(res, 200, await programSiteGenerator.setVariantVisibility(program, call, body.productId, body.hidden, body.version, body.landingId));
         return;
       }
       if (["preview-variant", "add-variant"].includes(action)) {

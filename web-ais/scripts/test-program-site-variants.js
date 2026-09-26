@@ -49,6 +49,7 @@ async function call(site,endpoint,body) {
   assert.equal(resolved.needsNewProduct,true);
   await assert.rejects(pg.resolveSite(program,call,12),/отдельный товар/);
   const preview=await pg.previewVariant(program,call,prepareCertificate);
+  assert.equal(preview.priceNote,"Скидка до [skidki-pp-pk]\nРассрочка без переплат");
   assert.equal(generated,0);assert.equal(productCount,0);
   assert.ok(calls.every(item=>["/resolve-site","/health","/check-variant"].includes(item.endpoint)||item.endpoint.startsWith("/sync-product/")));
   landing.version="changed";

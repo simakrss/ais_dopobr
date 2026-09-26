@@ -40,7 +40,7 @@ check($fields[42]===$before && !get_post_meta(42,'_ais_program_variants',true),'
 ais_pg_variant('attach-variant',$data);
 check(count($fields[42]['blok_ceny'])===2 && $fields[42]['blok_ceny'][0]===$before['blok_ceny'][0],'Append a distinct price offer, preserving the original');
 check($fields[42]['blok_ceny'][1]['ssylka_na_registraciyu']==='https://zifra-plus.ru/checkout/?add-to-cart=99','New offer points to the new shop product');
-check($fields[42]['blok_ceny'][1]['primechanie_ceny']==='Новый вариант' && $fields[42]['blok_ceny'][1]['kolichestvo_chasov']==='144','New name and hours identify the variant');
+check($fields[42]['blok_ceny'][1]['primechanie_ceny']==="Скидка до [skidki-pp-pk]\nРассрочка без переплат" && $fields[42]['blok_ceny'][1]['kolichestvo_chasov']==='144','New offer has exactly two default note lines and the new hours');
 check($fields[42]['slajder']===array_merge($before['slajder'],array_map(function($page){return array('izobrazhenie_slajda'=>$page['id']);},$pages)),'All new document pages appended after existing images');
 check(count($fields[42]['programmy_obucheniya'])===2 && $fields[42]['programmy_obucheniya'][0]===$before['programmy_obucheniya'][0],'Existing training plan is preserved');
 check($fields[42]['programmy_obucheniya'][1]['moduli_programmy'][0]['nazvanie_modulya']==='Новый модуль','New plan content is supplied');
@@ -57,6 +57,7 @@ $sync=array('landingId'=>42,'productId'=>99,'version'=>ais_pg_sync_landing(42)['
 ais_pg_sync_existing($sync);
 check($posts[42]['post_title']===$before_post['post_title'] && $fields[42]['srok']===$before['srok'],'Variant sync cannot rename or change the common landing');
 check($fields[42]['blok_ceny'][0]===$before['blok_ceny'][0] && $fields[42]['blok_ceny'][1]['stoimost_kursa']==='7000','Variant sync updates only its price');
+check($fields[42]['blok_ceny'][1]['primechanie_ceny']===ais_pg_variant_price_note(),'Synchronization preserves default price note instead of replacing it with program name');
 check($fields[42]['slajder'][0]===$before['slajder'][0] && count($fields[42]['slajder'])===4,'Variant sample sync retains original gallery images');
 check($fields[42]['slajder'][1]['izobrazhenie_slajda']===301 && $fields[42]['izobrazhenie_vydavaemogo_dokumenta']===100,'Only the variant samples are replaced');
 echo "PASS: variant preflight, new offer and plan, all sample pages, original data preservation, rollback, retries and scoped sample sync\n";

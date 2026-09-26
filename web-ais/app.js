@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.555",
-    releasedAt: "2026-09-25"
+    version: "1.7.556",
+    releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.556",
+      releasedAt: "2026-09-26",
+      changes: ["Новые варианты лендинга получают двухстрочное примечание о скидке и рассрочке. На вкладке «Сайт» можно временно скрыть вариант и вернуть его без удаления или изменения товара в магазине. Синхронизация сохраняет примечание и видимость."]
+    },
     {
       version: "1.7.555",
       releasedAt: "2026-09-25",
@@ -34735,6 +34740,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <div class="program-site-actions">
           ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" disabled>Создать на сайте</button>
           <button class="ghost-button compact-button" data-action="add-program-site-variant" type="button" disabled>Добавить вариант</button>
+          <button class="ghost-button compact-button" data-action="program-site-visibility" type="button" disabled>Видимость вариантов</button>
           <button class="ghost-button compact-button" data-action="resume-program-site" type="button" hidden disabled>Продолжить публикацию</button>` : ""}
           <button type="button" class="ghost-button compact-button" data-action="sync-program-with-sites" disabled>Синхронизировать с сайтом</button>
         </div>
@@ -34756,6 +34762,11 @@ MAX - https://bizvmax.ru/zifra_plus
     const sync = form.querySelector('[data-action="sync-program-with-sites"]');
     const continuation = form.querySelector('[data-action="resume-program-site"]');
     const variant = form.querySelector('[data-action="add-program-site-variant"]');
+    const visibility = form.querySelector('[data-action="program-site-visibility"]');
+    if (visibility) {
+      visibility.disabled = !allowed || result?.exists !== true || !result?.landing?.variantVisibility || !result?.products?.length;
+      visibility.title = "Временно скрыть или вернуть вариант на лендинг без изменения товара в магазине";
+    }
     if (variant) {
       const linked = Boolean(String(program?.productId || "").trim() || program?.siteSync?.product?.id || publication?.product?.id);
       variant.disabled = !allowed || result?.exists !== true || linked;
@@ -34849,7 +34860,7 @@ MAX - https://bizvmax.ru/zifra_plus
       status.textContent = "Проверка программы, лендинга и шаблона документа…";
       try {
         plan = await programSiteRequest("preview-variant", {programId, preferLocalTemplate: getEffectiveLocalDocumentsMode()});
-        preview.innerHTML = `<dl class="program-site-sync-summary"><dt>Новый товар</dt><dd>${escapeHtml(plan.model.productName)}</dd><dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.model.price)} ₽</dd><dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd><dt>Лендинг</dt><dd>${escapeHtml(plan.landing.title)} ${renderProgramSiteLink(plan.landing.url, "Открыть")}</dd><dt>Существующие варианты</dt><dd>${escapeHtml(plan.existingOffers)} — сохраняются</dd></dl>`;
+        preview.innerHTML = `<dl class="program-site-sync-summary"><dt>Новый товар</dt><dd>${escapeHtml(plan.model.productName)}</dd><dt>Часы</dt><dd>${escapeHtml(plan.model.hours)}</dd><dt>Стоимость</dt><dd>${escapeHtml(plan.model.price)} ₽</dd><dt>Старая цена</dt><dd>${Number(plan.model.oldPrice) > Number(plan.model.price) ? `${escapeHtml(plan.model.oldPrice)} ₽` : "Без скидки"}</dd><dt>Примечание цены</dt><dd>${escapeHtml(plan.priceNote || "").replace(/\n/g, "<br>")}</dd><dt>Лендинг</dt><dd>${escapeHtml(plan.landing.title)} ${renderProgramSiteLink(plan.landing.url, "Открыть")}</dd><dt>Существующие варианты</dt><dd>${escapeHtml(plan.existingOffers)} — сохраняются</dd></dl>`;
         status.textContent = plan.alreadyAdded ? "Вариант уже добавлен. Повторное подтверждение восстановит связь с карточкой без дублирования товара." : "Проверьте параметры и подтвердите добавление.";
       } catch (error) { status.textContent = error.message; }
       finally { setBusy(false); }
@@ -34885,6 +34896,80 @@ MAX - https://bizvmax.ru/zifra_plus
     dialog.querySelector("[data-variant-refresh]").addEventListener("click", load);
     const close = () => { if (!busy) { progress.dispose(); dialog.close(); dialog.remove(); } };
     dialog.querySelector("[data-variant-close]").addEventListener("click", close);
+    dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+    dialog.addEventListener("keydown", event => { if (event.key === "Escape") event.stopPropagation(); });
+    await load();
+  }
+
+  async function openProgramSiteVisibility() {
+    if (!isAdminUser() || isDatabaseDemoMode() || isSettingsDraftSessionActive() || document.querySelector("[data-program-site-dialog]")) return;
+    const card = document.querySelector("#recordForm[data-config='programs']");
+    if (!card) return;
+    const programId = await saveRecordFormBeforeContinuation(card, {flush: true});
+    if (!programId) return;
+    const dialog = document.createElement("dialog");
+    dialog.className = "modal program-site-dialog";
+    dialog.dataset.programSiteDialog = "";
+    dialog.setAttribute("aria-label", "Видимость вариантов на лендинге");
+    dialog.innerHTML = `<header class="modal-head"><h2>Видимость вариантов</h2><button class="icon-button" type="button" data-visibility-close aria-label="Закрыть">×</button></header>
+      <div class="program-site-body"><label>Вариант / товар<select data-visibility-product disabled></select></label>
+      <label class="program-site-review"><input type="checkbox" data-visibility-visible disabled><span>Показывать вариант на лендинге</span></label>
+      <p class="muted">Скрывается ценовой блок; у добавленного варианта также скрываются связанные учебный план и образцы документов. Данные сохраняются. Товар в интернет-магазине не удаляется и не изменяется. Вернуть вариант можно этой же галочкой.</p>
+      <div class="program-site-progress" data-site-progress hidden><progress aria-label="Изменение видимости"></progress><span role="status" aria-live="polite" data-site-progress-label></span><time data-site-progress-time>0:00</time></div>
+      <p role="status" aria-live="polite" data-visibility-status></p>
+      <div class="program-site-actions"><button class="primary-button" type="button" data-visibility-save disabled>Сохранить</button><button class="ghost-button" type="button" data-visibility-refresh>Обновить список</button></div></div>`;
+    document.body.appendChild(dialog); dialog.showModal();
+    const select = dialog.querySelector("[data-visibility-product]");
+    const visible = dialog.querySelector("[data-visibility-visible]");
+    const save = dialog.querySelector("[data-visibility-save]");
+    const status = dialog.querySelector("[data-visibility-status]");
+    const progress = createProgramSiteProgress(dialog);
+    let busy = false, plan = null;
+    const selected = () => plan?.products.find(item => Number(item.id) === Number(select.value));
+    const update = () => {
+      save.disabled = busy || !selected() || visible.checked === !selected().hidden;
+    };
+    const setBusy = value => {
+      busy = value;
+      dialog.querySelectorAll("button,input,select").forEach(control => { control.disabled = value; });
+      select.disabled = visible.disabled = value || !plan;
+      update();
+    };
+    const load = async () => {
+      if (busy) return;
+      const oldSelection = select.value;
+      plan = null; setBusy(true); progress.start("Загрузка вариантов лендинга…");
+      let failed = false;
+      try {
+        const result = await programSiteRequest("resolve", {programId});
+        if (!result.exists || !result.landing.variantVisibility || !result.products?.length) throw Error("Варианты недоступны. Обновите служебный модуль сайта и повторите проверку.");
+        plan = result;
+        select.innerHTML = plan.products.map(item => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.title || `Товар №${item.id}`)} — ${item.hidden ? "скрыт" : "показан"}</option>`).join("");
+        select.value = String(plan.products.find(item => String(item.id) === oldSelection)?.id || plan.product?.id || plan.products[0].id);
+        visible.checked = !selected().hidden;
+        status.textContent = "Измените видимость нужного варианта и нажмите «Сохранить».";
+      } catch (error) { failed = true; status.textContent = error.message; }
+      finally { progress.stop(failed); setBusy(false); }
+    };
+    select.addEventListener("change", () => { visible.checked = !selected()?.hidden; update(); });
+    visible.addEventListener("change", update);
+    save.addEventListener("click", async () => {
+      if (busy || save.disabled || !plan) return;
+      const productId = Number(select.value), hidden = !visible.checked;
+      setBusy(true); progress.start(hidden ? "Скрытие варианта на лендинге…" : "Возвращение варианта на лендинг…");
+      let failed = false;
+      try {
+        if (!await ensureRecordLockForSave(card)) throw Error("Восстановите блокировку карточки и повторите проверку.");
+        await programSiteRequest("set-variant-visibility", {programId, productId, hidden, landingId: plan.landing.id, version: plan.landing.version});
+        status.textContent = hidden ? "Вариант скрыт на лендинге. Товар в магазине сохранён." : "Вариант снова отображается на лендинге.";
+        await refreshProgramSiteLinks();
+        progress.dispose(); dialog.close(); dialog.remove();
+      } catch (error) { failed = true; plan = null; status.textContent = `${error.message} Нажмите «Обновить список».`; }
+      finally { progress.stop(failed); setBusy(false); }
+    });
+    dialog.querySelector("[data-visibility-refresh]").addEventListener("click", load);
+    const close = () => { if (!busy) { progress.dispose(); dialog.close(); dialog.remove(); } };
+    dialog.querySelector("[data-visibility-close]").addEventListener("click", close);
     dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
     dialog.addEventListener("keydown", event => { if (event.key === "Escape") event.stopPropagation(); });
     await load();
@@ -45732,6 +45817,8 @@ MAX - https://bizvmax.ru/zifra_plus
       ?.addEventListener("click", openProgramSiteSync);
     document.querySelector("[data-action='add-program-site-variant']")
       ?.addEventListener("click", openProgramSiteVariant);
+    document.querySelector("[data-action='program-site-visibility']")
+      ?.addEventListener("click", openProgramSiteVisibility);
     bindProgramSiteAddressChanges(document.querySelector("#recordForm[data-config='programs']"));
     if (document.querySelector('[data-program-tab-panel="site"]:not([hidden])')) void refreshProgramSiteLinks();
     document.querySelector("#recordForm[data-config='programs'] [name='type']")?.addEventListener("change", event => {
