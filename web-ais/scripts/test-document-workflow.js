@@ -151,9 +151,9 @@ assert.match(context.renderDocumentWorkflow(), /value="911-26\/ИАК"/);
 for (const definition of workflow.definitions) {
   context.state.documentWorkflowDraft = {documentId: definition.id, date: "2026-09-09", orderNo: "ТЕСТ-017"};
   const html = context.renderDocumentWorkflow();
-  assert.match(html, /<div class="document-workflow-heading"><h2>Документооборот<\/h2><\/div>/);
+  assert.match(html, /<div class="document-workflow-heading"><h2>Документы<\/h2><\/div>/);
   assert.doesNotMatch(html, /Генерация по формулам Ассистента/);
-  assert.match(html, /Документооборот/);
+  assert.doesNotMatch(html, /Документооборот/);
   assert.ok(html.includes(definition.title));
   assert.equal(html.includes('name="orderNo"'), definition.documentKind !== "workflowCommercialProposal");
   const modified = definition.fields.map(field => ({...field, formula: field.formula.replace("Стоимость,", "Стоимость * 2,")}));
@@ -165,6 +165,8 @@ for (const definition of workflow.definitions) {
 const reloaded = context.applyDocumentTemplateInspection(recruitment, recruitmentInspection, recruitment.fields.map(field => ({...field, formula: field.name === "Список" ? recruitment.legacyListFormula : field.formula})), {reloadWorkflowFormulas: true});
 assert.equal(reloaded.fields.find(field => field.name === "Список").formula, recruitmentInspection.properties[0].formula);
 assert.ok(reloaded.fields.some(field => field.name === "Дата начала набора"), "Refresh keeps workflow date parameters absent from Word");
+assert.match(app, /id: "documentWorkflow", label: "Документы"/);
+assert.match(app, /label: `Документы\. \$\{item\.title\}`/);
 assert.match(app, /state\.view === "documentWorkflow"\) return renderDocumentWorkflow\(\)/);
 assert.match(app, /bindDocumentWorkflowEvents\(\)/);
 assert.match(app, /options\.skipEmail \? null : prepareStudentDocumentEmailRequest/);

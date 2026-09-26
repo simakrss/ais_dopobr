@@ -153,7 +153,7 @@ if (process.argv.includes("--serve")) {
     const kind = Math.max(0, Math.min(2, Number(url.searchParams.get("kind")) || 0));
     const html = render(kind, Object.fromEntries(["empty", "error", "longTitle"].map(key => [key, url.searchParams.has(key)])));
     res.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
-    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка компоновки — Документооборот</title><link rel="stylesheet" href="/styles.css"><body><main class="main"><header class="topbar"><h1>АИС — тестовый документооборот</h1></header><section class="content">${html}</section></main><script>
+    res.end(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка компоновки — Документы</title><link rel="stylesheet" href="/styles.css"><body><main class="main"><header class="topbar"><h1>АИС — тестовый раздел «Документы»</h1></header><section class="content">${html}</section></main><script>
       let mainRegistryViewportFitFrame=0;
       const fitMainRegistryTablesToViewport=()=>{};
       const state={data:{collections:{programs:Array.from({length:24},(_,i)=>({id:'program-'+(i+1)}))}}};

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.557",
+    version: "1.7.558",
     releasedAt: "2026-09-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.558",
+      releasedAt: "2026-09-26",
+      changes: ["Раздел «Документооборот» переименован в «Документы»: новое название используется в меню, заголовке раздела и привязках шаблонов. Настройки, порядок меню и права доступа сохранены."]
+    },
     {
       version: "1.7.557",
       releasedAt: "2026-09-26",
@@ -5302,7 +5307,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { value: "expulsionOrder", label: "Карточка слушателя. Приказ об отчислении" },
     { value: "employeeContract", label: "Карточка сотрудника. Договор" },
     { value: "employeeAct", label: "Карточка сотрудника. Акт" },
-    ...window.AIS_DOCUMENT_WORKFLOW.definitions.map((item) => ({ value: item.documentKind, label: `Документооборот. ${item.title}` }))
+    ...window.AIS_DOCUMENT_WORKFLOW.definitions.map((item) => ({ value: item.documentKind, label: `Документы. ${item.title}` }))
   ];
 
   function createDefaultDocumentTemplate() {
@@ -6451,7 +6456,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "issuedDocuments", label: "Реестр выданных документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><circle cx="17.5" cy="17.5" r="3.5"></circle><path d="M16 17.5l1 1 2-2"></path></svg>' },
     { id: "generalExpenses", label: "Общие затраты", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8c0-2 3.6-3.5 8-3.5S20 6 20 8s-3.6 3.5-8 3.5S4 10 4 8z"></path><path d="M4 8v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5V8"></path><path d="M4 12v4c0 2 3.6 3.5 8 3.5s8-1.5 8-3.5v-4"></path></svg>' },
     { id: "inventory", label: "Запасы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8l8-4 8 4-8 4z"></path><path d="M4 8v8l8 4 8-4V8"></path><path d="M12 12v8"></path><path d="M8 6l8 4"></path></svg>' },
-    { id: "documentWorkflow", label: "Документооборот", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"></path></svg>' },
+    { id: "documentWorkflow", label: "Документы", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"></path></svg>' },
     { id: "documentConstructor", label: "Конструктор документов", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path><path d="M4 7h2"></path><path d="M4 11h2"></path><path d="M4 15h2"></path></svg>' },
     { id: "recycleBin", label: "Корзина", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 14h8l1-14"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>' },
     { id: "settings", label: "Настройки", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle></svg>' },
@@ -25538,7 +25543,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const documents = getWorkflowDocuments();
     const draft = getDocumentWorkflowDraft();
     const selected = documents.find((item) => item.id === draft.documentId) || documents[0];
-    if (!selected) return '<section class="panel"><p>Добавьте шаблон с привязкой «Документооборот» в конструкторе документов.</p></section>';
+    if (!selected) return '<section class="panel"><p>Добавьте шаблон с привязкой «Документы» в конструкторе документов.</p></section>';
     const definition = window.AIS_DOCUMENT_WORKFLOW.getDefinition(selected.documentKind);
     const isOrder = selected.documentKind !== "workflowCommercialProposal";
     if (isOrder) syncDocumentWorkflowDefaultOrderNumber(draft, definition);
@@ -25547,7 +25552,7 @@ MAX - https://bizvmax.ru/zifra_plus
     catch (failure) { error = failure.message; }
     return `
       <section class="panel document-workflow-panel">
-        <div class="document-workflow-heading"><h2>Документооборот</h2></div>
+        <div class="document-workflow-heading"><h2>Документы</h2></div>
         <div class="document-workflow-layout">
           <nav class="document-workflow-list" aria-label="Документы для формирования">
             ${documents.map((item) => `<button type="button" class="document-workflow-choice ${item.id === selected.id ? "is-active" : ""}" data-workflow-document="${escapeAttr(item.id)}" aria-pressed="${item.id === selected.id}">${escapeHtml(item.title)}</button>`).join("")}
@@ -25664,7 +25669,7 @@ MAX - https://bizvmax.ru/zifra_plus
           { id: template.id, name: template.title, workflowSourceValues: { ...sourceValues, ...fieldValues } },
           form.querySelector("[type='submit']"), "Не удалось сформировать документ", {
             fieldValues, sourceValues, skipEmail: true,
-            workflow: { fields: template.fields, programs }, auditArea: "Документооборот", entityType: "documentTemplates"
+            workflow: { fields: template.fields, programs }, auditArea: "Документы", entityType: "documentTemplates"
           }
         );
       } catch (error) { alert(`Не удалось сформировать документ: ${error.message}`); }

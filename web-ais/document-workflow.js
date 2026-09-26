@@ -178,7 +178,7 @@
     do { projections.push(or()); if (take("AS")) { if (!tokens[pos++]) throw new Error("Не указан псевдоним SQL-колонки."); } } while (take(","));
     expect("FROM");
     const table = tokens[pos++];
-    if (!table || normalize(table.value.replace(/^\[|\]$/g, "")) !== "реестр программ$") throw new Error("Документооборот читает только лист «Реестр программ».");
+    if (!table || normalize(table.value.replace(/^\[|\]$/g, "")) !== "реестр программ$") throw new Error("Раздел «Документы» читает только лист «Реестр программ».");
     const filter = take("WHERE") ? or() : () => true;
     const order = [];
     if (take("ORDER")) { expect("BY"); do { const get = concat(); const dir = take("DESC") ? -1 : (take("ASC"), 1); order.push({get, dir}); } while (take(",")); }
