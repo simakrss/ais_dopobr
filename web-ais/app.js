@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.566",
+    version: "1.7.567",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.567",
+      releasedAt: "2026-09-27",
+      changes: ["В поля шаблонов сообщений сотрудникам добавлены банк, расчётный счёт, корреспондентский счёт и БИК из раздела «Данные для оплаты». Реквизиты подставляются из текущей карточки, доступны в формулах и для перетаскивания в текст."]
+    },
     {
       version: "1.7.566",
       releasedAt: "2026-09-27",
@@ -4880,6 +4885,7 @@ https://edu-plus.ru`,
     "ДолжностьКарточки", "ТелефонКарточки", "ТелеграмКарточки", "КупонКарточки",
     "IDКупонаКарточки", "НомерДоговораКарточки", "ДатаДоговораКарточки",
     "ВидДоговораКарточки", "ПредметДоговораКарточки", "УсловияОплатыКарточки",
+    "БанкКарточки", "РасчетныйСчетКарточки", "КорреспондентскийСчетКарточки", "БИККарточки",
     "СообщениеДоступаКарточки"
   ];
   const communicationTemplateEditableFields = unique([
@@ -4966,6 +4972,10 @@ MAX - https://bizvmax.ru/zifra_plus
     ВидДоговораКарточки: "{ВидДоговораКарточки}",
     ПредметДоговораКарточки: "{ПредметДоговораКарточки}",
     УсловияОплатыКарточки: "{УсловияОплатыКарточки}",
+    БанкКарточки: "{БанкКарточки}",
+    РасчетныйСчетКарточки: "{РасчетныйСчетКарточки}",
+    КорреспондентскийСчетКарточки: "{КорреспондентскийСчетКарточки}",
+    БИККарточки: "{БИККарточки}",
     СообщениеДоступаКарточки: "Данные для доступа к порталу дистанционного обучения (https://portal.edu-plus.ru):\n\nЛогин: {ЛогинКарточки}\nПароль: {ПарольКарточки}\n\nУчебный центр Цифровизация Плюс\nwww.edu-plus.ru"
   };
   const communicationTemplateFieldAliasMap = {
@@ -32655,6 +32665,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ВидДоговораКарточки: String(record.type || ""),
       ПредметДоговораКарточки: String(record.subject || ""),
       УсловияОплатыКарточки: String(record.paymentTerms || ""),
+      БанкКарточки: String(record.bank ?? "").trim(),
+      РасчетныйСчетКарточки: String(record.settlementAccount ?? "").trim(),
+      КорреспондентскийСчетКарточки: String(record.correspondentAccount ?? "").trim(),
+      БИККарточки: String(record.bic ?? "").trim(),
       ИмяОтчество: getStudentCommunicationAddressee(record),
       ЕстьИмяОтчество: Boolean(getStudentCommunicationAddressee(record))
     });
@@ -42240,6 +42254,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ВидДоговораКарточки: String(record.type || "").trim(),
       ПредметДоговораКарточки: String(record.subject || "").trim(),
       УсловияОплатыКарточки: String(record.paymentTerms || "").trim(),
+      БанкКарточки: String(record.bank ?? "").trim(),
+      РасчетныйСчетКарточки: String(record.settlementAccount ?? "").trim(),
+      КорреспондентскийСчетКарточки: String(record.correspondentAccount ?? "").trim(),
+      БИККарточки: String(record.bic ?? "").trim(),
       СообщениеДоступаКарточки: buildContractPortalCredentials(record)
     };
     const templates = normalizeEmployeeCommunicationTemplates(
