@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.565",
+    version: "1.7.566",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.566",
+      releasedAt: "2026-09-27",
+      changes: ["Отправка документов по email после генерации привязывается к истории соответствующего слушателя или сотрудника, в том числе в групповых операциях. Журнал содержит получателя, тему и имена вложений; переход в другую карточку во время формирования больше не меняет привязку записи."]
+    },
     {
       version: "1.7.565",
       releasedAt: "2026-09-27",
@@ -43152,8 +43157,8 @@ MAX - https://bizvmax.ru/zifra_plus
     skipConfirmation = false,
     recipientLabel = "слушателя",
     entityType = "students",
-    entityId = "",
-    entityName = "",
+    entityId = null,
+    entityName = null,
     requestDeliveryAndReadReceipts,
     quiet = false
   }) {
@@ -43163,6 +43168,12 @@ MAX - https://bizvmax.ru/zifra_plus
       event,
       recipientMode
     );
+    // Capture before asynchronous attachment preparation. Explicit empty values
+    // must never fall back to a different card opened while the document was generated.
+    const auditEntityId = String(entityId ?? (state.modal?.id || state.modal?.draft?.id || "")).trim();
+    const auditEntityName = String(entityName ?? (entityType === "contracts"
+      ? getCurrentContractCardValue("name")
+      : getCurrentStudentCardValue("name"))).trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
       if (!quiet) alert(sendToSystemMailbox
         ? "Укажите корректный системный почтовый ящик в админке."
@@ -43214,22 +43225,12 @@ MAX - https://bizvmax.ru/zifra_plus
             : {}),
           auditContext: {
             entityType,
-            entityId: String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim(),
-            entityName: String(entityName || (entityType === "contracts"
-              ? getCurrentContractCardValue("name")
-              : getCurrentStudentCardValue("name"))).trim(),
-            studentId: entityType === "students"
-              ? String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim()
-              : "",
-            studentName: entityType === "students"
-              ? String(entityName || getCurrentStudentCardValue("name")).trim()
-              : "",
-            contractId: entityType === "contracts"
-              ? String(entityId || state.modal?.id || state.modal?.draft?.id || "").trim()
-              : "",
-            contractName: entityType === "contracts"
-              ? String(entityName || getCurrentContractCardValue("name")).trim()
-              : "",
+            entityId: auditEntityId,
+            entityName: auditEntityName,
+            studentId: entityType === "students" ? auditEntityId : "",
+            studentName: entityType === "students" ? auditEntityName : "",
+            contractId: entityType === "contracts" ? auditEntityId : "",
+            contractName: entityType === "contracts" ? auditEntityName : "",
             messageType: String(messageType || confirmText || normalizedSubject).trim(),
             recipientMode: sendToSystemMailbox
               ? "system"
@@ -73992,6 +73993,12 @@ MAX - https://bizvmax.ru/zifra_plus
       if (unavailable) { alert(unavailable); return; }
       record = prepareStudentAttestationDocumentRecord(record, documentTemplate.documentKind);
     }
+    const auditEntityType = options.entityType || "students";
+    const documentAuditContext = {
+      entityType: auditEntityType,
+      entityId: String(record.id || (state.modal?.config === auditEntityType ? state.modal?.id : "") || "").trim(),
+      entityName: String(record.name || "").trim()
+    };
     const templateUrl = documentTemplate.templateUrl || "";
     const templatePath = documentTemplate.templatePath || "";
     const fallbackTemplatePath = documentTemplate.fallbackTemplatePath || "";
@@ -74209,9 +74216,9 @@ MAX - https://bizvmax.ru/zifra_plus
         options.auditArea || "Документы слушателя",
         `${documentTemplate.title || responseDetails.fileName}; формат ${String(responseDetails.outputFormat || "").toUpperCase()}`,
         {
-          entityType: options.entityType || "students",
-          entityId: String(record.id || state.modal?.id || ""),
-          entityLabel: record.name || String(record.id || state.modal?.id || ""),
+          entityType: documentAuditContext.entityType,
+          entityId: documentAuditContext.entityId,
+          entityLabel: documentAuditContext.entityName || documentAuditContext.entityId,
           source: "document-generation"
         }
       );
@@ -74225,8 +74232,10 @@ MAX - https://bizvmax.ru/zifra_plus
         ));
         setDocumentGenerationStatus(generationTaskId, `Отправка письма: ${emailRequest.recipientDescription}`);
         emailSent = await sendServerEmail({
+          ...documentAuditContext,
           email: emailRequest.recipient,
-          recipientLabel: documentTemplate.documentKind === "studentAttestationProtocol" ? "председателя комиссии" : undefined,
+          recipientLabel: documentTemplate.documentKind === "studentAttestationProtocol" ? "председателя комиссии"
+            : documentAuditContext.entityType === "contracts" ? "сотрудника" : "слушателя",
           subject: emailRequest.subject,
           message: emailRequest.message,
           button,
