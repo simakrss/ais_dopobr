@@ -36,6 +36,7 @@ async function run(scenario = {}) {
     applyContractTemplateMarkers: value => value,
     getAdditionalDocumentStorageRequests: () => new Array(scenario.copies || 0).fill({}),
     getEffectiveLocalDocumentsMode: () => true,
+    getOpenDocumentsLocally: () => true,
     resolveDocumentProcessingOrigin: async () => "test-origin",
     requestGeneratedDocumentPreview: async () => ({previewToken: "test-preview"}),
     showGeneratedDocumentPreview: async () => scenario.confirmPreview !== false,

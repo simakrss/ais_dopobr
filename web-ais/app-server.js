@@ -5782,12 +5782,9 @@ function resolveLocalDocumentFile(source, fileName) {
 async function resolveLocalDocumentTemplateFile(templateUrl, templatePath) {
   const candidates = [];
   const remoteSource = String(templateUrl || "").trim();
-  const normalizedRemoteSource = normalizeSystemDocumentsRelativePath(remoteSource);
-  if (normalizedRemoteSource) {
-    candidates.push(resolveLocalDocumentsPath(
-      normalizedRemoteSource,
-      "Не удалось определить локальный путь к шаблону."
-    ));
+  if (remoteSource) {
+    const mappedPath = resolveLocalTemplatePathFromWebDavSource(remoteSource);
+    if (mappedPath) candidates.push(mappedPath);
   }
   const storedSource = String(templatePath || "").trim();
   if (storedSource) {
@@ -31355,15 +31352,22 @@ async function loadTemplateBytesForRequest(body) {
   const templateUrl = String(body?.templateUrl || "").trim();
   const templatePath = String(body?.templatePath || "").trim();
   if (!body?.preferLocalTemplate) return loadTemplateBytes(templateUrl, templatePath);
-  const localAvailable = await isLocalDocumentStorageAvailable();
+  // Reading a template is independent of PDF conversion and output storage.
+  // A sibling folder ([-1]/Договора) or an explicit path may still be available
+  // when the system documents folder is unavailable. Read the file on every run.
+  const canMapLocalSource = Boolean(getRuntimeFileSystemPathApi(
+    serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT
+  ));
   if (templateUrl) {
-    const localTemplatePath = localAvailable ? resolveLocalTemplatePathFromWebDavSource(templateUrl) : "";
-    // Fall back to the same cloud template, never an old bundled copy.
-    if (localTemplatePath && localAvailable) {
-      try { return await loadLocalTemplateBytes(localTemplatePath); } catch (error) {
+    const localTemplatePath = canMapLocalSource ? resolveLocalTemplatePathFromWebDavSource(templateUrl) : "";
+    const explicitLocalPath = getRuntimeFileSystemPathApi(templatePath) ? templatePath : "";
+    for (const candidate of new Set([localTemplatePath, explicitLocalPath].filter(Boolean))) {
+      try { return await loadLocalTemplateBytes(candidate); } catch (error) {
         if (!isUnavailableDocumentPathError(error)) throw error;
       }
     }
+    // Only the same configured cloud source is allowed when the disk is offline.
+    // A relative uploaded/bundled templatePath is not the current local original.
     return loadRemoteTemplateBytes(templateUrl);
   }
   if (templatePath) {
@@ -31371,7 +31375,7 @@ async function loadTemplateBytesForRequest(body) {
       path.resolve(ROOT, definition.templatePath) === path.resolve(ROOT, templatePath)
     ));
     if (!templateUrl && workflowDefinition?.localTemplateSource) {
-      if (localAvailable) {
+      if (canMapLocalSource) {
         try { return await loadLocalTemplateBytes(resolveLocalDocumentsPath(workflowDefinition.localTemplateSource)); } catch (error) {
           if (!isUnavailableDocumentPathError(error)) throw error;
         }
@@ -36573,7 +36577,7 @@ async function handleContractDocument(req, res, authUser) {
       templateBytes = await loadTemplateBytesForRequest(body);
     } catch (primaryTemplateError) {
       throwIfDocumentGenerationCancelled();
-      if (!String(body.fallbackTemplatePath || "").trim()) throw primaryTemplateError;
+      if (body.preferLocalTemplate || !String(body.fallbackTemplatePath || "").trim()) throw primaryTemplateError;
       templateBytes = await loadTemplateBytes("", body.fallbackTemplatePath);
     }
     const inputFieldValues = body.fieldValues || {};

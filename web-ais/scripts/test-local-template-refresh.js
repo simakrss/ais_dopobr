@@ -19,12 +19,15 @@ async function main() {
   const calls = [];
   const serverContext = {
     path, ROOT: root, documentWorkflow: workflow,
+    serverSettings: { localDocumentsRoot: "Y:/" }, DEFAULT_LOCAL_DOCUMENTS_ROOT: "Y:/",
+    getRuntimeFileSystemPathApi: value => path.isAbsolute(value) ? path : null,
     resolveLocalTemplatePathFromWebDavSource: value => value.startsWith("https://external.example/") ? "" : `local:${value}`,
     resolveLocalDocumentsPath: value => `source:${value}`,
     loadLocalTemplateBytes: async value => { calls.push(value); if (value.includes("missing")) throw new Error("ENOENT"); return Buffer.from(value); },
     loadTemplateBytes: async (...args) => { calls.push(["cloud", ...args]); return Buffer.from("cloud"); }
   };
   vm.createContext(serverContext);
+  vm.runInContext(extract(serverSource, "isUnavailableDocumentPathError"), serverContext);
   vm.runInContext(extract(serverSource, "loadTemplateBytesForRequest"), serverContext);
   for (const definition of workflow.definitions) {
     calls.length = 0;
@@ -47,7 +50,7 @@ async function main() {
   let local = true, available = true, apiOrigin = "http://127.0.0.1:8081";
   const requests = [];
   const appContext = {
-    getEffectiveLocalDocumentsMode: () => local,
+    getOpenDocumentsLocally: () => local,
     photoServerOrigin: () => "https://edu-plus.ru/lms",
     probeLocalDocumentServices: async () => ({appServerAvailable: available, localDocumentsAvailable: available, apiOrigin}),
     localDocumentServicesOrigin: "http://127.0.0.1:8081",

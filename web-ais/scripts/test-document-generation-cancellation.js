@@ -44,6 +44,7 @@ function clientFixture(phase) {
     applyContractTemplateMarkers: (value) => value, getAdditionalDocumentStorageRequests: () => [],
     prepareStudentDocumentEmailRequest: () => phase === "attachment" ? { recipient: "test@example.test", recipientDescription: "Тест" } : null,
     getEffectiveLocalDocumentsMode: () => false,
+    getOpenDocumentsLocally: () => false,
     resolveDocumentProcessingOrigin: () => waitPhase("origin", "https://example.test"),
     prepareStudentDocumentStorageRequest: () => waitPhase("storage", {}),
     prepareDocumentStorageRequestForEmail: (value) => value,

@@ -96,6 +96,7 @@ const defaultPhotoServerOrigin = "http://localhost:8081";
 const localDocumentServicesOrigin = "http://127.0.0.1:8081";
 const localDocumentServicesCacheMilliseconds = 10000;
 const localDocumentServicesState = { checkedAt: 0, capabilities: null, request: null };
+const getOpenDocumentsLocally = () => ${options.localMode === true};
 ${appSource.slice(start, end)}
 return { documentProcessingApiUrl, probeLocalDocumentServices, resolveDocumentProcessingOrigin };
 `
@@ -221,6 +222,13 @@ async function main() {
     "https://edu-plus.ru/lms",
     "ONLYOFFICE-редактор не должен выдаваться за высококачественный PDF-конвертер"
   );
+  const localTemplatesWithoutPdf = createDocumentProcessingResolver({
+    appServerAvailable: true, documentConversionAvailable: false, localDocumentsAvailable: false
+  }, {localMode: true});
+  assert.equal(await localTemplatesWithoutPdf.resolveDocumentProcessingOrigin("documentConversion"), "http://127.0.0.1:8081",
+    "Read the latest template on this computer even without a PDF converter or the output folder");
+  assert.equal(await localTemplatesWithoutPdf.resolveDocumentProcessingOrigin("ocr"), "https://edu-plus.ru/lms",
+    "Template selection does not change OCR routing");
   const unavailableResolver = createDocumentProcessingResolver({}, { reject: true });
   const unavailableOrigin = await unavailableResolver.resolveDocumentProcessingOrigin("documentConversion");
   assert.equal(

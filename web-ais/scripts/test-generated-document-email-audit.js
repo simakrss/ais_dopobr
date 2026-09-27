@@ -46,10 +46,13 @@ function fixture({ outcome = "success", recipientMode = "student", recipient = "
     loadStudentProtocolEmailTemplate: async template => template,
     evaluateContractTemplateFields: () => ({}), collectContractTemplateSourceValues: () => ({}),
     ensureGeneratedDocumentFileName: () => "Документ.pdf", applyContractTemplateMarkers: value => value,
-    getAdditionalDocumentStorageRequests: () => [], getEffectiveLocalDocumentsMode: () => true,
+    getAdditionalDocumentStorageRequests: () => [], getEffectiveLocalDocumentsMode: () => true, getOpenDocumentsLocally: () => true,
     prepareStudentDocumentEmailRequest: emailRequest,
     resolveDocumentProcessingOrigin: async () => {state.modal = {config: "students", id: "opened-during-generation", draft: {name: "Новое окно"}}; return "https://example.test";},
-    requestGeneratedDocumentPreview: async () => ({blob: "pdf", previewToken: "token", fileName: "Документ.pdf"}),
+    requestGeneratedDocumentPreview: async request => {
+      assert.equal(request.preferLocalTemplate, true, "Source preference must survive an unavailable output folder");
+      return {blob: "pdf", previewToken: "token", fileName: "Документ.pdf"};
+    },
     showGeneratedDocumentPreview: async () => true,
     showGeneratedDocumentEmailPreview: async () => previewDecision === "skip" ? {skipEmail: true} : previewDecision === "cancel" ? null : emailRequest(),
     cancelGeneratedDocumentPreview: async () => {}, prepareStudentDocumentStorageRequest: async () => ({}), documentProcessingApiUrl: url => url,
@@ -90,6 +93,7 @@ async function main() {
     const body=test.requests[0];assert.equal(body.auditContext.entityId,record.id);assert.equal(body.auditContext[entityType==="contracts" ? "contractId":"studentId"],record.id);
   }
   const bulk=fixture();bulk.state.modal=null;
+  bulk.c.getEffectiveLocalDocumentsMode = () => false;
   for(const id of ["bulk-a","bulk-b"]) {assert.equal((await bulk.run({id,name:id})).emailed,true);assert.equal((await bulk.history("students",id)).filter(row=>row.source==="smtp").length,1);}
   const system=fixture({recipientMode:"system"});await system.run({id:"employee-system",name:"Сотрудник"},{entityType:"contracts"},"employeeAct");
   assert.match((await system.history("contracts","employee-system")).find(row=>row.source==="smtp").details,/system@example.test \(системный ящик\)/);

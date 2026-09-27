@@ -78,7 +78,7 @@ function fixture() {
     loadStudentProtocolEmailTemplate: async (template) => template,
     evaluateContractTemplateFields: () => ({}), collectContractTemplateSourceValues: () => ({}),
     ensureGeneratedDocumentFileName: () => "Тест.pdf", applyContractTemplateMarkers: (value) => value,
-    getAdditionalDocumentStorageRequests: () => [], getEffectiveLocalDocumentsMode: () => true,
+    getAdditionalDocumentStorageRequests: () => [], getEffectiveLocalDocumentsMode: () => true, getOpenDocumentsLocally: () => true,
     prepareStudentDocumentEmailRequest: () => ({ ...email }),
     resolveDocumentProcessingOrigin: async () => "https://example.test",
     requestGeneratedDocumentPreview: async () => { calls.push("generate-preview"); return { blob: "synthetic-pdf", previewToken: "fixture-token", fileName: "Тест.pdf" }; },

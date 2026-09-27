@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.567",
+    version: "1.7.568",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.568",
+      releasedAt: "2026-09-27",
+      changes: ["В локальном режиме договоры и другие документы используют свежий файл шаблона с диска независимо от доступности PDF-конвертера и папки сохранения. Проверяется также явно заданный локальный путь; исключена незаметная подмена встроенной копией. Открытие шаблонов из соседних папок [-1] согласовано с генерацией."]
+    },
     {
       version: "1.7.567",
       releasedAt: "2026-09-27",
@@ -19180,7 +19185,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fieldValues: evaluateContractTemplateFields(draft, template.fields),
         sourceValues: { ...collectContractTemplateSourceValues(draft), ...draft.workflowSourceValues },
         documentKind: definition.kind, useCustomDocumentProperties: isChecked(template.useCustomDocumentProperties),
-        preferLocalTemplate: getEffectiveLocalDocumentsMode(), outputFormat: "pdf", skipPhoto: true }, origin, taskId);
+        preferLocalTemplate: getOpenDocumentsLocally(), outputFormat: "pdf", skipPhoto: true }, origin, taskId);
       token = preview.previewToken;
       throwIfDocumentGenerationCancelled(taskId);
       await showGeneratedDocumentPreview(preview.blob, { title: `${definition.title} — ${record.name}`, fileName: preview.fileName, outputFormat: preview.outputFormat, previewAvailable: preview.previewAvailable, editorAvailable: false, readOnly: true, signal: getDocumentGenerationSignal(taskId), generationTaskId: taskId });
@@ -54446,10 +54451,13 @@ MAX - https://bizvmax.ru/zifra_plus
   async function resolveDocumentProcessingOrigin(capability) {
     if (window.location.protocol === "file:") return defaultPhotoServerOrigin;
     const capabilities = await probeLocalDocumentServices();
+    // Assemble from the current local template even when PDF conversion must be
+    // delegated to the relay. Conversion availability must not choose the source.
+    const useLocalTemplate = capability === "documentConversion" && getOpenDocumentsLocally();
     const localAvailable = capabilities.appServerAvailable === true
       && (capability === "ocr"
         ? capabilities.ocrAvailable === true
-        : capabilities.documentConversionAvailable === true);
+        : useLocalTemplate || capabilities.documentConversionAvailable === true);
     return localAvailable
       ? String(capabilities.apiOrigin || localDocumentServicesOrigin)
       : photoServerOrigin();
@@ -62715,12 +62723,12 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function inspectDocumentTemplateSource(source) {
-    const preferLocalTemplate = getEffectiveLocalDocumentsMode();
+    const preferLocalTemplate = getOpenDocumentsLocally();
     let origin = photoServerOrigin();
     if (preferLocalTemplate) {
       const capabilities = await probeLocalDocumentServices();
-      if (!capabilities.appServerAvailable || !capabilities.localDocumentsAvailable) {
-        throw new Error("Локальный сервис или папка документов недоступны. Проверьте запуск локальной системы и повторите обновление.");
+      if (!capabilities.appServerAvailable) {
+        throw new Error("Локальный сервис недоступен. Проверьте запуск локальной системы и повторите обновление.");
       }
       origin = capabilities.apiOrigin || localDocumentServicesOrigin;
     }
@@ -74079,7 +74087,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ...(record.attestationDocumentKind ? { skipPhoto: true } : {}),
         ...(options.workflow ? { workflow: { ...options.workflow, fileNameTemplate } } : {}),
         useCustomDocumentProperties,
-        preferLocalTemplate: getEffectiveLocalDocumentsMode(),
+        preferLocalTemplate: getOpenDocumentsLocally(),
         outputFormat
       };
       if (previewEnabled) {

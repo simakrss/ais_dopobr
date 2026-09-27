@@ -51,9 +51,11 @@ async function main() {
 
   const events = [];
   let available = false, localError = null, cloudError = null, cancelled = false, aborted = false, headers;
-  const settings = { openDocumentsLocally: true };
+  const settings = { openDocumentsLocally: true, localDocumentsRoot: "Y:/" };
   const ctx = inject({
     Buffer, path, ROOT: root, documentWorkflow: workflow, serverSettings: settings,
+    DEFAULT_LOCAL_DOCUMENTS_ROOT: "Y:/",
+    getRuntimeFileSystemPathApi: value => path.isAbsolute(value) ? path : null,
     throwIfDocumentGenerationCancelled: () => { if (aborted) throw new Error("cancelled"); },
     getLocalSystemDocumentsAvailability: async () => ({available}),
     normalizeGeneratedDocumentFormat: value => value === "docx" ? "docx" : "pdf",
@@ -122,8 +124,8 @@ async function main() {
   const remote = "Документы/Шаблон.docx";
   available = false;
   events.length = 0;
-  assert.equal((await ctx.loadTemplateBytesForRequest({preferLocalTemplate: true, templateUrl: remote, templatePath: "old.docx"})).toString(), "CLOUD");
-  assert.deepEqual(events, [["template-cloud", remote]]);
+  assert.equal((await ctx.loadTemplateBytesForRequest({preferLocalTemplate: true, templateUrl: remote, templatePath: "old.docx"})).toString(), "LOCAL");
+  assert.deepEqual(events, [["template-local"]], "Read the chosen file even when the output folder is unavailable");
   available = true;
   localError = Object.assign(new Error("Missing"), {code: "ENOENT"});
   events.length = 0;
@@ -135,7 +137,7 @@ async function main() {
   const definition = workflow.definitions[0];
   events.length = 0;
   await ctx.loadTemplateBytesForRequest({preferLocalTemplate: true, templatePath: definition.templatePath});
-  assert.deepEqual(events, [["template-cloud", definition.localTemplateSource]]);
+  assert.deepEqual(events, [["template-local"]], "Workflow source is read independently of output storage availability");
   const extra = {fileName: "Копия.pdf", outputFormat: "pdf", autoSaveLocal: true, studentFolder: "Документы/Копии"};
   await send(body, {...generated, extraHeaders: {"X-Document-Conversion-Fallback": "true"}, additionalSaveTargets: [extra]});
   assert.deepEqual(events.map(value => value[0]), ["cloud", "cloud"]);
