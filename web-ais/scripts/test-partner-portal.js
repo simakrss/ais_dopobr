@@ -71,6 +71,9 @@ assert.match(profileText, /••••••••/u);
 assert.deepEqual(Object.keys(profile.tabs), ["main", "contract", "documents"]);
 assert.equal(profile.tabs.main.find((field) => field.key === "name").editable, true);
 assert.equal(profile.tabs.contract.find((field) => field.key === "contractNo").editable, false);
+assert.equal(profile.tabs.documents.find((field) => field.key === "login").editable, false);
+assert.equal(profile.tabs.documents.find((field) => field.key === "password").editable, false);
+assert.equal(profile.tabs.main.some((field) => field.key === "notificationEmail"), false);
 assert.equal(getPartnerDocumentsFolder({ name: "Иванов Иван Иванович" }), "Сотрудники/ИвановИИ/Документы");
 assert.equal(getPartnerDocumentsFolder({ photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" }), "Сотрудники/ИвановИИ/Документы");
 assert.deepEqual(
@@ -90,6 +93,7 @@ assert.deepEqual(sanitizePartnerProfileUpdate({ email: " partner@example.test ",
   email: "partner@example.test"
 });
 assert.deepEqual(sanitizePartnerProfileUpdate({ password: "" }), {});
+assert.deepEqual(sanitizePartnerProfileUpdate({ login: "changed", password: "changed", notificationEmail: false }), {});
 
 // Hide the internal photo path without clearing the stored path or disabling photo controls.
 const photoEmployee = { ...contracts[1], photoPath: "Сотрудники/ИвановИИ/Документы/ИвановИИ.jpg" };
@@ -102,7 +106,7 @@ const profileRenderContext = {
   authApi: { appUrl: value => `/${value}` }, window: {}, renderEmpty: () => "", renderDocumentsModal: () => ""
 };
 vm.createContext(profileRenderContext);
-vm.runInContext(["escapeHtml", "escapeAttr", "icon", "formatDate", "renderProfileField", "renderProfile"].map(name => {
+vm.runInContext(["escapeHtml", "escapeAttr", "icon", "formatDate", "partnerSdoUrl", "renderProfileField", "renderProfile"].map(name => {
   const match = partnerSource.replace(/\r\n/g, "\n").match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  \\}$`, "m"));
   assert.ok(match, name); return match[0];
 }).join("\n"), profileRenderContext);

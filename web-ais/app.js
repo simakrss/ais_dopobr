@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.561",
-    releasedAt: "2026-09-26"
+    version: "1.7.562",
+    releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.562",
+      releasedAt: "2026-09-27",
+      changes: ["На рабочем столе партнёра блок «К выплате» расположен перед выплатами по месяцам. Из профиля убраны email-уведомления; логин и пароль СДО доступны только для чтения. Пароль можно показать по кнопке, рядом добавлен переход в СДО по адресу из настроек."]
+    },
     {
       version: "1.7.561",
       releasedAt: "2026-09-26",

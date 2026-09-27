@@ -100,7 +100,8 @@
       refresh: '<path d="M20 7v5h-5M4 17v-5h5m10-2a8 8 0 0 0-14-3l-1 2m1 5a8 8 0 0 0 14 3l1-2"/>',
       tiles: '<path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/>',
       table: '<path d="M4 5h16v14H4V5Zm0 5h16M9 5v14"/>',
-      camera: '<path d="M5 7h3l1.5-2h5L16 7h3a2 2 0 0 1 2 2v9H3V9a2 2 0 0 1 2-2Zm7 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/>'
+      camera: '<path d="M5 7h3l1.5-2h5L16 7h3a2 2 0 0 1 2 2v9H3V9a2 2 0 0 1 2-2Zm7 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/>',
+      eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
     };
     return `<svg class="partner-icon ${escapeAttr(className)}" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.file}</svg>`;
   }
@@ -323,6 +324,10 @@
           <span>Записей в реестре</span><strong>${Number(summary.paymentRows) || 0}</strong><small>Начисления и выплаты</small>
         </article>
       </section>
+      <section class="partner-panel">
+        <header class="partner-panel-head"><div>${icon("payments")}<span><h3>К выплате</h3><p>Начисления, готовые к оплате</p></span></div></header>
+        ${payableRows.length ? renderCompactPayments(payableRows.slice(0, 6)) : renderEmpty("Сейчас нет начислений со статусом «К выплате».")}
+      </section>
       <section class="partner-panel partner-chart-panel">
         <header class="partner-panel-head"><div>${icon("chart")}<span><h3>Выплаты по месяцам</h3><p>От последней выплаты к более ранним</p></span></div><button data-view="payments" type="button">Открыть реестр ${icon("arrow")}</button></header>
         ${monthly.length ? `
@@ -336,10 +341,6 @@
             `).join("")}
           </div>
         ` : renderEmpty("Выплат по месяцам пока нет.")}
-      </section>
-      <section class="partner-panel">
-        <header class="partner-panel-head"><div>${icon("payments")}<span><h3>К выплате</h3><p>Начисления, готовые к оплате</p></span></div></header>
-        ${payableRows.length ? renderCompactPayments(payableRows.slice(0, 6)) : renderEmpty("Сейчас нет начислений со статусом «К выплате».")}
       </section>
     `;
   }
@@ -611,7 +612,7 @@
     const profile = state.portal.profile || {};
     const tabsById = new Map(PROFILE_TABS.map((tab) => [tab.id, tab]));
     // The photo uploader manages the storage path; keep it out of the partner's form.
-    const activeFields = (profile.tabs?.[state.profileTab] || []).filter(field => field.key !== "photoPath");
+    const activeFields = (profile.tabs?.[state.profileTab] || []).filter(field => !["photoPath", "notificationEmail"].includes(field.key));
     const photoUrl = authApi.appUrl(`api/partner/photo?v=${state.profilePhotoRevision}`);
     return `
       <section class="partner-page-heading"><div><p>Личные данные</p><h2>${escapeHtml(profile.name || "Профиль")}</h2></div><button class="partner-secondary-button" data-action="open-documents" type="button">${icon("folder")}Документы на Яндекс‑Диске</button></section>
@@ -638,7 +639,9 @@
             ${state.profileTabs.map((id) => { const tab = tabsById.get(id); return `<button class="${state.profileTab === id ? "is-active" : ""}" data-profile-tab="${id}" draggable="true" role="tab" aria-selected="${state.profileTab === id}">${escapeHtml(tab.label)}</button>`; }).join("")}
           </div>
           <form data-profile-form>
-            <div class="partner-profile-fields">${activeFields.map(renderProfileField).join("") || renderEmpty("Данные этого раздела не заполнены.")}</div>
+            <div class="partner-profile-fields">${activeFields.map(renderProfileField).join("") || renderEmpty("Данные этого раздела не заполнены.")}
+              ${state.profileTab === "documents" ? `<div class="partner-profile-field is-wide partner-sdo-actions"><a class="partner-secondary-button" href="${escapeAttr(partnerSdoUrl())}" target="_blank" rel="noopener noreferrer">${icon("external")}Открыть СДО</a><small>Логин и пароль изменяет администратор.</small></div>` : ""}
+            </div>
             <div class="partner-profile-actions">
               ${state.profileError ? `<p class="partner-form-message is-error">${escapeHtml(state.profileError)}</p>` : ""}
               ${state.profileStatus ? `<p class="partner-form-message is-success">${escapeHtml(state.profileStatus)}</p>` : ""}
@@ -652,6 +655,13 @@
   }
 
   function renderProfileField(field) {
+    // Old backend responses may mark these fields editable; never offer partner edits.
+    if (field.key === "login") {
+      return `<label class="partner-profile-field"><span>${escapeHtml(field.label)}</span><input data-partner-sdo-login type="text" value="${escapeAttr(field.value)}" readonly autocomplete="off"></label>`;
+    }
+    if (field.key === "password") {
+      return `<div class="partner-profile-field"><span id="partner-sdo-password-label">${escapeHtml(field.label)}</span><div class="partner-sdo-password-control"><input data-partner-sdo-password type="password" value="" placeholder="${field.value ? "••••••••" : "Не указан"}" readonly autocomplete="off" aria-labelledby="partner-sdo-password-label"><button class="partner-secondary-button" data-action="toggle-sdo-password" type="button" aria-label="Показать пароль СДО" title="Показать пароль СДО" aria-pressed="false"${field.value ? "" : " disabled"}>${icon("eye")}</button></div><small data-partner-sdo-password-status role="status"></small></div>`;
+    }
     let value = Object.prototype.hasOwnProperty.call(state.profileDraft, field.key)
       ? state.profileDraft[field.key] : field.value;
     if (field.editable) {
@@ -675,6 +685,51 @@
         ? `<a href="tel:${escapeAttr(content.replace(/[^+\d]/gu, ""))}">${escapeHtml(content)}</a>`
         : (window.AISFieldHtmlLinks?.renderLinks(content) || escapeHtml(content)).replaceAll("\n", "<br>");
     return `<div class="partner-profile-field ${field.kind === "multiline" ? "is-wide" : ""} ${empty ? "is-empty" : ""}"><span>${escapeHtml(field.label)}</span><strong>${display}</strong></div>`;
+  }
+
+  function partnerSdoUrl() {
+    try {
+      const url = new URL(state.portal?.sdoUrl || "https://portal.edu-plus.ru");
+      if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+    } catch { /* Fall back to the default portal, never to a script URL. */ }
+    return "https://portal.edu-plus.ru/";
+  }
+
+  async function togglePartnerSdoPassword(button) {
+    const field = button.closest(".partner-profile-field");
+    const input = field?.querySelector("[data-partner-sdo-password]");
+    const status = field?.querySelector("[data-partner-sdo-password-status]");
+    if (!input || button.disabled) return;
+    if (input.type === "text") {
+      input.value = "";
+      input.type = "password";
+      button.title = "Показать пароль СДО";
+      button.setAttribute("aria-label", button.title);
+      button.setAttribute("aria-pressed", "false");
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (status) status.textContent = "Загружаем пароль…";
+    try {
+      const result = await authApi.request("api/partner/sdo-password", { method: "POST" });
+      // Do not keep the secret in the profile draft, persistent state or a detached form.
+      if (!input.isConnected || document.hidden) {
+        if (status) status.textContent = "";
+        return;
+      }
+      input.value = String(result.password || "");
+      input.type = "text";
+      button.title = "Скрыть пароль СДО";
+      button.setAttribute("aria-label", button.title);
+      button.setAttribute("aria-pressed", "true");
+      if (status) status.textContent = input.value ? "" : "Пароль СДО не указан.";
+    } catch {
+      if (status?.isConnected) status.textContent = "Не удалось загрузить пароль. Повторите попытку.";
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
   }
 
   function renderDocumentsModal() {
@@ -998,6 +1053,7 @@
     if (action === "logout") { setPartnerAccountMenu(false); logout(); }
     if (action === "switch-account") authApi.redirectToLogin?.();
     if (action === "reload-portal") loadPortal();
+    if (action === "toggle-sdo-password") togglePartnerSdoPassword(button);
     if (action === "open-payable") navigate("payments", { status: "payable" });
     if (["open-month", "open-payment-row"].includes(action)) { state.selectedMonth = button.dataset.month || ""; navigate("payments"); }
     if (action === "select-payment-month") { state.selectedMonth = button.dataset.month || ""; render(); }
@@ -1180,6 +1236,12 @@
   });
 
   window.addEventListener("popstate", () => setPartnerAccountMenu(false));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      const button = app.querySelector('[data-action="toggle-sdo-password"][aria-pressed="true"]');
+      if (button) togglePartnerSdoPassword(button);
+    }
+  });
   window.addEventListener("hashchange", () => { parseRoute(); render(); if (state.view === "materials" && !state.materials) loadMaterials("/"); });
   window.addEventListener("ais:auth-refreshed", (event) => {
     if (event.detail?.user?.role !== "partner") window.location.reload();

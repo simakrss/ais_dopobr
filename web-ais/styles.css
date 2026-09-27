@@ -31151,6 +31151,11 @@ button.partner-kpi-card:hover {
 .partner-profile-field textarea:focus { outline: 0; border-color: #138878; box-shadow: 0 0 0 3px rgba(19, 136, 120, .12); }
 .partner-profile-field.is-checkbox { display: flex; align-items: center; justify-content: space-between; }
 .partner-profile-field.is-checkbox input { width: 18px; height: 18px; accent-color: #138878; }
+.partner-sdo-password-control { display: flex; align-items: center; gap: 6px; }
+.partner-sdo-password-control input { min-width: 0; flex: 1; }
+.partner-sdo-password-control button { flex: 0 0 34px; width: 34px; padding: 6px; }
+.partner-sdo-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.partner-sdo-actions small, [data-partner-sdo-password-status] { color: var(--muted); font-size: 12px; }
 .partner-profile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin: 0; padding: 10px 18px 14px; border-top: 1px solid #edf1ee; }
 .partner-profile-actions .partner-form-message { margin: 0 auto 0 0; }
 

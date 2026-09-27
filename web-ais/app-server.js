@@ -38588,11 +38588,11 @@ function partnerValueIsChecked(value) {
 }
 
 const PARTNER_EDITABLE_PROFILE_FIELDS = new Set([
-  "name", "position", "degree", "academicTitle", "phone", "email", "city", "notificationEmail",
+  "name", "position", "degree", "academicTitle", "phone", "email", "city",
   "partnerDirections", "additionalInfo",
   "bank", "settlementAccount", "correspondentAccount", "bic", "citizenship", "birthDate",
   "identityDocumentType", "identityDocument", "identityIssueDate", "identityDepartmentCode",
-  "identityIssuer", "address", "snils", "inn", "login", "password"
+  "identityIssuer", "address", "snils", "inn"
 ]);
 
 function partnerEmployeeField(key, label, value, kind = "text") {
@@ -38620,12 +38620,9 @@ function sanitizePartnerProfileUpdate(values = {}) {
   const result = {};
   for (const key of PARTNER_EDITABLE_PROFILE_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-    if (key === "notificationEmail") result[key] = Boolean(source[key]);
-    else if (key === "password" && !String(source[key] || "")) continue;
-    else result[key] = String(source[key] ?? "").trim().slice(0, ["identityIssuer", "address"].includes(key) ? 2000 : 500);
+    result[key] = String(source[key] ?? "").trim().slice(0, ["identityIssuer", "address"].includes(key) ? 2000 : 500);
   }
   if (Object.prototype.hasOwnProperty.call(result, "name") && !result.name) throw new Error("Укажите ФИО или наименование партнёра.");
-  if (Object.prototype.hasOwnProperty.call(result, "login") && !result.login) throw new Error("Логин СДО не может быть пустым.");
   return result;
 }
 
@@ -38651,12 +38648,6 @@ function buildPartnerProfile(employee = {}) {
         partnerEmployeeField("additionalInfo", "Дополнительные сведения", employee.additionalInfo, "multiline"),
         partnerEmployeeField("coupon", "Персональный купон", employee.coupon),
         partnerEmployeeField("couponId", "ID купона", employee.couponId),
-        partnerEmployeeField(
-          "notificationEmail",
-          "Уведомления по email",
-          partnerValueIsChecked(employee.notificationEmail),
-          "boolean"
-        ),
         partnerEmployeeField("photoPath", "Путь к фотографии", employee.photoPath)
       ],
       contract: [
@@ -38704,10 +38695,6 @@ async function updatePartnerProfile(req, res, authUser) {
     ? current.document.data.collections.contracts : [];
   const employee = selectPartnerEmployee(contracts, { employeeId: authUser.employeeId, login: authUser.login });
   if (!employee) throw new Error("Карточка партнёра не найдена.");
-  if (values.login && contracts.some((item) => item !== employee
-    && normalizePartnerIdentity(item?.login) === normalizePartnerIdentity(values.login))) {
-    throw new Error("Этот логин уже используется другой учётной записью.");
-  }
   const completeOnboarding = body.completeOnboarding === true && employee.partnerProfileRequired === true;
   const updated = { ...employee, ...values };
   if (completeOnboarding) {
@@ -38734,7 +38721,7 @@ async function updatePartnerProfile(req, res, authUser) {
   await safelyAppendAuditEntry({
     action: "Обновлён профиль партнёра", area: "Кабинет партнёра", entityType: "employee",
     entityId: updated.id, entityLabel: updated.name,
-    details: `Изменены поля: ${Object.keys(values).filter((key) => key !== "password").join(", ") || "пароль"}`
+    details: `Изменены поля: ${Object.keys(values).join(", ") || "нет"}`
   }, authUser, req);
   sendJson(res, 200, {
     ok: true,
@@ -39411,6 +39398,18 @@ async function handlePartnerFeedback(req, res, authUser) {
   sendJson(res, 200, { ok: true, message: "Сообщение отправлено." });
 }
 
+function getPartnerSdoUrl(data = {}) {
+  const settings = Array.isArray(data.dictionaries?.sdoSettings) ? data.dictionaries.sdoSettings : [];
+  const legacyUrls = Array.isArray(data.dictionaries?.moodlePortalUrls) ? data.dictionaries.moodlePortalUrls : [];
+  const source = String(settings.find(item => item?.key === "portalUrl")?.value
+    || legacyUrls.find(value => String(value || "").trim()) || "https://portal.edu-plus.ru").trim();
+  try {
+    const url = new URL(source);
+    if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+  } catch { /* Invalid settings must not become an executable link. */ }
+  return "https://portal.edu-plus.ru/";
+}
+
 async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
   if (authUser?.role !== "partner") {
     sendError(res, 403, "Кабинет доступен только партнёру.");
@@ -39422,6 +39421,7 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
       const payments = buildPartnerPaymentData(context.data, context.relatedContracts);
       sendJson(res, 200, {
         profile: buildPartnerProfile(context.employee),
+        sdoUrl: getPartnerSdoUrl(context.data),
         payments,
         materials: {
           publicUrl: normalizePartnerMaterialsUrl(
@@ -39443,6 +39443,12 @@ async function handlePartnerPortalRequest(req, res, authUser, requestUrl) {
     }
     if (req.method === "PUT" && requestUrl.pathname === "/api/partner/profile") {
       await updatePartnerProfile(req, res, authUser);
+      return;
+    }
+    if (req.method === "POST" && requestUrl.pathname === "/api/partner/sdo-password") {
+      // Resolve only the authenticated partner; never accept an employee id from the request.
+      const context = await resolvePartnerPortalContext(authUser);
+      sendJson(res, 200, { password: String(context.employee.password || "") });
       return;
     }
     if (req.method === "POST" && requestUrl.pathname === "/api/partner/documents/list") {
@@ -41338,6 +41344,7 @@ module.exports = {
   getPartnerRegistrationPublicBaseUrl,
   selectPartnerEmployee,
   buildPartnerProfile,
+  getPartnerSdoUrl,
   getPartnerDocumentsFolder,
   sanitizePartnerProfileUpdate,
   getManagedPersonPhotoTarget,
