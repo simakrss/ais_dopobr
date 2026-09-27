@@ -235,6 +235,7 @@ async function serverTests(temp) {
   c.loadTemplateBytesForRequest = async () => Buffer.from("fixture");
   c.prepareAdditionalDocumentSaveTargets = () => [];
   c.loadContractPhoto = async () => null;
+  c.resolveDocumentImageFields = (_template, fieldValues) => ({ fieldValues, imageSources: {}, clearImageFields: [] });
   c.fillDocxMarkers = () => Buffer.from("fixture docx");
   c.convertDocxBytesToPdf = async () => {
     vm.runInContext("documentGenerationContext.getStore().abort()", c);

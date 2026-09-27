@@ -3795,6 +3795,7 @@ function findTopLevelAdditiveOperator(value) {
 }
 
 function formulaValueToString(value) {
+  if (value && typeof value === "object" && typeof value.documentImageSource === "string") return value.documentImageSource;
   if (value === true) return "ИСТИНА";
   if (value === false) return "ЛОЖЬ";
   if (value === null || value === undefined) return "";
@@ -3899,8 +3900,12 @@ function getDocumentFormulaAliasedAddressValue(name, context) {
   return { found: false, value: "" };
 }
 
-function getFormulaContextValue(name, context) {
+function getFormulaContextValue(name, context, sourceReference = false) {
   const key = String(name || "").trim();
+  // [Фото] is a source path, even when the output field Фото has its own formula.
+  if (sourceReference && key === "Фото" && Object.prototype.hasOwnProperty.call(context.sourceValues, key)) {
+    return context.sourceValues[key];
+  }
   const evaluatingName = String(context?.evaluatingName || "").trim();
   if (key && key === String(context?.evaluatingName || "").trim()
     && Object.prototype.hasOwnProperty.call(context.sourceValues, key)) {
@@ -3936,7 +3941,7 @@ function replaceDocumentFormulaReferences(text, context) {
     .replace(/\[([^\]]+)\]/g, (match, fieldName) => (
       /^\$-/u.test(String(fieldName || "").trim())
         ? match
-        : formulaValueToString(getFormulaContextValue(fieldName, context))
+        : formulaValueToString(getFormulaContextValue(fieldName, context, true))
     ));
 }
 
@@ -3993,7 +3998,7 @@ function evaluateDocumentFormula(formula, context) {
   } catch {
     return expression
       .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
-      .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
+      .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context, true)))
       .trim();
   }
 }
@@ -4039,14 +4044,14 @@ function evaluateDocumentFormulaExpression(expression, context) {
   const hashRef = /^#([^#]+)#$/.exec(text);
   if (hashRef) return getFormulaContextValue(hashRef[1], context);
   const sourceRef = /^\[([^\]]+)\]$/.exec(text);
-  if (sourceRef) return getFormulaContextValue(sourceRef[1], context);
+  if (sourceRef) return getFormulaContextValue(sourceRef[1], context, true);
   const functionMatch = /^([\p{L}_][\p{L}\p{N}_*]*)\s*\(([\s\S]*)\)$/u.exec(text);
   if (functionMatch) {
     return evaluateDocumentFormulaFunction(functionMatch[1], splitTopLevel(functionMatch[2], ";"), context);
   }
   return text
     .replace(/#([^#]+)#/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)))
-    .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context)));
+    .replace(/\[([^\]]+)\]/g, (_, fieldName) => formulaValueToString(getFormulaContextValue(fieldName, context, true)));
 }
 
 const DOCUMENT_TRANSLITERATION_PAIRS = [
@@ -4222,7 +4227,10 @@ function evaluateDocumentFormulaFunction(name, args, context) {
   const text = (index) => formulaValueToString(value(index));
   if (upperName === "\u0421\u0422\u0420\u041e\u0427\u041d") return text(0).toLocaleLowerCase("ru-RU");
   if (upperName === "\u041f\u0423\u0422\u042c\u0414\u041e\u041a\u0423\u041c\u0415\u041d\u0422\u0410") return "";
-  if (upperName === "\u0418\u0417\u041e\u0411\u0420\u0410\u0416\u0415\u041d\u0418\u0415") return text(0);
+  if (upperName === "\u0418\u0417\u041e\u0411\u0420\u0410\u0416\u0415\u041d\u0418\u0415") {
+    const source = text(0);
+    return context.preserveImageResult ? { documentImageSource: source } : source;
+  }
   if (upperName === "ТДАТА") return new Date();
   if (upperName === "ЕСЛИ") return formulaValueToBoolean(value(0)) ? value(1) : value(2);
   if (upperName === "И") return args.every((arg) => formulaValueToBoolean(evaluateDocumentFormulaExpression(arg, context)));
@@ -4534,6 +4542,34 @@ function applyCustomDocumentPropertyFormulas(templateBytes, fieldValues, sourceV
     context.evaluatingName = "";
   });
   return values;
+}
+
+function resolveDocumentImageFields(templateBytes, fieldValues, sourceValues, fields = [], useCustomDocumentProperties = false) {
+  const formulas = new Map((Array.isArray(fields) ? fields : []).map((field) => [String(field?.name || "").trim(), String(field?.formula || "")]));
+  if (useCustomDocumentProperties) {
+    // Match the same precedence as ordinary field evaluation: the current Word/Assistant properties win.
+    getDocumentFormulaPropertiesFromEntries(readDocxZipEntries(templateBytes)).forEach((property) => {
+      formulas.set(property.name, String(property.value || ""));
+    });
+  }
+  const values = { ...(fieldValues || {}) };
+  const imageSources = {};
+  const clearImageFields = ["Фото"];
+  for (const [name, formula] of formulas) {
+    if (!name || !/ИЗОБРАЖЕНИЕ\s*\(/iu.test(formula)) continue;
+    const expression = stripDocumentFormulaComments(formula.replace(/^=\s*/, ""));
+    const context = { fieldValues: values, sourceValues: sourceValues || {}, evaluatingName: name, preserveImageResult: true };
+    // Inspect the actual result, not just the formula text: unselected ЕСЛИ branches
+    // and quoted text mentioning ИЗОБРАЖЕНИЕ must not load a file or insert a picture.
+    const result = evaluateDocumentFormulaExpression(expression, context);
+    values[name] = formulaValueToString(result).trim();
+    if (result && typeof result === "object" && typeof result.documentImageSource === "string") {
+      imageSources[name] = result.documentImageSource.trim();
+    } else {
+      clearImageFields.push(name);
+    }
+  }
+  return { fieldValues: values, imageSources, clearImageFields };
 }
 
 function getIndexedWordFieldPositionMap(entries) {
@@ -5550,6 +5586,13 @@ function fillDocxMarkers(templateBytes, fieldValues, imageValues = {}, propertyU
     fieldValues
   );
   updateCustomDocumentProperties(entries, fieldValues, propertyUpdateNames);
+  for (const name of new Set(["Фото", ...(options.clearImageFields || [])])) {
+    if (Object.prototype.hasOwnProperty.call(fieldValues || {}, name)
+      && !Object.prototype.hasOwnProperty.call(imageValues, name)) {
+      // Remove only a cached image bound to this indexed field, retaining unrelated template graphics.
+      applyIndexedDocumentImage(entries, name, null, indexedFieldPositionMap);
+    }
+  }
   Object.entries(imageValues || {}).forEach(([name, image]) => {
     const indexedImageHandled = applyIndexedDocumentImage(entries, name, image, indexedFieldPositionMap);
     if (!indexedImageHandled && image?.bytes?.length) insertDocumentImage(entries, name, image);
@@ -36595,20 +36638,23 @@ async function handleContractDocument(req, res, authUser) {
     const documentIdentity = [body.templateUrl, body.templatePath, body.fileName]
       .map((value) => String(value || "").toLocaleLowerCase("ru-RU"))
       .join("\n");
-    const omitDocumentPhoto = String(body.documentKind || "").trim() === "employeeAct"
-      || documentIdentity.includes("акт оказанных услуг");
-    const photo = omitDocumentPhoto ? null : await loadContractPhoto({
-      ...fieldValues,
-      "Фото": sourceValues["Фото"] || fieldValues["Фото"] || "",
-      photo: sourceValues.photo || fieldValues.photo || "",
-      photoPath: sourceValues.photoPath || fieldValues.photoPath || ""
-    });
+    const documentImages = resolveDocumentImageFields(
+      templateBytes, fieldValues, sourceValues,
+      workflow ? body.workflow?.fields : body.fieldFormulas,
+      !workflow && body.useCustomDocumentProperties
+    );
+    const imageValues = {};
+    for (const [name, source] of Object.entries(documentImages.imageSources)) {
+      throwIfDocumentGenerationCancelled();
+      imageValues[name] = source ? await loadContractPhoto({ "Фото": source }) : null;
+    }
     const hasQrCodeField = Object.prototype.hasOwnProperty.call(fieldValues, "QRкод");
     throwIfDocumentGenerationCancelled();
     const qrCode = hasQrCodeField
       ? createDocumentQrCodeImage(fieldValues["QRкод"] || sourceValues["QRкод"] || "")
       : null;
-    const outputFieldValues = { ...fieldValues, "Фото": "" };
+    const outputFieldValues = { ...documentImages.fieldValues };
+    for (const name of Object.keys(imageValues)) outputFieldValues[name] = "";
     if (
       Object.prototype.hasOwnProperty.call(sourceValues, "Скидка")
       || Object.prototype.hasOwnProperty.call(fieldValues, "Скидка")
@@ -36619,15 +36665,14 @@ async function handleContractDocument(req, res, authUser) {
       );
     }
     if (hasQrCodeField) outputFieldValues["QRкод"] = "";
-    if (!photo) outputFieldValues["ПутьСохр"] = "";
-    const imageValues = { "Фото": photo };
     if (hasQrCodeField) imageValues["QRкод"] = qrCode;
     const docxResult = fillDocxMarkers(
       templateBytes,
       outputFieldValues,
       imageValues,
       propertyUpdateNames,
-      workflow
+      workflow,
+      { clearImageFields: documentImages.clearImageFields }
     );
     const requestedOutputFormat = normalizeGeneratedDocumentFormat(body.outputFormat);
     throwIfDocumentGenerationCancelled();
@@ -41263,6 +41308,7 @@ module.exports = {
   queryStudentMailboxMessages,
   buildLocalDocumentSaveDialogLauncher,
   applyCustomDocumentPropertyFormulas,
+  resolveDocumentImageFields,
   buildLibreOfficePdfConversionFilter,
   resolveLibreOfficeBinary,
   convertDocxBytesToPdfWithLibreOffice,

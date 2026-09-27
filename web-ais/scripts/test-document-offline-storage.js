@@ -152,6 +152,7 @@ async function main() {
     assertGeneratedDocumentPreviewRequestAllowed: async () => {},
     applyCustomDocumentPropertyFormulas: (_bytes, values) => values,
     loadContractPhoto: async () => null,
+    resolveDocumentImageFields: (_template, fieldValues) => ({ fieldValues, imageSources: {}, clearImageFields: [] }),
     fillDocxMarkers: () => Buffer.from("FILLED-DOCX"),
     convertDocxBytesToPdf: async () => { conversionCalls++; throw new Error("PDF unavailable"); },
     registerGeneratedDocumentPreview: async doc => { stored = doc; return "test-token"; },

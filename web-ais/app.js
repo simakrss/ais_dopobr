@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.569",
+    version: "1.7.570",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.570",
+      releasedAt: "2026-09-27",
+      changes: ["Поле [Фото] подставляет путь к файлу, без автоматической вставки фотографии. Изображения в документах слушателей и сотрудников создаются только по явной формуле ИЗОБРАЖЕНИЕ(...), в том числе в полях с другим названием; текстовые пути больше не очищаются при отсутствии фото."]
+    },
     {
       version: "1.7.569",
       releasedAt: "2026-09-27",
@@ -19188,6 +19193,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const preview = await requestGeneratedDocumentPreview({ templateUrl: template.templateUrl, templatePath: template.templatePath,
         fallbackTemplatePath: template.fallbackTemplatePath || "", fileName: `${definition.title}.pdf`,
         fieldValues: evaluateContractTemplateFields(draft, template.fields),
+        fieldFormulas: (template.fields || []).map(({ name, formula }) => ({ name, formula })),
         sourceValues: { ...collectContractTemplateSourceValues(draft), ...draft.workflowSourceValues },
         documentKind: definition.kind, useCustomDocumentProperties: isChecked(template.useCustomDocumentProperties),
         preferLocalTemplate: getOpenDocumentsLocally(), outputFormat: "pdf", skipPhoto: true }, origin, taskId);
@@ -74089,6 +74095,7 @@ MAX - https://bizvmax.ru/zifra_plus
         fieldValues,
         sourceValues,
         documentKind: documentTemplate.documentKind,
+        fieldFormulas: (documentTemplate.fields || []).map(({ name, formula }) => ({ name, formula })),
         ...(record.attestationDocumentKind ? { skipPhoto: true } : {}),
         ...(options.workflow ? { workflow: { ...options.workflow, fileNameTemplate } } : {}),
         useCustomDocumentProperties,
