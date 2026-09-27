@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.568",
+    version: "1.7.569",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.569",
+      releasedAt: "2026-09-27",
+      changes: ["Последний подтверждённый выбор шаблона договора сохраняется для сотрудника и автоматически подставляется при следующем формировании, в том числе в других его договорах. Выбор можно изменить; отмена окна не меняет предпочтение. Настройки контекстного меню относятся к запомненному шаблону."]
+    },
     {
       version: "1.7.568",
       releasedAt: "2026-09-27",
@@ -32751,7 +32756,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const contractTitle = buildStudentDocumentGenerationTooltip(
       "Договор",
       "Сформировать договор по данным карточки сотрудника.",
-      ["После щелчка можно выбрать один из четырёх шаблонов."]
+      ["Последний выбранный шаблон запоминается для сотрудника.", "После щелчка можно подтвердить или изменить выбор."]
     );
     return `
       <div class="orders-sdo-contract-document-row employee-contract-document-row">
@@ -46996,7 +47001,7 @@ MAX - https://bizvmax.ru/zifra_plus
       showEmployeeDocumentActionMenu(
         event.clientX,
         event.clientY,
-        getEmployeeContractDocumentTemplates()[0],
+        getPreferredEmployeeContractDocumentTemplate(collectContractFormDraft()),
         { title: "Договор сотрудника", documentKind: "employeeContract" }
       );
     });
@@ -75172,15 +75177,53 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
+  function getPreferredEmployeeContractDocumentTemplate(record = {}, templates = getEmployeeContractDocumentTemplates()) {
+    const name = normalizeEmployeeActPersonName(record.name);
+    const candidates = [record, ...(state.data.collections.contracts || []).filter((item) => (
+      name && normalizeEmployeeActPersonName(item.name) === name
+    ))].filter((item) => templates.some((template) => template.id === item.employeeContractTemplateId));
+    candidates.sort((left, right) => (
+      String(right.employeeContractTemplateSelectedAt || "").localeCompare(String(left.employeeContractTemplateSelectedAt || ""))
+    ));
+    return templates.find((template) => template.id === candidates[0]?.employeeContractTemplateId) || templates[0] || null;
+  }
+
+  function rememberEmployeeContractDocumentTemplate(record, documentTemplate, modal = state.modal) {
+    if (!documentTemplate?.id || !modal || modal !== state.modal || modal.config !== "contracts" || modal.readOnly) return false;
+    const id = String(record.id || "").trim();
+    if (id !== String(modal.id || "").trim()) return false;
+    const preference = {
+      employeeContractTemplateId: documentTemplate.id,
+      employeeContractTemplateSelectedAt: new Date().toISOString()
+    };
+    Object.assign(record, preference);
+    modal.draft = { ...(modal.draft || {}), ...preference };
+    const stored = id ? (state.data.collections.contracts || []).find((item) => item.id === id) : null;
+    if (!stored) {
+      modal.hasDraftChanges = true;
+      return true;
+    }
+    // Persist only the choice, not other unsaved card/payment edits. Keep the
+    // payment transaction's copy in sync so its later commit cannot undo it.
+    Object.assign(stored, preference);
+    const transactionRecord = modal.employeePaymentTransaction?.collections?.contracts?.find((item) => item.id === id);
+    if (transactionRecord) Object.assign(transactionRecord, preference);
+    persist();
+    return true;
+  }
+
   async function openEmployeeContractDocument(event) {
     const button = event?.currentTarget;
+    const modal = state.modal;
     const record = collectContractFormDraft();
     const templates = getEmployeeContractDocumentTemplates();
-    const documentTemplate = await chooseStudentContractDocument(templates, templates[0]?.id, {
+    const preferred = getPreferredEmployeeContractDocumentTemplate(record, templates);
+    const documentTemplate = await chooseStudentContractDocument(templates, preferred?.id, {
       eyebrow: "Карточка сотрудника",
-      note: "По умолчанию выбран шаблон договора на образовательные услуги."
+      note: "Выбранный шаблон запоминается для сотрудника. При следующем формировании он будет выбран автоматически; при необходимости его можно изменить."
     });
-    if (!documentTemplate) return;
+    if (!documentTemplate || state.modal !== modal) return;
+    rememberEmployeeContractDocumentTemplate(record, documentTemplate, modal);
     if (!validateEmployeeContractDocumentFields(record, documentTemplate)) return;
     const generationRecord = prepareEmployeeContractDocumentRecord(record, documentTemplate);
     await downloadStudentDocumentFromTemplate(
