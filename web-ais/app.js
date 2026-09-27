@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.562",
+    version: "1.7.563",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.563",
+      releasedAt: "2026-09-27",
+      changes: ["Исправлено перескакивание курсора при добавлении пустых строк в шаблонах сообщений и других текстовых редакторах. Обновление подсветки сохраняет переносы строк, выделение и прокрутку; Enter и Shift+Enter добавляют одну строку, не нарушая отмену изменений."]
+    },
     {
       version: "1.7.562",
       releasedAt: "2026-09-27",
@@ -51285,7 +51290,11 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.addEventListener("beforeinput", (event) => {
       const control = getFieldHistoryControlFromEvent(event);
-      if (!control || isContentEditableTextControl(control)) return;
+      if (!control) return;
+      if (isContentEditableTextControl(control)) {
+        handleCommunicationTemplateLineBreak(event, control);
+        return;
+      }
       const history = initializeFieldControlHistory(control);
       if (history && !history.applying) history.beforeInput = captureFieldControlHistoryValue(control);
     });
@@ -51616,19 +51625,15 @@ MAX - https://bizvmax.ru/zifra_plus
   function refreshAutomaticExpenseRulesEditor(editor, preserveCaret = false) {
     if (!editor) return;
     const value = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
-    editor.innerHTML = renderAutomaticExpenseRulesEditorContent(value);
+    replaceCommunicationTemplateEditorHtml(editor, renderAutomaticExpenseRulesEditorContent(value), preserveCaret);
     syncAutomaticExpenseRulesEditor(editor);
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function refreshPaymentFormulaEditor(editor, preserveCaret = false) {
     if (!editor) return;
-    const formula = serializeCommunicationTemplateEditor(editor).trim();
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
-    editor.innerHTML = renderPaymentFormulaEditorContent(formula);
+    const formula = serializeCommunicationTemplateEditor(editor);
+    replaceCommunicationTemplateEditorHtml(editor, renderPaymentFormulaEditorContent(formula), preserveCaret);
     syncPaymentFormulaEditor(editor);
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function deletePaymentFormulaConstantToken(token) {
@@ -63151,11 +63156,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function refreshDocumentSaveFolderEditor(editor) {
     if (!editor) return;
     if (editor.matches("input, textarea")) {
-      editor.value = editor.value.trim();
       return;
     }
-    const value = serializeCommunicationTemplateEditor(editor).trim();
-    editor.innerHTML = renderDocumentSaveFolderEditorContent(value);
+    const value = serializeCommunicationTemplateEditor(editor);
+    replaceCommunicationTemplateEditorHtml(editor, renderDocumentSaveFolderEditorContent(value));
     syncDocumentSaveFolderEditor(editor);
   }
 
@@ -63248,10 +63252,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!editor) return;
     const tokens = getDocumentEmailEditorTokens(editor);
     let value = serializeCommunicationTemplateEditor(editor);
-    if (editor.dataset.documentEmailField === "emailSubjectTemplate") {
+    if (editor.dataset.documentEmailField === "emailSubjectTemplate" && document.activeElement !== editor) {
       value = value.replace(/\s*\n+\s*/g, " ").trim();
     }
-    editor.innerHTML = renderDocumentEmailEditorContent(value, tokens);
+    replaceCommunicationTemplateEditorHtml(editor, renderDocumentEmailEditorContent(value, tokens));
     syncDocumentEmailTemplateEditor(editor);
   }
 
@@ -63433,8 +63437,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshDocumentPathValueEditor(editor) {
     if (!editor) return;
-    const value = serializeCommunicationTemplateEditor(editor).trim();
-    editor.innerHTML = renderDocumentPathValueEditorContent(value);
+    const value = serializeCommunicationTemplateEditor(editor);
+    replaceCommunicationTemplateEditorHtml(editor, renderDocumentPathValueEditorContent(value));
     syncDocumentPathValueEditor(editor);
   }
 
@@ -63767,11 +63771,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshContractFormulaEditor(editor, preserveCaret = false) {
     const formula = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
     const fields = collectContractTemplateForm(editor.closest("form")).document.fields;
-    editor.innerHTML = renderContractFormulaEditorContent(formula, fields);
+    replaceCommunicationTemplateEditorHtml(editor, renderContractFormulaEditorContent(formula, fields), preserveCaret);
     syncContractFormulaEditor(editor);
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function showContractFormulaTokenMenu(token, x, y) {
@@ -63839,9 +63841,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function refreshTemplateLinkEditor(editor, preserveCaret = false) {
     if (!editor) return;
     const value = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
-    editor.innerHTML = renderCommunicationTemplateLinks(value);
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
+    replaceCommunicationTemplateEditorHtml(editor, renderCommunicationTemplateLinks(value), preserveCaret);
   }
 
   function syncProgramPromoEditor(editor) {
@@ -64626,7 +64626,27 @@ MAX - https://bizvmax.ru/zifra_plus
     } else {
       editor.innerHTML = renderCommunicationTemplateEditorContent(value);
     }
+    ensureCommunicationTemplateEditorTrailingLine(editor);
     syncCommunicationTemplateEditorByType(editor);
+  }
+
+  function handleCommunicationTemplateLineBreak(event, editor) {
+    if (!event.cancelable || event.defaultPrevented || event.isComposing || editor.dataset.composing === "true"
+      || !["insertParagraph", "insertLineBreak"].includes(event.inputType)) return false;
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode)) return false;
+    const model = getCommunicationTemplateEditorTextModel(editor);
+    const anchor = model.offsetAt(selection.anchorNode, selection.anchorOffset);
+    const focus = model.offsetAt(selection.focusNode, selection.focusOffset);
+    const start = Math.min(anchor, focus), end = Math.max(anchor, focus);
+    const next = `${model.value.slice(0, start)}\n${model.value.slice(end)}`;
+    event.preventDefault();
+    // Native Shift+Enter can add two literal LFs under pre-wrap. Insert exactly one.
+    renderCommunicationTemplateEditorValue(editor, next);
+    commitCommunicationTemplateEditorChange(editor, model.value, next);
+    setCommunicationTemplateEditorCaretOffset(editor, start + 1);
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: event.inputType, data: "\n" }));
+    return true;
   }
 
   function restoreCommunicationTemplateEditorHistoryValue(editor, value) {
@@ -64979,11 +64999,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshCommunicationTemplateFormulaEditor(editor, preserveCaret = false) {
     const formula = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
-    editor.innerHTML = renderCommunicationTemplateFormulaEditorContent(formula);
+    replaceCommunicationTemplateEditorHtml(editor, renderCommunicationTemplateFormulaEditorContent(formula), preserveCaret);
     const hiddenInput = editor.closest("form")?.elements.formula;
     if (hiddenInput) hiddenInput.value = formula;
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function getCommunicationTemplateEditorCaretOffset(editor) {
@@ -64991,66 +65009,14 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) {
       return serializeCommunicationTemplateEditor(editor).length;
     }
-    const range = selection.getRangeAt(0).cloneRange();
-    range.selectNodeContents(editor);
-    range.setEnd(selection.anchorNode, selection.anchorOffset);
-    const fragment = document.createElement("div");
-    fragment.append(range.cloneContents());
-    return serializeCommunicationTemplateEditor(fragment).length;
+    return getCommunicationTemplateEditorTextModel(editor).offsetAt(selection.anchorNode, selection.anchorOffset);
   }
 
   function setCommunicationTemplateEditorCaretOffset(editor, offset) {
     const selection = window.getSelection?.();
     if (!selection) return;
-    const range = document.createRange();
-    let remaining = Math.max(0, Number(offset || 0));
-    let placed = false;
-    const placeInNode = (node) => {
-      if (placed) return;
-      if (node.nodeType === Node.TEXT_NODE) {
-        const length = node.nodeValue?.length || 0;
-        if (remaining <= length) {
-          range.setStart(node, remaining);
-          placed = true;
-          return;
-        }
-        remaining -= length;
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node.matches("[data-template-token]")) {
-        const tokenLength = (node.dataset.templateToken || node.textContent || "").length;
-        if (remaining <= 0) {
-          range.setStartBefore(node);
-          placed = true;
-          return;
-        }
-        if (remaining < tokenLength) {
-          range.setStartAfter(node);
-          placed = true;
-          return;
-        }
-        remaining -= tokenLength;
-        return;
-      }
-      if (node.tagName === "BR") {
-        if (remaining <= 0) {
-          range.setStartBefore(node);
-          placed = true;
-          return;
-        }
-        remaining -= 1;
-        return;
-      }
-      Array.from(node.childNodes).forEach(placeInNode);
-    };
-    Array.from(editor.childNodes).forEach(placeInNode);
-    if (!placed) {
-      range.selectNodeContents(editor);
-      range.collapse(false);
-    } else {
-      range.collapse(true);
-    }
+    ensureCommunicationTemplateEditorTrailingLine(editor);
+    const range = getCommunicationTemplateRangeAtOffset(editor, offset);
     selection.removeAllRanges();
     selection.addRange(range);
   }
@@ -65151,32 +65117,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getCommunicationTemplateNodeStartOffset(editor, targetNode) {
     if (!editor || !targetNode) return 0;
-    let offset = 0;
-    let found = false;
-    const walk = (node) => {
-      if (found) return;
-      if (node === targetNode) {
-        found = true;
-        return;
-      }
-      if (node.nodeType === Node.TEXT_NODE) {
-        offset += node.nodeValue?.length || 0;
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node.matches("[data-template-token]")) {
-        offset += (node.dataset.templateToken || node.textContent || "").length;
-        return;
-      }
-      if (node.tagName === "BR") {
-        offset += 1;
-        return;
-      }
-      Array.from(node.childNodes).forEach(walk);
-      if (/^(DIV|P)$/.test(node.tagName)) offset += 1;
-    };
-    Array.from(editor.childNodes).forEach(walk);
-    return offset;
+    return getCommunicationTemplateEditorTextModel(editor).offsetAt(targetNode, 0);
   }
 
   function restoreCommunicationTemplateField(field) {
@@ -65296,7 +65237,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshDataFormulaEditor(editor) {
     const value = serializeCommunicationTemplateEditor(editor);
-    editor.innerHTML = renderDataFormulaEditorContent(value);
+    replaceCommunicationTemplateEditorHtml(editor, renderDataFormulaEditorContent(value));
     syncDataFormulaEditor(editor);
   }
 
@@ -65468,64 +65409,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getCommunicationTemplateRangeAtOffset(editor, offset) {
     if (!editor) return null;
-    const range = document.createRange();
-    let remaining = Math.max(0, Number(offset || 0));
-    let placed = false;
-    const placeInNode = (node) => {
-      if (placed) return;
-      if (node.nodeType === Node.TEXT_NODE) {
-        const length = node.nodeValue?.length || 0;
-        if (remaining <= length) {
-          range.setStart(node, remaining);
-          placed = true;
-          return;
-        }
-        remaining -= length;
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node.matches("[data-template-token]")) {
-        const tokenLength = (node.dataset.templateToken || node.textContent || "").length;
-        if (remaining <= 0) {
-          range.setStartBefore(node);
-          placed = true;
-          return;
-        }
-        if (remaining < tokenLength) {
-          range.setStartAfter(node);
-          placed = true;
-          return;
-        }
-        remaining -= tokenLength;
-        return;
-      }
-      if (node.tagName === "BR") {
-        if (remaining <= 0) {
-          range.setStartBefore(node);
-          placed = true;
-          return;
-        }
-        remaining -= 1;
-        return;
-      }
-      Array.from(node.childNodes).forEach(placeInNode);
-      if (!placed && /^(DIV|P)$/.test(node.tagName)) {
-        if (remaining <= 0) {
-          range.setStartAfter(node);
-          placed = true;
-          return;
-        }
-        remaining -= 1;
-      }
-    };
-    Array.from(editor.childNodes).forEach(placeInNode);
-    if (!placed) {
-      range.selectNodeContents(editor);
-      range.collapse(false);
-    } else {
-      range.collapse(true);
-    }
-    return range;
+    return getCommunicationTemplateEditorTextModel(editor).rangeAt(offset);
   }
 
   function syncCommunicationTemplateEditor(editor) {
@@ -65535,23 +65419,117 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function refreshCommunicationTemplateEditor(editor, preserveCaret = false) {
     const template = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
-    editor.innerHTML = renderCommunicationTemplateEditorContent(template);
+    replaceCommunicationTemplateEditorHtml(editor, renderCommunicationTemplateEditorContent(template), preserveCaret);
     const hiddenInput = editor.closest("form")?.elements[`template${editor.dataset.templateIndex}`];
     if (hiddenInput) hiddenInput.value = template;
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
   }
 
   function serializeCommunicationTemplateEditor(editor) {
-    const serializeNode = (node) => {
-      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
-      if (node.nodeType !== Node.ELEMENT_NODE) return "";
-      if (node.matches("[data-template-token]")) return node.dataset.templateToken || node.textContent || "";
-      if (node.tagName === "BR") return "\n";
-      const text = Array.from(node.childNodes).map(serializeNode).join("");
-      return /^(DIV|P)$/.test(node.tagName) ? `${text}\n` : text;
+    return getCommunicationTemplateEditorTextModel(editor).value;
+  }
+
+  function getCommunicationTemplateEditorTextModel(editor) {
+    // Use the same line/token model for text, caret, selection and drag offsets.
+    // Browser paragraph wrappers separate lines; they do not append text at EOF.
+    let value = "";
+    const positions = new Map();
+    const segments = [];
+    const append = (text, before, after, textNode = null) => {
+      if (!text) return;
+      const start = value.length;
+      value += text;
+      segments.push({ start, end: value.length, before, after, textNode });
     };
-    return Array.from(editor.childNodes).map(serializeNode).join("").replace(/\n$/, "");
+    const walk = (parent) => {
+      const offsets = [value.length];
+      positions.set(parent, { offsets });
+      let previous = null;
+      Array.from(parent.childNodes).forEach((node, index) => {
+        const before = [parent, index], after = [parent, index + 1];
+        if (![Node.TEXT_NODE, Node.ELEMENT_NODE].includes(node.nodeType) || (node.nodeType === Node.TEXT_NODE && !node.nodeValue)) {
+          positions.set(node, { offsets: [value.length] });
+          offsets[index + 1] = value.length;
+          return;
+        }
+        if (node.nodeType === Node.ELEMENT_NODE && node.matches("[data-editor-caret-sentinel]")) {
+          positions.set(node, { offsets: [value.length] });
+          offsets[index + 1] = value.length;
+          return;
+        }
+        const block = node.nodeType === Node.ELEMENT_NODE && /^(DIV|P|LI|PRE|H[1-6])$/.test(node.tagName);
+        const previousBlock = previous?.nodeType === Node.ELEMENT_NODE && /^(DIV|P|LI|PRE|H[1-6])$/.test(previous.tagName);
+        if ((block && previous && previous.tagName !== "BR") || (previousBlock && !block)) {
+          append("\n", before, [node, 0]);
+        }
+        if (node.nodeType === Node.TEXT_NODE) {
+          positions.set(node, { start: value.length, length: (node.nodeValue || "").length });
+          append(node.nodeValue || "", [node, 0], [node, (node.nodeValue || "").length], node);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.matches("[data-template-token]")) {
+            positions.set(node, { offsets: [value.length] });
+            append(node.dataset.templateToken || node.textContent || "", before, after);
+          } else if (node.tagName === "BR") {
+            positions.set(node, { offsets: [value.length] });
+            // The browser's last BR is a caret placeholder (Enter/Shift+Enter).
+            // It can be wrapped in a copied link/syntax span after pressing Enter.
+            let tail = node;
+            while (!tail.nextSibling && tail.parentNode !== editor && !/^(DIV|P|LI|PRE|H[1-6])$/.test(tail.parentNode?.tagName || "")) tail = tail.parentNode;
+            if (tail.nextSibling) append("\n", before, after);
+          } else {
+            walk(node);
+          }
+        }
+        offsets[index + 1] = value.length;
+        if (node.nodeType === Node.ELEMENT_NODE || node.nodeValue) previous = node;
+      });
+    };
+    walk(editor);
+    return {
+      value,
+      offsetAt(node, offset) {
+        const point = positions.get(node);
+        if (!point) return value.length;
+        if (point.offsets) return point.offsets[Math.min(Math.max(0, offset), point.offsets.length - 1)];
+        return point.start + Math.min(Math.max(0, offset), point.length);
+      },
+      rangeAt(offset) {
+        const target = Math.min(value.length, Math.max(0, Number(offset) || 0));
+        const range = document.createRange();
+        const segment = segments.find(item => target <= item.end);
+        if (segment?.textNode) range.setStart(segment.textNode, Math.max(0, target - segment.start));
+        else if (segment) range.setStart(...(target <= segment.start ? segment.before : segment.after));
+        else { range.selectNodeContents(editor); range.collapse(false); }
+        range.collapse(true);
+        return range;
+      }
+    };
+  }
+
+  function ensureCommunicationTemplateEditorTrailingLine(editor) {
+    if (!serializeCommunicationTemplateEditor(editor).endsWith("\n") || editor.lastChild?.matches?.("[data-editor-caret-sentinel]")) return;
+    if (/^(DIV|P|LI|PRE|H[1-6])$/.test(editor.lastChild?.tagName || "")) return;
+    const sentinel = document.createElement("br");
+    sentinel.dataset.editorCaretSentinel = "";
+    editor.append(sentinel);
+  }
+
+  function replaceCommunicationTemplateEditorHtml(editor, html, preserveSelection = document.activeElement === editor) {
+    if (preserveSelection && editor.dataset.composing === "true") return;
+    const selection = window.getSelection?.();
+    const model = preserveSelection && document.activeElement === editor && selection?.rangeCount && editor.contains(selection.anchorNode) && editor.contains(selection.focusNode)
+      ? getCommunicationTemplateEditorTextModel(editor) : null;
+    const anchor = model?.offsetAt(selection.anchorNode, selection.anchorOffset);
+    const focus = model?.offsetAt(selection.focusNode, selection.focusOffset);
+    const scrollTop = editor.scrollTop, scrollLeft = editor.scrollLeft;
+    editor.innerHTML = html;
+    ensureCommunicationTemplateEditorTrailingLine(editor);
+    if (model) {
+      const next = getCommunicationTemplateEditorTextModel(editor);
+      const start = next.rangeAt(anchor), end = next.rangeAt(focus);
+      selection.setBaseAndExtent(start.startContainer, start.startOffset, end.startContainer, end.startOffset);
+    }
+    editor.scrollTop = scrollTop;
+    editor.scrollLeft = scrollLeft;
   }
 
   function pasteDictionaryValues(event) {
@@ -66240,12 +66218,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function refreshAdminSqlQueryEditor(editor, preserveCaret = false) {
     if (!editor) return;
     const query = serializeCommunicationTemplateEditor(editor);
-    const caretOffset = preserveCaret ? getCommunicationTemplateEditorCaretOffset(editor) : null;
     const scrollTop = editor.scrollTop;
     const scrollLeft = editor.scrollLeft;
-    editor.innerHTML = renderAdminSqlQuerySyntax(query);
+    replaceCommunicationTemplateEditorHtml(editor, renderAdminSqlQuerySyntax(query), preserveCaret);
     syncAdminSqlQueryEditor(editor);
-    if (preserveCaret) setCommunicationTemplateEditorCaretOffset(editor, caretOffset);
     editor.scrollTop = scrollTop;
     editor.scrollLeft = scrollLeft;
     updateSqlMiniIdeLineNumbers(editor);

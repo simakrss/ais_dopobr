@@ -74,7 +74,7 @@ async function tests() {
 }
 tests().then(()=>{
   if(!process.argv.includes("--serve"))return;
-  const uiNames=["openStudentProgramPromoDialog","renderProgramPromoMessageEditor","syncProgramPromoEditor","serializeCommunicationTemplateEditor","bindProgramPromoEditors","insertPlainTextIntoContentEditable","chooseUnsavedChangesAction","closeTopmostWindowByEscape"];
+  const uiNames=["openStudentProgramPromoDialog","renderProgramPromoMessageEditor","syncProgramPromoEditor","serializeCommunicationTemplateEditor","getCommunicationTemplateEditorTextModel","bindProgramPromoEditors","insertPlainTextIntoContentEditable","chooseUnsavedChangesAction","closeTopmostWindowByEscape"];
   const script=setup+saving+uiNames.map(extract).join("\n")+`
     var unsavedChangesDialogSession=null;
     function escapeHtml(value){return String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");} var escapeAttr=escapeHtml;

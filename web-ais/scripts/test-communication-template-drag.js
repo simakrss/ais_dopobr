@@ -14,6 +14,7 @@ function extract(name) {
 }
 const exemptions = source.match(/  const SHIFT_DRAG_EXEMPT_SELECTOR = \[[\s\S]*?\].join\(", "\);/)[0];
 const functions = [
+  "getCommunicationTemplateEditorTextModel", "ensureCommunicationTemplateEditorTrailingLine", "replaceCommunicationTemplateEditorHtml", "getCommunicationTemplateRangeAtOffset",
   "isShiftDragExemptElement", "getShiftRequiredDragElement", "annotateShiftRequiredDraggableElements", "bindShiftDragRequirement",
   "renderCommunicationTemplateAudienceForm", "renderCommunicationTemplateEditorContent", "renderCommunicationTemplateFormulaEditorContent",
   "renderCommunicationTemplateLinks", "renderCommunicationTemplateSyntax", "renderCommunicationTemplateFieldToken",
