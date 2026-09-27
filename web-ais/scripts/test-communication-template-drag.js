@@ -18,7 +18,7 @@ const functions = [
   "isShiftDragExemptElement", "getShiftRequiredDragElement", "annotateShiftRequiredDraggableElements", "bindShiftDragRequirement",
   "renderCommunicationTemplateAudienceForm", "renderCommunicationTemplateEditorContent", "renderCommunicationTemplateFormulaEditorContent",
   "renderCommunicationTemplateLinks", "renderCommunicationTemplateSyntax", "renderCommunicationTemplateFieldToken",
-  "bindCommunicationTemplateTokenDragLifecycle", "bindCommunicationTemplateDragAndDrop", "bindCommunicationTemplateFieldDialogFields",
+  "bindTemplateTokenCursorInsertion", "bindCommunicationTemplateTokenDragLifecycle", "bindCommunicationTemplateDragAndDrop", "bindCommunicationTemplateFieldDialogFields",
   "createCommunicationTemplateBlock", "getCommunicationTemplateDropRange", "getCommunicationTemplateNodeStartOffset",
   "syncCommunicationTemplateEditor", "refreshCommunicationTemplateEditor", "serializeCommunicationTemplateEditor",
   "syncCommunicationTemplateFormulaEditor", "refreshCommunicationTemplateFormulaEditor",

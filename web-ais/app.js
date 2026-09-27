@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.570",
+    version: "1.7.571",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.571",
+      releasedAt: "2026-09-27",
+      changes: ["Двойной щелчок по доступному полю/блоку формулы вставляет его в сохранённую позицию курсора активного редактора. Работает в формулах документов, типовых сообщений, нумерации, писем и выплат; сохранены перетаскивание и отмена, исключена двойная вставка."]
+    },
     {
       version: "1.7.570",
       releasedAt: "2026-09-27",
@@ -27906,7 +27911,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <form class="data-formula-form" data-action="save-data-formulas">
         <aside class="data-formula-tokens">
           <strong>Блоки формулы</strong>
-          <p>Перетащите блок в нужное место формулы.</p>
+          <p>Перетащите блок или дважды щёлкните для вставки в позицию курсора.</p>
           <div class="data-formula-token-list">
             ${dataFormulaTokenDefinitions.map((item) => `
               <button
@@ -28350,7 +28355,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <aside class="contract-template-token-panel contract-template-document-fields-panel">
               ${renderContractTemplateTokenGroup(
                 "Поля документа",
-                "Выберите поле, чтобы открыть его формулу. Перетащите в формулу для ссылки.",
+                "Щелчок — открыть формулу; двойной щелчок или перетаскивание — вставить ссылку в текущую формулу.",
                 documentTokens,
                 activeField?.id
               )}
@@ -28362,7 +28367,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     <strong>${escapeHtml(activeField.name)}</strong>
                     <span>Формула поля договора</span>
                   </div>
-                  <small>Перетаскивайте поля в формулу. Правый щелчок по блоку открывает меню.</small>
+                  <small>Перетаскивайте поля или вставляйте двойным щелчком в позицию курсора. Правый щелчок открывает меню.</small>
                 </header>
                 <div class="contract-active-field-controls">
                   <label>
@@ -28384,7 +28389,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="contract-template-available-fields">
                 ${renderContractTemplateTokenGroup(
                   "Доступные поля",
-                  "Перетащите поле в формулу.",
+                  "Перетащите поле или дважды щёлкните для вставки в позицию курсора.",
                   sourceTokens,
                   activeField?.id
                 )}
@@ -28803,7 +28808,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderCommunicationTemplateFieldToken(field, title = "Перетащите поле. Нажмите правой кнопкой мыши для настройки") {
     const token = `{${field.name}}`;
-    return `<button class="communication-template-token communication-template-field-token ${field.custom ? "is-custom" : ""}" data-template-token="${escapeAttr(token)}" data-template-field-name="${escapeAttr(field.name)}" draggable="true" type="button" title="${escapeAttr(title)}">${escapeHtml(token)}</button>`;
+    return `<button class="communication-template-token communication-template-field-token ${field.custom ? "is-custom" : ""}" data-template-token="${escapeAttr(token)}" data-template-field-name="${escapeAttr(field.name)}" draggable="true" type="button" title="${escapeAttr(`${title}. Двойной щелчок — вставить в позицию курсора`)}">${escapeHtml(token)}</button>`;
   }
 
   function auditFilterValue(key) {
@@ -47148,11 +47153,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelectorAll("[data-action='remove-contract-template-field']").forEach((button) => {
       button.addEventListener("click", () => removeContractTemplateField(button.dataset.index));
     });
-    document.querySelectorAll("[data-action='insert-contract-template-token']").forEach((button) => {
-      button.addEventListener("click", () => insertContractTemplateToken(button.dataset.token || ""));
-    });
     document.querySelectorAll("[data-action='select-contract-document-token']").forEach((button) => {
-      button.addEventListener("click", () => selectContractTemplateField(button.dataset.contractFieldId, { focusToken: true }));
       button.addEventListener("keydown", (event) => {
         handleContractTemplateFieldNavigation(event, button.dataset.contractFieldId);
       });
@@ -52175,6 +52176,14 @@ MAX - https://bizvmax.ru/zifra_plus
     root.querySelectorAll("[data-program-payment-constant-palette]").forEach((palette) => {
       if (palette.dataset.paymentConstantPaletteBound === "true") return;
       palette.dataset.paymentConstantPaletteBound = "true";
+      const paymentForm = palette.closest("form");
+      if (paymentForm?.querySelector("[data-payment-formula-editor]")) {
+        bindTemplateTokenCursorInsertion(paymentForm, {
+          tokenSelector: "[data-program-payment-constant-palette] [data-program-payment-constant-token]",
+          editorSelector: "[data-payment-formula-editor]",
+          getToken: (token) => `[${normalizePaymentConstantMarker(token.dataset.programPaymentConstantToken)}]`
+        });
+      }
       palette.addEventListener("dragstart", (event) => {
         const token = event.target.closest("[data-program-payment-constant-token]");
         const marker = normalizePaymentConstantMarker(token?.dataset.programPaymentConstantToken);
@@ -63245,17 +63254,96 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
-  function insertContractTemplateToken(token) {
-    const form = document.querySelector("form[data-action='save-contract-template-fields']");
-    const editor = form?.querySelector("[data-contract-formula-editor]");
-    if (!editor || !token) return;
-    if (!canInsertContractFormulaToken(editor, token)) return;
-    const beforeValue = serializeCommunicationTemplateEditor(editor);
-    editor.append(createContractFormulaBlock(token));
-    commitCommunicationTemplateEditorChange(editor, beforeValue);
-    syncContractFormulaEditor(editor);
-    refreshContractFormulaEditor(editor, true);
-    editor.focus({ preventScroll: true });
+  function bindTemplateTokenCursorInsertion(root, options) {
+    if (!root) return;
+    const { tokenSelector, editorSelector, singleClick = false, onSingleClick = null } = options;
+    const key = `${tokenSelector}|${editorSelector}`;
+    root.templateTokenCursorBindings ||= new Set();
+    if (root.templateTokenCursorBindings.has(key)) return;
+    root.templateTokenCursorBindings.add(key);
+    const selections = new WeakMap();
+    let activeEditor = null;
+    let clickTimer = 0;
+    const available = editor => editor?.isConnected && root.contains(editor) && editor.isContentEditable
+      && !editor.closest("[hidden], [inert]") && editor.getAttribute("aria-disabled") !== "true";
+    const remember = editor => {
+      if (!available(editor)) return;
+      const selection = window.getSelection?.();
+      if (!selection?.rangeCount || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode)) return;
+      const model = getCommunicationTemplateEditorTextModel(editor);
+      selections.set(editor, {
+        anchor: model.offsetAt(selection.anchorNode, selection.anchorOffset),
+        focus: model.offsetAt(selection.focusNode, selection.focusOffset)
+      });
+    };
+    const tokenAt = event => {
+      const token = event.target.closest?.(tokenSelector);
+      return token && root.contains(token) && !token.closest("[contenteditable='true']") && !token.disabled ? token : null;
+    };
+    const insert = token => {
+      const editor = available(activeEditor) ? activeEditor : Array.from(root.querySelectorAll(editorSelector)).find(available);
+      const value = String(options.getToken ? options.getToken(token) : token.dataset.templateToken || "");
+      if (!editor || !value || (options.canInsert && !options.canInsert(editor, value))) return;
+      if (document.activeElement === editor || editor.contains(document.activeElement)) remember(editor);
+      const before = serializeCommunicationTemplateEditor(editor);
+      const saved = selections.get(editor) || { anchor: before.length, focus: before.length };
+      const start = Math.max(0, Math.min(before.length, saved.anchor, saved.focus));
+      const end = Math.max(start, Math.min(before.length, Math.max(saved.anchor, saved.focus)));
+      initializeCommunicationTemplateEditorHistory(editor);
+      renderCommunicationTemplateEditorValue(editor, before.slice(0, start) + value + before.slice(end));
+      commitCommunicationTemplateEditorChange(editor, before);
+      editor.focus({ preventScroll: true });
+      setCommunicationTemplateEditorCaretOffset(editor, start + value.length);
+      activeEditor = editor;
+      remember(editor);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    for (const type of ["focus", "blur", "keyup", "mouseup", "input"]) {
+      root.addEventListener(type, event => {
+        const editor = event.target.closest?.(editorSelector);
+        if (!available(editor)) return;
+        activeEditor = editor;
+        remember(editor);
+      }, true);
+    }
+    root.addEventListener("pointerdown", event => {
+      if (event.button !== 0 || !tokenAt(event)) return;
+      // Keep logical offsets, not a DOM Range: blur/highlighting can rebuild the editor.
+      const focused = document.activeElement?.closest?.(editorSelector);
+      if (available(focused)) {
+        activeEditor = focused;
+        remember(activeEditor);
+      }
+    }, true);
+    root.addEventListener("click", event => {
+      const token = tokenAt(event);
+      if (!token) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window.clearTimeout(clickTimer);
+      if (onSingleClick) {
+        // Document-field selection re-renders the form; wait so a double click can insert instead.
+        if (event.detail === 0) onSingleClick(token);
+        else if (event.detail === 1) clickTimer = window.setTimeout(() => {
+          if (root.isConnected && token.isConnected) onSingleClick(token);
+        }, 500);
+      } else if ((singleClick || event.detail === 0) && event.detail < 2) insert(token);
+    }, true);
+    root.addEventListener("dblclick", event => {
+      const token = tokenAt(event);
+      if (!token) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window.clearTimeout(clickTimer);
+      if (!singleClick) insert(token);
+      else if (available(activeEditor)) {
+        const saved = selections.get(activeEditor);
+        activeEditor.focus({ preventScroll: true });
+        if (saved) setCommunicationTemplateEditorCaretOffset(activeEditor, saved.focus);
+        remember(activeEditor);
+      }
+    }, true);
+    root.addEventListener("dragstart", () => window.clearTimeout(clickTimer), true);
   }
 
   function createDocumentSaveFolderToken(token) {
@@ -63441,10 +63529,8 @@ MAX - https://bizvmax.ru/zifra_plus
     form.dataset.documentEmailEditorsBound = "true";
     const tokenMime = "application/x-ais-contract-template-token";
     const editors = Array.from(form.querySelectorAll("[data-document-email-editor]"));
-    const tokenButtons = Array.from(form.querySelectorAll("[data-action='insert-document-email-token']"));
     const markerSearch = form.querySelector("[data-document-email-marker-search]");
     if (!editors.length) return;
-    let activeEditor = editors[0];
     let draggedEmailBlock = null;
 
     markerSearch?.addEventListener("input", () => {
@@ -63486,16 +63572,15 @@ MAX - https://bizvmax.ru/zifra_plus
       });
       draggedEmailBlock = null;
     });
-    tokenButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        insertDocumentEmailTemplateToken(activeEditor, button.dataset.templateToken || "");
-      });
+    bindTemplateTokenCursorInsertion(form, {
+      tokenSelector: "[data-action='insert-document-email-token']",
+      editorSelector: "[data-document-email-editor]",
+      singleClick: true
     });
     editors.forEach((editor) => {
       initializeCommunicationTemplateEditorHistory(editor);
       editor.addEventListener("focus", () => {
         editors.forEach((item) => item.classList.toggle("is-active-editor", item === editor));
-        activeEditor = editor;
       });
       editor.addEventListener("click", openTemplateEditorLink);
       editor.addEventListener("contextmenu", (event) => {
@@ -63674,6 +63759,18 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindContractTemplateConstructor() {
     const form = document.querySelector("form[data-action='save-contract-template-fields']");
     if (!form) return;
+    bindTemplateTokenCursorInsertion(form, {
+      tokenSelector: "[data-action='insert-contract-template-token']",
+      editorSelector: "[data-contract-formula-editor]",
+      singleClick: true,
+      canInsert: canInsertContractFormulaToken
+    });
+    bindTemplateTokenCursorInsertion(form, {
+      tokenSelector: "[data-action='select-contract-document-token']",
+      editorSelector: "[data-contract-formula-editor]",
+      onSingleClick: token => selectContractTemplateField(token.dataset.contractFieldId, { focusToken: true }),
+      canInsert: canInsertContractFormulaToken
+    });
     const tokenMime = "application/x-ais-contract-template-token";
     const rowMime = "application/x-ais-contract-template-field-row";
     let draggedRow = null;
@@ -64981,7 +65078,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <section class="communication-template-field-dialog-fields">
           <div class="communication-template-field-dialog-fields-head">
             <strong>Доступные поля для формулы</strong>
-            <span>Перетащите в формулу</span>
+            <span>Перетащите или вставьте двойным щелчком в позицию курсора</span>
           </div>
           <div class="communication-template-field-list">
             ${availableFields.map((availableField) => renderCommunicationTemplateFieldToken(
@@ -65041,6 +65138,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const tokenMime = "application/x-ais-template-field";
     const editor = dialog.querySelector("[data-formula-editor]");
     if (!editor) return;
+    bindTemplateTokenCursorInsertion(dialog, {
+      tokenSelector: ".communication-template-field-token",
+      editorSelector: "[data-formula-editor]"
+    });
     let draggedFormulaBlock = null;
     let formulaHighlightTimer = null;
     const drag = bindCommunicationTemplateTokenDragLifecycle(dialog);
@@ -65294,18 +65395,10 @@ MAX - https://bizvmax.ru/zifra_plus
       draggedBlock = null;
     });
 
-    form.querySelectorAll(".data-formula-token").forEach((button) => {
-      button.addEventListener("click", () => {
-        const activeIndex = form.dataset.activeFormulaIndex || "0";
-        const editor = form.querySelector(`[data-data-formula-editor][data-formula-index="${activeIndex}"]`)
-          || form.querySelector("[data-data-formula-editor]");
-        if (!editor) return;
-        const beforeValue = serializeCommunicationTemplateEditor(editor);
-        editor.append(createDataFormulaBlock(button.dataset.templateToken || ""));
-        commitCommunicationTemplateEditorChange(editor, beforeValue);
-        syncDataFormulaEditor(editor);
-        editor.focus({ preventScroll: true });
-      });
+    bindTemplateTokenCursorInsertion(form, {
+      tokenSelector: ".data-formula-token",
+      editorSelector: "[data-data-formula-editor]",
+      singleClick: true
     });
 
     form.querySelectorAll("[data-data-formula-editor]").forEach((editor) => {
@@ -65412,6 +65505,10 @@ MAX - https://bizvmax.ru/zifra_plus
     const tokenMime = "application/x-ais-template-field";
     const forms = document.querySelectorAll("form[data-action='save-communication-templates']");
     forms.forEach((form) => {
+      bindTemplateTokenCursorInsertion(form, {
+        tokenSelector: ".communication-template-field-token",
+        editorSelector: "[data-template-editor]"
+      });
       let draggedTemplateBlock = null;
       const drag = bindCommunicationTemplateTokenDragLifecycle(form);
 
