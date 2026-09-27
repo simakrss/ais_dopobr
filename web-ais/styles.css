@@ -15961,8 +15961,7 @@ body.card-window-moving {
   resize: vertical;
 }
 
-.contract-form-grid label[data-field-key="notificationEmail"],
-.contract-form-grid label[data-field-key="accountingRecorded"] {
+.contract-form-grid label[data-field-key="notificationEmail"] {
   min-height: 32px;
   display: flex;
   align-items: center;
@@ -15972,11 +15971,32 @@ body.card-window-moving {
   gap: 7px;
 }
 
-.contract-form-grid label[data-field-key="notificationEmail"] input,
-.contract-form-grid label[data-field-key="accountingRecorded"] input {
+.contract-form-grid label[data-field-key="notificationEmail"] input {
   width: 16px;
   min-height: 16px;
   margin: 0;
+}
+
+.contract-form-grid .contract-accounting-toggle {
+  position: relative;
+  display: block;
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.contract-form-grid .contract-accounting-toggle input {
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+}
+
+.contract-accounting-toggle input:disabled + .student-personal-case-toggle-card {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .contract-section-columns {

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.564",
+    version: "1.7.565",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.565",
+      releasedAt: "2026-09-27",
+      changes: ["Отметка «Договор передан в бухгалтерию» в карточке сотрудника оформлена как заметный переключатель по образцу личного дела слушателя: жёлтое состояние «Не передан» и зелёное «Передан». Формат сохранения отметки не изменён."]
+    },
     {
       version: "1.7.564",
       releasedAt: "2026-09-27",
@@ -36733,6 +36738,22 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function renderContractAccountingToggle(item, value) {
+    return `
+      <label class="student-personal-case-toggle contract-accounting-toggle" data-field-key="${escapeAttr(item.key)}">
+        <input class="student-personal-case-toggle-input" name="${escapeAttr(item.key)}" type="checkbox" role="switch" value="Да" aria-label="${escapeAttr(item.label)}" ${isChecked(value) ? "checked" : ""}>
+        <span class="student-personal-case-toggle-card">
+          <span class="student-personal-case-toggle-track" aria-hidden="true"><span></span></span>
+          <span class="student-personal-case-toggle-copy">
+            <strong>${escapeHtml(item.label)}</strong>
+            <small class="student-personal-case-state is-pending">Не передан</small>
+            <small class="student-personal-case-state is-complete">Передан</small>
+          </span>
+        </span>
+      </label>
+    `;
+  }
+
   function renderField(item, record) {
     const layoutOptions = item.options && !Array.isArray(item.options) ? item.options : {};
     const value = layoutOptions.list
@@ -36762,6 +36783,9 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (state.modal?.config === "contracts" && item.key === "snils") {
       return renderStudentIdentityInput(label, item.key, value, { maxLength: 14 });
+    }
+    if (state.modal?.config === "contracts" && item.key === "accountingRecorded") {
+      return renderContractAccountingToggle(item, value);
     }
     if (item.type === "checkbox") {
       const checked = state.modal?.config === "generalExpenses" && item.key === "accountingClosed"
