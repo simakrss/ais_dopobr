@@ -80,6 +80,7 @@ function serveFixture() {
   <link rel="stylesheet" href="/styles.css"><style>
   body{padding:20px}.fixture{max-width:1100px;margin:auto}.communication-template-form{height:auto;min-height:0;display:grid;grid-template-columns:230px 1fr;gap:16px}.communication-template-editor{min-height:80px;height:80px}.communication-template-list{height:auto}.communication-template-field-list{max-height:160px}.communication-template-actions{display:none}.communication-template-audience-panel{margin:16px 0}#formula{padding:12px;background:white}#result{white-space:pre-wrap}
   </style><main class="fixture"><h1>Перетаскивание полей сообщений</h1><p>Тестовые данные — изменения не сохраняются в систему. Перетащите поле без Shift.</p><button type="button" id="run" class="primary-button">Проверить перенос и отмену</button><output id="result" role="status"></output><div id="forms"></div><section id="formula"><form data-card-message-formula><h2>Формула сообщения из карточки</h2><div data-formula-editor contenteditable="true" class="communication-template-editor" role="textbox" aria-label="Формула поля"></div><input type="hidden" name="formula"><div id="formula-fields"></div></form></section></main><script>
+  const state={communicationTemplateFieldsCollapsed:{}};
   const definitions=[{name:'ФИО'},{name:'Email'}];
   const getCommunicationTemplateFieldDefinitions=()=>definitions;
   const escapeHtml=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

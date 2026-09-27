@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.563",
+    version: "1.7.564",
     releasedAt: "2026-09-27"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.564",
+      releasedAt: "2026-09-27",
+      changes: ["Область доступных полей в шаблонах типовых сообщений можно сворачивать отдельно для слушателей и сотрудников. Поля в текстовых редакторах выделяются и копируются вместе с текстом через Ctrl+C и контекстное меню; в буфере сохраняются обозначения полей и переносы строк, перетаскивание остаётся доступным."]
+    },
     {
       version: "1.7.563",
       releasedAt: "2026-09-27",
@@ -7546,6 +7551,7 @@ MAX - https://bizvmax.ru/zifra_plus
     eventSettingsTab: "students",
     communicationTemplateFieldSort: "asc",
     communicationTemplateAudience: "students",
+    communicationTemplateFieldsCollapsed: {},
     documentTemplateSearch: "",
     documentTemplateSort: { key: "title", dir: "asc" },
     documentTemplateLinkDialog: false,
@@ -27605,15 +27611,15 @@ MAX - https://bizvmax.ru/zifra_plus
         ${active ? "" : "hidden"}
       >
         <form class="communication-template-form" data-action="save-communication-templates" data-template-audience="${escapeAttr(audience)}">
-          <div class="communication-template-fields">
-            <div class="communication-template-fields-head">
+          <details class="communication-template-fields" data-communication-template-fields="${escapeAttr(audience)}" ${state.communicationTemplateFieldsCollapsed[audience] ? "" : "open"}>
+            <summary class="communication-template-fields-head">
               <strong>Доступные поля</strong>
               <button class="communication-template-field-add" data-action="add-communication-template-field" type="button" title="Добавить поле" aria-label="Добавить поле">+</button>
-            </div>
+            </summary>
             <div class="communication-template-field-list">${templateFields.map((field) => (
               renderCommunicationTemplateFieldToken(field, "Перетащите поле в текст сообщения. Нажмите правой кнопкой мыши для настройки")
             )).join("")}</div>
-          </div>
+          </details>
           <div class="communication-template-list">
             ${messages.map((message, index) => `
               <section class="communication-template-item">
@@ -49932,6 +49938,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showFieldCopyPopup(control, x, y, options = {}) {
+    const copyValue = getControlCopyValue(control);
     hideFieldCopyPopup();
     hideStudentDocumentRecognitionFieldMenu();
     initializeFieldControlHistory(control);
@@ -50110,7 +50117,7 @@ MAX - https://bizvmax.ru/zifra_plus
       event.stopPropagation();
       if (copyStarted) return;
       copyStarted = true;
-      copyTextToClipboard(getControlCopyValue(control));
+      copyTextToClipboard(copyValue);
       popup.classList.add("is-copied");
       window.setTimeout(hideFieldCopyPopup, 140);
     };
@@ -51270,6 +51277,8 @@ MAX - https://bizvmax.ru/zifra_plus
       pasteTextIntoControl(control, normalizedValue);
     });
     document.addEventListener("copy", handleDateControlClipboardEvent, true);
+    document.addEventListener("copy", handleCommunicationTemplateCopyEvent);
+    document.addEventListener("click", selectCommunicationTemplateToken);
     document.addEventListener("compositionstart", (event) => {
       const control = getFieldHistoryControlFromEvent(event);
       if (getDateTextInputFormat(control)) control.dataset.dateInputComposing = "true";
@@ -51386,11 +51395,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getSelectedControlText(control) {
-    if (isContentEditableTextControl(control)) {
-      const selection = window.getSelection();
-      if (!selection?.rangeCount || selection.isCollapsed) return "";
-      const range = selection.getRangeAt(0);
-      return control.contains(range.commonAncestorContainer) ? selection.toString() : "";
+    if (control?.matches?.("[contenteditable][role='textbox']")) {
+      return getCommunicationTemplateSelectedText(control);
     }
     if (!["INPUT", "TEXTAREA"].includes(control.tagName)) return "";
     try {
@@ -51401,6 +51407,67 @@ MAX - https://bizvmax.ru/zifra_plus
     } catch (error) {
       return "";
     }
+  }
+
+  function getCommunicationTemplateSelectedText(editor) {
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || selection.isCollapsed) return "";
+    const range = selection.getRangeAt(0).cloneRange();
+    if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return "";
+    const tokenAt = (node) => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest?.("[data-template-token]");
+    // Fields are atomic: copy their stored marker, never a label fragment or a delete button.
+    const startToken = tokenAt(range.startContainer), endToken = tokenAt(range.endContainer);
+    if (startToken && editor.contains(startToken)) range.setStartBefore(startToken);
+    if (endToken && editor.contains(endToken)) range.setEndAfter(endToken);
+    const model = getCommunicationTemplateEditorTextModel(editor);
+    return model.value.slice(model.offsetAt(range.startContainer, range.startOffset), model.offsetAt(range.endContainer, range.endOffset));
+  }
+
+  function handleCommunicationTemplateCopyEvent(event) {
+    if (event.defaultPrevented || !event.clipboardData?.setData) return false;
+    if (event.target?.closest?.("input, textarea, select")) return false;
+    const selection = window.getSelection?.();
+    const node = selection?.anchorNode;
+    const editor = (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)?.closest?.("[contenteditable][role='textbox']");
+    if (!editor) return false;
+    const text = getCommunicationTemplateSelectedText(editor);
+    if (!text) return false;
+    event.clipboardData.clearData();
+    event.clipboardData.setData("text/plain", text);
+    lastKnownClipboardText = text;
+    event.preventDefault();
+    return true;
+  }
+
+  function selectCommunicationTemplateToken(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey) return;
+    if (event.target?.closest?.("button, a")) return;
+    const token = event.target?.closest?.("[data-template-token]");
+    const editor = token?.closest?.("[contenteditable][role='textbox']");
+    if (!editor) return;
+    const selection = window.getSelection?.();
+    if (!selection || (!selection.isCollapsed && editor.contains(selection.anchorNode) && editor.contains(selection.focusNode))) return;
+    editor.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNode(token);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function appendCommunicationTemplateCopyAction(popup, token) {
+    if (!token) return;
+    const editor = token.closest("[contenteditable][role='textbox']");
+    const text = (editor && getCommunicationTemplateSelectedText(editor)) || token.dataset.templateToken || token.textContent || "";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = "copy-template-token";
+    button.textContent = "Копировать";
+    button.addEventListener("pointerdown", event => event.preventDefault());
+    button.addEventListener("click", () => {
+      copyTextToClipboard(text);
+      hideCommunicationTemplateFieldMenu();
+    });
+    popup.prepend(button);
   }
 
   async function readFieldClipboardText() {
@@ -51907,6 +51974,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <span>Удалить из формулы</span>
       </button>
     `;
+    appendCommunicationTemplateCopyAction(popup, token);
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
     popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
@@ -63814,6 +63882,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
       ` : ""}
     `;
+    appendCommunicationTemplateCopyAction(popup, token);
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
     popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;
@@ -64704,9 +64773,14 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindCommunicationTemplateFieldActions() {
     document.querySelectorAll("form[data-action='save-communication-templates']").forEach((form) => {
-      form.querySelector("[data-action='add-communication-template-field']")?.addEventListener("click", () => (
-        showCommunicationTemplateFieldDialog()
-      ));
+      const fields = form.querySelector("[data-communication-template-fields]");
+      fields?.addEventListener("toggle", () => {
+        state.communicationTemplateFieldsCollapsed[fields.dataset.communicationTemplateFields] = !fields.open;
+      });
+      form.querySelector("[data-action='add-communication-template-field']")?.addEventListener("click", (event) => {
+        event.preventDefault();
+        showCommunicationTemplateFieldDialog();
+      });
       form.addEventListener("contextmenu", (event) => {
         const token = event.target.closest?.("[data-template-field-name]");
         if (!token || !form.contains(token)) return;
@@ -64754,6 +64828,7 @@ MAX - https://bizvmax.ru/zifra_plus
         <span>Восстановить</span>
       </button>
     `;
+    appendCommunicationTemplateCopyAction(popup, sourceToken);
     document.body.appendChild(popup);
     const rect = popup.getBoundingClientRect();
     popup.style.left = `${clamp(x, 8, Math.max(8, window.innerWidth - rect.width - 8))}px`;

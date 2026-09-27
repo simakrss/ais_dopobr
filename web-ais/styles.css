@@ -6272,8 +6272,7 @@ body.long-press-dragging * {
 }
 
 .communication-template-fields {
-  display: grid;
-  gap: 6px;
+  display: block;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
@@ -6291,6 +6290,30 @@ body.long-press-dragging * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.communication-template-fields-head::-webkit-details-marker {
+  display: none;
+}
+
+.communication-template-fields-head::before {
+  content: "";
+  border: 4px solid transparent;
+  border-left-color: currentColor;
+}
+
+.communication-template-fields[open] > .communication-template-fields-head::before {
+  transform: rotate(90deg);
+}
+
+.communication-template-fields-head strong {
+  flex: 1;
+}
+
+.communication-template-fields > .communication-template-field-list {
+  margin-top: 6px;
 }
 
 .communication-template-field-tools {
@@ -9903,6 +9926,16 @@ body.long-press-dragging * {
 .communication-template-block.is-dragging {
   cursor: grabbing;
   opacity: 0.65;
+}
+
+[contenteditable][role="textbox"] [data-template-token] {
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+[contenteditable][role="textbox"] [data-template-token] button {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .communication-template-field-menu {

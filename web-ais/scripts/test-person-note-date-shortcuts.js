@@ -24,6 +24,7 @@ const names = [
   "getDateTextInputFormat", "getDateTextCaretOffset", "applyDateTextInputMask", "initializeDateTextInputMasks",
   "initializeNativeDateInputFormats", "handleDateTextInputKeydown", "isNativeDateInputControl",
   "getDateControlCopyValue", "handleDateControlClipboardEvent", "canPasteControlValue", "findPastedSelectOption",
+  "handleCommunicationTemplateCopyEvent", "selectCommunicationTemplateToken",
   "normalizePastedInputValue", "pasteTextIntoControl", "todayIso", "handlePersonNoteDateShortcut", "bindFieldEditHistory"
 ];
 const runtime = `let fieldEditHistoryBound = false; const fieldControlHistories = new WeakMap(); let lastKnownClipboardText = "unchanged";\n${names.map(extractFunction).join("\n\n")}`;
