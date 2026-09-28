@@ -87,6 +87,9 @@ $script:httpHandler = $null
 $script:httpClient = $null
 $script:healthTask = $null
 $script:lastHealth = $false
+$script:healthFailures = 0
+$script:healthSuccesses = 0
+$script:healthUnavailable = $false
 $script:lastVisualState = $null
 $script:lastReadyMarkerState = $null
 $script:stateIcons = @{}
@@ -455,13 +458,33 @@ function Show-AisAbout {
   }
 }
 
+function Register-HealthProbeResult([bool]$Healthy) {
+  if ($Healthy) {
+    $script:healthFailures = 0
+    $script:healthSuccesses = [Math]::Min(2, $script:healthSuccesses + 1)
+    # A first successful startup probe is enough; an outage needs stable recovery.
+    if (-not $script:healthUnavailable -or $script:healthSuccesses -ge 2) {
+      $script:lastHealth = $true
+      $script:healthUnavailable = $false
+    }
+  } else {
+    $script:healthSuccesses = 0
+    $script:healthFailures = [Math]::Min(3, $script:healthFailures + 1)
+    # Keep the last confirmed state through isolated timeouts or failed requests.
+    if ($script:healthFailures -ge 3) {
+      $script:lastHealth = $false
+      $script:healthUnavailable = $true
+    }
+  }
+}
+
 function Complete-HealthProbe {
   if ($null -eq $script:healthTask -or -not $script:healthTask.IsCompleted) { return }
   try {
     $responseText = $script:healthTask.GetAwaiter().GetResult()
-    $script:lastHealth = [bool]($responseText -match '"ok"\s*:\s*true')
+    Register-HealthProbeResult ([bool]($responseText -match '"ok"\s*:\s*true'))
   } catch {
-    $script:lastHealth = $false
+    Register-HealthProbeResult $false
   } finally {
     try { $script:healthTask.Dispose() } catch { }
     $script:healthTask = $null
@@ -469,19 +492,25 @@ function Complete-HealthProbe {
 }
 
 function Update-HealthProbe([bool]$ServiceIsRunning) {
-  Complete-HealthProbe
   if (-not $ServiceIsRunning) {
     $script:lastHealth = $false
+    $script:healthFailures = 0
+    $script:healthSuccesses = 0
+    $script:healthUnavailable = $false
     if ($null -ne $script:healthTask) {
       try { $script:httpClient.CancelPendingRequests() } catch { }
+      try { $script:healthTask.Dispose() } catch { }
+      # Do not accept a late result from the previous service instance.
+      $script:healthTask = $null
     }
     return
   }
+  Complete-HealthProbe
   if ($null -eq $script:healthTask) {
     try {
       $script:healthTask = $script:httpClient.GetStringAsync([Uri]$healthUrl)
     } catch {
-      $script:lastHealth = $false
+      Register-HealthProbeResult $false
       $script:healthTask = $null
     }
   }
@@ -538,6 +567,8 @@ function Update-TrayState {
 
     if ($isRunning -and $script:lastHealth) {
       Set-TrayVisual "running" "система работает" "АИС: система работает" $true $serviceStatus
+    } elseif ($isRunning -and $script:healthUnavailable) {
+      Set-TrayVisual "pending" "служба работает, сервер не отвечает" "АИС: сервер не отвечает" $true $serviceStatus
     } elseif ($isRunning) {
       Set-TrayVisual "pending" "служба работает, интерфейс запускается" "АИС: интерфейс запускается" $true $serviceStatus
     } elseif ($serviceStatus -in @("StartPending", "ContinuePending")) {
@@ -701,7 +732,7 @@ namespace AisDopobr.Tray
   $script:httpHandler = New-Object Net.Http.HttpClientHandler
   $script:httpHandler.UseProxy = $false
   $script:httpClient = New-Object Net.Http.HttpClient $script:httpHandler
-  $script:httpClient.Timeout = [TimeSpan]::FromMilliseconds(1400)
+  $script:httpClient.Timeout = [TimeSpan]::FromSeconds(5)
 
   $script:applicationContext = New-Object Windows.Forms.ApplicationContext
   $script:pollTimer = New-Object Windows.Forms.Timer
