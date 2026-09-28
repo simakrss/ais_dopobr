@@ -25,13 +25,15 @@ async function main() {
     const escapeAttr = escapeHtml, normalizeDocumentGenerationFormat = x => x, normalizeServerEmailSubject = x => x.trim();
     const chooseUnsavedChangesAction = async () => "discard";
     const pdfs = ${JSON.stringify(pdfs)}.map(s => new Blob([Uint8Array.from(atob(s), x => x.charCodeAt(0))], {type:"application/pdf"}));
-    const requestGeneratedDocumentEditor = async () => ({editorToken:"fixture", editorOrigin:location.origin, editorUrl:location.origin+"/editor"});
-    const saveGeneratedDocumentEditor = async () => ({blob:pdfs[1], editRevision:1});
-    const discardGeneratedDocumentEditor = async () => {};
-    ${["showGeneratedDocumentPreview", "documentEmailMessageContainsHtml", "buildGeneratedDocumentEmailPreviewHtml", "showGeneratedDocumentEmailPreview"].map(extract).join("\n")}
+    window.fixtureNow = Date.now(); Date.now = () => fixtureNow;
+    const timing = remaining => ({previewExpiresAt:9000000+remaining,previewServerTime:9000000});
+    const requestGeneratedDocumentEditor = async () => ({editorToken:"fixture", editorOrigin:location.origin, editorUrl:location.origin+"/editor", previewLifetime:readGeneratedDocumentPreviewLifetime(timing(7200000))});
+    const saveGeneratedDocumentEditor = async () => ({blob:pdfs[1], editRevision:1, previewLifetime:readGeneratedDocumentPreviewLifetime(timing(600000))});
+    const discardGeneratedDocumentEditor = async () => timing(600000);
+    ${["readGeneratedDocumentPreviewLifetime", "bindGeneratedDocumentPreviewCountdown", "showGeneratedDocumentPreview", "documentEmailMessageContainsHtml", "buildGeneratedDocumentEmailPreviewHtml", "showGeneratedDocumentEmailPreview"].map(extract).join("\n")}
     document.querySelector("#open").onclick = async () => {
       let blob = pdfs[0], email = {subject:"Тестовая тема", message:"Тестовое письмо", recipientDescription:"Получатель — recipient@example.test"}, editing = false;
-      const options = {title:"Тестовый документ", fileName:"Тест.pdf", outputFormat:"pdf", previewToken:"fixture", processingOrigin:location.origin, onPreviewUpdated:next => {blob=next;}};
+      const options = {title:"Тестовый документ", fileName:"Тест.pdf", outputFormat:"pdf", previewToken:"fixture", processingOrigin:location.origin, previewLifetime:readGeneratedDocumentPreviewLifetime(timing(600000)), onPreviewUpdated:next => {blob=next;}};
       while (await showGeneratedDocumentPreview(blob, options)) {
         const result = await showGeneratedDocumentEmailPreview(email, {...options, canReturnToDocument:true, editing});
         if (result?.backToDocument) {email=result.emailRequest; editing=result.editing; continue;}
@@ -80,10 +82,15 @@ async function main() {
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await page.click("#open");
       await page.waitForSelector('[data-generated-pdf-viewer][data-pdf-state="ready"]');
+      assert.match(await page.locator('[data-preview-countdown-label]').textContent(), /10:00/);
       await action("edit-generated-document-preview").click();
       await page.waitForSelector('[data-action="save-generated-document-editor"]:not([disabled])');
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      assert.match(await page.locator('[data-preview-countdown-label]').textContent(), /2:00:00/);
       await action("save-generated-document-editor").click();
       await page.waitForSelector('[data-generated-pdf-viewer][data-pdf-state="ready"]');
+      await page.evaluate(() => { fixtureNow += 30000; window.dispatchEvent(new Event("focus")); });
+      assert.match(await page.locator('[data-preview-countdown-label]').textContent(), /09:30/);
       const editedCanvas = await page.locator("[data-pdf-canvas]").evaluate(c => c.toDataURL());
       await action("confirm-generated-document-preview").click();
       await assertLayout();
@@ -95,6 +102,7 @@ async function main() {
       assert.equal(await page.locator("[data-generated-document-email-preview]").count(), 0);
       await page.waitForSelector('[data-generated-pdf-viewer][data-pdf-state="ready"]');
       assert.equal(await page.locator("[data-pdf-canvas]").evaluate(c => c.toDataURL()), editedCanvas);
+      assert.match(await page.locator('[data-preview-countdown-label]').textContent(), /09:30/, "Back retains saved document deadline");
       await action("confirm-generated-document-preview").click();
       assert.equal(await page.locator("[data-generated-document-email-subject-input]").inputValue(), "");
       assert.equal(await page.locator("[data-generated-document-email-message-input]").inputValue(), "  Правки письма\n");

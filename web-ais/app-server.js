@@ -1366,7 +1366,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Document-Generation-Id",
-  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Document-Editor-Available, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
+  "Access-Control-Expose-Headers": "Content-Disposition, X-Frdo-Export-Count, X-Frdo-Saved, X-Frdo-Storage, X-Frdo-Path, X-Frdo-Relative-Folder, X-Frdo-Revealed, X-Frdo-Warning, X-Generated-Document-Format, X-Generated-Document-File-Name, X-Document-Conversion-Fallback, X-Document-Conversion-Error, X-Document-Preview-Token, X-Document-Preview-Expires-At, X-Document-Preview-Server-Time, X-Document-Preview-Revision, X-Document-Editor-Available, X-Yandex-Disk-Saved, X-Yandex-Disk-Path, X-Yandex-Disk-Error, X-Local-Document-Saved, X-Local-Document-Path, X-Local-Document-Error, X-Local-Document-Cancelled, X-Local-Document-Revealed, X-Local-Document-Reveal-Error, X-Additional-Documents-Result"
 };
 
 const MIME_TYPES = {
@@ -34681,6 +34681,33 @@ function generatedDocumentPreviewEffectiveExpiresAt(preview) {
   );
 }
 
+async function getGeneratedDocumentPreviewTiming(token) {
+  const normalizedToken = normalizeGeneratedDocumentPreviewToken(token);
+  if (!normalizedToken) throw generatedDocumentPreviewError("Предварительный просмотр не найден.", 404);
+  let metadata;
+  try {
+    metadata = useGeneratedDocumentPreviewFileStore()
+      ? JSON.parse(await fs.readFile(generatedDocumentPreviewMetadataPath(normalizedToken), "utf8"))
+      : generatedDocumentPreviews.get(normalizedToken);
+  } catch (error) {
+    if (error.code === "ENOENT") throw generatedDocumentPreviewError("Предварительный просмотр не найден.", 404);
+    throw error;
+  }
+  if (!metadata) throw generatedDocumentPreviewError("Предварительный просмотр не найден.", 404);
+  return {
+    previewExpiresAt: generatedDocumentPreviewEffectiveExpiresAt(metadata),
+    previewServerTime: Date.now()
+  };
+}
+
+async function getGeneratedDocumentPreviewTimingHeaders(token) {
+  const timing = await getGeneratedDocumentPreviewTiming(token);
+  return {
+    "X-Document-Preview-Expires-At": String(timing.previewExpiresAt),
+    "X-Document-Preview-Server-Time": String(timing.previewServerTime)
+  };
+}
+
 function pruneGeneratedDocumentPreviews(now = Date.now()) {
   pruneDocumentConversionSources(now);
   for (const [token, preview] of generatedDocumentPreviews) {
@@ -35827,7 +35854,8 @@ async function handleGeneratedDocumentPreviewEditorStart(req, res, authUser) {
       editorUrl,
       editorToken: session.editorToken,
       editRevision: session.editRevision,
-      expiresAt: session.expiresAt
+      expiresAt: session.expiresAt,
+      ...await getGeneratedDocumentPreviewTiming(body.previewToken)
     });
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 400, error.message);
@@ -35863,7 +35891,8 @@ async function handleGeneratedDocumentPreviewEditorRefresh(req, res, authUser = 
       editorOrigin: new URL(editorUrl).origin,
       editorToken: refreshed.editorToken,
       editRevision: refreshed.editRevision,
-      expiresAt: refreshed.expiresAt
+      expiresAt: refreshed.expiresAt,
+      ...await getGeneratedDocumentPreviewTiming(previewToken)
     }, {
       "Set-Cookie": generatedDocumentEditorProxyCookieHeader(req, proxyCookie)
     });
@@ -35953,6 +35982,8 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
           }
           notify("session", {
             expiresAt: Math.max(0, Number(payload.expiresAt || 0)),
+            previewExpiresAt: Number(payload.previewExpiresAt || 0),
+            previewServerTime: Number(payload.previewServerTime || 0),
             editRevision: Math.max(0, Number(payload.editRevision || 0))
           });
         } catch (error) {
@@ -36210,7 +36241,10 @@ async function handleGeneratedDocumentPreviewEditorSave(req, res, authUser) {
       rendered.previewPdf,
       rendered.fileName,
       generatedDocumentContentType("pdf"),
-      { "X-Document-Preview-Revision": String(rendered.editRevision) }
+      {
+        "X-Document-Preview-Revision": String(rendered.editRevision),
+        ...await getGeneratedDocumentPreviewTimingHeaders(previewToken)
+      }
     );
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 400, error.message);
@@ -36227,7 +36261,7 @@ async function handleGeneratedDocumentPreviewEditorDiscard(req, res, authUser) {
       body.editorToken,
       authUser
     );
-    sendJson(res, 200, discarded);
+    sendJson(res, 200, { ...discarded, ...await getGeneratedDocumentPreviewTiming(body.previewToken) });
   } catch (error) {
     sendError(res, Number(error?.statusCode) || 400, error.message);
   }
@@ -36748,7 +36782,8 @@ async function handleContractDocument(req, res, authUser) {
         {
           ...extraHeaders,
           "X-Document-Editor-Available": String(previewFormat === "pdf" && generatedDocumentRequestBackend(req) !== "server"),
-          "X-Document-Preview-Token": previewToken
+          "X-Document-Preview-Token": previewToken,
+          ...await getGeneratedDocumentPreviewTimingHeaders(previewToken)
         }
       );
       return;
@@ -41129,6 +41164,8 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  getGeneratedDocumentPreviewTiming,
+  getGeneratedDocumentPreviewTimingHeaders,
   getDocumentRelayClient,
   startDocumentRelayWorker,
   executeDocumentRelayJob,

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.571",
-    releasedAt: "2026-09-27"
+    version: "1.7.572",
+    releasedAt: "2026-09-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.572",
+      releasedAt: "2026-09-28",
+      changes: ["В предпросмотре документа и проверке письма показан обратный отсчёт до истечения временного файла, с предупреждением за две минуты. Срок поступает с сервера, учитывает правки документа и не сбрасывается при переходе к письму и обратно."]
+    },
     {
       version: "1.7.571",
       releasedAt: "2026-09-27",
@@ -72813,6 +72818,61 @@ MAX - https://bizvmax.ru/zifra_plus
     };
   }
 
+  function readGeneratedDocumentPreviewLifetime(source, current = {}) {
+    const expiresAt = Number(source?.headers?.get("X-Document-Preview-Expires-At") ?? source?.previewExpiresAt);
+    const serverTime = Number(source?.headers?.get("X-Document-Preview-Server-Time") ?? source?.previewServerTime);
+    if (!Number.isFinite(expiresAt) || !Number.isFinite(serverTime) || expiresAt <= 0 || serverTime <= 0) return current;
+    // Use the server's remaining lifetime, not its wall-clock time on a different computer.
+    const remaining = expiresAt - serverTime;
+    Object.assign(current, { deadlineAt: Date.now() + remaining, durationMs: Math.max(1, remaining) });
+    return current;
+  }
+
+  function bindGeneratedDocumentPreviewCountdown(host, lifetime = {}) {
+    if (!host) return { dispose() {}, check: () => true };
+    host.innerHTML = '<span data-preview-countdown-label></span><progress data-preview-countdown-progress aria-label="Оставшееся время проверки"></progress><small data-preview-countdown-warning role="status"></small>';
+    const label = host.querySelector("[data-preview-countdown-label]");
+    const progress = host.querySelector("[data-preview-countdown-progress]");
+    const warning = host.querySelector("[data-preview-countdown-warning]");
+    const update = () => {
+      const deadline = Number(lifetime?.deadlineAt || 0);
+      host.hidden = !deadline;
+      if (!deadline) return false; // Older servers must not be presented with an invented deadline.
+      const remaining = Math.max(0, deadline - Date.now());
+      const seconds = Math.ceil(remaining / 1000);
+      const hours = Math.floor(seconds / 3600);
+      const time = `${hours ? `${hours}:` : ""}${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+      label.textContent = seconds ? `На проверку документа осталось ${time}` : "Время проверки документа истекло";
+      host.classList.toggle("is-warning", remaining > 0 && remaining <= 120000);
+      host.classList.toggle("is-expired", remaining === 0);
+      progress.max = Math.max(1, Number(lifetime.durationMs) || remaining);
+      progress.value = remaining;
+      const message = !seconds
+        ? "Временный файл больше недоступен для сохранения. Закройте окно и сформируйте документ заново."
+        : remaining <= 120000
+          ? "Завершите проверку и подтверждение. После истечения времени документ потребуется сформировать заново."
+          : "Срок временного хранения предпросмотра. Проверка письма входит в это время.";
+      if (warning.textContent !== message) warning.textContent = message;
+      return !seconds;
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+    return {
+      dispose() {
+        window.clearInterval(timer);
+        document.removeEventListener("visibilitychange", update);
+        window.removeEventListener("focus", update);
+      },
+      check() {
+        if (!update()) return true;
+        alert("Время проверки истекло. Закройте предпросмотр и сформируйте документ заново.");
+        return false;
+      }
+    };
+  }
+
   async function requestGeneratedDocumentPreview(generationRequest, processingOrigin, generationTaskId = "") {
     // Load the renderer while the server is generating; never delay the document request.
     if (typeof window !== "undefined" && typeof APP_BASE_URL !== "undefined") {
@@ -72855,6 +72915,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       return {
         previewToken,
+        previewLifetime: readGeneratedDocumentPreviewLifetime(response),
         previewAvailable,
         editorAvailable: previewAvailable && response.headers.get("X-Document-Editor-Available") !== "false",
         ...getGeneratedDocumentResponseDetails(response, generationRequest.fileName, generationRequest.outputFormat),
@@ -72902,6 +72963,7 @@ MAX - https://bizvmax.ru/zifra_plus
         editorUrl: parsedUrl.toString(),
         editorOrigin: parsedUrl.origin,
         editorToken,
+        previewLifetime: readGeneratedDocumentPreviewLifetime(payload),
         editRevision: Math.max(0, Number(payload.editRevision || 0)),
         expiresAt: Math.max(0, Number(payload.expiresAt || 0))
       };
@@ -72984,6 +73046,7 @@ MAX - https://bizvmax.ru/zifra_plus
       Math.max(0, Number(editorSession.expiresAt || 0)),
       Math.max(0, Number(payload.expiresAt || 0))
     );
+    editorSession.previewLifetime = readGeneratedDocumentPreviewLifetime(payload, editorSession.previewLifetime || {});
     return editorSession;
   }
 
@@ -73076,6 +73139,7 @@ MAX - https://bizvmax.ru/zifra_plus
         throw new Error("Сервер не подготовил обновлённый PDF для проверки.");
       }
       return {
+        previewLifetime: readGeneratedDocumentPreviewLifetime(response),
         blob: await response.blob(),
         editRevision: Math.max(
           editorSession.editRevision,
@@ -73109,6 +73173,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const processingOrigin = String(options.processingOrigin || "").trim();
     const previewAvailable = options.previewAvailable !== false;
     const editorAvailable = options.editorAvailable !== false && previewAvailable;
+    const previewLifetime = options.previewLifetime || {};
     let previewUrl = URL.createObjectURL(previewAvailable ? new Blob([previewBlob], { type: "application/pdf" }) : previewBlob);
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -73123,6 +73188,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div>
               <p class="eyebrow">${escapeHtml(title)}</p>
               <h2 id="generated-document-preview-title" data-generated-document-preview-heading>${previewAvailable ? "Предварительный просмотр" : "Документ готов"}</h2>
+              <div class="generated-document-preview-countdown" data-preview-countdown hidden></div>
             </div>
             <button class="icon-button" data-action="cancel-generated-document-preview" type="button" title="Закрыть" aria-label="Закрыть">×</button>
           </header>
@@ -73149,6 +73215,9 @@ MAX - https://bizvmax.ru/zifra_plus
           </footer>
         </section>
       `;
+      const countdown = bindGeneratedDocumentPreviewCountdown(
+        backdrop.querySelector("[data-preview-countdown]"), options.readOnly ? {} : previewLifetime
+      );
       let settled = false;
       let pdfViewer = null;
       let pdfViewerSequence = 0;
@@ -73229,6 +73298,8 @@ MAX - https://bizvmax.ru/zifra_plus
         startPdfPreview();
       };
       const setEditorMode = (session) => {
+        Object.assign(previewLifetime, session.previewLifetime || {});
+        session.previewLifetime = previewLifetime;
         pdfViewerSequence++; pdfViewer?.destroy(); pdfViewer = null;
         if (pdfHost) pdfHost.hidden = true;
         editorSession = session;
@@ -73369,7 +73440,9 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       const finish = (confirmed) => {
         if (settled) return;
+        if (confirmed && !countdown.check()) return;
         settled = true;
+        countdown.dispose();
         editorStartSequence += 1;
         pdfViewerSequence++; pdfViewer?.destroy(); pdfViewer = null;
         options.signal?.removeEventListener("abort", abortPreview);
@@ -73506,6 +73579,7 @@ MAX - https://bizvmax.ru/zifra_plus
           if (settled || editorSession !== sessionToSave) return false;
           const previousPreviewUrl = previewUrl;
           previewBlob = saved.blob;
+          Object.assign(previewLifetime, saved.previewLifetime || {});
           options.onPreviewUpdated?.(saved.blob);
           previewUrl = URL.createObjectURL(new Blob([saved.blob], { type: "application/pdf" }));
           sessionToSave.editRevision = saved.editRevision;
@@ -73561,12 +73635,13 @@ MAX - https://bizvmax.ru/zifra_plus
             : "Отменяем изменения и возвращаем исходный PDF…";
         }
         try {
-          await discardGeneratedDocumentEditor(
+          const discarded = await discardGeneratedDocumentEditor(
             previewToken,
             sessionToDiscard.editorToken,
             processingOrigin
           );
           if (settled || editorSession !== sessionToDiscard) return false;
+          readGeneratedDocumentPreviewLifetime(discarded, previewLifetime);
           editorDirty = false;
           if (closePreview) {
             finish(false);
@@ -73650,6 +73725,7 @@ MAX - https://bizvmax.ru/zifra_plus
       backdrop.querySelector("[data-action='download-generated-document-preview']")?.addEventListener("click", () => downloadBlob(fileName, previewBlob));
       editButton?.addEventListener("click", async () => {
         if (!previewToken || !processingOrigin || editButton.disabled || editorStartPending) return;
+        if (!countdown.check()) return;
         const startSequence = ++editorStartSequence;
         editorStartPending = true;
         editButton.disabled = true;
@@ -73763,6 +73839,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <div>
               <p class="eyebrow">${escapeHtml(title)}</p>
               <h2 id="generated-document-email-preview-title">Предварительный просмотр письма</h2>
+              <div class="generated-document-preview-countdown" data-preview-countdown hidden></div>
             </div>
             <button class="icon-button" data-action="cancel-generated-document-email-preview" type="button" title="Закрыть" aria-label="Закрыть">×</button>
           </header>
@@ -73814,6 +73891,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </footer>
         </section>
       `;
+      const countdown = bindGeneratedDocumentPreviewCountdown(backdrop.querySelector("[data-preview-countdown]"), options.previewLifetime);
       let settled = false;
       let previewRefreshTimer = 0;
       let emailEditorDirty = false;
@@ -73889,7 +73967,9 @@ MAX - https://bizvmax.ru/zifra_plus
       };
       const finish = (result) => {
         if (settled) return;
+        if (result && !result.backToDocument && !countdown.check()) return;
         settled = true;
+        countdown.dispose();
         options.signal?.removeEventListener("abort", abortEmailPreview);
         window.clearTimeout(previewRefreshTimer);
         backdrop.removeEventListener("keydown", trapFocus);
@@ -74215,6 +74295,7 @@ MAX - https://bizvmax.ru/zifra_plus
             editorAvailable: preview.editorAvailable,
             emailDescription: emailRequest?.recipientDescription || "",
             previewToken: pendingPreviewToken,
+            previewLifetime: preview.previewLifetime,
             processingOrigin: documentProcessingOrigin,
             generationTaskId,
             signal: getDocumentGenerationSignal(generationTaskId),
@@ -74232,6 +74313,7 @@ MAX - https://bizvmax.ru/zifra_plus
             title: documentTemplate.title,
             fileName: preview.fileName || fileName,
             canReturnToDocument: true,
+            previewLifetime: preview.previewLifetime,
             editing: emailEditing,
             signal: getDocumentGenerationSignal(generationTaskId)
           });

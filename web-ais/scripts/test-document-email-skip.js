@@ -62,6 +62,7 @@ function fixture() {
     documentEmailMessageContainsHtml: () => false,
     buildGeneratedDocumentEmailPreviewHtml: (message) => message,
     normalizeServerEmailSubject: (value) => String(value || "").trim(),
+    bindGeneratedDocumentPreviewCountdown: () => ({ dispose() {}, check: () => true }), // Real timer/expiry covered by test-document-preview-countdown.js.
     chooseUnsavedChangesAction: async () => { calls.push("unsaved-dialog"); return "cancel"; },
     state: { modal: { id: "fixture-student" } },
     beginDocumentGeneration: () => "fixture-generation",
@@ -221,7 +222,7 @@ async function tests() {
 
 if (process.argv.includes("--serve")) {
   const http = require("node:http");
-  const helpers = ["documentEmailMessageContainsHtml", "buildGeneratedDocumentEmailPreviewHtml"].map(extract).join("\n");
+  const helpers = ["bindGeneratedDocumentPreviewCountdown", "documentEmailMessageContainsHtml", "buildGeneratedDocumentEmailPreviewHtml"].map(extract).join("\n");
   const page = `<!doctype html><html lang="ru"><meta charset="utf-8"><link rel="stylesheet" href="/styles.css">
     <body><button id="open" class="primary-button">Просмотр тестового письма</button><p id="result"></p>
     <script>const escapeHtml=(v)=>String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");

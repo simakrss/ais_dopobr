@@ -976,7 +976,7 @@ const editorClientApiContext = {
 };
 vm.createContext(editorClientApiContext);
 vm.runInContext(
-  `${editorClientApiSource}\nthis.saveGeneratedDocumentEditor = saveGeneratedDocumentEditor;`,
+  `${appSource.slice(appSource.indexOf("  function readGeneratedDocumentPreviewLifetime("), appSource.indexOf("  function bindGeneratedDocumentPreviewCountdown("))}\n${editorClientApiSource}\nthis.saveGeneratedDocumentEditor = saveGeneratedDocumentEditor;`,
   editorClientApiContext
 );
 const makeClientEditorSession = () => ({
@@ -1129,7 +1129,7 @@ assert.match(previewModalSource, /cancelButton\?\.addEventListener\("click", req
 assert.match(previewModalSource, /let editorStartPending = false;\s+let editorStartSequence = 0;/u);
 assert.match(
   previewModalSource,
-  /const finish = \(confirmed\) => \{[\s\S]+settled = true;\s+editorStartSequence \+= 1;/u,
+  /const finish = \(confirmed\) => \{[\s\S]+settled = true;\s+countdown\.dispose\(\);\s+editorStartSequence \+= 1;/u,
   "Закрытие предпросмотра должно инвалидировать незавершённый запуск ONLYOFFICE"
 );
 assert.match(

@@ -106,6 +106,7 @@ async function main() {
     convertDocxBytesToPdf: async docx => { conversions.push(docx); return Buffer.from("%PDF-fixture"); },
     assertGeneratedDocumentPreviewRequestAllowed: async () => {},
     registerGeneratedDocumentPreview: async generated => { preview = generated; return "fixture"; },
+    getGeneratedDocumentPreviewTimingHeaders: async () => ({}),
     generatedDocumentRequestBackend: () => "local",
     generatedDocumentContentType: () => "application/pdf",
     sendFile: (_res, status) => { assert.equal(status, 200); response = preview; },

@@ -156,6 +156,7 @@ async function main() {
     fillDocxMarkers: () => Buffer.from("FILLED-DOCX"),
     convertDocxBytesToPdf: async () => { conversionCalls++; throw new Error("PDF unavailable"); },
     registerGeneratedDocumentPreview: async doc => { stored = doc; return "test-token"; },
+    getGeneratedDocumentPreviewTimingHeaders: async () => ({ "X-Document-Preview-Expires-At": String(Date.now() + 600000), "X-Document-Preview-Server-Time": String(Date.now()) }),
     cancelGeneratedDocumentPreview: async () => {},
     generatedDocumentRequestBackend: () => "server",
     sendFile: (_res, status, bytes, name, type, extra) => { response = {status, bytes, name, type, extra}; },
@@ -180,7 +181,7 @@ async function main() {
       assert.equal(JSON.parse(options.body).autoSaveLocal, false);
       return parse(new Response(response.bytes, {headers: {...response.extra, "Content-Type": response.type}}));
     },
-  }, app, ["getGeneratedDocumentResponseDetails", "requestGeneratedDocumentPreview"], "  ");
+  }, app, ["readGeneratedDocumentPreviewLifetime", "getGeneratedDocumentResponseDetails", "requestGeneratedDocumentPreview"], "  ");
   const preview = await previewClient.requestGeneratedDocumentPreview({fileName: "Тест.pdf", outputFormat: "pdf"}, "server");
   assert.equal(preview.previewAvailable, false);
   assert.equal(preview.editorAvailable, false);
@@ -191,7 +192,7 @@ async function main() {
 }
 function serveFixture() {
   const http = require("node:http");
-  const modalSource = extract(app, "showGeneratedDocumentPreview", "  ");
+  const modalSource = ["readGeneratedDocumentPreviewLifetime", "bindGeneratedDocumentPreviewCountdown", "showGeneratedDocumentPreview"].map(name => extract(app, name, "  ")).join("\n");
   const fixture = http.createServer((req, res) => {
     if (req.url === "/styles.css") { res.setHeader("Content-Type", "text/css"); res.end(fs.readFileSync(path.join(root, "styles.css"))); return; }
     res.setHeader("Content-Type", "text/html; charset=utf-8");

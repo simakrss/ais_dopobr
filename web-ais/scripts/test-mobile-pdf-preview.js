@@ -21,6 +21,7 @@ if(process.argv.includes("--serve") || process.argv.includes("--browser")) (asyn
   const html=`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><body><script>
     const APP_BASE_URL=new URL("/",location.href);const normalizeDocumentGenerationFormat=x=>x;
     const escapeHtml=x=>String(x).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll('"',"&quot;");const escapeAttr=escapeHtml;
+    ${app.slice(app.indexOf("  function bindGeneratedDocumentPreviewCountdown("), app.indexOf("  async function requestGeneratedDocumentPreview("))}
     ${preview}
     showGeneratedDocumentPreview(new Blob([Uint8Array.from(atob("${bytes}"),x=>x.charCodeAt(0))],{type:"application/pdf"}),{title:"Тест просмотра",fileName:"Проверка.pdf",outputFormat:"pdf",editorAvailable:false,readOnly:true});
   </script></body></html>`;

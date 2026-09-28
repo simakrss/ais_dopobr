@@ -34,6 +34,7 @@ function getMissingStudentDocumentFields(){return [];}
 function getEducationDocumentTrainingPlanRows(){return [{discipline:'Тест',attestation:'Зачет'}];}
 function getStudentYandexDocumentsFolder(record){return 'Слушатели/'+record.id+'/Документы';}
 function getEffectiveLocalDocumentsMode(){return local;}
+function getOpenDocumentsLocally(){return local;}
 function recordLockEntityType(value){return value;} function recordLockKey(type,id){return type+':'+id;}
 async function requestSharedRecordLocks({body}){calls.push({action:'lock',operation:body.action,id:body.entityId});if(lockFails&&body.action==='acquire')throw Object.assign(new Error('busy'),{status:423});}
 async function flushSharedApplicationStateThroughGeneration(){calls.push({action:'flush'});if(failEventFlush&&sharedStateDirty)return false;sharedStateDirty=false;return true;}

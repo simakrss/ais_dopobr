@@ -13840,6 +13840,59 @@ body.card-window-moving {
   overflow: hidden;
 }
 
+.generated-document-preview-dialog > header > div,
+.generated-document-email-preview-dialog > header > div {
+  min-width: 0;
+}
+
+.generated-document-preview-countdown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.generated-document-preview-countdown[hidden] {
+  display: none;
+}
+
+.generated-document-preview-countdown progress {
+  width: 100px;
+  max-width: 100%;
+  height: 6px;
+  accent-color: var(--accent);
+}
+
+.generated-document-preview-countdown small {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.generated-document-preview-countdown.is-warning,
+.generated-document-preview-countdown.is-warning small {
+  color: #8c5700;
+}
+
+.generated-document-preview-countdown.is-warning progress {
+  accent-color: #a96800;
+}
+
+.generated-document-preview-countdown.is-expired,
+.generated-document-preview-countdown.is-expired small {
+  color: #ba2323;
+}
+
+.generated-document-preview-countdown.is-expired progress {
+  accent-color: #ba2323;
+}
+
 .generated-document-preview-summary {
   display: flex;
   align-items: baseline;
