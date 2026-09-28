@@ -134,7 +134,7 @@ Object.assign(context, {
   reuseExistingStudentPersonalData: value => value, resolveProStudentAdditionalStatus: () => "",
   applyStudentEventTemplateDefaults: value => value, addAutomaticStudentExpenses: record => ({record})
 });
-vm.runInContext(extract("createStudentFromApplication"), context);
+vm.runInContext(extract("isStudentExpelledStatus") + "\n" + extract("createStudentFromApplication"), context);
 assert.equal(context.createStudentFromApplication({name: "Ким Любовь"}, 1).gender, "Женский");
 assert.equal(context.createStudentFromApplication({name: "Ким Любовь", gender: "М"}, 1).gender, "Мужской");
 context.reuseExistingStudentPersonalData = value => ({...value, name: "Петров Иван Иванович"});

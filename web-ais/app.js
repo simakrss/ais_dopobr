@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.572",
+    version: "1.7.573",
     releasedAt: "2026-09-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.573",
+      releasedAt: "2026-09-28",
+      changes: ["При установке статуса «Отчислен» или «Отчисленные» дополнительный статус автоматически меняется на «Отчисленные» для КПК, ППП и ДОП, а для ПРО — на «Вебинары. Архив». Правило действует в карточке, при импорте и в групповых операциях."]
+    },
     {
       version: "1.7.572",
       releasedAt: "2026-09-28",
@@ -4579,6 +4584,7 @@
     "password"
   ]);
   const STUDENT_LEARNING_ADDITIONAL_STATUS = "Обучающиеся";
+  const STUDENT_EXPELLED_ADDITIONAL_STATUS = "Отчисленные";
   const PRO_STUDENT_ADDITIONAL_STATUS = "Вебинары";
   const WEBINAR_MESSAGE_FIELDS = Object.freeze([
     "НазваниеПрограммы", "ДатаВебинара", "ВремяВебинара", "СсылкаПодключения", "КоличествоРегистраций", "ИмяОтчество", "ФИОПреподавателя"
@@ -6432,6 +6438,7 @@ MAX - https://bizvmax.ru/zifra_plus
     studentAdditionalStatuses: [
       DEFAULT_STUDENT_ADDITIONAL_STATUS,
       STUDENT_LEARNING_ADDITIONAL_STATUS,
+      STUDENT_EXPELLED_ADDITIONAL_STATUS,
       PRO_STUDENT_ADDITIONAL_STATUS,
       PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS,
       "На зачисление (отложенный старт)"
@@ -8664,6 +8671,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((expense, index) => normalizeGeneralExpenseRecord(expense, index));
     data.dictionaries.studentAdditionalStatuses = unique([
       ...(data.dictionaries.studentAdditionalStatuses || []),
+      STUDENT_EXPELLED_ADDITIONAL_STATUS,
       "На зачисление (отложенный старт)",
       ...data.collections.students.map((student) => student.additionalStatus)
     ].map((value) => String(value || "").trim()).filter(Boolean));
@@ -23595,6 +23603,9 @@ MAX - https://bizvmax.ru/zifra_plus
       program?.type || record.educationType,
       { imported: true }
     );
+    if (isStudentExpelledStatus(record.status)) {
+      record.additionalStatus = resolveStudentAdditionalStatusAfterMainStatusChange(record, program?.type || record.educationType);
+    }
     return calculateStudentFinance(addAutomaticStudentExpenses(
       applyStudentEventTemplateDefaults(record),
       program
@@ -37037,7 +37048,7 @@ MAX - https://bizvmax.ru/zifra_plus
       additionalStatus: additionalStatusControl.value,
       educationType: programType
     };
-    const nextStatus = options.mainStatusChanged === true
+    const nextStatus = options.mainStatusChanged === true || isStudentExpelledStatus(statusContext.status)
       ? resolveStudentAdditionalStatusAfterMainStatusChange(statusContext, programType)
       : resolveProStudentAdditionalStatus(statusContext, programType);
     if (!nextStatus || nextStatus === String(additionalStatusControl.value || "").trim()) return false;
@@ -37826,11 +37837,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return text.replace(/[^А-ЯA-Z0-9]/g, "").slice(0, 8);
   }
 
+  function isStudentExpelledStatus(value) {
+    return ["отчислен", "отчисленные"].includes(String(value || "").trim().toLocaleLowerCase("ru-RU"));
+  }
+
   function resolveProStudentAdditionalStatus(record = {}, programType = "", options = {}) {
     const current = String(record.additionalStatus || "").trim();
     const normalizedProgramType = normalizeEducationProgramType(programType || record.educationType);
     if (normalizedProgramType !== "ПРО") return current;
-    if (String(record.status || "").trim().toLocaleLowerCase("ru-RU") === "отчислен") {
+    if (isStudentExpelledStatus(record.status)) {
       return PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS;
     }
     return options.imported === true ? PRO_STUDENT_ADDITIONAL_STATUS : current;
@@ -37839,6 +37854,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function resolveStudentAdditionalStatusAfterMainStatusChange(record = {}, programType = "") {
     if (String(record.status || "").trim().toLocaleLowerCase("ru-RU") === "учится") {
       return STUDENT_LEARNING_ADDITIONAL_STATUS;
+    }
+    if (isStudentExpelledStatus(record.status)
+      && ["КПК", "ППП", "ДОП"].includes(normalizeEducationProgramType(programType || record.educationType))) {
+      return STUDENT_EXPELLED_ADDITIONAL_STATUS;
     }
     return resolveProStudentAdditionalStatus(record, programType);
   }
@@ -60625,26 +60644,25 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     const selectedSet = new Set(selected);
-    let proArchiveCount = 0;
+    const additionalStatusCounts = new Map();
     state.data.collections[config.collection] = (state.data.collections[config.collection] || []).map((row) => {
       if (!selectedSet.has(row.id)) return row;
       const nextRecord = { ...row, status };
       if (configId !== "students") return nextRecord;
-      const nextAdditionalStatus = resolveProStudentAdditionalStatus(
+      if (String(row.status || "").trim() === String(status).trim() && !isStudentExpelledStatus(status)) return nextRecord;
+      const nextAdditionalStatus = resolveStudentAdditionalStatusAfterMainStatusChange(
         nextRecord,
         findProgramByName(nextRecord.program)?.type || nextRecord.educationType
       );
       if (nextAdditionalStatus !== String(nextRecord.additionalStatus || "").trim()) {
         nextRecord.additionalStatus = nextAdditionalStatus;
-        proArchiveCount += 1;
+        additionalStatusCounts.set(nextAdditionalStatus, (additionalStatusCounts.get(nextAdditionalStatus) || 0) + 1);
       }
       return nextRecord;
     });
     const bulkStatusAuditDetails = [
       `${selected.length} записей: ${status}`,
-      proArchiveCount
-        ? `для программ ПРО дополнительный статус «${PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS}»: ${proArchiveCount}`
-        : ""
+      ...[...additionalStatusCounts].map(([value, count]) => `дополнительный статус «${value}»: ${count}`)
     ].filter(Boolean).join("; ");
     addAudit("Массовое изменение статуса", config.title, bulkStatusAuditDetails, {
       entityType: config.collection,
@@ -61455,7 +61473,7 @@ MAX - https://bizvmax.ru/zifra_plus
           continue;
         }
         const record = { ...current, [fieldName]: value };
-        if (fieldName === "status" && value !== String(current.status || "").trim()) {
+        if (fieldName === "status" && (value !== String(current.status || "").trim() || isStudentExpelledStatus(value))) {
           record.additionalStatus = resolveStudentAdditionalStatusAfterMainStatusChange(
             record, findProgramByName(record.program)?.type || record.educationType
           );

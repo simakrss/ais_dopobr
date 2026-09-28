@@ -12,9 +12,9 @@ function extract(name) {
 }
 const names = ["getStudentBulkStatusOptions", "runStudentBulkStatus", "getRowsByIds", "replaceStudentBulkRecord",
   "persistStudentBulkChanges", "resolveStudentAdditionalStatusAfterMainStatusChange", "resolveProStudentAdditionalStatus",
-  "normalizeEducationProgramType", "renderStudentStatusOptions"];
+  "normalizeEducationProgramType", "isStudentExpelledStatus", "renderStudentStatusOptions"];
 const constants = source.match(/  const STUDENT_STATUS_ORDER = Object.freeze\(\[[\s\S]*?\]\);/u)[0]
-  + ["STUDENT_LEARNING_ADDITIONAL_STATUS", "PRO_STUDENT_ADDITIONAL_STATUS", "PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS"]
+  + ["STUDENT_LEARNING_ADDITIONAL_STATUS", "STUDENT_EXPELLED_ADDITIONAL_STATUS", "PRO_STUDENT_ADDITIONAL_STATUS", "PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS"]
     .map(name => source.match(new RegExp(`  const ${name} = [^;]+;`, "u"))[0]).join("\n");
 const plan = source.slice(source.indexOf("  const studentBulkOperationDefinitions = Object.freeze(["), source.indexOf("  function openStudentBulkOperationsDialog()"));
 const production = constants + "\n" + names.map(extract).join("\n") + plan;
@@ -94,8 +94,27 @@ async function test() {
   assert.ok(h.state.data.collections.students.slice(0,2).every(row=>row.status==="Учится"&&row.additionalStatus==="Обучающиеся"));
   assert.equal(h.audits[0][3].changes.length,2,"Automatic additional-status change is also audited");
   await h.c.runStudentBulkStatus(h.state.data.collections.students.slice(0,2),"status","Отчислен",h.update);
-  assert.equal(h.state.data.collections.students[0].additionalStatus,"Обучающиеся");
+  assert.equal(h.state.data.collections.students[0].additionalStatus,"Отчисленные");
   assert.equal(h.state.data.collections.students[1].additionalStatus,"Вебинары. Архив");
+
+  for (const status of ["Отчислен", "Отчисленные"]) {
+    for (const type of ["КПК", "ППП", "ДОП", "ПРО"]) {
+      h = harness();
+      h.state.data.dictionaries.statuses.push("Отчисленные");
+      h.state.data.collections.programs[0].type = type;
+      h.state.data.collections.students[0].status = status;
+      h.state.data.collections.students[0].educationType = type === "ПРО" ? "КПК" : "ПРО";
+      result = await h.c.runStudentBulkStatus(h.state.data.collections.students.slice(0,1), "status", status, h.update);
+      assert.equal(result.success, 1, "Reapplying expulsion repairs an obsolete additional status");
+      assert.equal(h.state.data.collections.students[0].additionalStatus, type === "ПРО" ? "Вебинары. Архив" : "Отчисленные", "Registry type takes precedence");
+      assert.equal(h.audits[0][3].changes.length, 1);
+      assert.equal(h.audits[0][3].changes[0].field, "additionalStatus");
+      assert.equal(h.saved.length, 1);
+      result = await h.c.runStudentBulkStatus(h.state.data.collections.students.slice(0,1), "status", status, h.update);
+      assert.equal(result.skipped, 1, "Correct statuses must not be written or audited again");
+      assert.equal(h.saved.length, 1);
+    }
+  }
 
   h=harness({onAcquire:(id,state)=>{state.data.collections.students.find(row=>row.id===id).notes="Обновлено после выбора";}});
   const stale = {...h.state.data.collections.students[0]};

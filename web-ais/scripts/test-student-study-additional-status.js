@@ -40,6 +40,7 @@ class FakeSelect extends FakeInput {
 
 const context = {
   STUDENT_LEARNING_ADDITIONAL_STATUS: "Обучающиеся",
+  STUDENT_EXPELLED_ADDITIONAL_STATUS: "Отчисленные",
   PRO_STUDENT_ADDITIONAL_STATUS: "Вебинары",
   PRO_STUDENT_ARCHIVE_ADDITIONAL_STATUS: "Вебинары. Архив",
   HTMLInputElement: FakeInput,

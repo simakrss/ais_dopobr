@@ -83,7 +83,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /function bulkSetStatus[\s\S]*?resolveProStudentAdditionalStatus\([\s\S]*?proArchiveCount/u,
+  /function bulkSetStatus[\s\S]*?resolveStudentAdditionalStatusAfterMainStatusChange\([\s\S]*?additionalStatusCounts/u,
   "Массовая смена статуса должна применять правило ПРО"
 );
 assert.match(
