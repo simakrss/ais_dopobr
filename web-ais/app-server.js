@@ -211,7 +211,7 @@ const DEFAULT_ADVERTISING_COLLECTOR_LOCAL_WORKBOOK_PATH = "Y:\\Реклама\\�
 const DEFAULT_ADVERTISING_COLLECTOR_WEBDAV_PATH = "ООО Цифровизация Плюс/Реклама/Базы рассылок/База рассылок.xlsb";
 const DEFAULT_ADVERTISING_SOURCE_PROXY_URL = "https://edu-plus.ru/lms/api/advertising/email-collector/source-proxy";
 const ADVERTISING_EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu;
-const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook"]);
+const ADVERTISING_EMAIL_SOURCE_KINDS = new Set(["sql", "ais", "google", "workbook", "vitu"]);
 const ADVERTISING_EMAIL_SQL_CONNECTIONS = new Set(["assistant", "applications", "abit", "moodle"]);
 const ADVERTISING_EMAIL_WORKBOOK_DATASETS = new Set(["googleContacts", "legacyContacts"]);
 const ADVERTISING_SITES_SUMMARY_DEFINITIONS = Object.freeze([
@@ -451,6 +451,7 @@ const ADVERTISING_EMAIL_HISTORY_MAX_CONTACTS_PER_RUN = 200000;
 const ADVERTISING_EMAIL_HISTORY_WRITE_CHUNK_SIZE = 150;
 const ADVERTISING_EMAIL_HISTORY_READ_PAGE_SIZE = 5000;
 const DEFAULT_ADVERTISING_EMAIL_SOURCES = Object.freeze([
+  { id: "vitu_applicants", label: "Анкеты абитуриентов (виту.рф)", group: "Сайт ВИТУ", kind: "vitu", stream: "applicants", enabled: true },
   {
     id: "assistant_installations",
     label: "Установка Ассистента (edu-plus.ru)",
@@ -8166,6 +8167,28 @@ function normalizeAdvertisingGoogleWorkbooks(value) {
   });
 }
 
+function advertisingEmailSourceStream(source) {
+  if (source?.kind === "vitu") return "applicants";
+  if (["applicants", "other"].includes(source?.stream)) return source.stream;
+  return ["vitu_applicants", "viit_applicants", "viit_open_days"].includes(source?.id) ? "applicants" : "other";
+}
+
+function advertisingEmailRowStream(row) {
+  if (row?.stream === "applicants" || (row?.sources || []).some((source) => advertisingEmailSourceStream(source) === "applicants")) return "applicants";
+  return "other";
+}
+
+function advertisingEmailStreamSummary(rows) {
+  return Object.fromEntries(["applicants", "other"].map((stream) => {
+    const selected = rows.filter((row) => advertisingEmailRowStream(row) === stream);
+    return [stream, {
+      unique: selected.length,
+      ready: selected.filter((row) => !row.excluded).length,
+      newReady: selected.filter((row) => row.isNew && !row.excluded).length
+    }];
+  }));
+}
+
 function normalizeAdvertisingEmailSource(value, index = 0) {
   const kind = String(value?.kind || "sql").trim().toLowerCase();
   if (!ADVERTISING_EMAIL_SOURCE_KINDS.has(kind)) {
@@ -8175,6 +8198,7 @@ function normalizeAdvertisingEmailSource(value, index = 0) {
     id: normalizeAdvertisingSourceId(value?.id || value?.label, index),
     label: cleanAdvertisingContactText(value?.label || `Источник ${index + 1}`, 180),
     group: cleanAdvertisingContactText(value?.group || "Другое", 80),
+    stream: advertisingEmailSourceStream(value),
     kind,
     enabled: value?.enabled !== false
   };
@@ -8212,7 +8236,12 @@ function normalizeAdvertisingEmailSources(value) {
 
 function getAdvertisingEmailSourceDefinitions() {
   try {
-    return normalizeAdvertisingEmailSources(serverSettings.advertisingEmailSources);
+    const sources = normalizeAdvertisingEmailSources(serverSettings.advertisingEmailSources);
+    // Add the built-in source to already saved configurations; retain an explicit disabled flag.
+    if (!sources.some((source) => source.kind === "vitu")) {
+      sources.push(normalizeAdvertisingEmailSource(DEFAULT_ADVERTISING_EMAIL_SOURCES.find((source) => source.kind === "vitu")));
+    }
+    return sources;
   } catch (error) {
     console.warn(`Настройки источников рекламы повреждены, используются стандартные: ${error.message}`);
     return normalizeAdvertisingEmailSources(DEFAULT_ADVERTISING_EMAIL_SOURCES);
@@ -8225,6 +8254,7 @@ function publicAdvertisingEmailSource(source, includeConfiguration = false) {
     label: source.label,
     group: source.group,
     kind: source.kind,
+    stream: advertisingEmailSourceStream(source),
     enabled: source.enabled !== false
   };
   if (!includeConfiguration) return result;
@@ -9105,6 +9135,7 @@ async function queryAdvertisingEmailRecordsThroughSite(source) {
   }
   const records = normalizeAdvertisingEmailRecords(payload.records);
   Object.defineProperty(records, "processing", { value: "site-proxy", enumerable: false });
+  Object.defineProperty(records, "sourceSyncedAt", { value: normalizeAdvertisingSourceReceivedAt(payload.sourceSyncedAt), enumerable: false });
   return records;
 }
 
@@ -9123,7 +9154,39 @@ function formatAdvertisingSourceError(error, source) {
   return message;
 }
 
+function readAdvertisingVituContacts(databasePath = process.env.AIS_ADVERTISING_VITU_DATABASE || "D:/Jupiter/VITU-Mirror/data/vitu.sqlite", now = Date.now()) {
+  // Use the existing, continuously synchronized VITU mirror. Never open the site database for writing.
+  let db;
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    db = new DatabaseSync(databasePath, { readOnly: true });
+    db.exec("PRAGMA busy_timeout=3000; BEGIN");
+    const sync = db.prepare("SELECT synced_at FROM mirror_sync_state WHERE id=1").get();
+    const syncedAt = Date.parse(sync?.synced_at || "");
+    if (!Number.isFinite(syncedAt) || now - syncedAt > 15 * 60 * 1000 || syncedAt > now + 60000) {
+      throw new Error("Зеркало анкет виту.рф не обновлялось более 15 минут. Проверьте синхронизацию проекта «Сайт ВИТУ» и повторите сбор.");
+    }
+    const rows = db.prepare("SELECT email, created_at AS sourceReceivedAt FROM applications WHERE TRIM(COALESCE(email, '')) <> '' AND COALESCE(archive_state, '') <> 'deleted' ORDER BY created_at, id LIMIT 100001").all();
+    if (rows.length > 100000) throw new Error("В анкетах ВИТУ превышен предел 100000 записей. Требуется расширить лимит сборщика.");
+    const records = normalizeAdvertisingEmailRecords(rows);
+    Object.defineProperty(records, "processing", { value: "vitu-mirror", enumerable: false });
+    Object.defineProperty(records, "sourceSyncedAt", { value: new Date(syncedAt).toISOString(), enumerable: false });
+    return records;
+  } catch (error) {
+    if (/Зеркало анкет|В анкетах ВИТУ/u.test(error.message)) throw error;
+    throw new Error("Анкеты виту.рф недоступны. Проверьте зеркало «Сайт ВИТУ» на компьютере Server и Node.js 22.13 или новее.");
+  } finally {
+    if (db) db.close();
+  }
+}
+
 async function runAdvertisingEmailSource(source, workbookPromise) {
+  if (source.kind === "vitu") {
+    const mirrorPath = process.env.AIS_ADVERTISING_VITU_DATABASE || "D:/Jupiter/VITU-Mirror/data/vitu.sqlite";
+    return process.platform === "win32" && fsSync.existsSync(mirrorPath)
+      ? readAdvertisingVituContacts(mirrorPath)
+      : queryAdvertisingEmailRecordsThroughSite(source);
+  }
   if (source.kind === "sql") {
     try {
       return await queryAdvertisingEmailRecords(
@@ -9189,7 +9252,7 @@ function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
           contact.sourceReceivedAt = sourceReceivedAt;
         }
         if (!contact.sources.some((item) => item.id === source.id)) {
-          contact.sources.push({ id: source.id, label: source.label });
+          contact.sources.push({ id: source.id, label: source.label, stream: advertisingEmailSourceStream(source) });
         }
       }
     }
@@ -9202,6 +9265,7 @@ function aggregateAdvertisingEmailResults(sourceResults, exclusions = []) {
       : (exclusionMap.has(domain) ? domain : "");
     return {
       ...contact,
+      stream: advertisingEmailRowStream(contact),
       sources: contact.sources.sort((left, right) => left.label.localeCompare(right.label, "ru")),
       excluded: Boolean(exclusionKey),
       exclusionReason: exclusionKey
@@ -9266,10 +9330,11 @@ function normalizeAdvertisingEmailHistoryRows(value) {
       const label = cleanAdvertisingContactText(source?.label || id, 180);
       if (!id || sourceIds.has(id)) continue;
       sourceIds.add(id);
-      sources.push({ id, label });
+      sources.push({ id, label, stream: advertisingEmailSourceStream(source) });
     }
     rowsByEmail.set(email, {
       email,
+      stream: advertisingEmailRowStream({ ...item, sources }),
       name: cleanAdvertisingContactText(item?.name, 240),
       phone: cleanAdvertisingContactText(item?.phone, 120),
       organization: cleanAdvertisingContactText(item?.organization, 240),
@@ -9363,7 +9428,8 @@ function buildAdvertisingEmailHistoryResult(result, previousEmailKeys = [], opti
       ready: readyRows.length,
       excluded: decoratedRows.length - readyRows.length,
       newUnique: newRows.length,
-      newReady: newReadyRows.length
+      newReady: newReadyRows.length,
+      streams: advertisingEmailStreamSummary(decoratedRows)
     },
     rows: decoratedRows,
     comparedTo: {
@@ -9713,8 +9779,11 @@ async function deleteAdvertisingEmailHistoryRun(value, authUser = null) {
   }
 }
 
-async function readAdvertisingEmailHistoryNewReadyEmails(value) {
+async function readAdvertisingEmailHistoryNewReadyEmails(value, stream = "") {
   const runId = normalizeAdvertisingEmailHistoryRunId(value);
+  if (stream && !["applicants", "other"].includes(stream)) {
+    throw advertisingEmailHistoryError("Неизвестный поток email.", 400, "ADVERTISING_INVALID_STREAM");
+  }
   let pool;
   try {
     pool = await getSharedRecordLocksMySqlPool();
@@ -9773,6 +9842,7 @@ async function readAdvertisingEmailHistoryNewReadyEmails(value) {
       if (!rows.length) break;
       for (const row of rows) {
         const snapshot = advertisingEmailHistoryJson(row.data_json, null);
+        if (stream && advertisingEmailRowStream(snapshot) !== stream) continue;
         const email = extractAdvertisingEmails(snapshot?.email)[0] || "";
         if (!email || seenEmails.has(email)) continue;
         seenEmails.add(email);
@@ -10308,6 +10378,7 @@ async function collectAdvertisingEmails(sourceIds = [], options = {}) {
         records,
         count: new Set(records.flatMap((record) => extractAdvertisingEmails(record.email))).size,
         processing: String(records.processing || "direct"),
+        sourceSyncedAt: String(records.sourceSyncedAt || ""),
         durationMs: Date.now() - sourceStartedAt,
         error: ""
       };
@@ -10570,8 +10641,9 @@ async function handleAdvertisingEmailSourceProxy(req, res, authUser) {
   try {
     const body = await readJsonBody(req, 64 * 1024);
     source = normalizeAdvertisingEmailSource(body.source, 0);
-    if (source.kind !== "sql") throw new Error("Через сервер сайта выполняются только SQL-источники.");
-    const records = await queryAdvertisingEmailRecords(
+    if (!["sql", "vitu"].includes(source.kind)) throw new Error("Этот тип источника недоступен через сервер сайта.");
+    // VITU proxy must terminate on Server, never recurse through the public gateway.
+    const records = source.kind === "vitu" ? readAdvertisingVituContacts() : await queryAdvertisingEmailRecords(
       await getAdvertisingSourceMySqlPool(source.connection),
       source.sql
     );
@@ -10580,6 +10652,7 @@ async function handleAdvertisingEmailSourceProxy(req, res, authUser) {
       source: publicAdvertisingEmailSource(source),
       records,
       count: records.length,
+      sourceSyncedAt: String(records.sourceSyncedAt || ""),
       processing: "site-proxy"
     });
   } catch (error) {
@@ -10696,7 +10769,7 @@ async function handleAdvertisingEmailHistory(req, res, requestUrl, authUser) {
       sendJson(
         res,
         200,
-        await readAdvertisingEmailHistoryNewReadyEmails(requestUrl.searchParams.get("runId"))
+        await readAdvertisingEmailHistoryNewReadyEmails(requestUrl.searchParams.get("runId"), requestUrl.searchParams.get("stream") || "")
       );
       return;
     }
@@ -41231,6 +41304,10 @@ module.exports = {
   executeAdvertisingSitesPlanWithPools,
   normalizeAdvertisingEmailRecords,
   aggregateAdvertisingEmailResults,
+  advertisingEmailSourceStream,
+  advertisingEmailRowStream,
+  advertisingEmailStreamSummary,
+  readAdvertisingVituContacts,
   normalizeAdvertisingEmailSources,
   normalizeAdvertisingEmailExclusions,
   mergeAdvertisingEmailExclusions,

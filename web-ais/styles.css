@@ -28727,7 +28727,7 @@ body.is-resizing-column .statistics-profitability-resize-handle::after {
 
 .advertising-filters {
   display: grid;
-  grid-template-columns: minmax(240px, 2fr) minmax(190px, 1.2fr) minmax(150px, 0.8fr) auto;
+  grid-template-columns: minmax(180px, 2fr) minmax(130px, 0.8fr) minmax(160px, 1.2fr) minmax(130px, 0.8fr) auto;
   gap: 8px;
   align-items: end;
 }
@@ -32076,4 +32076,23 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 @media (max-width: 420px) {
   .program-site-sync-dialog .program-site-sync-summary { grid-template-columns: minmax(0, 1fr); }
   .program-site-sync-dialog .program-site-sync-summary dt:not(:first-child) { margin-top: 4px; }
+}
+.advertising-stream-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.advertising-stream-panel {
+  min-width: 0;
+}
+
+.advertising-stream-panel .panel-head,
+.advertising-stream-panel .advertising-heading-actions {
+  flex-wrap: wrap;
+}
+
+.advertising-stream-panel .advertising-heading-actions {
+  justify-content: flex-start;
 }

@@ -104,7 +104,7 @@ assert.match(collectFunction, /advertising\.result\s*=\s*payload/u);
 assert.match(collectFunction, /advertising\.resultLoaded\s*=\s*true/u);
 assert.match(
   collectFunction,
-  /if\s*\(\s*newUnique\s*>\s*0\s*\)[\s\S]*?advertising\.filters\s*=\s*\{\s*query:\s*["']["']\s*,\s*source:\s*["']["']\s*,\s*status:\s*["']new["']\s*\}/u,
+  /if\s*\(\s*newUnique\s*>\s*0\s*\)[\s\S]*?advertising\.filters\s*=\s*\{\s*query:\s*["']["']\s*,\s*source:\s*["']["']\s*,\s*status:\s*["']new["']\s*,\s*stream:\s*["']["']\s*\}/u,
   "После успешного поиска новых адресов поиск и источник должны очищаться, а таблица — переключаться на статус «Новые»."
 );
 assert.match(
@@ -441,7 +441,7 @@ assert.doesNotMatch(
 
 const copyHandlerStart = bindFunction.indexOf("[data-action='copy-new-advertising-emails']");
 assert.ok(copyHandlerStart >= 0, "Не найден обработчик копирования новых контактов.");
-const copyHandler = bindFunction.slice(copyHandlerStart, copyHandlerStart + 1800);
+const copyHandler = bindFunction.slice(copyHandlerStart, bindFunction.indexOf("[data-action='copy-advertising-history-run']", copyHandlerStart));
 assert.match(
   copyHandler,
   /getAdvertisingFilteredRows\(\{\s*status:\s*["']new["']\s*\}\)/u,
@@ -462,7 +462,7 @@ const historyCopyHandlerAction = bindFunction.includes("[data-action='copy-adver
 const historyCopyHandlerStart = bindFunction.indexOf(historyCopyHandlerAction);
 assert.ok(historyCopyHandlerStart >= 0, "Не найден обработчик копирования набора отдельного запроса.");
 const historyCopyBinding = bindFunction.slice(historyCopyHandlerStart, historyCopyHandlerStart + 500);
-assert.match(historyCopyBinding, /copyAdvertisingEmailHistoryRun\(button\.dataset\.runId\)/u);
+assert.match(historyCopyBinding, /copyAdvertisingEmailHistoryRun\(button\.dataset\.runId,\s*button\.dataset\.stream/u);
 const transferBindingStart = bindFunction.indexOf("[data-action='toggle-advertising-history-transfer']");
 assert.ok(transferBindingStart >= 0, "Не найден обработчик ручной отметки передачи email.");
 assert.match(

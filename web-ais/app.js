@@ -6545,6 +6545,7 @@ MAX - https://bizvmax.ru/zifra_plus
     { id: "admin", label: "Админка", icon: '<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.6-2.8 7.9-7 10-4.2-2.1-7-5.4-7-10V6z"></path><circle cx="12" cy="12" r="2.4"></circle><path d="M12 8.2v1.2"></path><path d="M12 14.6v1.2"></path><path d="M15.8 12h-1.2"></path><path d="M9.4 12H8.2"></path><path d="M14.7 9.3l-.9.9"></path><path d="M10.2 13.8l-.9.9"></path><path d="M14.7 14.7l-.9-.9"></path><path d="M10.2 10.2l-.9-.9"></path></svg>' }
   ];
   const ADVERTISING_EMAIL_SOURCES = Object.freeze([
+    { id: "vitu_applicants", label: "Анкеты абитуриентов (виту.рф)", group: "Сайт ВИТУ", kind: "vitu", stream: "applicants" },
     { id: "assistant_installations", label: "Установка Ассистента (edu-plus.ru)", group: "SQL", kind: "sql" },
     { id: "site_downloads", label: "Загрузки с zifra-plus.ru", group: "SQL", kind: "sql" },
     { id: "ais_students_contracts", label: "База слушателей и договоров", group: "АИС", kind: "ais" },
@@ -7668,6 +7669,7 @@ MAX - https://bizvmax.ru/zifra_plus
       result: null,
       selectedSourceIds: ADVERTISING_EMAIL_SOURCES.map((source) => source.id),
       filters: {
+        stream: "",
         query: "",
         source: "",
         status: "ready"
@@ -17063,6 +17065,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (requestedStatus === "ready" && row.excluded) return false;
       if (requestedStatus === "excluded" && !row.excluded) return false;
       if (requestedStatus === "new" && !isEffectiveNew(row)) return false;
+      if (applyScopeFilters && filters.stream && getAdvertisingRowStream(row) !== filters.stream) return false;
       if (applyScopeFilters && sourceId && !(row.sources || []).some((source) => source.id === sourceId)) return false;
       if (!applyScopeFilters || !query) return true;
       const haystack = [
@@ -17143,6 +17146,38 @@ MAX - https://bizvmax.ru/zifra_plus
     return sources.filter((source) => options.includeDisabled || source.enabled !== false);
   }
 
+  function getAdvertisingSourceStream(source) {
+    if (source?.kind === "vitu") return "applicants";
+    if (["applicants", "other"].includes(source?.stream)) return source.stream;
+    return ["vitu_applicants", "viit_applicants", "viit_open_days"].includes(source?.id) ? "applicants" : "other";
+  }
+
+  function getAdvertisingRowStream(row) {
+    return row?.stream === "applicants" || (row?.sources || []).some((source) => getAdvertisingSourceStream(source) === "applicants") ? "applicants" : "other";
+  }
+
+  function getAdvertisingStreamRows(stream, onlyNew = false) {
+    return (state.advertising.result?.rows || []).filter((row) => !row.excluded
+      && getAdvertisingRowStream(row) === stream
+      && (!onlyNew || isAdvertisingCurrentRowNew(row)));
+  }
+
+  function renderAdvertisingStreams() {
+    const busy = state.advertising.loading || state.advertising.resultLoading || state.advertising.resultCachePartial;
+    return `<div class="advertising-stream-grid">${[["applicants", "Абитуриенты"], ["other", "Прочие"]].map(([stream, label]) => {
+      const ready = getAdvertisingStreamRows(stream).length;
+      const fresh = getAdvertisingStreamRows(stream, true).length;
+      return `<section class="panel advertising-stream-panel" aria-label="${label}">
+        <div class="panel-head"><h2>${label}</h2><span class="statistics-row-count">${formatStatisticsInteger(ready)} · новых ${formatStatisticsInteger(fresh)}</span></div>
+        <div class="advertising-heading-actions">
+          <button class="ghost-button" data-action="copy-advertising-stream" data-stream="${stream}" type="button" ${busy || !ready ? "disabled" : ""}>Копировать все (${formatStatisticsInteger(ready)})</button>
+          <button class="ghost-button advertising-copy-new" data-action="copy-advertising-stream" data-stream="${stream}" data-only-new="true" type="button" ${busy || !fresh ? "disabled" : ""}>Копировать новые (${formatStatisticsInteger(fresh)})</button>
+          <button class="ghost-button" data-action="show-advertising-stream" data-stream="${stream}" type="button">Показать адреса</button>
+        </div>
+      </section>`;
+    }).join("")}</div>`;
+  }
+
   function renderAdvertisingSourceCards() {
     const selected = new Set(state.advertising.selectedSourceIds || []);
     const resultSources = new Map((state.advertising.result?.sources || []).map((source) => [source.id, source]));
@@ -17152,7 +17187,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const statusLabel = status === "error"
         ? "Ошибка"
         : status === "ok" ? `${formatStatisticsInteger(result.count)} адресов` : "Ожидает запуска";
-      const processingLabel = result?.processing === "site-proxy" ? " · через сайт" : "";
+      const processingLabel = source.kind === "vitu" ? ` · зеркало Server${result?.sourceSyncedAt ? ` · ${formatDateTimeRu(result.sourceSyncedAt)}` : ""}` : result?.processing === "site-proxy" ? " · через сайт" : "";
       return `
         <label class="advertising-source-card is-${escapeAttr(status)} ${selected.has(source.id) ? "is-selected" : ""}" title="${escapeMultilineAttr(result?.error || (result?.processing === "site-proxy" ? `${source.label}\n\nИсточник обработан через сервер сайта, поскольку прямое подключение с компьютера недоступно.` : source.label))}">
           <input
@@ -17172,6 +17207,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderAdvertisingSourceConfiguration(source, index) {
+    if (source.kind === "vitu") {
+      return '<p class="advertising-source-native-note">Email и даты анкет виту.рф из обновляемого зеркала проекта «Сайт ВИТУ» на Server. Только чтение; при работе из интернета используется защищённый туннель.</p>';
+    }
     if (source.kind === "sql") {
       return `
         <div class="advertising-source-query">
@@ -17258,6 +17296,11 @@ MAX - https://bizvmax.ru/zifra_plus
                     <option value="google" ${source.kind === "google" ? "selected" : ""}>Опубликованная таблица</option>
                     <option value="workbook" ${source.kind === "workbook" ? "selected" : ""}>Раздел базы рекламы</option>
                     <option value="ais" ${source.kind === "ais" ? "selected" : ""}>Данные АИС</option>
+                    <option value="vitu" ${source.kind === "vitu" ? "selected" : ""}>Анкеты виту.рф</option>
+                  </select></label>
+                  <label><span>Поток адресов</span><select data-advertising-source-field="stream" ${source.kind === "vitu" ? "disabled" : ""}>
+                    <option value="applicants" ${getAdvertisingSourceStream(source) === "applicants" ? "selected" : ""}>Абитуриенты</option>
+                    <option value="other" ${getAdvertisingSourceStream(source) === "other" ? "selected" : ""}>Прочие</option>
                   </select></label>
                   <label><span>Идентификатор</span><input data-advertising-source-field="id" value="${escapeAttr(source.id || `source_${index + 1}`)}" pattern="[a-z0-9_-]+" spellcheck="false"></label>
                   <label class="advertising-source-enabled"><input data-advertising-source-field="enabled" type="checkbox" ${source.enabled !== false ? "checked" : ""}><span>Использовать источник</span></label>
@@ -17892,6 +17935,10 @@ MAX - https://bizvmax.ru/zifra_plus
           </td>
           <td data-label="Действия"><div class="advertising-history-actions">
             <button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${copyDisabled ? "disabled" : ""}>${isCopying ? '<span class="auth-spinner" aria-hidden="true"></span> Копирование…' : `Копировать (${formatStatisticsInteger(availableNewReady)})`}</button>
+            ${[["applicants", "Абитуриенты"], ["other", "Прочие"]].map(([stream, label]) => {
+              const count = summary.streams?.[stream]?.newReady;
+              return `<button class="ghost-button compact-button advertising-history-copy" data-action="copy-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" data-stream="${stream}" type="button" ${copyDisabled || count === 0 ? "disabled" : ""}>${label}: новые${Number.isFinite(count) ? ` (${formatStatisticsInteger(transferredToAdvertising ? 0 : count)})` : ""}</button>`;
+            }).join("")}
             ${canDelete ? `<button class="danger-button compact-button advertising-history-delete" data-action="delete-advertising-history-run" data-run-id="${escapeAttr(row.runId || "")}" type="button" ${history.loading || history.deletingRunId || history.copyingRunId || history.updatingTransferRunId || state.advertising.resultLoading ? "disabled" : ""}>${isDeleting ? '<span class="auth-spinner" aria-hidden="true"></span> Удаление…' : "Удалить"}</button>` : ""}
           </div></td>
         </tr>
@@ -18056,6 +18103,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
         ${renderAdvertisingHistory()}
 
+        ${renderAdvertisingStreams()}
+
         <section class="panel advertising-results-panel" data-advertising-results tabindex="-1">
           <div class="panel-head advertising-results-head">
             <div><p class="eyebrow">Сохранённый результат</p><h2>Email-адреса последнего поиска</h2></div>
@@ -18066,6 +18115,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
           <div class="advertising-filters">
             <label class="advertising-filter-query"><span>Поиск</span><input data-advertising-filter="query" value="${escapeAttr(advertising.filters.query)}" placeholder="Email, ФИО, организация, телефон" autocomplete="off"></label>
+            <label><span>Поток</span><select data-advertising-filter="stream"><option value="">Все потоки</option><option value="applicants" ${advertising.filters.stream === "applicants" ? "selected" : ""}>Абитуриенты</option><option value="other" ${advertising.filters.stream === "other" ? "selected" : ""}>Прочие</option></select></label>
              <label><span>Источник</span><select data-advertising-filter="source"><option value="">Все источники</option>${getAdvertisingEmailSources().map((source) => `<option value="${escapeAttr(source.id)}" ${advertising.filters.source === source.id ? "selected" : ""}>${escapeHtml(source.label)}</option>`).join("")}</select></label>
             <label><span>Статус</span><select data-advertising-filter="status"><option value="ready" ${advertising.filters.status === "ready" ? "selected" : ""}>Готовы к рекламе</option><option value="new" ${advertising.filters.status === "new" ? "selected" : ""}>Новые</option><option value="excluded" ${advertising.filters.status === "excluded" ? "selected" : ""}>Исключённые</option><option value="all" ${advertising.filters.status === "all" ? "selected" : ""}>Все адреса</option></select></label>
             <button class="ghost-button" data-action="reset-advertising-filters" type="button">Сбросить</button>
@@ -18262,7 +18312,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  async function copyAdvertisingEmailHistoryRun(runId) {
+  async function copyAdvertisingEmailHistoryRun(runId, stream = "") {
     const advertising = state.advertising;
     const history = advertising.history;
     const normalizedRunId = String(runId || "").trim();
@@ -18272,7 +18322,7 @@ MAX - https://bizvmax.ru/zifra_plus
     advertising.notice = "";
     if (state.view === "advertising") render();
     try {
-      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/history?runId=${encodeURIComponent(normalizedRunId)}`), {
+      const response = await fetch(photoApiUrl(`/api/advertising/email-collector/history?runId=${encodeURIComponent(normalizedRunId)}${stream ? `&stream=${encodeURIComponent(stream)}` : ""}`), {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
@@ -18480,7 +18530,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const newUnique = Number(payload.summary?.newUnique) || 0;
       const newReady = Number(payload.summary?.newReady) || 0;
       if (newUnique > 0) {
-        advertising.filters = { query: "", source: "", status: "new" };
+        advertising.filters = { query: "", source: "", status: "new", stream: "" };
         advertising.history.olderExpanded = false;
         revealNewAddresses = true;
       }
@@ -18527,6 +18577,7 @@ MAX - https://bizvmax.ru/zifra_plus
       id: String(source.id || `source_${index + 1}`).trim(),
       label: String(source.label || "").trim(),
       group: String(source.group || "Другое").trim(),
+      stream: getAdvertisingSourceStream(source),
       kind,
       enabled: source.enabled !== false
     };
@@ -18607,6 +18658,7 @@ MAX - https://bizvmax.ru/zifra_plus
         id: String(field("id")?.value || `source_${index + 1}`).trim(),
         label: String(field("label")?.value || "").trim(),
         group: String(field("group")?.value || "Другое").trim(),
+        stream: kind === "vitu" ? "applicants" : String(field("stream")?.value || "other"),
         kind,
         enabled: Boolean(field("enabled")?.checked)
       };
@@ -18863,7 +18915,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     document.querySelector("[data-action='reset-advertising-filters']")?.addEventListener("click", () => {
-      state.advertising.filters = { query: "", source: "", status: "ready" };
+      state.advertising.filters = { query: "", source: "", status: "ready", stream: "" };
       state.tablePages.advertisingEmails = 1;
       render();
     });
@@ -18907,7 +18959,31 @@ MAX - https://bizvmax.ru/zifra_plus
       render();
     });
     document.querySelectorAll("[data-action='copy-advertising-history-run']").forEach((button) => {
-      button.addEventListener("click", () => copyAdvertisingEmailHistoryRun(button.dataset.runId));
+      button.addEventListener("click", () => copyAdvertisingEmailHistoryRun(button.dataset.runId, button.dataset.stream || ""));
+    });
+    document.querySelectorAll("[data-action='show-advertising-stream']").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.advertising.filters = { query: "", source: "", status: "ready", stream: button.dataset.stream };
+        state.tablePages.advertisingEmails = 1;
+        render();
+        document.querySelector("[data-advertising-results]")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      });
+    });
+    document.querySelectorAll("[data-action='copy-advertising-stream']").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (state.advertising.resultCachePartial || state.advertising.loading || state.advertising.resultLoading) return;
+        const stream = button.dataset.stream;
+        const emails = getAdvertisingClipboardEmails(getAdvertisingStreamRows(stream, button.dataset.onlyNew === "true"));
+        if (!emails.length) return;
+        try {
+          await copyTextToClipboard(emails.join("\r\n"));
+          state.advertising.notice = `${stream === "applicants" ? "Абитуриенты" : "Прочие"}: скопировано ${emails.length} ${button.dataset.onlyNew === "true" ? "новых " : ""}адресов.`;
+          state.advertising.error = "";
+        } catch (error) {
+          state.advertising.error = error.message || "Не удалось скопировать адреса.";
+        }
+        render();
+      });
     });
     document.querySelectorAll("[data-action='toggle-advertising-history-transfer']").forEach((checkbox) => {
       checkbox.addEventListener("change", () => updateAdvertisingEmailHistoryTransfer(
