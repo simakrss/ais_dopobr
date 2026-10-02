@@ -1619,6 +1619,38 @@ function gateway_tunnel_settings(): ?array
     return ['baseUrl' => $baseUrl, 'secret' => $secret];
 }
 
+function gateway_handle_shared_auth_role_proxy(string $method, string $path, string $body): void
+{
+    if ($path !== '/api/auth/shared-roles') return;
+    $settings = gateway_tunnel_settings();
+    $headers = gateway_request_headers();
+    $provided = (string) ($headers['x-ais-gateway-token'] ?? '');
+    if ($settings === null || $provided === '' || !hash_equals($settings['secret'], $provided)) {
+        gateway_fail(404, 'Not found');
+    }
+    if ($method !== 'POST') gateway_fail(405, 'Method not allowed');
+    if (strlen($body) > 32 * 1024) gateway_fail(413, 'Запрос слишком большой.');
+    $payload = gateway_read_json_body($body);
+    $keys = $payload['principalKeys'] ?? null;
+    if (!is_array($keys) || !array_is_list($keys) || count($keys) < 1 || count($keys) > 200
+        || ($payload['stateKey'] ?? '') !== gateway_shared_state_key()) {
+        gateway_fail(400, 'Некорректный запрос ролей.');
+    }
+    foreach ($keys as $key) {
+        if (!is_string($key) || preg_match('/^[a-f0-9]{64}$/D', $key) !== 1) gateway_fail(400, 'Некорректный запрос ролей.');
+    }
+    try {
+        $pdo = gateway_record_locks_pdo();
+        // Read only: this route must not initialize roles supplied by a stale local copy.
+        $placeholders = implode(',', array_fill(0, count($keys), '?'));
+        $query = $pdo->prepare('SELECT principal_key, role, revision FROM ais_auth_roles WHERE state_key = ? AND principal_key IN (' . $placeholders . ')');
+        $query->execute([gateway_shared_state_key(), ...$keys]);
+        gateway_json(200, ['ok' => true, 'roles' => $query->fetchAll()]);
+    } catch (Throwable $error) {
+        gateway_fail(503, 'Общее хранилище ролей временно недоступно.');
+    }
+}
+
 function gateway_handle_advertising_source_proxy(
     string $method,
     string $path,
@@ -4067,6 +4099,7 @@ try {
         }
         gateway_serve_protected_data($requestPath);
     }
+    gateway_handle_shared_auth_role_proxy($method, $requestPath, $body);
     if (str_starts_with($requestPath, '/api/auth/')) {
         if (in_array($requestPath, [
             '/api/auth/partner-registration/challenge',

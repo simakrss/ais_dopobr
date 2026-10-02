@@ -37453,7 +37453,82 @@ async function ensureSharedAuthRoleTable(pool) {
   sharedAuthRoleTables.add(pool);
 }
 
+let sharedAuthDirectRetryAt = 0;
+
+async function readSharedAuthRolesThroughSite(users) {
+  const secret = String(process.env.AIS_GATEWAY_SHARED_SECRET || "").trim();
+  const base = new URL(`${String(process.env.AIS_PUBLIC_APP_URL || "https://edu-plus.ru/lms").replace(/\/+$/u, "")}/`);
+  if (secret.length < 32 || base.protocol !== "https:" || base.username || base.password) {
+    throw new Error("Не настроен защищённый доступ к общим ролям.");
+  }
+  const principalKeys = [...new Set(users.map(user => sharedAuthRoleIdentity(user).key))];
+  const roles = new Map();
+  for (let offset = 0; offset < principalKeys.length; offset += 200) {
+    const requestedKeys = principalKeys.slice(offset, offset + 200);
+    // Never forward passwords or accept redirects carrying the machine secret.
+    const response = await fetch(new URL("api/auth/shared-roles", base), {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(12000),
+      headers: { "Content-Type": "application/json", "X-AIS-Gateway-Token": secret },
+      body: JSON.stringify({ principalKeys: requestedKeys, stateKey: SHARED_STATE_MYSQL_KEY })
+    });
+    if (!response.ok) throw new Error("Сайт не подтвердил общие роли.");
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > 256 * 1024) throw new Error("Некорректный ответ сервера ролей.");
+      chunks.push(chunk);
+    }
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (payload?.ok !== true || !Array.isArray(payload.roles)) throw new Error("Некорректный ответ сервера ролей.");
+    for (const row of payload.roles) {
+      if (!requestedKeys.includes(row?.principal_key) || roles.has(row.principal_key)
+        || !/^[1-9]\d*$/u.test(String(row.revision))) throw new Error("Некорректное назначение роли.");
+      roles.set(row.principal_key, row);
+    }
+  }
+  return users.map(user => {
+    const row = roles.get(sharedAuthRoleIdentity(user).key);
+    // Missing authority is not permission to reuse a potentially revoked local admin role.
+    if (!row) throw new Error("Общая роль пользователя не найдена.");
+    return applySharedAuthRole(user, row);
+  });
+}
+
+async function withSharedAuthReadFallback(users, readDirect, poolOverride) {
+  const canUseSite = !poolOverride && process.platform === "win32"
+    && String(process.env.AIS_GATEWAY_SHARED_SECRET || "").trim().length >= 32;
+  if (!canUseSite || Date.now() >= sharedAuthDirectRetryAt) {
+    try {
+      const result = await readDirect();
+      sharedAuthDirectRetryAt = 0;
+      return result;
+    } catch (error) {
+      const code = String(error?.code || "").toUpperCase();
+      if (!canUseSite || !["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "PROTOCOL_CONNECTION_LOST", "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR"].includes(code)) throw error;
+      sharedAuthDirectRetryAt = Date.now() + 30000;
+    }
+  }
+  try {
+    return await readSharedAuthRolesThroughSite(users);
+  } catch {
+    const error = new Error("Не удалось проверить права доступа: база и резервная проверка через сайт недоступны. Повторите вход позже.");
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
 async function resolveSharedAuthUser(user, poolOverride) {
+  if (isDatabaseDemoModeEnabled()) return user;
+  return (await withSharedAuthReadFallback([user], async () => [await resolveSharedAuthUserDirect(user, poolOverride)], poolOverride))[0];
+}
+
+async function resolveSharedAuthUsers(users, poolOverride) {
+  if (isDatabaseDemoModeEnabled()) return users;
+  return withSharedAuthReadFallback(users, () => resolveSharedAuthUsersDirect(users, poolOverride), poolOverride);
+}
+
+async function resolveSharedAuthUserDirect(user, poolOverride) {
   if (isDatabaseDemoModeEnabled()) return user;
   const pool = poolOverride || await getSharedRecordLocksMySqlPool();
   if (!pool) return applySharedAuthRole(user, null);
@@ -37467,7 +37542,7 @@ async function resolveSharedAuthUser(user, poolOverride) {
   return applySharedAuthRole(user, created[0]);
 }
 
-async function resolveSharedAuthUsers(users, poolOverride) {
+async function resolveSharedAuthUsersDirect(users, poolOverride) {
   if (isDatabaseDemoModeEnabled()) return users;
   const pool = poolOverride || await getSharedRecordLocksMySqlPool();
   if (!pool) return users.map(user => applySharedAuthRole(user, null));
