@@ -1680,17 +1680,8 @@ function gateway_handle_advertising_source_proxy(
     $headers['x-ais-user-name'] = 'Advertising source proxy';
     $headers['x-ais-user-role'] = 'admin';
     $headers['x-ais-session-id'] = hash('sha256', 'advertising-source-proxy');
-    $payload = gateway_read_json_body($body);
-    if (($payload['source']['kind'] ?? '') === 'vitu') {
-        // Email-only, authenticated read of the VITU mirror on Server; no public data endpoint.
-        try {
-            $response = gateway_run_tunnel($settings, $path, 'POST', $headers, $body);
-        } catch (Throwable $error) {
-            gateway_fail(503, 'Анкеты виту.рф недоступны: проверьте компьютер Server и туннель.');
-        }
-        $response['headers']['X-AIS-Processing'] = 'local-tunnel';
-        gateway_send_node_response($response);
-    }
+    // Compatibility for older authenticated collectors. VITU is read through the encrypted
+    // zifra-plus.ru queue by Node; no inbound connection to Server is required.
     $response = gateway_run_node($path, 'POST', $headers, $body);
     $response['headers']['X-AIS-Processing'] = 'site-proxy';
     gateway_send_node_response($response);

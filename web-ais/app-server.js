@@ -9154,7 +9154,29 @@ function formatAdvertisingSourceError(error, source) {
   return message;
 }
 
-function readAdvertisingVituContacts(databasePath = process.env.AIS_ADVERTISING_VITU_DATABASE || "D:/Jupiter/VITU-Mirror/data/vitu.sqlite", now = Date.now()) {
+function advertisingVituDatabasePath() {
+  return process.env.AIS_ADVERTISING_VITU_DATABASE || "D:/Jupiter/VITU-Mirror/data/vitu.sqlite";
+}
+
+function hasAdvertisingVituMirror() {
+  // Only configured local mirrors may advertise this capability. Never accept a path from a job.
+  try {
+    return typeof require("node:sqlite").DatabaseSync === "function"
+      && fsSync.statSync(advertisingVituDatabasePath()).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function validateAdvertisingVituSyncTime(value, now = Date.now()) {
+  const syncedAt = Date.parse(value || "");
+  if (!Number.isFinite(syncedAt) || now - syncedAt > 15 * 60 * 1000 || syncedAt > now + 60000) {
+    throw new Error("Зеркало анкет виту.рф не обновлялось более 15 минут. Проверьте синхронизацию проекта «Сайт ВИТУ» и повторите сбор.");
+  }
+  return new Date(syncedAt).toISOString();
+}
+
+function readAdvertisingVituContacts(databasePath = advertisingVituDatabasePath(), now = Date.now()) {
   // Use the existing, continuously synchronized VITU mirror. Never open the site database for writing.
   let db;
   try {
@@ -9162,15 +9184,13 @@ function readAdvertisingVituContacts(databasePath = process.env.AIS_ADVERTISING_
     db = new DatabaseSync(databasePath, { readOnly: true });
     db.exec("PRAGMA busy_timeout=3000; BEGIN");
     const sync = db.prepare("SELECT synced_at FROM mirror_sync_state WHERE id=1").get();
-    const syncedAt = Date.parse(sync?.synced_at || "");
-    if (!Number.isFinite(syncedAt) || now - syncedAt > 15 * 60 * 1000 || syncedAt > now + 60000) {
-      throw new Error("Зеркало анкет виту.рф не обновлялось более 15 минут. Проверьте синхронизацию проекта «Сайт ВИТУ» и повторите сбор.");
-    }
+    const syncedAt = validateAdvertisingVituSyncTime(sync?.synced_at, now);
     const rows = db.prepare("SELECT email, created_at AS sourceReceivedAt FROM applications WHERE TRIM(COALESCE(email, '')) <> '' AND COALESCE(archive_state, '') <> 'deleted' ORDER BY created_at, id LIMIT 100001").all();
     if (rows.length > 100000) throw new Error("В анкетах ВИТУ превышен предел 100000 записей. Требуется расширить лимит сборщика.");
     const records = normalizeAdvertisingEmailRecords(rows);
+    if (records.length > 100000) throw new Error("В анкетах ВИТУ превышен предел 100000 записей. Требуется расширить лимит сборщика.");
     Object.defineProperty(records, "processing", { value: "vitu-mirror", enumerable: false });
-    Object.defineProperty(records, "sourceSyncedAt", { value: new Date(syncedAt).toISOString(), enumerable: false });
+    Object.defineProperty(records, "sourceSyncedAt", { value: syncedAt, enumerable: false });
     return records;
   } catch (error) {
     if (/Зеркало анкет|В анкетах ВИТУ/u.test(error.message)) throw error;
@@ -9180,12 +9200,28 @@ function readAdvertisingVituContacts(databasePath = process.env.AIS_ADVERTISING_
   }
 }
 
+async function queryAdvertisingVituContacts() {
+  if (hasAdvertisingVituMirror()) return readAdvertisingVituContacts();
+  // Both hosted and desktop collectors use the durable signed queue key, not a tunnel token.
+  const client = await getDocumentRelayClient();
+  const result = await client.run("vitu-emails", {}, {timeoutMs: 55000});
+  if (!result || !Array.isArray(result.records) || result.records.length > 100000) {
+    throw new Error("Источник ВИТУ вернул некорректный список адресов.");
+  }
+  // Recheck freshness after transit; never silently accept an old or undated snapshot.
+  const syncedAt = validateAdvertisingVituSyncTime(result.sourceSyncedAt);
+  const records = normalizeAdvertisingEmailRecords(result.records.map(row => ({
+    email: row?.email, sourceReceivedAt: row?.sourceReceivedAt
+  })));
+  if (records.length > 100000) throw new Error("Источник ВИТУ вернул слишком большой список адресов.");
+  Object.defineProperty(records, "processing", {value: "vitu-relay", enumerable: false});
+  Object.defineProperty(records, "sourceSyncedAt", {value: syncedAt, enumerable: false});
+  return records;
+}
+
 async function runAdvertisingEmailSource(source, workbookPromise) {
   if (source.kind === "vitu") {
-    const mirrorPath = process.env.AIS_ADVERTISING_VITU_DATABASE || "D:/Jupiter/VITU-Mirror/data/vitu.sqlite";
-    return process.platform === "win32" && fsSync.existsSync(mirrorPath)
-      ? readAdvertisingVituContacts(mirrorPath)
-      : queryAdvertisingEmailRecordsThroughSite(source);
+    return queryAdvertisingVituContacts();
   }
   if (source.kind === "sql") {
     try {
@@ -10642,8 +10678,8 @@ async function handleAdvertisingEmailSourceProxy(req, res, authUser) {
     const body = await readJsonBody(req, 64 * 1024);
     source = normalizeAdvertisingEmailSource(body.source, 0);
     if (!["sql", "vitu"].includes(source.kind)) throw new Error("Этот тип источника недоступен через сервер сайта.");
-    // VITU proxy must terminate on Server, never recurse through the public gateway.
-    const records = source.kind === "vitu" ? readAdvertisingVituContacts() : await queryAdvertisingEmailRecords(
+    // Older clients may still call this authenticated route; use the queue, never the tunnel.
+    const records = source.kind === "vitu" ? await queryAdvertisingVituContacts() : await queryAdvertisingEmailRecords(
       await getAdvertisingSourceMySqlPool(source.connection),
       source.sql
     );
@@ -36477,6 +36513,17 @@ async function runDocumentRelayOcr(operation, payload) {
 
 async function executeDocumentRelayJob(kind, payload, controller) {
   return documentGenerationContext.run(controller, async () => {
+    if (kind === "vitu-emails") {
+      controller.signal.throwIfAborted();
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length) {
+        throw new Error("Недопустимое задание ВИТУ: параметры источника задаются только на компьютере-исполнителе.");
+      }
+      // Read only email/date, with the same freshness and deletion rules as a local collection.
+      // Workers must never fall back to the queue recursively.
+      const records = readAdvertisingVituContacts();
+      controller.signal.throwIfAborted();
+      return {records: records.map(({email, sourceReceivedAt}) => ({email, sourceReceivedAt})), sourceSyncedAt: records.sourceSyncedAt};
+    }
     if (kind === "pdf") {
       const bytes = Buffer.from(String(payload?.base64 || ""), "base64");
       if (!bytes.length || bytes.length > MAX_DOCX_BYTES || bytes.subarray(0, 2).toString() !== "PK") throw new Error("Некорректный документ DOCX.");
@@ -36509,12 +36556,12 @@ function startDocumentRelayWorker() {
     getCapabilities: async () => {
       if (Date.now() - checkedAt > 30000) {
         const [pdf, ocr] = await Promise.all([resolveLibreOfficeBinary(), readOcrHealthPayload().catch(() => null)]);
-        capabilities = [...(pdf ? ["pdf"] : []), ...(ocr?.ok ? ["ocr"] : [])]; checkedAt = Date.now();
+        capabilities = [...(pdf ? ["pdf"] : []), ...(ocr?.ok ? ["ocr"] : []), ...(hasAdvertisingVituMirror() ? ["vitu-emails"] : [])]; checkedAt = Date.now();
       }
       return capabilities;
     },
     execute: executeDocumentRelayJob,
-    onError: message => console.warn(`Очередь PDF/OCR: ${message}`)
+    onError: message => console.warn(`Очередь PDF/OCR/ВИТУ: ${message}`)
   });
   return documentRelayWorker;
 }
@@ -41383,6 +41430,8 @@ module.exports = {
   advertisingEmailRowStream,
   advertisingEmailStreamSummary,
   readAdvertisingVituContacts,
+  hasAdvertisingVituMirror,
+  queryAdvertisingVituContacts,
   normalizeAdvertisingEmailSources,
   normalizeAdvertisingEmailExclusions,
   mergeAdvertisingEmailExclusions,

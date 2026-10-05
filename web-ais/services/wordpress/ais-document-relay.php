@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: АИС — защищённая очередь PDF и OCR
- * Description: Исходящий обмен с исполнителями АИС; зашифрованные временные документы вне public_html.
- * Version: 1.1.0
+ * Plugin Name: АИС — защищённая очередь PDF, OCR и ВИТУ
+ * Description: Исходящий обмен с исполнителями АИС; зашифрованные временные пакеты вне public_html.
+ * Version: 1.2.0
  */
 // Direct requests use the same signed protocol without booting WordPress/WooCommerce.
 // The file remains an MU plugin too, preserving compatibility with older desktops.
@@ -14,6 +14,7 @@ class AisDrStandaloneError {
 }
 const AIS_DR_MAX_BYTES = 50331648;
 const AIS_DR_CHUNK = 393216;
+const AIS_DR_KINDS = array('pdf', 'ocr', 'vitu-emails');
 function ais_dr_error($message, $status = 400) { return class_exists('WP_Error') ? new WP_Error('ais_document_relay', $message, array('status' => $status)) : new AisDrStandaloneError($message, $status); }
 function ais_dr_is_error($value) { return $value instanceof AisDrStandaloneError || (function_exists('is_wp_error') && is_wp_error($value)); }
 function ais_dr_nonce($nonce) {
@@ -83,12 +84,13 @@ function ais_dr_dispatch($root, $action, $data, $now) {
     if ($action === 'health') {
         $workers = ais_dr_workers($root, $now);
         return array('ok' => true, 'pollMs' => 3000, 'workers' => count($workers), 'pdf' => count(array_filter($workers, fn($w) => in_array('pdf', $w['capabilities'], true))),
-            'ocr' => count(array_filter($workers, fn($w) => in_array('ocr', $w['capabilities'], true))));
+            'ocr' => count(array_filter($workers, fn($w) => in_array('ocr', $w['capabilities'], true))),
+            'vitu' => count(array_filter($workers, fn($w) => in_array('vitu-emails', $w['capabilities'], true))));
     }
     if ($action === 'claim') {
         $worker = $data['worker'] ?? '';
-        if (!ais_dr_id($worker) || !is_array($data['capabilities'] ?? null) || count($data['capabilities']) > 2) throw new InvalidArgumentException('Некорректный исполнитель.');
-        $caps = array_values(array_intersect(array('pdf', 'ocr'), $data['capabilities']));
+        if (!ais_dr_id($worker) || !is_array($data['capabilities'] ?? null) || count($data['capabilities']) > count(AIS_DR_KINDS)) throw new InvalidArgumentException('Некорректный исполнитель.');
+        $caps = array_values(array_intersect(AIS_DR_KINDS, $data['capabilities']));
         ais_dr_write("$root/worker-$worker.json", array('worker' => $worker, 'seen' => $now, 'capabilities' => $caps, 'expires' => $now + 300));
         $jobs = array();
         foreach (glob($root . '/job-*.json') ?: array() as $file) {
@@ -116,13 +118,16 @@ function ais_dr_dispatch($root, $action, $data, $now) {
     $file = "$root/job-$id.json"; $job = ais_dr_json($file);
     if ($action === 'submit') {
         ais_dr_validate_size($data);
-        if (!ais_dr_id($data['owner'] ?? '', 64) || !in_array($data['kind'] ?? '', array('pdf', 'ocr'), true)) throw new InvalidArgumentException('Некорректное задание.');
+        if (!ais_dr_id($data['owner'] ?? '', 64) || !in_array($data['kind'] ?? '', AIS_DR_KINDS, true)) throw new InvalidArgumentException('Некорректное задание.');
         if ($job) {
             if (!hash_equals($job['owner'], hash('sha256', $data['owner'])) || $job['digest'] !== $data['digest']) return ais_dr_error('Идентификатор уже занят.', 409);
             return array('ok' => true);
         }
         $ready = array_filter(ais_dr_workers($root, $now), fn($w) => in_array($data['kind'], $w['capabilities'], true));
-        if (!$ready) return ais_dr_error('Нет доступного компьютера с ' . ($data['kind'] === 'pdf' ? 'LibreOffice' : 'OCR') . '. Запустите АИС и службы документов на одном из компьютеров.', 503);
+        if (!$ready) {
+            if ($data['kind'] === 'vitu-emails') return ais_dr_error('Нет доступного компьютера с базой ВИТУ. Запустите обновлённую АИС на компьютере Server и проверьте зеркало «Сайт ВИТУ». Туннель не требуется.', 503);
+            return ais_dr_error('Нет доступного компьютера с ' . ($data['kind'] === 'pdf' ? 'LibreOffice' : 'OCR') . '. Запустите АИС и службы документов на одном из компьютеров.', 503);
+        }
         $files = glob($root . '/job-*.json') ?: array(); $reserved = 0;
         foreach ($files as $existing) { $j = ais_dr_json($existing); if ($j && !in_array($j['state'], array('acknowledged', 'cancelled'), true)) $reserved += $j['size'] + ($j['output']['size'] ?? 0); }
         if (count($files) >= 200 || $reserved + 2 * $data['size'] > 268435456) return ais_dr_error('Очередь заполнена. Повторите позже.', 429);

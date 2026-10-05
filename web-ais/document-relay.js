@@ -8,7 +8,7 @@ const BASE = "https://zifra-plus.ru/wp-content/mu-plugins/ais-document-relay.php
 const POLL_MS = 3000;
 const CHUNK_BYTES = 384 * 1024;
 const MAX_BYTES = 48 * 1024 * 1024;
-const KINDS = ["pdf", "ocr"];
+const KINDS = ["pdf", "ocr", "vitu-emails"];
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const derive = (secret, purpose) => crypto.createHmac("sha256", secret).update(`ais-document-relay-v1:${purpose}`).digest();
 function failure(message, status = 503) { return Object.assign(new Error(message), { statusCode: status }); }

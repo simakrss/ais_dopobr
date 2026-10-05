@@ -38,7 +38,7 @@ async function main() {
     for (let n = 0; ; n++) { if (startupError) throw startupError; try { await client.call("health"); break; } catch(error) { if (n > 50) throw error; await new Promise(r=>setTimeout(r,100)); } }
     await assert.rejects(relay.createClient("b".repeat(64), clientOptions).call("health"), error => error.statusCode === 403);
     for (const workerId of ["1".repeat(32), "2".repeat(32)]) {
-      workers.push(relay.startWorker({workerId, getClient: async () => client, getCapabilities: async () => ["pdf", "ocr"], execute: async (kind, payload, controller) => {
+      workers.push(relay.startWorker({workerId, getClient: async () => client, getCapabilities: async () => ["pdf", "ocr", ...(workerId.startsWith("2") ? ["vitu-emails"] : [])], execute: async (kind, payload, controller) => {
         handled.push({workerId, index: payload.index, kind});
         if (payload.cancel) await new Promise((resolve, reject) => { controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {once:true}); });
         else await new Promise(r=>setTimeout(r,150));
@@ -50,6 +50,11 @@ async function main() {
     const results = await Promise.all([0,1,2,3].map(index => client.run(index % 2 ? "ocr" : "pdf", {index, ...(index === 0 ? {large: "x".repeat(900000)} : {})})));
     assert.deepEqual(results.map(x=>x.index), [0,1,2,3]); assert.equal(results[0].size,900000);
     assert.equal(handled.length, 4); assert.equal(new Set(handled.map(x=>x.workerId)).size,2);
+    assert.equal((await client.call("health")).vitu, 1);
+    const vitu = await client.run("vitu-emails", {index: 5});
+    assert.equal(vitu.index, 5);
+    assert.equal(handled.find(item => item.index === 5).workerId, "2".repeat(32), "Only a VITU-capable worker may claim applicant jobs");
+    await assert.rejects(client.run("arbitrary-sql", {}), error => error.statusCode === 400);
     const privateRoot = path.join(temp,"ais-document-relay-private");
     assert.equal(fs.readdirSync(privateRoot).filter(file=>/\.(input|output)$/.test(file)).length, 0, "Received payloads must be removed");
     const controller = new AbortController();
