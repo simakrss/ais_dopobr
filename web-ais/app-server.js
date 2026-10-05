@@ -65,6 +65,7 @@ let localUpdateActiveRequests = 0;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
 const documentRelay = require("./document-relay.js");
+const vituEmailSource = require("./vitu-email-source.js");
 let documentRelayWorker = null;
 let documentRelayClientPromise = null;
 const programSiteProgress = require("./program-site-progress.js").createProgressStore();
@@ -9201,10 +9202,9 @@ function readAdvertisingVituContacts(databasePath = advertisingVituDatabasePath(
 }
 
 async function queryAdvertisingVituContacts() {
-  if (hasAdvertisingVituMirror()) return readAdvertisingVituContacts();
-  // Both hosted and desktop collectors use the durable signed queue key, not a tunnel token.
-  const client = await getDocumentRelayClient();
-  const result = await client.run("vitu-emails", {}, {timeoutMs: 55000});
+  // Read the primary website directly, even when a local mirror exists. No worker/tunnel required.
+  const storage = SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data");
+  const result = await vituEmailSource.read(storage);
   if (!result || !Array.isArray(result.records) || result.records.length > 100000) {
     throw new Error("Источник ВИТУ вернул некорректный список адресов.");
   }
@@ -9214,7 +9214,7 @@ async function queryAdvertisingVituContacts() {
     email: row?.email, sourceReceivedAt: row?.sourceReceivedAt
   })));
   if (records.length > 100000) throw new Error("Источник ВИТУ вернул слишком большой список адресов.");
-  Object.defineProperty(records, "processing", {value: "vitu-relay", enumerable: false});
+  Object.defineProperty(records, "processing", {value: "vitu-site", enumerable: false});
   Object.defineProperty(records, "sourceSyncedAt", {value: syncedAt, enumerable: false});
   return records;
 }

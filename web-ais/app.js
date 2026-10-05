@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.574",
+    version: "1.7.575",
     releasedAt: "2026-10-05"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.575",
+      releasedAt: "2026-10-05",
+      changes: ["АИС получает email и даты анкет напрямую с виту.рф через отдельный защищённый API. Компьютер Server, локальное зеркало и туннель для сбора адресов больше не требуются."]
+    },
     {
       version: "1.7.574",
       releasedAt: "2026-10-05",
@@ -17192,7 +17197,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const statusLabel = status === "error"
         ? "Ошибка"
         : status === "ok" ? `${formatStatisticsInteger(result.count)} адресов` : "Ожидает запуска";
-      const processingLabel = source.kind === "vitu" ? ` · ${result?.processing === "vitu-relay" ? "через zifra-plus.ru" : "зеркало Server"}${result?.sourceSyncedAt ? ` · ${formatDateTimeRu(result.sourceSyncedAt)}` : ""}` : result?.processing === "site-proxy" ? " · через сайт" : "";
+      const processingLabel = source.kind === "vitu" ? ` · ${result?.processing === "vitu-relay" ? "через zifra-plus.ru" : result?.processing === "vitu-mirror" ? "зеркало Server" : "напрямую с виту.рф"}${result?.sourceSyncedAt ? ` · ${formatDateTimeRu(result.sourceSyncedAt)}` : ""}` : result?.processing === "site-proxy" ? " · через сайт" : "";
       return `
         <label class="advertising-source-card is-${escapeAttr(status)} ${selected.has(source.id) ? "is-selected" : ""}" title="${escapeMultilineAttr(result?.error || (result?.processing === "site-proxy" ? `${source.label}\n\nИсточник обработан через сервер сайта, поскольку прямое подключение с компьютера недоступно.` : source.label))}">
           <input
@@ -17213,7 +17218,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function renderAdvertisingSourceConfiguration(source, index) {
     if (source.kind === "vitu") {
-      return '<p class="advertising-source-native-note">Email и даты анкет виту.рф из обновляемого зеркала проекта «Сайт ВИТУ» на Server. Только чтение; обмен через защищённую очередь zifra-plus.ru, без туннеля. На Server должна работать обновлённая АИС; зеркало должно обновляться не реже чем раз в 15 минут.</p>';
+      return '<p class="advertising-source-native-note">Email и даты анкет напрямую из базы на виту.рф. Защищённый API только для чтения; компьютер Server, локальное зеркало и туннель не требуются. Удалённые анкеты исключаются, остальные персональные данные не передаются.</p>';
     }
     if (source.kind === "sql") {
       return `

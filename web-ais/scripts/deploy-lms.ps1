@@ -11,7 +11,10 @@ param(
   [switch]$WindowsComponents,
   # Explicit, separately approved installation only; never part of -All.
   [switch]$ProgramSites,
-  [switch]$DocumentRelay
+  [switch]$DocumentRelay,
+  # Explicit VITU integration deployment; no changes to its database or production config.
+  [string]$VituEmailExportRoot = "",
+  [switch]$VituCheckOnly
 )
 
 Set-StrictMode -Version Latest
@@ -32,6 +35,7 @@ $runtimeMirrorFiles = @(
   "pwa-assets.js",
   "app-server.js",
   "document-relay.js",
+  "vitu-email-source.js",
   "local-update.js",
   "local-update-components.js",
   "local-update-windows.js",
@@ -162,7 +166,16 @@ if ($ListDeployable) {
   exit 0
 }
 
-if ($ValidateProfile) {
+if ($VituEmailExportRoot) {
+  if ($ValidateProfile -or $TunnelRuntime -or $ProgramSites -or $DocumentRelay -or $All -or $RelativePath.Count) { throw "VITU deployment must be a separate operation." }
+  $VituEmailExportRoot = (Resolve-Path -LiteralPath $VituEmailExportRoot).Path
+  $pathsToDeploy = @('app/ais-email-export.php', 'app/developer-guide-data.php', 'app/developer-guide-pdf-data.php', 'api/ais-email-export.php')
+  foreach ($file in $pathsToDeploy) {
+    if (-not (Test-Path -LiteralPath (Join-Path $VituEmailExportRoot $file)) -or -not @(& (Get-GitPath) -C $VituEmailExportRoot ls-files -- $file).Count) { throw "VITU file must be committed: $file" }
+  }
+  if (& (Get-GitPath) -C $VituEmailExportRoot diff HEAD --name-only -- $pathsToDeploy) { throw 'Commit VITU files before deployment.' }
+} elseif ($VituCheckOnly) { throw '-VituCheckOnly requires -VituEmailExportRoot.'
+} elseif ($ValidateProfile) {
   if ($TunnelRuntime -or $ProgramSites -or $DocumentRelay -or $All -or $RelativePath.Count) {
     throw "-ValidateProfile cannot be combined with deployment parameters."
   }
@@ -600,7 +613,82 @@ function Install-ProgramSiteModules {
   }
 }
 
-$results = if ($DocumentRelay) {
+function Publish-VituEmailExport {
+  $siteRoot = '/vitu/public_html'
+  $privateRoot = '/vitu/.vitu-private'
+  $configuration = Read-ProgramSitePrivateFile "$siteRoot/config.local.php"
+  if (-not $configuration -or $configuration -notmatch "data_dir['\x22]\s*=>\s*dirname\(__DIR__\)\s*\.\s*['\x22]/\.vitu-private['\x22]" -or (Get-FtpFileSize "$privateRoot/vitu.sqlite") -lt 1) {
+    throw 'VITU storage layout differs from the reviewed .vitu-private configuration. No files changed.'
+  }
+  $keys = [IO.File]::ReadAllText((Join-Path $appRoot 'storage/program-site-keys.json')) | ConvertFrom-Json
+  if ([string]$keys.shop -cnotmatch '^[a-f0-9]{64}$') { throw 'VITU integration key source is missing.' }
+  $siteKeys = (Read-ProgramSitePrivateFile '/edu-plus.ru/lms-runtime/data/program-site-keys.json') | ConvertFrom-Json
+  if (-not $siteKeys -or [string]$siteKeys.shop -cne [string]$keys.shop) { throw 'AIS website and local publisher keys differ. No files changed.' }
+  $hmac = New-Object Security.Cryptography.HMACSHA256
+  $hmac.Key = $utf8.GetBytes([string]$keys.shop)
+  try { $derived = [BitConverter]::ToString($hmac.ComputeHash($utf8.GetBytes('ais-vitu-email-export-v1'))).Replace('-', '').ToLowerInvariant() } finally { $hmac.Dispose() }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $keyHash = [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($derived))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose(); $derived = $null }
+  $keyPath = "$privateRoot/ais-email-export-key.json"
+  $existingKey = Read-ProgramSitePrivateFile $keyPath
+  if ($existingKey -and (($existingKey | ConvertFrom-Json).sha256 -cne $keyHash)) { throw 'Existing VITU export key differs. No automatic key rotation.' }
+  $batch = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+  $backupRoot = "D:\Jupiter\VITU-Jupiter\data\ais-email-export-deployment\$batch"
+  $entries = @()
+  foreach ($relative in $pathsToDeploy) {
+    $content = [IO.File]::ReadAllText((Join-Path $VituEmailExportRoot $relative))
+    $remote = "$siteRoot/$relative"
+    $prior = Read-ProgramSitePrivateFile $remote
+    if ($null -ne $prior -and $prior.Replace("`r`n", "`n") -cne $content.Replace("`r`n", "`n")) {
+      $existsInBase = & (Get-GitPath) -C $VituEmailExportRoot ls-tree HEAD^ -- $relative
+      if (-not $existsInBase) { throw "Unreviewed remote file already exists: $relative" }
+      $baseline = ((& (Get-GitPath) -C $VituEmailExportRoot show "HEAD^:$relative") -join "`n") + "`n"
+      if ($LASTEXITCODE -ne 0 -or $prior.Replace("`r`n", "`n") -cne $baseline) { throw "Remote drift detected: $relative. No files changed." }
+    }
+    $entries += [pscustomobject]@{ File = $relative; Remote = $remote; Content = $content; Prior = $prior }
+  }
+  $entries += [pscustomobject]@{ File = 'ais-email-export-key.json'; Remote = $keyPath; Content = (@{version=1;sha256=$keyHash} | ConvertTo-Json -Compress); Prior = $existingKey }
+  if ($VituCheckOnly) { Write-Host 'VITU preflight OK: storage, committed files, remote drift and private key checked; no writes.'; return }
+  [IO.Directory]::CreateDirectory($backupRoot) | Out-Null
+  $stageRoot = "/vitu/.ais-email-export-stage-$batch"
+  $remoteBackup = "/vitu/.ais-email-export-backup-$batch"
+  # Stage and verify ALL bytes outside public_html before replacing anything.
+  foreach ($entry in $entries) {
+    $local = Join-Path $backupRoot ('new/' + $entry.File)
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $local)) | Out-Null
+    [IO.File]::WriteAllText($local, $entry.Content, $utf8)
+    if ($null -ne $entry.Prior) {
+      $backup = Join-Path $backupRoot ('previous/' + $entry.File)
+      [IO.Directory]::CreateDirectory((Split-Path -Parent $backup)) | Out-Null
+      [IO.File]::WriteAllText($backup, $entry.Prior, $utf8)
+    }
+    $stage = "$stageRoot/$($entry.File)"
+    Ensure-FtpDirectory ($stage.Substring(0, $stage.LastIndexOf('/')))
+    Send-FtpFile $local $stage
+    if ((Read-ProgramSitePrivateFile $stage) -cne $entry.Content) { throw "VITU staged bytes differ: $($entry.File)" }
+  }
+  # Install the key first and the endpoint last. No credentials ever enter the public root.
+  foreach ($entry in ($entries | Sort-Object { if ($_.File -eq 'ais-email-export-key.json') { 0 } elseif ($_.File -eq 'api/ais-email-export.php') { 2 } else { 1 } })) {
+    $backup = "$remoteBackup/$($entry.File)"
+    Ensure-FtpDirectory ($backup.Substring(0, $backup.LastIndexOf('/')))
+    if ($null -ne $entry.Prior) { Rename-FtpFile $entry.Remote $backup }
+    try {
+      Rename-FtpFile "$stageRoot/$($entry.File)" $entry.Remote
+      if ((Read-ProgramSitePrivateFile $entry.Remote) -cne $entry.Content) { throw 'VITU uploaded bytes differ.' }
+    } catch {
+      $failure = $_
+      Rename-FtpFileIfExists $entry.Remote "$stageRoot/failed-$([IO.Path]::GetFileName($entry.File))" | Out-Null
+      if ($null -ne $entry.Prior) { Rename-FtpFile $backup $entry.Remote }
+      throw $failure
+    }
+    [pscustomobject]@{File=$entry.File;Target='VITU direct export';Bytes=$utf8.GetByteCount($entry.Content);Status='uploaded and verified'}
+  }
+  Write-Host "VITU prior files preserved outside public_html and in $backupRoot"
+}
+
+$results = if ($VituEmailExportRoot) {
+  Publish-VituEmailExport
+} elseif ($DocumentRelay) {
   $remoteKey = Read-ProgramSitePrivateFile '/zifra-plus.ru/ais-program-site.key'
   $localKeys = [IO.File]::ReadAllText((Join-Path $appRoot 'storage/program-site-keys.json')) | ConvertFrom-Json
   if (-not $remoteKey -or $remoteKey.Trim() -cne [string]$localKeys.shop) { throw 'Ключ связи с zifra-plus.ru не совпадает. Публикация остановлена без изменения ключей.' }
@@ -629,7 +717,7 @@ $results | Format-Table -AutoSize
 # Publish immutable signed installation files first, and switch latest.json last.
 # Only the publishing workstation owns this private signing key. It never enters FTP.
 $updateSigningKey = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem'
-if (-not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
+if (-not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
     (Test-Path -LiteralPath $updateSigningKey)) {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   $nodePath = if ($nodeCommand) { $nodeCommand.Source } else {

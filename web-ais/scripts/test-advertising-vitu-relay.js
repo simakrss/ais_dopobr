@@ -34,7 +34,7 @@ async function main() {
     for (const row of result.records) assert.deepEqual(Object.keys(row), ["email", "sourceReceivedAt"]);
     assert.ok(!JSON.stringify(result).includes("PRIVATE_NOT_FOR_TRANSFER"));
     assert.deepEqual(fs.readFileSync(databasePath), before, "Read-only executor must not change the mirror");
-    const local = await api.queryAdvertisingVituContacts();
+    const local = api.readAdvertisingVituContacts();
     assert.equal(local.processing, "vitu-mirror");
     assert.equal(local.length, 3);
     for (const payload of [null, [], {path: databasePath}, {sql: "SELECT * FROM applications"}, {url: "https://example.org"}]) {
@@ -44,7 +44,7 @@ async function main() {
     await assert.rejects(api.executeDocumentRelayJob("vitu-emails", {}, controller), /Test cancellation/);
     db.prepare("UPDATE mirror_sync_state SET synced_at=?").run(new Date(now - 16 * 60000).toISOString());
     await assert.rejects(api.executeDocumentRelayJob("vitu-emails", {}, new AbortController()), /15 минут/);
-    await assert.rejects(api.queryAdvertisingVituContacts(), /15 минут/, "Never fall back to old snapshots");
+    assert.throws(() => api.readAdvertisingVituContacts(), /15 минут/, "Never fall back to old snapshots");
     db.prepare("UPDATE mirror_sync_state SET synced_at=?").run(new Date(now + 120000).toISOString());
     assert.throws(() => api.readAdvertisingVituContacts(databasePath, now), /15 минут/);
     process.env.AIS_ADVERTISING_VITU_DATABASE = path.join(root, "missing.sqlite");
@@ -53,20 +53,19 @@ async function main() {
     assert.equal(fs.existsSync(process.env.AIS_ADVERTISING_VITU_DATABASE), false);
 
     let relayResult = result, calls = 0, relayError = null;
-    const context = vm.createContext({Date, Object, Array, Error,
+    const context = vm.createContext({Date, Object, Array, Error, path, SERVER_CODE_ROOT: "/private/app", ROOT: "/public/lms", STORAGE_ROOT: "/public/lms/storage",
       hasAdvertisingVituMirror: () => false,
       normalizeAdvertisingEmailRecords: api.normalizeAdvertisingEmailRecords,
-      getDocumentRelayClient: async () => ({run: async (kind, payload, options) => {
-        calls++; assert.equal(kind, "vitu-emails"); assert.equal(Object.keys(payload).length, 0);
-        assert.equal(options.timeoutMs, 55000);
+      vituEmailSource: {read: async (storage) => {
+        calls++; assert.equal(storage, path.resolve("/private/app", "..", "data"));
         if (relayError) throw relayError;
         return relayResult;
-      }})
+      }}
     });
     vm.runInContext(block("function validateAdvertisingVituSyncTime(", "function readAdvertisingVituContacts("), context);
     vm.runInContext(block("async function queryAdvertisingVituContacts(", "async function runAdvertisingEmailSource("), context);
     const received = await context.queryAdvertisingVituContacts();
-    assert.equal(received.processing, "vitu-relay"); assert.equal(received.sourceSyncedAt, synced);
+    assert.equal(received.processing, "vitu-site"); assert.equal(received.sourceSyncedAt, synced);
     assert.deepEqual(received.map(row => row.email), result.records.map(row => row.email));
     // Source-side personal fields cannot leak through a modified/old worker result.
     relayResult = {sourceSyncedAt: synced, records: [{email: "safe@example.org", name: "PRIVATE", phone: "PRIVATE"}]};
@@ -86,8 +85,8 @@ async function main() {
     assert.match(proxy, /hash_equals/, "Legacy authenticated proxy stays protected");
     assert.match(block("function startDocumentRelayWorker(", "function isUnavailableDocumentPathError("), /hasAdvertisingVituMirror\(\) \? \["vitu-emails"\]/);
     const app = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
-    assert.match(app, /через защищённую очередь zifra-plus\.ru, без туннеля/);
-    console.log("PASS VITU relay: local/hosted routing, email/date only, read-only mirror, deleted rows, capability gating, freshness at both ends, payload validation and cancellation");
+    assert.match(app, /напрямую из базы на виту\.рф/);
+    console.log("PASS VITU direct source and legacy relay: hosted private keys, email/date only, read-only mirror compatibility, deleted rows, freshness, payload validation and cancellation");
   } finally {
     db.close();
     if (originalPath === undefined) delete process.env.AIS_ADVERTISING_VITU_DATABASE;
