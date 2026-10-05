@@ -24,6 +24,7 @@ async function main(){
   await assert.rejects(api.read(root,{fetch:async()=>{throw Error("PRIVATE transport context");}}),e=>!e.message.includes("PRIVATE"));
   await assert.rejects(api.read(path.join(root,"missing"),options),/Не настроен/);
   const updater=require("../local-update");assert.ok(updater.FILES.includes("vitu-email-source.js"));
+  const deployment=fs.readFileSync(path.join(__dirname,'deploy-lms.ps1'),'utf8');assert.equal((deployment.match(/"vitu-email-source\.js"/g)||[]).length,2,'New dependency must be allowlisted and mirrored to the private runtime');
   console.log("PASS VITU client: fixed HTTPS endpoint, scoped key, no redirects, bounded response, protocol/count validation, errors and update manifest");
  }finally{assert.ok(path.basename(root).startsWith("ais-vitu-source-"));fs.rmSync(root,{recursive:true,force:true});}
 }

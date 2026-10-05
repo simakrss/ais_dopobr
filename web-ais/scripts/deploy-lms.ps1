@@ -89,6 +89,7 @@ function Test-DeployablePath([string]$PathValue) {
     ".htaccess",
     "app-server.js",
     "document-relay.js",
+    "vitu-email-source.js",
     "pdf-preview.js",
     "pdfjs-core.js",
     "pdfjs-worker.js",
