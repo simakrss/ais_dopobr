@@ -16584,7 +16584,16 @@ function normalizeStudentDatabaseCriticalContractValue(record, fieldName) {
   ) {
     return normalizeStudentDatabaseCriticalBoolean(record?.[fieldName]);
   }
-  return normalizeContractDatabaseValue(record?.[fieldName], fieldName);
+  const value = normalizeContractDatabaseValue(record?.[fieldName], fieldName);
+  // Text inputs and Excel numeric cells can carry the same identifier (e.g. couponId).
+  // Compare textual fields as text, never convert strings to numbers: leading zeros
+  // and long account/identifier digits must still trigger a mismatch if Excel loses them.
+  if (
+    typeof value === "number"
+    && Number.isFinite(value)
+    && !CONTRACT_DATABASE_NUMBER_FIELDS.has(fieldName)
+  ) return String(value);
+  return value;
 }
 
 function projectStudentDatabaseCriticalContract(

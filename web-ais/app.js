@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.576",
+    version: "1.7.577",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.577",
+      releasedAt: "2026-10-06",
+      changes: ["Исправлена ложная ошибка синхронизации «Купон_ID изменилось при записи книги»: одинаковые текстовые реквизиты договоров сравниваются независимо от числового или текстового типа ячейки Excel. Реальные изменения, потеря ведущих нулей и точности по-прежнему блокируют замену XLSB."]
+    },
     {
       version: "1.7.576",
       releasedAt: "2026-10-06",
