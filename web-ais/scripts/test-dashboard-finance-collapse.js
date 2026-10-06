@@ -18,7 +18,6 @@ function control(dataset) {
   };
 }
 const expenses = control({ dashboardFinanceSection: "expenses" });
-const chart = control({ dashboardFinanceSection: "chart" });
 const metric = control({ metric: "direct" });
 const defaultExpansion = source.match(/dashboardFinanceExpanded: (\{[^\n]+\})/u);
 assert.ok(defaultExpansion);
@@ -31,7 +30,7 @@ let lastRender = "";
 const context = vm.createContext({
   state,
   document: { querySelectorAll(selector) {
-    if (selector === "[data-dashboard-finance-section]") return [expenses, chart];
+    if (selector === "[data-dashboard-finance-section]") return [expenses];
     if (selector === "[data-action='toggle-finance-metric']") return [metric];
     return [];
   } },
@@ -65,7 +64,7 @@ function isOpen(html, key) {
 
 const initial = context.renderDashboard();
 assert.equal(isOpen(initial, "expenses"), false);
-assert.equal(isOpen(initial, "chart"), false);
+assert.equal((initial.match(/data-dashboard-finance-section=/gu) || []).length, 1);
 const topSummary = initial.match(/<div class="finance-summary">([\s\S]*?)<\/div>/u)[1];
 assert.deepEqual([...topSummary.matchAll(/data-finance-metric="([^"]+)"/gu)].map((match) => match[1]),
   ["revenue", "receivable", "profit"], "Profit immediately follows receivable in the always-visible summary");
@@ -73,36 +72,34 @@ assert.match(topSummary, /1000 ₽/u);
 assert.match(topSummary, /300 ₽/u);
 assert.match(topSummary, /850 ₽/u);
 const expenseContent = detailsBlock(initial, "expenses");
-assert.match(expenseContent, /<summary>Прямые и общие затраты<\/summary>/u);
+assert.match(expenseContent, /<summary>Затраты<\/summary>/u);
 assert.deepEqual([...expenseContent.matchAll(/data-finance-metric="([^"]+)"/gu)].map((match) => match[1]), ["direct", "general"]);
 assert.match(expenseContent, /150 ₽/u);
 assert.match(expenseContent, /200 ₽/u);
 assert.ok(initial.indexOf('data-finance-metric="profit"') < initial.indexOf('data-dashboard-finance-section="expenses"'));
-assert.ok(initial.indexOf('data-dashboard-finance-section="expenses"') < initial.indexOf('data-dashboard-finance-section="chart"'));
-assert.match(detailsBlock(initial, "chart"), /<summary>График<\/summary>/u);
-assert.match(detailsBlock(initial, "chart"), /data-action="toggle-finance-metric" data-metric="direct"/u);
+assert.match(expenseContent, /class="finance-chart"/u);
+assert.ok(expenseContent.indexOf('data-finance-metric="general"') < expenseContent.indexOf('class="finance-chart"'));
+assert.match(expenseContent, /data-action="toggle-finance-metric" data-metric="direct"/u);
 
 context.bindDashboardFinanceControls();
 expenses.open = true;
 expenses.events.toggle();
 assert.equal(isOpen(context.renderDashboard(), "expenses"), true);
-assert.equal(isOpen(context.renderDashboard(), "chart"), false, "Sections expand independently");
-chart.open = true;
-chart.events.toggle();
 metric.events.click();
 assert.equal(state.financeChart.direct, false);
-assert.equal(isOpen(lastRender, "chart"), true, "Changing a metric must keep the chart expanded after rendering");
-assert.equal(isOpen(lastRender, "expenses"), true);
-assert.match(detailsBlock(lastRender, "chart"), /data-metric="direct"[^>]*aria-pressed="false"/u);
-chart.open = false;
-chart.events.toggle();
-assert.equal(isOpen(context.renderDashboard(), "chart"), false);
-chart.isConnected = false;
-chart.open = true;
-chart.events.toggle();
-assert.equal(state.dashboardFinanceExpanded.chart, false, "Queued events from replaced DOM must not overwrite current state");
+assert.equal(isOpen(lastRender, "expenses"), true, "Changing a metric must keep the whole expenses group expanded");
+assert.match(detailsBlock(lastRender, "expenses"), /data-metric="direct"[^>]*aria-pressed="false"/u);
+expenses.open = false;
+expenses.events.toggle();
+assert.equal(isOpen(context.renderDashboard(), "expenses"), false);
+expenses.isConnected = false;
+expenses.open = true;
+expenses.events.toggle();
+assert.equal(state.dashboardFinanceExpanded.expenses, false, "Queued events from replaced DOM must not overwrite current state");
 context.buildFinanceSeries = () => [];
-assert.match(detailsBlock(context.renderDashboard(), "chart"), /Нет данных для графика/u);
+assert.match(detailsBlock(context.renderDashboard(), "expenses"), /Нет данных для графика/u);
+context.calculateDashboardStudentProfitSummary = () => ({ profit: 0, averageProfitability: null });
+assert.match(context.renderDashboard(), /Средняя прибыльность: —/u);
 assert.match(extract("bindEvents"), /bindDashboardFinanceControls\(\)/u);
 assert.match(styles, /details > summary\s*\{\s*cursor: pointer;/u);
 assert.match(styles, /\.dashboard-finance-details > summary:focus-visible/u);

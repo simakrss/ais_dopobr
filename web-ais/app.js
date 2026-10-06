@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.580",
+    version: "1.7.581",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.581",
+      releasedAt: "2026-10-06",
+      changes: ["Прямые и общие затраты и финансовый график объединены в одну свёрнутую по умолчанию группу «Затраты» на рабочем столе. Средняя прибыльность рассчитывается по общим суммам: внесено слушателями ÷ прибыль × 100%; при нулевой прибыли выводится прочерк."]
+    },
     {
       version: "1.7.580",
       releasedAt: "2026-10-06",
@@ -7649,7 +7654,7 @@ MAX - https://bizvmax.ru/zifra_plus
     activeContractTemplateFieldId: "",
     pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
-    dashboardFinanceExpanded: { expenses: false, chart: false },
+    dashboardFinanceExpanded: { expenses: false },
     statistics: {
       tab: "income",
       filters: {
@@ -19794,19 +19799,16 @@ MAX - https://bizvmax.ru/zifra_plus
             <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="revenue" type="button"><span>Внесено слушателями</span><strong>${money(revenue)}</strong></button>
             <button class="finance-summary-row is-receivable" data-action="open-finance-details" data-finance-metric="receivable" type="button"><span>Дебиторская задолженность</span><strong>${money(receivable)}</strong></button>
             <button class="finance-summary-row finance-summary-profit ${profitSummary.profit < 0 ? "is-negative" : ""}" data-action="open-finance-details" data-finance-metric="profit" type="button">
-              <span class="finance-summary-label"><span>Прибыль</span><small>Средняя прибыльность: ${percent(profitSummary.averageProfitability)}</small></span>
+              <span class="finance-summary-label"><span>Прибыль</span><small title="Внесено слушателями ÷ прибыль × 100%. При нулевой прибыли показатель не рассчитывается.">Средняя прибыльность: ${profitSummary.averageProfitability === null ? "—" : percent(profitSummary.averageProfitability)}</small></span>
               <strong>${money(profitSummary.profit)}</strong>
             </button>
           </div>
           <details class="dashboard-finance-details" data-dashboard-finance-section="expenses" ${state.dashboardFinanceExpanded.expenses ? "open" : ""}>
-            <summary>Прямые и общие затраты</summary>
+            <summary>Затраты</summary>
             <div class="finance-summary">
               <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="direct" type="button"><span>Прямые затраты</span><strong>${money(direct)}</strong></button>
               <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="general" type="button"><span>Общие затраты</span><strong>${money(general)}</strong></button>
             </div>
-          </details>
-          <details class="dashboard-finance-details" data-dashboard-finance-section="chart" ${state.dashboardFinanceExpanded.chart ? "open" : ""}>
-            <summary>График</summary>
             ${renderFinanceChart(financeSeries)}
           </details>
         </section>
@@ -19851,12 +19853,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function calculateDashboardStudentProfitSummary(students = []) {
     const results = students.map((student) => calculateDashboardStudentProfit(student));
     const profit = Math.round(results.reduce((sum, item) => sum + item.profit, 0) * 100) / 100;
-    const profitabilityValues = results
-      .map((item) => item.profitability)
-      .filter((value) => Number.isFinite(value));
-    const averageProfitability = profitabilityValues.length
-      ? Math.round((profitabilityValues.reduce((sum, value) => sum + value, 0) / profitabilityValues.length) * 10) / 10
-      : 0;
+    // Use the same received amount as the dashboard, not a mean of individual ratios.
+    const revenue = sumBy(students, "paidAmount");
+    const ratio = profit !== 0 ? revenue / profit * 100 : null;
+    const averageProfitability = Number.isFinite(ratio) ? (Math.round(ratio * 10) / 10 || 0) : null;
     return { profit, averageProfitability };
   }
 
@@ -20265,7 +20265,7 @@ MAX - https://bizvmax.ru/zifra_plus
       details.addEventListener("toggle", () => {
         if (!details.isConnected) return;
         const key = details.dataset.dashboardFinanceSection;
-        if (key === "expenses" || key === "chart") state.dashboardFinanceExpanded[key] = details.open;
+        if (key === "expenses") state.dashboardFinanceExpanded[key] = details.open;
       });
     });
     document.querySelectorAll("[data-action='toggle-finance-metric']").forEach((button) => {
