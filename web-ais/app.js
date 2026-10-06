@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.577",
+    version: "1.7.578",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.578",
+      releasedAt: "2026-10-06",
+      changes: ["Исправлена ложная ошибка XLSB «Номер в расходах БК изменилось при записи книги». Текстовые поля общих и прямых расходов и запасов сравниваются независимо от числового или текстового типа ячейки. Сохранена проверка реальных изменений, ведущих нулей и точности номеров; сравнение галочки закрытия расходов приведено к единому правилу."]
+    },
     {
       version: "1.7.577",
       releasedAt: "2026-10-06",

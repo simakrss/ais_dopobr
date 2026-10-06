@@ -16596,6 +16596,30 @@ function normalizeStudentDatabaseCriticalContractValue(record, fieldName) {
   return value;
 }
 
+function normalizeStudentDatabaseCriticalExpenseValue(value, fieldName, normalizer) {
+  const normalized = normalizer(value, fieldName);
+  // General-format Excel cells may store textual codes/notes as numbers.
+  // Stringify the numeric cell, not the input text: significant zeros and
+  // precision loss must remain detectable. Amounts retain numeric semantics.
+  return fieldName !== "amount" && typeof normalized === "number" && Number.isFinite(normalized)
+    ? String(normalized)
+    : normalized;
+}
+
+function normalizeStudentDatabaseCriticalDirectExpenseValue(value, fieldName) {
+  return normalizeStudentDatabaseCriticalExpenseValue(value, fieldName, normalizeDirectExpenseDatabaseValue);
+}
+
+function normalizeStudentDatabaseCriticalGeneralExpenseValue(value, fieldName) {
+  if (fieldName === "section") return normalizeGeneralExpenseDatabaseSection(value);
+  if (fieldName === "accountingClosed") return normalizeStudentDatabaseCriticalBoolean(value);
+  return normalizeStudentDatabaseCriticalExpenseValue(value, fieldName, normalizeGeneralExpenseDatabaseValue);
+}
+
+function normalizeStudentDatabaseCriticalInventoryValue(value, fieldName) {
+  return normalizeStudentDatabaseCriticalExpenseValue(value, fieldName, normalizeInventoryDatabaseValue);
+}
+
 function projectStudentDatabaseCriticalContract(
   record,
   eventTemplates = CONTRACT_EVENT_IMPORT_TEMPLATES
@@ -17276,7 +17300,7 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
       booleanFields: new Set(),
       identityFields: [["uid", "date", "type"]],
       summaryFields: ["uid", "date", "type", "amount", "note"],
-      normalize: (record, fieldName) => normalizeDirectExpenseDatabaseValue(
+      normalize: (record, fieldName) => normalizeStudentDatabaseCriticalDirectExpenseValue(
         record?.[fieldName],
         fieldName
       ),
@@ -17296,13 +17320,10 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
       booleanFields: generalExpenseBooleanFields,
       identityFields: [["section", "counterparty", "date", "workType"]],
       summaryFields: ["section", "counterparty", "date", "workType", "amount"],
-      normalize: (record, fieldName) => {
-        if (fieldName === "section") return normalizeGeneralExpenseDatabaseSection(record?.section);
-        if (generalExpenseBooleanFields.has(fieldName)) {
-          return normalizeStudentDatabaseChangeBoolean(record?.[fieldName]);
-        }
-        return normalizeGeneralExpenseDatabaseValue(record?.[fieldName], fieldName);
-      },
+      normalize: (record, fieldName) => normalizeStudentDatabaseCriticalGeneralExpenseValue(
+        record?.[fieldName],
+        fieldName
+      ),
       recordLabel: (record) => [record?.counterparty, record?.workType, record?.date]
         .map((value) => String(value || "").trim())
         .filter(Boolean)
@@ -17319,7 +17340,7 @@ function getStudentDatabaseSynchronizedChangeDefinitions(beforeValue, afterValue
       booleanFields: new Set(),
       identityFields: [["itemType", "uid", "date", "amount", "note"]],
       summaryFields: ["itemType", "uid", "date", "amount", "note"],
-      normalize: (record, fieldName) => normalizeInventoryDatabaseValue(
+      normalize: (record, fieldName) => normalizeStudentDatabaseCriticalInventoryValue(
         record?.[fieldName],
         fieldName
       ),
@@ -17577,7 +17598,7 @@ function buildStudentDatabaseCriticalSnapshot(value) {
       (record) => projectStudentDatabaseCriticalMappedRecord(
         record,
         [...new Set(Object.values(DIRECT_EXPENSE_DATABASE_COLUMN_MAP))],
-        normalizeDirectExpenseDatabaseValue
+        normalizeStudentDatabaseCriticalDirectExpenseValue
       )
     ),
     generalExpenses: canonicalizeStudentDatabaseCriticalRecords(
@@ -17585,9 +17606,7 @@ function buildStudentDatabaseCriticalSnapshot(value) {
       (record) => projectStudentDatabaseCriticalMappedRecord(
         record,
         ["section", ...new Set(Object.values(GENERAL_EXPENSE_DATABASE_COLUMN_MAP))],
-        (fieldValue, fieldName) => fieldName === "section"
-          ? normalizeGeneralExpenseDatabaseSection(fieldValue)
-          : normalizeGeneralExpenseDatabaseValue(fieldValue, fieldName)
+        normalizeStudentDatabaseCriticalGeneralExpenseValue
       )
     ),
     inventoryUnits: canonicalizeStudentDatabaseCriticalRecords(
@@ -17595,7 +17614,7 @@ function buildStudentDatabaseCriticalSnapshot(value) {
       (record) => projectStudentDatabaseCriticalMappedRecord(
         record,
         [...new Set(Object.values(INVENTORY_DATABASE_COLUMN_MAP))],
-        normalizeInventoryDatabaseValue
+        normalizeStudentDatabaseCriticalInventoryValue
       )
     ),
     programs: canonicalizeStudentDatabaseCriticalRecords(
