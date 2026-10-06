@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.583",
+    version: "1.7.584",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.584",
+      releasedAt: "2026-10-06",
+      changes: ["Кнопка заполнения документа об образовании для ПРО устанавливает текущую дату начала, окончания обучения, отчисления и выдачи документа, заполняет номера бланка и регистрации. Даты сохраняются в черновике карточки, включая поля на других вкладках."]
+    },
     {
       version: "1.7.583",
       releasedAt: "2026-10-06",
@@ -38062,7 +38067,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return settings.find((item) => normalizeEducationProgramType(item.programType) === typeCode)?.code || typeCode;
   }
 
-  function getEducationDocumentAutofillContext() {
+  function getEducationDocumentAutofillContext({ useCurrentDateForPro = false } = {}) {
     const form = document.getElementById("recordForm");
     if (!form || form.dataset.config !== "students") return null;
     const record = collectStudentFormDraft();
@@ -38078,7 +38083,9 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Для выбранной программы в реестре не указан тип образовательной программы.");
       return null;
     }
-    const issueDate = String(record.expulsionDate || record.expulsionOrderDate || "").trim();
+    const issueDate = useCurrentDateForPro && programType === "ПРО"
+      ? todayIso()
+      : String(record.expulsionDate || record.expulsionOrderDate || "").trim();
     if (!parseOrdersSdoDate(issueDate)) {
       alert("Заполните дату отчисления. Дата выдачи документа берется из даты отчисления.");
       focusStudentDocumentField("expulsionDate", record);
@@ -38158,15 +38165,25 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function autoFillEducationDocument() {
-    const context = getEducationDocumentAutofillContext();
+    const context = getEducationDocumentAutofillContext({ useCurrentDateForPro: true });
     if (!context) return null;
-    const values = getEducationDocumentAutofillValues(context.record, {
+    const documentValues = getEducationDocumentAutofillValues(context.record, {
       program: context.program,
       programType: context.programType,
       issueDate: context.issueDate,
       currentId: context.form.dataset.id
     });
-    if (!values) return null;
+    if (!documentValues) return null;
+    // The results tab does not render training dates. Include them in the draft
+    // as well as in any visible inputs so switching tabs and saving retain them.
+    const values = context.programType === "ПРО"
+      ? {
+        ...documentValues,
+        startDate: context.issueDate,
+        endDate: context.issueDate,
+        expulsionDate: context.issueDate
+      }
+      : documentValues;
     Object.entries(values).forEach(([fieldName, value]) => {
       setOrdersSdoFieldValue(context.form, fieldName, value);
     });
