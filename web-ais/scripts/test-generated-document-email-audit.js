@@ -70,6 +70,7 @@ function fixture({ outcome = "success", recipientMode = "student", recipient = "
     finishStudentDocumentGeneration: async () => ({localSaveResult: {saved: true}}),
     createStudentDocumentEmailAttachment: async () => ({fileName: "Документ.pdf", contentType: "application/pdf", base64: "synthetic"}),
     markStudentContractEmailSent() {},
+    markStudentEducationDocumentEmailSent() {},
     addAudit: (action, area, details, context) => rows.push({...context, action, area, details, createdAt:"2026-09-27T12:00:00Z"}),
     showDocumentGenerationNotice() {}, alert() {}, confirm: () => true
   });

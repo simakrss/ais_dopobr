@@ -96,12 +96,14 @@ const educationDocumentEmailSentBlock = sourceBlock(
   "function isExplicitUncheckedEventState("
 );
 const markedEducationDocumentEvents = [];
+const educationState = { data: { collections: { students: [] } }, modal: null };
 const markStudentEducationDocumentEmailSent = new Function(
   "getStudentProgramTypeCode",
   "normalizeEventTemplateLabel",
   "getStudentEventTemplates",
   "buildMacroEventKey",
   "markStudentEventsCompleted",
+  "state", "configs", "resolveStudentAdditionalStatusAfterMainStatusChange", "addAudit", "persist",
   educationDocumentEmailSentBlock + "\nreturn markStudentEducationDocumentEmailSent;"
 )(
   (student) => student.programType,
@@ -122,7 +124,8 @@ const markStudentEducationDocumentEmailSent = new Function(
       options
     });
     return 17;
-  }
+  },
+  educationState, { students: { title: "Слушатели" } }, () => "Вебинары. Архив", () => {}, () => {}
 );
 const electronicDocumentEventLabel = "Отправлен электронный документ об образовании";
 const clientStudentEventTemplatesBlock = sourceBlock(
@@ -171,6 +174,7 @@ for (const programType of ["ДОП", "ПРО"]) {
     programType,
     eventTemplates: configuredEventTemplates
   };
+  educationState.data.collections.students.push(student);
   assert.equal(
     markStudentEducationDocumentEmailSent(student, {
       emailed: true,
@@ -256,9 +260,13 @@ const educationBlock = sourceBlock(
 );
 assert.match(
   educationBlock,
-  /markStudentEducationDocumentEmailSent\(record, result\)/u,
-  "Одиночная отправка документа должна использовать общий helper"
+  /downloadStudentDocumentFromTemplate\(/u,
+  "Одиночная отправка документа должна использовать общий механизм отправки"
 );
+const sendDocumentBlock = sourceBlock(appSource, "async function downloadStudentDocumentFromTemplate(", "async function openStudentEducationDocument(");
+assert.match(sendDocumentBlock, /documentTemplate.documentKind === "education"[\s\S]*?markStudentEducationDocumentEmailSent\(record,/u);
+assert.ok(sendDocumentBlock.indexOf("markStudentEducationDocumentEmailSent(record,") > sendDocumentBlock.indexOf("emailSent = await sendServerEmail("));
+assert.ok(sendDocumentBlock.indexOf("markStudentEducationDocumentEmailSent(record,") < sendDocumentBlock.indexOf("if (storageRequest.openAfterGeneration)"));
 
 const extensionBlock = sourceBlock(
   appSource,
@@ -311,8 +319,8 @@ assert.match(bulkDocumentBlock, /"enrollmentOrderPrepared"/u);
 assert.match(bulkDocumentBlock, /"expulsionOrderPrepared"/u);
 assert.match(
   bulkDocumentBlock,
-  /markStudentEducationDocumentEmailSent\(record, generated\)/u,
-  "Массовая отправка документов должна использовать общий helper"
+  /downloadStudentDocumentFromTemplate\(/u,
+  "Массовая отправка документов должна использовать общий механизм отправки"
 );
 
 console.log("student automatic event checks: OK");

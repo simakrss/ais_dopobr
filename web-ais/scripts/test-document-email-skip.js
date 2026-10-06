@@ -96,6 +96,7 @@ function fixture() {
     createStudentDocumentEmailAttachment: async () => { calls.push("attachment"); return {}; },
     sendServerEmail: async (request) => { calls.push({ sent: request }); return true; },
     markStudentContractEmailSent: () => calls.push("sent-status"),
+    markStudentEducationDocumentEmailSent: () => calls.push("sent-status"),
     addAudit: () => calls.push("audit"),
     showDocumentGenerationNotice: (message) => calls.push({ notice: message }),
     alert: (message) => calls.push({ alert: message })

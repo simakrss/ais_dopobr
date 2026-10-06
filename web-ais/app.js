@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.584",
+    version: "1.7.585",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.585",
+      releasedAt: "2026-10-06",
+      changes: ["После обновления страницы восстанавливается последний открытый раздел и его вкладка. Место запоминается отдельно для пользователя и вкладки браузера с проверкой прав доступа; настройка стартового раздела для новых вкладок сохраняется.", "После успешной отправки документа об образовании слушателю ПРО автоматически устанавливается статус «Отчислен» и допстатус «Вебинары. Архив». Пропуск, отмена, ошибка отправки и отправка в системный ящик статусы не меняют.", "Средняя прибыльность на рабочем столе рассчитывается как прибыль ÷ внесено слушателями × 100% с точностью до двух знаков; при отсутствии поступлений отображается прочерк."]
+    },
     {
       version: "1.7.584",
       releasedAt: "2026-10-06",
@@ -4590,6 +4595,7 @@
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION_KEY = "ais-dopobr-dashboard-status-layout-v1";
   const DASHBOARD_STATUS_ORDER_LAYOUT_VERSION = "enrollment-study-first";
   const START_VIEW_KEY = "ais-dopobr-start-view-v1";
+  const LAST_SECTION_SESSION_KEY = "ais-dopobr-last-section-v1";
   const INTERFACE_LAYOUT_PENDING_KEY = "ais-dopobr-interface-layout-pending-v1";
   const PROGRAM_REGISTRY_FILTERS_KEY = "ais-dopobr-program-registry-filters-v1";
   const programRegistryFilterPreferences = new Map();
@@ -7542,7 +7548,7 @@ MAX - https://bizvmax.ru/zifra_plus
     && /^\/lms(?:\/|$)/i.test(window.location.pathname)
   );
   let shouldBootstrapHostedDatabase = false;
-  const initialView = loadStartView();
+  const initialView = loadLastAisSection()?.view || loadStartView();
   let state = {
     view: initialView,
     search: "",
@@ -14121,6 +14127,78 @@ MAX - https://bizvmax.ru/zifra_plus
     return navItems.some((item) => item.id === saved) && canAccessView(saved) ? saved : "dashboard";
   }
 
+  function getLastAisSectionStorageKey() {
+    const user = getCurrentAuthUser();
+    const userId = String(user.id || user.login || "").trim();
+    return userId ? `${LAST_SECTION_SESSION_KEY}:${encodeURIComponent(APP_BASE_URL.pathname)}:${encodeURIComponent(userId)}` : "";
+  }
+
+  function normalizeLastAisSection(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1) return null;
+    if (!navItems.some((item) => item.id === value.view) || !canAccessView(value.view)) return null;
+    // Store section identifiers only, never forms, search text or record snapshots.
+    const section = { version: 1, view: value.view };
+    const tab = (key, allowed) => { section[key] = allowed.includes(value[key]) ? value[key] : allowed[0]; };
+    if (section.view === "admin") {
+      tab("adminTab", ["database", "email", "demo", "external-services", "audit", "users"]);
+      tab("adminDatabaseTab", ["ais", "advertising", "shop", "statistics", "cloud"]);
+    } else if (section.view === "statistics") {
+      tab("statisticsTab", getAvailableStatisticsTabs().map((item) => item.id));
+    } else if (section.view === "advertising") {
+      tab("advertisingTab", ["collector", "exclusions", ...(isAdminUser() ? ["sources", "sites"] : [])]);
+    } else if (section.view === "settings") {
+      const dictionary = typeof value.selectedDictionary === "string" ? value.selectedDictionary : "";
+      section.selectedDictionary = Object.hasOwn(dictionaryDefaults, dictionary)
+        || ["commissionSets", "partnerProgramSettings", "notificationSettings", "studentEventSettings"].includes(dictionary)
+        ? dictionary : "";
+      tab("paymentSettingsTab", ["rates", "assignment", "agents"]);
+      tab("eventSettingsTab", ["students", "employees"]);
+    }
+    return section;
+  }
+
+  function loadLastAisSection() {
+    const key = getLastAisSectionStorageKey();
+    if (!key) return null;
+    try {
+      return normalizeLastAisSection(JSON.parse(sessionStorage.getItem(key) || "null"));
+    } catch { return null; }
+  }
+
+  function restoreLastAisSection(value) {
+    const section = normalizeLastAisSection(value);
+    if (!section || section.view !== state.view) return;
+    if (section.view === "admin") {
+      state.adminTab = section.adminTab;
+      state.adminDatabaseTab = section.adminDatabaseTab;
+    } else if (section.view === "statistics") {
+      state.statistics.tab = section.statisticsTab;
+    } else if (section.view === "advertising") {
+      state.advertising.tab = section.advertisingTab;
+    } else if (section.view === "settings") {
+      state.selectedDictionary = section.selectedDictionary;
+      state.paymentSettingsTab = section.paymentSettingsTab;
+      state.eventSettingsTab = section.eventSettingsTab;
+    }
+  }
+
+  function saveLastAisSection() {
+    const key = getLastAisSectionStorageKey();
+    if (!key) return;
+    const section = normalizeLastAisSection({
+      version: 1, view: state.view,
+      adminTab: state.adminTab, adminDatabaseTab: state.adminDatabaseTab,
+      statisticsTab: state.statistics?.tab, advertisingTab: state.advertising?.tab,
+      selectedDictionary: state.selectedDictionary,
+      paymentSettingsTab: state.paymentSettingsTab, eventSettingsTab: state.eventSettingsTab
+    });
+    if (!section) return;
+    try {
+      const serialized = JSON.stringify(section);
+      if (sessionStorage.getItem(key) !== serialized) sessionStorage.setItem(key, serialized);
+    } catch { /* Browser storage restrictions must not prevent navigation. */ }
+  }
+
   function getProgramRegistryFiltersStorageKey() {
     if (isDatabaseDemoMode()) return "";
     const user = getCurrentAuthUser();
@@ -14360,9 +14438,9 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(num);
   }
 
-  function percent(value) {
+  function percent(value, maximumFractionDigits = 1) {
     const num = Number(value || 0);
-    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(num)}%`;
+    return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits }).format(num)}%`;
   }
 
   function pieces(value) {
@@ -14692,7 +14770,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function synchronizeAisBrowserHistory() {
     saveProgramRegistryFilters();
-    if (!aisHistoryNavigationBound || aisHistoryNavigationRestoring) return;
+    if (!aisHistoryNavigationBound) return;
+    saveLastAisSection();
+    if (aisHistoryNavigationRestoring) return;
     const snapshot = captureAisNavigationSnapshot();
     const currentSnapshot = window.history.state?.aisNavigation;
     if (!currentSnapshot) {
@@ -19816,7 +19896,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="revenue" type="button"><span>Внесено слушателями</span><strong>${money(revenue)}</strong></button>
             <button class="finance-summary-row is-receivable" data-action="open-finance-details" data-finance-metric="receivable" type="button"><span>Дебиторская задолженность</span><strong>${money(receivable)}</strong></button>
             <button class="finance-summary-row finance-summary-profit ${profitSummary.profit < 0 ? "is-negative" : ""}" data-action="open-finance-details" data-finance-metric="profit" type="button">
-              <span class="finance-summary-label"><span>Прибыль</span><small title="Внесено слушателями ÷ прибыль × 100%. При нулевой прибыли показатель не рассчитывается.">Средняя прибыльность: ${profitSummary.averageProfitability === null ? "—" : percent(profitSummary.averageProfitability)}</small></span>
+              <span class="finance-summary-label"><span>Прибыль</span><small title="Прибыль ÷ внесено слушателями × 100%. При нулевых поступлениях показатель не рассчитывается.">Средняя прибыльность: ${profitSummary.averageProfitability === null ? "—" : percent(profitSummary.averageProfitability, 2)}</small></span>
               <strong>${money(profitSummary.profit)}</strong>
             </button>
           </div>
@@ -19872,8 +19952,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const profit = Math.round(results.reduce((sum, item) => sum + item.profit, 0) * 100) / 100;
     // Use the same received amount as the dashboard, not a mean of individual ratios.
     const revenue = sumBy(students, "paidAmount");
-    const ratio = profit !== 0 ? revenue / profit * 100 : null;
-    const averageProfitability = Number.isFinite(ratio) ? (Math.round(ratio * 10) / 10 || 0) : null;
+    const ratio = revenue !== 0 ? profit / revenue * 100 : null;
+    const averageProfitability = Number.isFinite(ratio) ? (Math.round(ratio * 100) / 100 || 0) : null;
     return { profit, averageProfitability };
   }
 
@@ -40727,17 +40807,61 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function markStudentEducationDocumentEmailSent(record, result = {}) {
-    if (result?.emailed !== true || result.emailRecipientMode === "system") return 0;
+    if (!record || result?.emailed !== true || result.emailRecipientMode !== "student") return 0;
     const programType = getStudentProgramTypeCode(record);
     if (!["ДОП", "ПРО"].includes(programType)) {
       return markStudentEventsCompleted(record, "educationDocMaketSent");
+    }
+    let statusChanged = false;
+    if (programType === "ПРО") {
+      const recordId = String(record.id || "").trim();
+      const stored = (state.data.collections.students || []).find((item) => recordId && String(item.id || "") === recordId);
+      const currentCard = state.modal?.config === "students" && String(state.modal.id || "").trim() === recordId;
+      if (!stored && (!currentCard || recordId)) return 0;
+      const values = {
+        status: "Отчислен",
+        additionalStatus: resolveStudentAdditionalStatusAfterMainStatusChange({ ...record, status: "Отчислен" }, programType)
+      };
+      const changes = stored ? Object.entries(values)
+        .filter(([key, value]) => String(stored[key] || "") !== value)
+        .map(([key, value]) => ({ field: key, label: key === "status" ? "Статус" : "Доп. статус", before: String(stored[key] || ""), after: value })) : [];
+      if (changes.length) {
+        Object.assign(stored, values);
+        statusChanged = true;
+        addAudit("Изменён статус после отправки документа об образовании", configs.students.title, stored.name || stored.id, {
+          entityType: "students", entityId: stored.id, entityLabel: stored.name || stored.id,
+          source: "automatic-education-document-email", changes
+        });
+      }
+      if (currentCard) {
+        state.modal.draft = { ...(state.modal.draft || {}), ...values };
+        if (!recordId) state.modal.hasDraftChanges = true;
+        const form = document.querySelector("#recordForm[data-config='students']");
+        if (form && String(form.dataset.id || "") === recordId) {
+          Object.entries(values).forEach(([key, value]) => {
+            const control = form.elements[key];
+            if (!control) return;
+            if (control.tagName === "SELECT" && ![...control.options].some((option) => option.value === value)) {
+              const option = document.createElement("option");
+              option.value = value;
+              option.textContent = value;
+              control.appendChild(option);
+            }
+            control.value = value;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+          });
+        }
+      }
     }
     const electronicDocumentEventLabel = "Отправлен электронный документ об образовании";
     const normalizedEventLabel = normalizeEventTemplateLabel(electronicDocumentEventLabel);
     const configuredEvent = getStudentEventTemplates()
       .find((event) => normalizeEventTemplateLabel(event.label) === normalizedEventLabel);
     const eventKey = configuredEvent?.key || buildMacroEventKey(electronicDocumentEventLabel);
-    return markStudentEventsCompleted(record, eventKey, "", { ensureVisible: true });
+    // Persist the status with the delivery event, preserving unrelated card drafts.
+    const eventChanged = markStudentEventsCompleted(record, eventKey, "", { ensureVisible: true });
+    if (statusChanged && !eventChanged) persist();
+    return eventChanged || (statusChanged ? 1 : 0);
   }
 
   function markStudentContractEmailSent(record, result = {}) {
@@ -61565,8 +61689,6 @@ MAX - https://bizvmax.ru/zifra_plus
         } else if (operation === "expulsionOrder") {
           const orderRecords = getStudentOrderDocumentRecords(record, "expulsionOrderNo");
           markStudentEventsCompleted(orderRecords.length ? orderRecords : record, "expulsionOrderPrepared");
-        } else if (operation === "education") {
-          markStudentEducationDocumentEmailSent(record, generated);
         }
         if (
           effectiveTemplate.openAfterGeneration
@@ -74759,6 +74881,9 @@ MAX - https://bizvmax.ru/zifra_plus
         if (documentTemplate.documentKind === "contract" && (!options.entityType || options.entityType === "students")) {
           markStudentContractEmailSent(record, { emailed: emailSent, emailRecipientMode: emailRequest.recipientMode });
         }
+        if (documentTemplate.documentKind === "education" && (!options.entityType || options.entityType === "students")) {
+          markStudentEducationDocumentEmailSent(record, { emailed: emailSent, emailRecipientMode: emailRequest.recipientMode });
+        }
       }
       throwIfDocumentGenerationCancelled(generationTaskId);
       if (options.workflow && !responseDetails.conversionFallback) {
@@ -74850,7 +74975,6 @@ MAX - https://bizvmax.ru/zifra_plus
       button,
       "Не удалось сформировать документ об образовании"
     );
-    markStudentEducationDocumentEmailSent(record, result);
     return result;
   }
 
@@ -77275,7 +77399,9 @@ MAX - https://bizvmax.ru/zifra_plus
   async function initializeApplication() {
     initializeSearchClearControls();
     await synchronizeInterfaceLayout({ startup: true });
-    state.view = loadStartView();
+    const rememberedSection = loadLastAisSection();
+    state.view = rememberedSection?.view || loadStartView();
+    restoreLastAisSection(rememberedSection);
     state.statusFilter = getDefaultStatusFilter(state.view);
     state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
     state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
