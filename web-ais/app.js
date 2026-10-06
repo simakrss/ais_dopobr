@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.578",
+    version: "1.7.579",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.579",
+      releasedAt: "2026-10-06",
+      changes: ["В учёте выплат сотрудника итоги рассчитываются по отмеченным строкам, а без выделения — по текущему списку с учётом фильтров. Слева от «Выплата» добавлена сумма «К зачислению» за вычетом подоходного налога по ставке из настроек. Выделение строк не изменяет сохранённые суммы договора."]
+    },
     {
       version: "1.7.578",
       releasedAt: "2026-10-06",
@@ -10340,18 +10345,23 @@ MAX - https://bizvmax.ru/zifra_plus
   function getEmployeePaymentAccounting(
     record = {},
     collections = {},
-    paymentSettings = state.data?.dictionaries?.paymentSettings
+    paymentSettings = state.data?.dictionaries?.paymentSettings,
+    includedRowKeys = null
   ) {
+    // Selection limits the displayed summary only, never the stored contract totals.
+    const includesRow = (sourceType, sourceId) => !includedRowKeys
+      || includedRowKeys.has(`${sourceType}:${String(sourceId || "").trim()}`);
     const employeeName = normalizeEmployeeActPersonName(record.name);
     const directEntries = employeeName
       ? getDirectExpenseEntriesFromCollections(collections).filter(({ expense }) => (
           normalizeEmployeeActPersonName(expense.note) === employeeName
-        ))
+        )).filter(({ expense, identity }) => includesRow("direct", expense.id || identity))
       : [];
     const generalEntries = employeeName
       ? (collections.generalExpenses || [])
           .filter((expense) => normalizeEmployeeActPersonName(expense?.counterparty) === employeeName)
           .map((expense) => ({ expense, identity: String(expense.id || "").trim() }))
+          .filter(({ identity }) => includesRow("general", identity))
       : [];
     const partnerStudents = employeeName
       ? (collections.students || []).filter((student) => (
@@ -10360,7 +10370,7 @@ MAX - https://bizvmax.ru/zifra_plus
       : [];
     const partnerRows = partnerStudents.flatMap((student) => (
       getEmployeePartnerPaymentRows(student, collections, paymentSettings)
-    ));
+    )).filter((row) => includesRow("partner", row.sourceId));
     const unpaidGeneralTotal = generalEntries.reduce((sum, { expense }) => (
       isEmployeePaymentSettled(expense) ? sum : sum + Number(expense?.amount || 0)
     ), 0);
@@ -10378,7 +10388,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const hasExpenseSources = directEntries.length > 0 || generalEntries.length > 0;
     const services = hasExpenseSources
       ? Math.trunc(unpaidGeneralTotal + recommendedDirectTotal)
-      : Number(record.paid || 0);
+      : includedRowKeys ? 0 : Number(record.paid || 0);
     const calculatedAgencyAmount = partnerRows.reduce((sum, row) => (
       row.affectsAccounting
         && !isEmployeePaymentSettled(normalizeEmployeePaymentSourceRow("partner", row.source))
@@ -10389,7 +10399,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const amount = services + agencyAmount;
     const balance = hasExpenseSources
       ? Math.trunc(unpaidGeneralTotal + unpaidDirectTotal) + agencyAmount - amount
-      : Number(record.balance || 0);
+      : includedRowKeys ? 0 : Number(record.balance || 0);
     return {
       amount: Math.round(amount * 100) / 100,
       paid: Math.round(services * 100) / 100,
@@ -33867,12 +33877,13 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
         <div class="employee-payment-formula-summary" aria-label="Итоги расчёта выплат">
+          <span title="Выплата за вычетом подоходного налога по ставке из настроек системы"><small>К зачислению</small><strong data-employee-payment-summary="netAmount">${escapeHtml(money(getEmployeeNetPayment(accounting.amount)))}</strong></span>
           <span><small>Выплата</small><strong data-employee-payment-summary="amount">${escapeHtml(money(accounting.amount))}</strong></span>
           <span><small>Услуги</small><strong data-employee-payment-summary="paid">${escapeHtml(money(accounting.paid))}</strong></span>
           <span><small>Агентские</small><strong data-employee-payment-summary="agencyAmount">${escapeHtml(money(accounting.agencyAmount))}</strong></span>
           <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(money(accounting.balance))}</strong></span>
         </div>
-        <p class="employee-payment-formula-hint">Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
+        <p class="employee-payment-formula-hint"><span data-employee-payment-summary-scope>По всему списку.</span> Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
         <div class="employee-payment-group-actions" data-employee-payment-group-actions>
           <span class="employee-payment-group-count">Выбрано: <strong data-employee-payment-selected-count>0</strong></span>
           <label>
@@ -34054,6 +34065,39 @@ MAX - https://bizvmax.ru/zifra_plus
     ));
   }
 
+  function syncEmployeePaymentSummaryUi(section) {
+    if (!section) return;
+    const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
+    const selectedRows = getSelectedEmployeePaymentRows(section);
+    const visibleRows = rows.filter((row) => !row.hidden);
+    const summaryRows = selectedRows.length ? selectedRows : visibleRows;
+    const restricted = selectedRows.length > 0 || visibleRows.length !== rows.length
+      || employeePaymentFiltersAreActive();
+    const includedRowKeys = restricted ? new Set(summaryRows.map((row) => (
+      `${row.dataset.paymentSource}:${String(row.dataset.paymentSourceId || "").trim()}`
+    ))) : null;
+    const accounting = getEmployeePaymentAccounting(
+      getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false }),
+      getEmployeePaymentCollections(),
+      state.data?.dictionaries?.paymentSettings,
+      includedRowKeys
+    );
+    const summary = { ...accounting, netAmount: getEmployeeNetPayment(accounting.amount) };
+    ["netAmount", "amount", "paid", "agencyAmount", "balance"].forEach((key) => {
+      const output = section.querySelector(`[data-employee-payment-summary="${key}"]`);
+      if (output) output.textContent = money(summary[key]);
+    });
+    section.querySelector("[data-employee-payment-balance-card]")
+      ?.classList.toggle("has-balance", Boolean(summary.balance));
+    const scope = section.querySelector("[data-employee-payment-summary-scope]");
+    if (scope) {
+      const hiddenSelected = selectedRows.filter((row) => row.hidden).length;
+      scope.textContent = selectedRows.length
+        ? `По выбранным строкам: ${selectedRows.length}${hiddenSelected ? ` (скрыто фильтром: ${hiddenSelected})` : ""}.`
+        : restricted ? `По фильтру: ${visibleRows.length}.` : "По всему списку.";
+    }
+  }
+
   function syncEmployeePaymentSelectionUi(section) {
     if (!section) return;
     const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
@@ -34079,6 +34123,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     section.querySelector("[data-employee-payment-group-actions]")
       ?.classList.toggle("has-selection", Boolean(selectedRows.length));
+    syncEmployeePaymentSummaryUi(section);
   }
 
   function updateEmployeePaymentSelection(event, section) {
