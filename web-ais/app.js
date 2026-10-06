@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.581",
+    version: "1.7.582",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.582",
+      releasedAt: "2026-10-06",
+      changes: ["Исправлено подключение веб-версии к локальной АИС для формирования и сохранения документов. Локальный редактор открывается в отдельном окне без туннеля; после сохранения правок возвращается обновлённый PDF. Место сохранения определяется после проверки локального сервиса, в том числе для договоров сотрудников и групповой генерации."]
+    },
     {
       version: "1.7.581",
       releasedAt: "2026-10-06",
@@ -19269,9 +19274,11 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!result.saved) {
         const template = { ...getStudentCardDocumentTemplate(item.definition.kind), saveFolderTemplate: studentDocumentsFolderTemplateMarker,
           additionalSaveTargets: [], previewBeforeGeneration: options.previewEach, openAfterGeneration: false };
-        const local = getEffectiveLocalDocumentsMode();
-        const storageRequest = { studentFolder: getStudentYandexDocumentsFolder(record), studentName: record.name,
-          autoSaveLocal: local, saveToYandexDisk: !local, promptLocalSave: false, useBrowserDownloads: false, openAfterGeneration: false };
+        const storageRequest = () => {
+          const local = getEffectiveLocalDocumentsMode();
+          return { studentFolder: getStudentYandexDocumentsFolder(record), studentName: record.name,
+            autoSaveLocal: local, saveToYandexDisk: !local, promptLocalSave: false, useBrowserDownloads: false, openAfterGeneration: false };
+        };
         onProgress(`Формирование и сохранение: ${record.name} — ${item.definition.title}`);
         const generated = await downloadStudentDocumentFromTemplate(template, record, null, "Не удалось сформировать документ", {
           storageRequest, skipEmail: true, skipPreview: !options.previewEach, skipOpenAfterGeneration: true,
@@ -54583,6 +54590,7 @@ MAX - https://bizvmax.ru/zifra_plus
       appServerAvailable: false,
       ocrAvailable: false,
       documentConversionAvailable: false,
+      documentEditingAvailable: false,
       localDocumentsAvailable: false,
       openDocumentsLocally: false,
       apiOrigin: ""
@@ -54591,7 +54599,8 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function requestLocalDocumentServiceCapabilities(url, processingHeader, options = {}) {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    // Allow time to answer the browser's local-network permission prompt.
+    const timeout = window.setTimeout(() => controller.abort(), processingHeader === "local-docker" ? 30000 : 2500);
     try {
       const response = await fetch(url, {
         method: "GET",
@@ -54606,6 +54615,7 @@ MAX - https://bizvmax.ru/zifra_plus
         appServerAvailable: payload.appServerAvailable === true,
         ocrAvailable: payload.ocrAvailable === true,
         documentConversionAvailable: payload.documentConversionAvailable === true,
+        documentEditingAvailable: payload.documentEditingAvailable === true,
         localDocumentsAvailable: payload.localDocumentsAvailable === true,
         openDocumentsLocally: payload.openDocumentsLocally !== false,
         apiOrigin: processingHeader === "local-docker"
@@ -54625,6 +54635,7 @@ MAX - https://bizvmax.ru/zifra_plus
         appServerAvailable: true,
         ocrAvailable: true,
         documentConversionAvailable: true,
+        documentEditingAvailable: true,
         localDocumentsAvailable: true,
         openDocumentsLocally: true,
         apiOrigin: defaultPhotoServerOrigin
@@ -54665,7 +54676,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   async function resolveDocumentProcessingOrigin(capability) {
     if (window.location.protocol === "file:") return defaultPhotoServerOrigin;
-    const capabilities = await probeLocalDocumentServices();
+    const capabilities = await probeLocalDocumentServices(localDocumentServicesState.capabilities?.appServerAvailable === false);
     // Assemble from the current local template even when PDF conversion must be
     // delegated to the relay. Conversion availability must not choose the source.
     const useLocalTemplate = capability === "documentConversion" && getOpenDocumentsLocally();
@@ -61506,7 +61517,7 @@ MAX - https://bizvmax.ru/zifra_plus
           null,
           "Не удалось сформировать групповой документ",
           {
-            storageRequest,
+            storageRequest: () => getStudentBulkDocumentStorageRequest(record, effectiveTemplate),
             skipEmailConfirmation: true,
             quietEmail: true,
             skipPreview: true,
@@ -72709,7 +72720,10 @@ MAX - https://bizvmax.ru/zifra_plus
       controller.abort();
     }, Math.max(1000, Number(timeoutMs) || 120000));
     try {
-      const response = await fetch(url, { ...options, signal: controller.signal });
+      const localTransport = /^http:\/\/(?:127\.0\.0\.1|localhost):8081(?:\/|$)/iu.test(String(url))
+        ? { mode: "cors", targetAddressSpace: "local" }
+        : {};
+      const response = await fetch(url, { ...localTransport, ...options, signal: controller.signal });
       return typeof readResponse === "function"
         ? await readResponse(response, controller.signal)
         : response;
@@ -73427,6 +73441,25 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       };
       let editorSession = null;
+      // A first-party local window avoids mixed-content iframe and third-party
+      // cookie restrictions without weakening ONLYOFFICE authentication.
+      const useLocalEditorWindow = window.location.protocol === "https:"
+        && /^http:\/\/(?:127\.0\.0\.1|localhost):8081(?:\/|$)/iu.test(processingOrigin);
+      let editorWindow = null;
+      const closeEditorWindow = () => {
+        if (editorWindow && !editorWindow.closed) editorWindow.close();
+        editorWindow = null;
+      };
+      const localEditorWindowUrl = (session) => {
+        const url = new URL(session.editorUrl);
+        url.searchParams.set("parentOrigin", window.location.origin);
+        return url.href;
+      };
+      const setEditorWindowBusy = (busy) => {
+        if (editorSession && editorWindow && !editorWindow.closed) editorWindow.postMessage({
+          source: "ais-generated-document-preview", editorSession: editorSession.editorToken, busy
+        }, editorSession.editorOrigin);
+      };
       let editorReady = false;
       let editorChangesPending = false;
       let editorDirty = false;
@@ -73441,12 +73474,14 @@ MAX - https://bizvmax.ru/zifra_plus
       const description = backdrop.querySelector("[data-generated-document-preview-description]");
       const hint = backdrop.querySelector("[data-generated-document-preview-hint]");
       const editButton = backdrop.querySelector("[data-action='edit-generated-document-preview']");
+      const defaultEditButtonText = editButton?.textContent || "Редактировать";
       const refreshButton = backdrop.querySelector("[data-action='refresh-generated-document-editor']");
       const saveButton = backdrop.querySelector("[data-action='save-generated-document-editor']");
       const cancelButton = backdrop.querySelector("[data-action='cancel-generated-document-editor-or-preview']");
       const continueButton = backdrop.querySelector("[data-action='confirm-generated-document-preview']");
       const defaultDescription = description?.textContent || "";
       const setPreviewMode = (message = "") => {
+        closeEditorWindow();
         editorReady = false;
         editorChangesPending = false;
         editorDirty = false;
@@ -73462,7 +73497,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (heading) heading.textContent = "Предварительный просмотр";
         if (description) description.textContent = message || defaultDescription;
         if (hint) hint.textContent = "Сохранение, скачивание и отправка начнутся только после подтверждения.";
-        if (editButton) editButton.hidden = false;
+        if (editButton) { editButton.hidden = false; editButton.textContent = defaultEditButtonText; }
         if (refreshButton) {
           refreshButton.hidden = true;
           refreshButton.disabled = true;
@@ -73499,15 +73534,24 @@ MAX - https://bizvmax.ru/zifra_plus
         editorSessionRefreshRequired = false;
         editorSessionRefreshStatus = 0;
         if (frame) {
-          frame.hidden = false;
+          frame.hidden = useLocalEditorWindow;
           frame.classList.add("is-editor");
-          frame.src = session.editorUrl;
+          frame.src = useLocalEditorWindow ? "about:blank" : session.editorUrl;
           frame.title = `Редактирование документа ${title}`;
         }
+        if (useLocalEditorWindow && editorWindow && !editorWindow.closed) {
+          editorWindow.location.replace(localEditorWindowUrl(session));
+          editorWindow.focus();
+        }
         if (heading) heading.textContent = "Редактирование документа";
-        if (description) description.textContent = "Документ открыт в ONLYOFFICE. После правки нажмите «Сохранить изменения».";
+        if (description) description.textContent = useLocalEditorWindow
+          ? "Документ открыт в отдельном локальном окне ONLYOFFICE. Сохраните изменения, чтобы вернуться к просмотру PDF."
+          : "Документ открыт в ONLYOFFICE. После правки нажмите «Сохранить изменения».";
         if (hint) hint.textContent = "После сохранения система снова покажет PDF для окончательной проверки.";
-        if (editButton) editButton.hidden = true;
+        if (editButton) {
+          editButton.hidden = !useLocalEditorWindow;
+          if (useLocalEditorWindow) editButton.textContent = "Открыть окно редактора";
+        }
         if (refreshButton) {
           refreshButton.hidden = false;
           refreshButton.disabled = false;
@@ -73548,10 +73592,13 @@ MAX - https://bizvmax.ru/zifra_plus
       const handleEditorMessage = (event) => {
         if (
           !editorSession
+          || event.source !== (useLocalEditorWindow ? editorWindow : frame?.contentWindow)
           || event.origin !== editorSession.editorOrigin
           || event.data?.source !== "ais-generated-document-editor"
           || event.data?.editorSession !== editorSession.editorToken
         ) return;
+        if (event.data.type === "save-request") { void saveCurrentEditorChanges(); return; }
+        if (event.data.type === "cancel-request") { void requestCancelEditorOrPreview(); return; }
         if (event.data.type === "ready") {
           editorReady = true;
           if (saveButton && !saveButton.hasAttribute("aria-busy")) {
@@ -73633,6 +73680,7 @@ MAX - https://bizvmax.ru/zifra_plus
         settled = true;
         countdown.dispose();
         editorStartSequence += 1;
+        closeEditorWindow();
         pdfViewerSequence++; pdfViewer?.destroy(); pdfViewer = null;
         options.signal?.removeEventListener("abort", abortPreview);
         backdrop.removeEventListener("keydown", trapFocus);
@@ -73664,6 +73712,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const frameWasInert = Boolean(frame?.hasAttribute("inert"));
         const previousFramePointerEvents = frame?.style.pointerEvents || "";
         editorActionPending = true;
+        setEditorWindowBusy(true);
         if (frame) {
           frame.setAttribute("inert", "");
           frame.style.pointerEvents = "none";
@@ -73692,7 +73741,9 @@ MAX - https://bizvmax.ru/zifra_plus
             return true;
           }
           editorReady = false;
-          if (frame) {
+          if (useLocalEditorWindow && editorWindow && !editorWindow.closed) {
+            editorWindow.location.replace(localEditorWindowUrl(sessionToRefresh));
+          } else if (frame && !useLocalEditorWindow) {
             frame.src = refreshedEditorFrameUrl(sessionToRefresh);
             frame.title = `Редактирование документа ${title}`;
           }
@@ -73712,6 +73763,7 @@ MAX - https://bizvmax.ru/zifra_plus
           return false;
         } finally {
           editorActionPending = false;
+          setEditorWindowBusy(false);
           if (frame) {
             if (!frameWasInert) frame.removeAttribute("inert");
             frame.style.pointerEvents = previousFramePointerEvents;
@@ -73741,6 +73793,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         const sessionToSave = editorSession;
         editorActionPending = true;
+        setEditorWindowBusy(true);
         saveButton.disabled = true;
         saveButton.setAttribute("aria-busy", "true");
         if (refreshButton) refreshButton.disabled = true;
@@ -73795,6 +73848,7 @@ MAX - https://bizvmax.ru/zifra_plus
           return false;
         } finally {
           editorActionPending = false;
+          setEditorWindowBusy(false);
           if (!settled && editorSession === sessionToSave) {
             saveButton.disabled = !editorReady || editorChangesPending;
             saveButton.removeAttribute("aria-busy");
@@ -73814,6 +73868,7 @@ MAX - https://bizvmax.ru/zifra_plus
         }
         const sessionToDiscard = editorSession;
         editorActionPending = true;
+        setEditorWindowBusy(true);
         cancelButton.disabled = true;
         cancelButton.setAttribute("aria-busy", "true");
         if (saveButton) saveButton.disabled = true;
@@ -73849,6 +73904,7 @@ MAX - https://bizvmax.ru/zifra_plus
           return false;
         } finally {
           editorActionPending = false;
+          setEditorWindowBusy(false);
           if (!settled && editorSession === sessionToDiscard) {
             if (saveButton) saveButton.disabled = !editorReady || editorChangesPending;
             if (refreshButton) {
@@ -73915,6 +73971,22 @@ MAX - https://bizvmax.ru/zifra_plus
       editButton?.addEventListener("click", async () => {
         if (!previewToken || !processingOrigin || editButton.disabled || editorStartPending) return;
         if (!countdown.check()) return;
+        if (useLocalEditorWindow) {
+          if (!editorWindow || editorWindow.closed) {
+            editorWindow = window.open("about:blank", "_blank", "popup,width=1200,height=850");
+            if (!editorWindow) {
+              alert("Разрешите всплывающие окна для этого сайта и снова нажмите «Редактировать».");
+              return;
+            }
+            if (editorSession) {
+              editorReady = false;
+              if (saveButton) saveButton.disabled = true;
+              editorWindow.location.replace(localEditorWindowUrl(editorSession));
+            }
+          }
+          editorWindow.focus();
+          if (editorSession) return;
+        }
         const startSequence = ++editorStartSequence;
         editorStartPending = true;
         editButton.disabled = true;
@@ -73930,9 +74002,14 @@ MAX - https://bizvmax.ru/zifra_plus
             ).catch(() => null);
             return;
           }
+          if (useLocalEditorWindow && (!editorWindow || editorWindow.closed)) {
+            await discardGeneratedDocumentEditor(previewToken, requestedSession.editorToken, processingOrigin);
+            throw new Error("Окно редактора закрыто. Нажмите «Редактировать» ещё раз.");
+          }
           setEditorMode(requestedSession);
         } catch (error) {
           if (settled || startSequence !== editorStartSequence) return;
+          closeEditorWindow();
           if (description) description.textContent = defaultDescription;
           alert(`Не удалось открыть редактор: ${error.message}`);
         } finally {
@@ -74532,7 +74609,9 @@ MAX - https://bizvmax.ru/zifra_plus
         }
       }
       throwIfDocumentGenerationCancelled(generationTaskId);
-      const requestedStorage = options.storageRequest || await awaitDocumentGenerationStage(generationTaskId, () => prepareStudentDocumentStorageRequest(
+      const requestedStorage = typeof options.storageRequest === "function"
+        ? await options.storageRequest()
+        : options.storageRequest || await awaitDocumentGenerationStage(generationTaskId, () => prepareStudentDocumentStorageRequest(
         record,
         documentTemplate,
         fileName,
@@ -75610,7 +75689,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         auditArea: "Документы сотрудника",
         messageType: "Договор сотрудника",
-        storageRequest: getEmployeeDocumentStorageRequest(record, documentTemplate)
+        storageRequest: () => getEmployeeDocumentStorageRequest(record, documentTemplate)
       }
     );
   }
@@ -75675,7 +75754,7 @@ MAX - https://bizvmax.ru/zifra_plus
         entityType: "contracts",
         auditArea: "Документы сотрудника",
         messageType: "Акт оказанных услуг",
-        storageRequest: getEmployeeDocumentStorageRequest(record, documentTemplate)
+        storageRequest: () => getEmployeeDocumentStorageRequest(record, documentTemplate)
       }
     );
     if (result?.emailed) markEmployeeActPaymentRowsAsSent(record, collections);

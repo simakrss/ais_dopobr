@@ -35860,6 +35860,13 @@ function assertGeneratedDocumentEditorBackendAvailable(req) {
 }
 
 async function resolveGeneratedDocumentEditorBrowserBaseUrl(req) {
+  // The authenticated gateway identifies a direct browser bridge. Its forwarded
+  // HTTPS protocol describes the cloud page, not this local HTTP server.
+  if (requestHasConfiguredGatewaySecret(req)
+    && String(req.headers["x-ais-session-id"] || "") === "local-browser-services"
+    && isLoopbackEditorHostname(new URL(requestPublicOrigin(req) || "http://invalid").hostname)) {
+    return `http://127.0.0.1:${PORT}`;
+  }
   const requestOrigin = requestPublicOrigin(req);
   const pageOrigin = String(req.headers.origin || "").trim();
   let pageUsesHttps = false;
@@ -36067,6 +36074,12 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
     const safeConfig = JSON.stringify(config).replace(/</gu, "\\u003c");
     const safePreviewToken = JSON.stringify(previewToken).replace(/</gu, "\\u003c");
     const safeSession = JSON.stringify(editorToken).replace(/</gu, "\\u003c");
+    let parentOrigin = "";
+    try {
+      const candidate = new URL(requestUrl.searchParams.get("parentOrigin") || "");
+      if (["https:", "http:"].includes(candidate.protocol)) parentOrigin = candidate.origin;
+    } catch { /* Embedded editors keep their existing parent channel. */ }
+    const safeParentOrigin = JSON.stringify(parentOrigin).replace(/</gu, "\\u003c");
     const proxyCookie = signGeneratedDocumentEditorProxyCookie(
       editorToken,
       context.metadata.editorSession.expiresAt,
@@ -36079,25 +36092,55 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Редактирование документа</title>
   <style>
-    html,body,#editor{width:100%;height:100%;margin:0;overflow:hidden;background:#eef3f1}
+    html,body,#editor-host,#editor{width:100%;height:100%;margin:0;overflow:hidden;background:#eef3f1}
     #status{position:fixed;inset:0;display:grid;place-items:center;font:600 15px/1.4 "Segoe UI",Arial,sans-serif;color:#38504a;background:#eef3f1;z-index:2}
     body.is-ready #status{display:none}
+    #local-actions{display:none;box-sizing:border-box;height:46px;align-items:center;justify-content:flex-end;gap:8px;padding:6px 12px;background:#fff;font:14px "Segoe UI",Arial,sans-serif}
+    body.is-local-window #local-actions{display:flex}
+    body.is-local-window #editor-host{height:calc(100% - 46px)}
+    #local-actions button{padding:6px 12px;border:1px solid #bfd3cf;border-radius:6px;background:#fff;cursor:pointer}
+    #local-actions button:first-child{background:#0f766e;color:white}
+    #local-actions button:disabled{opacity:.5;cursor:wait}
+    body.is-busy #status{display:grid}
   </style>
 </head>
 <body>
   <div id="status">Открываем онлайн-редактор…</div>
-  <div id="editor"></div>
+  <div id="local-actions"><button id="save" disabled>Сохранить и вернуться к просмотру</button><button id="cancel">Отменить изменения</button></div>
+  <div id="editor-host"><div id="editor"></div></div>
   <script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
   <script>
     (() => {
       const previewToken = ${safePreviewToken};
       const editorSession = ${safeSession};
-      const notify = (type, details = {}) => parent.postMessage({
+      const parentOrigin = ${safeParentOrigin};
+      const controllerWindow = window.opener || parent;
+      const notify = (type, details = {}) => controllerWindow.postMessage({
         source: "ais-generated-document-editor",
         editorSession,
         type,
         ...details
-      }, "*");
+      }, parentOrigin || "*");
+      let editorReady = false;
+      let changesPending = false;
+      let busy = false;
+      const updateActions = () => {
+        document.getElementById("save").disabled = !editorReady || changesPending || busy;
+        document.getElementById("cancel").disabled = busy;
+      };
+      if (window.opener && parentOrigin) {
+        document.body.classList.add("is-local-window");
+        document.getElementById("save").onclick = () => { notify("save-request"); controllerWindow.focus(); };
+        document.getElementById("cancel").onclick = () => { notify("cancel-request"); controllerWindow.focus(); };
+        window.addEventListener("message", (event) => {
+          if (event.source !== controllerWindow || event.origin !== parentOrigin
+            || event.data?.source !== "ais-generated-document-preview" || event.data?.editorSession !== editorSession) return;
+          busy = event.data.busy === true;
+          document.body.classList.toggle("is-busy", busy);
+          document.getElementById("status").textContent = busy ? "Обработка изменений…" : "Открываем онлайн-редактор…";
+          updateActions();
+        });
+      }
       let sessionRefreshPending = false;
       const refreshSession = async () => {
         if (sessionRefreshPending) return;
@@ -36150,10 +36193,14 @@ async function handleGeneratedDocumentPreviewEditorPage(req, res, requestUrl) {
       config.events = {
         onDocumentReady() {
           document.body.classList.add("is-ready");
+          editorReady = true;
+          updateActions();
           notify("ready");
         },
         onDocumentStateChange(event) {
-          notify("state", { modified: Boolean(event?.data) });
+          changesPending = Boolean(event?.data);
+          updateActions();
+          notify("state", { modified: changesPending });
         },
         onError(event) {
           notify("error", { message: String(event?.data?.errorDescription || event?.data?.errorCode || "Ошибка ONLYOFFICE") });

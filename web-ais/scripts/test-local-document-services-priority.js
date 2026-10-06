@@ -159,6 +159,7 @@ async function main() {
     appServerAvailable: true,
     ocrAvailable: true,
     documentConversionAvailable: true,
+    documentEditingAvailable: true,
     localDocumentsAvailable: true,
     openDocumentsLocally: true
   });
@@ -170,6 +171,7 @@ async function main() {
   assert.equal(localResolver.getFetchCount(), 1, "Проверка локальных сервисов должна кэшироваться");
   assert.equal(localResolver.getRequestOptions().targetAddressSpace, "local");
   assert.equal((await localResolver.probeLocalDocumentServices()).localDocumentsAvailable, true);
+  assert.equal((await localResolver.probeLocalDocumentServices()).documentEditingAvailable, true);
 
   const degradedResolver = createDocumentProcessingResolver({
     appServerAvailable: true,
@@ -347,6 +349,16 @@ async function main() {
     });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
+    for (const action of ["/api/contracts/student-document", "/api/contracts/student-document-preview/editor-save",
+      "/api/contracts/student-document-preview/finalize", "/api/contracts/student-document-preview/abort-generation"]) {
+      const response = await fetch(baseUrl + action, { method: "OPTIONS", headers: {
+        ...remoteHeaders, "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type,x-document-generation-id"
+      } });
+      assert.equal(response.status, 204);
+      assert.equal(response.headers.get("access-control-allow-origin"), "https://edu-plus.ru");
+      assert.match(response.headers.get("access-control-allow-headers"), /x-document-generation-id/iu);
+    }
 
     const filesResponse = await fetch(`${baseUrl}/api/students/recognize-documents/files`, {
       method: "POST",
