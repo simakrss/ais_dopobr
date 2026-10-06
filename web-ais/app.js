@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.575",
-    releasedAt: "2026-10-05"
+    version: "1.7.576",
+    releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.576",
+      releasedAt: "2026-10-06",
+      changes: ["Исправлено чтение пустого списка отмеченных событий из XLSB: первое событие больше не отмечается самопроизвольно. Синхронизация слушателей и договоров сотрудников сохраняет снятые галочки; проверка реальных расхождений остаётся включённой."]
+    },
     {
       version: "1.7.575",
       releasedAt: "2026-10-05",

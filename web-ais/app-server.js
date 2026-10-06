@@ -15963,9 +15963,13 @@ function parseRecordEventSettings(
     const key = line.slice(0, separator).trim();
     const rawValue = line.slice(separator + 1).trim();
     if (!currentEvent && key === "Выд") {
+      // An empty selection is not index 0: Number("") would check the first event.
+      // Only explicit decimal indices written by Excel may select an event.
       block.selected = rawValue.split(",")
-        .map((item) => Number(item.trim()))
-        .filter((item) => Number.isInteger(item) && item >= 0);
+        .map((item) => item.trim())
+        .filter((item) => /^\d+$/u.test(item))
+        .map(Number)
+        .filter((item) => Number.isSafeInteger(item) && item >= 0);
       return;
     }
     if (!currentEvent) return;
@@ -41454,6 +41458,8 @@ module.exports = {
   optimizeStudentApplicationsSqlQuery,
   runStudentApplicationsQuery,
   parseStudentDatabaseWorkbook,
+  parseStudentEventSettings,
+  parseContractEventSettings,
   normalizeStudentDatabaseDiscountPercent,
   formatSystemDocumentsCardPath,
   systemDocumentsPathsEqual,
