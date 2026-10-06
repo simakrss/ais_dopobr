@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.579",
+    version: "1.7.580",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.580",
+      releasedAt: "2026-10-06",
+      changes: ["На рабочем столе в блоке «Поступления и затраты» прибыль размещена сразу после дебиторской задолженности. Прямые и общие затраты и график перенесены вниз в отдельные сворачиваемые области, закрытые по умолчанию. Переключение показателей не сворачивает открытый график."]
+    },
     {
       version: "1.7.579",
       releasedAt: "2026-10-06",
@@ -7644,6 +7649,7 @@ MAX - https://bizvmax.ru/zifra_plus
     activeContractTemplateFieldId: "",
     pendingContractTemplateFieldFocus: "",
     financeChart: { revenue: true, direct: true, general: true },
+    dashboardFinanceExpanded: { expenses: false, chart: false },
     statistics: {
       tab: "income",
       filters: {
@@ -19787,14 +19793,22 @@ MAX - https://bizvmax.ru/zifra_plus
           <div class="finance-summary">
             <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="revenue" type="button"><span>Внесено слушателями</span><strong>${money(revenue)}</strong></button>
             <button class="finance-summary-row is-receivable" data-action="open-finance-details" data-finance-metric="receivable" type="button"><span>Дебиторская задолженность</span><strong>${money(receivable)}</strong></button>
-            <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="direct" type="button"><span>Прямые затраты</span><strong>${money(direct)}</strong></button>
-            <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="general" type="button"><span>Общие затраты</span><strong>${money(general)}</strong></button>
             <button class="finance-summary-row finance-summary-profit ${profitSummary.profit < 0 ? "is-negative" : ""}" data-action="open-finance-details" data-finance-metric="profit" type="button">
               <span class="finance-summary-label"><span>Прибыль</span><small>Средняя прибыльность: ${percent(profitSummary.averageProfitability)}</small></span>
               <strong>${money(profitSummary.profit)}</strong>
             </button>
           </div>
-          ${renderFinanceChart(financeSeries)}
+          <details class="dashboard-finance-details" data-dashboard-finance-section="expenses" ${state.dashboardFinanceExpanded.expenses ? "open" : ""}>
+            <summary>Прямые и общие затраты</summary>
+            <div class="finance-summary">
+              <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="direct" type="button"><span>Прямые затраты</span><strong>${money(direct)}</strong></button>
+              <button class="finance-summary-row" data-action="open-finance-details" data-finance-metric="general" type="button"><span>Общие затраты</span><strong>${money(general)}</strong></button>
+            </div>
+          </details>
+          <details class="dashboard-finance-details" data-dashboard-finance-section="chart" ${state.dashboardFinanceExpanded.chart ? "open" : ""}>
+            <summary>График</summary>
+            ${renderFinanceChart(financeSeries)}
+          </details>
         </section>
       </div>
     `;
@@ -20243,6 +20257,24 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     document.querySelectorAll("[data-action='open-finance-detail-source']").forEach((button) => {
       button.addEventListener("click", () => openFinanceDetailSource(button.dataset.rowId));
+    });
+  }
+
+  function bindDashboardFinanceControls() {
+    document.querySelectorAll("[data-dashboard-finance-section]").forEach((details) => {
+      details.addEventListener("toggle", () => {
+        if (!details.isConnected) return;
+        const key = details.dataset.dashboardFinanceSection;
+        if (key === "expenses" || key === "chart") state.dashboardFinanceExpanded[key] = details.open;
+      });
+    });
+    document.querySelectorAll("[data-action='toggle-finance-metric']").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.metric;
+        if (!key) return;
+        state.financeChart[key] = !state.financeChart[key];
+        render();
+      });
     });
   }
 
@@ -46866,14 +46898,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
     bindTableColumnEvents();
 
-    document.querySelectorAll("[data-action='toggle-finance-metric']").forEach((button) => {
-      button.addEventListener("click", () => {
-        const key = button.dataset.metric;
-        if (!key) return;
-        state.financeChart[key] = !state.financeChart[key];
-        render();
-      });
-    });
+    bindDashboardFinanceControls();
 
     bindComboFieldEvents();
 

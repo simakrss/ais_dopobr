@@ -5617,6 +5617,33 @@ body.long-press-dragging * {
   color: #b42318;
 }
 
+.dashboard-finance-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.dashboard-finance-details > summary {
+  padding: 4px 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.dashboard-finance-details > summary:hover {
+  color: var(--teal);
+}
+
+.dashboard-finance-details > summary:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.dashboard-finance-details > .finance-summary,
+.dashboard-finance-details > .finance-chart {
+  margin-top: 8px;
+}
+
 .dashboard-panel-title-link {
   border: 0;
   background: transparent;
