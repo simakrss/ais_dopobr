@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.582",
+    version: "1.7.583",
     releasedAt: "2026-10-06"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.583",
+      releasedAt: "2026-10-06",
+      changes: ["Поле программы переименовано в «Ссылка на отчет по оценкам / ссылка на подключение». Напоминания слушателям и преподавателю берут ссылку подключения из этого поля; прежний параметр SberJazz используется только при пустом основном поле. Изменение ссылки требует обновления предпросмотра перед отправкой."]
+    },
     {
       version: "1.7.582",
       releasedAt: "2026-10-06",
@@ -6777,7 +6782,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("productId", "Код товара в магазине"),
         field("studyForm", "Форма обучения", "select", false, "studyForms"),
         field("promoSite", "На промо сайте"),
-        field("gradeReportUrl", "Ссылка на отчет по оценкам"),
+        field("gradeReportUrl", "Ссылка на отчет по оценкам / ссылка на подключение"),
         field("telegramGroup", "Гр. Телеграмм"),
         field("groupIndex", "Индекс группы", "text", false, null, { tableLabel: "Индекс гр." }),
         field("webinarDate", "Дата вебинара", "date", false, null, { programTab: "site" }),
@@ -43053,11 +43058,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const time = String(program.webinarTime || "").trim();
     if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) errors.push("В параметрах программы укажите время вебинара по Москве.");
     let joinUrl = "";
+    // The main program field is authoritative, just as in site synchronization.
+    // Do not silently use an old meeting when a nonempty current link is invalid.
+    const connectionUrl = [program.gradeReportUrl, program["Ссылка на отчет по оценкам"], program.webinarJoinUrl]
+      .map((value) => String(value || "").trim()).find(Boolean) || "";
     try {
-      const url = new URL(String(program.webinarJoinUrl || "").trim());
+      const url = new URL(connectionUrl);
       if (url.protocol === "https:" && !url.username && !url.password) joinUrl = url.href;
     } catch { /* Missing or malformed connection URL is reported below. */ }
-    if (!joinUrl) errors.push("В параметрах программы укажите корректную HTTPS-ссылку подключения SberJazz.");
+    if (!joinUrl) errors.push("На вкладке «Основное» программы в поле «Ссылка на отчет по оценкам / ссылка на подключение» укажите корректную HTTPS-ссылку подключения SberJazz.");
     if (audience === "teacher" && !teacher) errors.push("Выберите преподавателя из базы сотрудников.");
     if (audience === "students" && !registrations.length) errors.push("У этой программы нет слушателей со статусом «На зачисление».");
     const seenEmails = new Set();

@@ -227,6 +227,50 @@ async function test() {
   }
   const ru = harness(); ru.c.state.data.collections.programs[0].webinarDate = "4.08.2026";
   assert.equal(ru.c.getWebinarMessageContext("pro").fields.ДатаВебинара, "04.08.2026");
+  assert.match(source, /field\("gradeReportUrl", "Ссылка на отчет по оценкам \/ ссылка на подключение"\)/u);
+  const mainJoinUrl = "https://salutejazz.ru/#/calls/test-meeting?psw=AbC_123&source=reminder";
+  for (const audience of ["students", "teacher"]) {
+    const primary = harness();
+    const program = primary.c.state.data.collections.programs[0];
+    program.gradeReportUrl = `  ${mainJoinUrl}  `;
+    const before = JSON.stringify(program);
+    const preview = primary.c.getWebinarMessageContext("pro", audience, audience === "teacher" ? "t1" : "");
+    assert.equal(preview.errors.length, 0);
+    assert.equal(preview.fields.СсылкаПодключения, mainJoinUrl, "Main field wins over the old Jazz parameter");
+    const template = defaults.find(item => item.id === audience);
+    const message = primary.c.renderWebinarMessage(template.message, preview.fields);
+    assert.ok(message.includes(mainJoinUrl), "Preserve meeting password and fragment in both messages");
+    assert.ok(!message.includes(program.webinarJoinUrl), "Never put a stale meeting in the reminder");
+    const sent = await primary.c.deliverWebinarMessages(preview, { subject: "Проверка", message });
+    assert.equal(sent.sent, preview.recipients.length);
+    assert.ok(primary.calls.every(call => call.message.includes(mainJoinUrl)));
+    assert.equal(JSON.stringify(program), before, "Preview and sending must not mutate the program");
+    program.gradeReportUrl = "https://salutejazz.ru/calls/new-meeting?psw=Changed";
+    const changed = primary.c.getWebinarMessageContext("pro", audience, audience === "teacher" ? "t1" : "");
+    assert.notEqual(changed.fingerprint, preview.fingerprint);
+    const oldCount = primary.calls.length;
+    const stale = await primary.c.deliverWebinarMessages(preview, { subject: "Проверка", message });
+    assert.equal(stale.sent, 0, "A changed connection URL requires a fresh preview");
+    assert.equal(primary.calls.length, oldCount);
+  }
+  for (const invalidUrl of ["javascript:alert(1)", "http://salutejazz.ru/calls/test", "https://user:pass@example.test", "не ссылка"]) {
+    const invalid = harness();
+    invalid.c.state.data.collections.programs[0].gradeReportUrl = invalidUrl;
+    const preview = invalid.c.getWebinarMessageContext("pro");
+    assert.equal(preview.fields.СсылкаПодключения, "");
+    assert.ok(preview.errors.some(error => error.includes("На вкладке «Основное»")));
+    await assert.rejects(invalid.c.deliverWebinarMessages(preview, { subject: "Тема", message: "Текст" }));
+    assert.equal(invalid.calls.length, 0, "Invalid main link must not fall back to a valid but stale meeting");
+  }
+  const legacy = harness();
+  legacy.c.state.data.collections.programs[0].gradeReportUrl = "  ";
+  assert.equal(legacy.c.getWebinarMessageContext("pro").fields.СсылкаПодключения, "https://example.test/join?token=test");
+  legacy.c.state.data.collections.programs[0]["Ссылка на отчет по оценкам"] = mainJoinUrl;
+  assert.equal(legacy.c.getWebinarMessageContext("pro").fields.СсылкаПодключения, mainJoinUrl);
+  const mainOnly = harness();
+  mainOnly.c.state.data.collections.programs[0].gradeReportUrl = mainJoinUrl;
+  delete mainOnly.c.state.data.collections.programs[0].webinarJoinUrl;
+  assert.equal(mainOnly.c.getWebinarMessageContext("pro").errors.length, 0, "No generator setup is required for a link from the main tab");
   const content = {subject:"Вебинар",message:rendered};
   const selectedHarness = harness(); const selectionContext=selectedHarness.c.getWebinarMessageContext("pro");
   const excluded=[" FIRST@EXAMPLE.TEST "];

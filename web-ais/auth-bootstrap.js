@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261006-cloud-local-documents";
+  const AUTH_BUILD = "20261006-webinar-main-join-url";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
