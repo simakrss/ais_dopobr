@@ -103,7 +103,7 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
   const requiredFiles = FILES.filter(name => (!["local-update-components.js", "windows-update-service.js"].includes(name) || compareVersions(release.version, "1.7.551") >= 0)
     && (name !== "document-relay.js" || compareVersions(release.version, "1.7.542") >= 0)
     && (name !== "vitu-email-source.js" || compareVersions(release.version, "1.7.575") >= 0)
-    && (!name.startsWith("pk-report") || compareVersions(release.version, "1.7.584") >= 0)
+    && (!name.startsWith("pk-report") || compareVersions(release.version, "1.7.586") >= 0)
     && (!(name === "pdf-preview.js" || name.startsWith("pdfjs-")) || compareVersions(release.version, "1.7.543") >= 0)
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");

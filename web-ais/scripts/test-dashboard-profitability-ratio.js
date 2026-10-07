@@ -13,7 +13,7 @@ const context = vm.createContext({
   sumStudentPayments: (record) => Number(record.detailedPayments || 0),
   sumStudentExpenses: (record) => Number(record.expenses || 0)
 });
-vm.runInContext(["sumBy", "calculateDashboardStudentProfit", "calculateDashboardStudentProfitSummary"].map(extract).join("\n"), context);
+vm.runInContext(["sumBy", "percent", "calculateDashboardStudentProfit", "calculateDashboardStudentProfitSummary"].map(extract).join("\n"), context);
 function check(students, profit, ratio) {
   const snapshot = JSON.stringify(students);
   const result = context.calculateDashboardStudentProfitSummary(students);
@@ -21,13 +21,19 @@ function check(students, profit, ratio) {
   assert.equal(result.averageProfitability, ratio);
   assert.equal(JSON.stringify(students), snapshot, "Summary must not modify payment data");
 }
-check([{ paidAmount: 1000, expenses: 200 }], 800, 125);
-check([{ paidAmount: 1000, expenses: 200 }, { paidAmount: 9000, expenses: 8000 }], 1800, 555.6);
+check([{ paidAmount: 1000, expenses: 200 }], 800, 80);
+check([{ paidAmount: 1000, expenses: 200 }, { paidAmount: 9000, expenses: 8000 }], 1800, 18);
 check([{ paidAmount: 1000, detailedPayments: 1500, expenses: 500 }], 1000, 100);
-check([{ paidAmount: 1000, expenses: 1500 }], -500, -200);
-check([{ paidAmount: 1000, expenses: 1000 }], 0, null);
-check([{ paidAmount: 0, expenses: 200 }], -200, 0);
+check([{ paidAmount: 1000, expenses: 1500 }], -500, -50);
+check([{ paidAmount: 1000, expenses: 1000 }], 0, 0);
+check([{ paidAmount: 0, expenses: 200 }], -200, null);
 check([{ paidAmount: "100,50" }], 0, null);
-check([{ paidAmount: "100.5", expenses: 20.1 }], 80.4, 125);
+check([{ paidAmount: "100.5", expenses: 20.1 }], 80.4, 80);
 check([], 0, null);
-console.log("Dashboard profitability: received amount / total profit, aggregate ratio, zero/negative/decimal cases: OK");
+check([{ paidAmount: 1495330, expenses: 1495330 - 719953 }], 719953, 48.15);
+check([{ paidAmount: 1000, expenses: 1000.001 }], 0, 0);
+assert.equal(context.percent(48.15, 2), "48,15%");
+assert.equal(context.percent(48.15), "48,2%", "Other percentage displays keep existing precision");
+assert.match(source, /title="Прибыль ÷ внесено слушателями × 100%/u);
+assert.match(source, /percent\(profitSummary.averageProfitability, 2\)/u);
+console.log("Dashboard profitability: total profit / received amount, 48.15% example, aggregate ratio, zero/negative/decimal cases: OK");
