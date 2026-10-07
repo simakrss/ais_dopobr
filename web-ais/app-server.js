@@ -40621,6 +40621,9 @@ const PUBLIC_STATIC_PATHS = new Set([
   "/favicon.ico",
   "/field-html-links.js",
   "/document-workflow.js",
+  "/pk-reporting.js",
+  "/pk-report-templates.js",
+  "/vendor/sheetjs/xlsx.full.min.js",
   "/index.html",
   "/partner-app.js",
   "/styles.css"

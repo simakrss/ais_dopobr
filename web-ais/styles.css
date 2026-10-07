@@ -32123,3 +32123,26 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .advertising-stream-panel .advertising-heading-actions {
   justify-content: flex-start;
 }
+.pk-report-panel { padding: 18px; }
+.pk-report-panel input, .pk-report-panel select, .pk-report-panel button { font: inherit; min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--panel); }
+.pk-report-panel button { cursor: pointer; }
+.pk-report-panel button.primary { color: white; background: var(--teal); border-color: var(--teal); }
+.pk-report-panel button:disabled { opacity: .55; cursor: default; }
+.pk-report-panel input:focus-visible, .pk-report-panel select:focus-visible, .pk-report-panel button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.pk-report-panel table { width: 100%; border-collapse: collapse; }
+.pk-report-panel th, .pk-report-panel td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.pk-report-panel th { background: var(--panel-soft); font-size: 13px; color: var(--muted); }
+.pk-report-panel .muted { color: var(--muted); line-height: 1.5; font-size: 13px; }
+.pk-report-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
+.pk-report-controls label, .pk-report-section { display: grid; gap: 5px; }
+.pk-report-controls input { width: 110px; }
+.pk-report-section { max-width: 620px; margin: 14px 0; }
+.pk-report-warning { padding: 12px; border: 1px solid #e4c690; border-radius: 8px; background: #fff9ed; margin: 14px 0; }
+.pk-report-warning ul { max-height: 230px; overflow: auto; }
+.pk-report-cells { max-height: 58vh; overflow: auto; }
+.pk-report-cells th { position: sticky; top: 0; background: #edf4ef; z-index: 1; }
+.pk-report-cells td:first-child { min-width: 220px; max-width: 500px; white-space: normal; }
+.pk-report-cells input { min-width: 150px; }
+.pk-report-cells pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 550px; font-size: 12px; }
+.pk-report-panel summary { cursor: pointer; }
+.pk-report-panel progress { vertical-align: middle; margin-right: 8px; }

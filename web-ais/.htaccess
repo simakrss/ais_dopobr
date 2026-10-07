@@ -20,6 +20,7 @@ Options -Indexes
   RewriteRule ^updates/windows/(?:latest\.json|[a-f0-9]{64}\.msi)$ - [L]
   RewriteRule ^updates/install-[0-9]+\.[0-9]+\.[0-9]+\.zip$ - [L]
   RewriteRule ^local-update-client\.js$ - [L]
+  RewriteRule ^(?:pk-reporting\.js|pk-report-templates\.js|vendor/sheetjs/xlsx\.full\.min\.js)$ - [L]
   RewriteRule ^(?:manifest\.webmanifest|pwa-client\.js|pwa-icon-(?:192|512|maskable)\.png|apple-touch-icon\.png)$ - [L]
   RewriteRule ^(?:pdf-preview\.js|pdfjs-core\.js|pdfjs-worker\.js|pdfjs-license\.html)$ - [L]
   RewriteRule ^$ - [L]

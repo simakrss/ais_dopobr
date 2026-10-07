@@ -95,6 +95,8 @@ function Test-DeployablePath([string]$PathValue) {
     "pdfjs-worker.js",
     "pdfjs-license.html",
     "app.js",
+    "pk-reporting.js",
+    "pk-report-templates.js",
     "audit-lib.php",
     "auth-bootstrap.js",
     "auth-lib.php",
