@@ -6,6 +6,12 @@ const base={id:'1',name:'Тестовая Анна',program:'Тест КПК',ed
 const programs=[{name:'Тест КПК',type:'КПК',economicActivity:'Образование',minimumEducationLevel:'Высшее образование',studyForm:'Дистанционная'}, {name:'Тест ППП',type:'ППП',economicActivity:'Образование',minimumEducationLevel:'Высшее образование'}];
 (async()=>{
   assert.equal(R.period('quarterly',2026,now).end,'2026-09-30');
+  assert.equal(R.period('quarterly',2026,now,2).end,'2026-06-30');
+  assert.equal(R.period('quarterly',2026,now,2).automaticQuarters,3);
+  assert.equal(R.period('quarterly',2026,now,2).quarterMode,'manual');
+  assert.equal(R.period('quarterly',2025,now,4).end,'2025-12-31');
+  assert.throws(()=>R.period('quarterly',2026,now,4),/не завершён/);
+  for(const q of [0,5,1.5,'bad'])assert.throws(()=>R.period('quarterly',2026,now,q));
   assert.equal(R.period('quarterly',2026,new Date('2026-03-31T20:59:59Z')).quarters,0);
   assert.equal(R.period('quarterly',2026,new Date('2026-03-31T21:00:00Z')).end,'2026-03-31');
   assert.equal(R.period('quarterly',2026,new Date('2026-06-30T21:00:00Z')).end,'2026-06-30');
@@ -58,6 +64,15 @@ const programs=[{name:'Тест КПК',type:'КПК',economicActivity:'Обра
   assert.deepEqual(q.values['1-ПК квартальный'],{C8:2,D8:1,E8:1,F8:1,D11:''});assert.equal(q.issues.length,1);
   const qb=R.exportXlsx(q,T,X),qw=X.read(qb,{type:'array'});
   assert.equal(qw.Sheets['1-ПК квартальный'].C8.v,2);assert.match(qw.Sheets['1-ПК квартальный'].A2.v,/30.09.2026/);
+  const progress=[];
+  const q2=await R.calculate({kind:'quarterly',year:2026,quarter:2,students:quarterlyStudents,programs,templates:T,now,onProgress:p=>progress.push(p)});
+  assert.equal(q2.values['1-ПК квартальный'].C8,0);assert.equal(q2.values['1-ПК квартальный'].E8,1);
+  const q2w=X.read(R.exportXlsx(q2,T,X,p=>progress.push(p)),{type:'array'});
+  assert.match(q2w.Sheets['1-ПК квартальный'].A2.v,/1–2 кварталы 2026.*30.06.2026/);
+  assert.deepEqual(q2w.Sheets['1-ПК квартальный']['!merges'],qw.Sheets['1-ПК квартальный']['!merges']);
+  assert.ok(progress.some(p=>p.stage==='Расчёт квартальных показателей'));
+  assert.ok(progress.some(p=>p.stage==='Заполнение листов Excel'&&p.completed===p.total));
+  assert.equal(progress.at(-1).stage,'Упаковка файла Excel');
   const controller=new AbortController();controller.abort();await assert.rejects(R.calculate({kind:'annual',year:2025,students,programs,templates:T,now,signal:controller.signal}),{name:'AbortError'});
   const mid=new AbortController();await assert.rejects(R.calculate({kind:'annual',year:2025,students,programs,templates:T,now,signal:mid.signal,onProgress:()=>mid.abort()}),{name:'AbortError'});
   const or=R.prepare([{...base,endDate:'2024-12-31'}],programs,R.period('annual',2025,now));assert.equal(or.rows.length,1);

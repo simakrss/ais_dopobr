@@ -12,16 +12,20 @@
   }
   const iso=d=>d.toISOString().slice(0,10);
   const russianDate=s=>s.split('-').reverse().join('.');
-  function period(kind,year,now=new Date()){
+  function period(kind,year,now=new Date(),quarter=null){
     const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
     const part=k=>Number(parts.find(p=>p.type===k).value),currentYear=part('year'),month=part('month');
     year=Number(year|| (kind==='annual'?currentYear-1:currentYear));
     if(!Number.isInteger(year)||year<2000||year>currentYear)throw Error('Выберите отчётный год от 2000 до текущего.');
     if(!['annual','quarterly'].includes(kind))throw Error('Неизвестный вид отчёта.');
     if(kind==='annual'&&year===currentYear)throw Error('Годовой отчёт доступен только за завершённый год.');
-    const quarters=kind==='annual'||year<currentYear?4:Math.floor((month-1)/3);
+    const automaticQuarters=kind==='annual'||year<currentYear?4:Math.floor((month-1)/3);
+    const manualQuarter=kind==='quarterly'&&quarter!=null&&quarter!==''&&quarter!=='auto';
+    const quarters=manualQuarter?Number(quarter):automaticQuarters;
+    if(manualQuarter&&(!Number.isInteger(quarters)||quarters<1||quarters>4))throw Error('Выберите квартал от I до IV.');
+    if(manualQuarter&&quarters>automaticQuarters)throw Error('Выбранный квартал ещё не завершён. Выберите завершённый квартал или предыдущий год.');
     const end=quarters?iso(new Date(Date.UTC(year,quarters*3,0))):null;
-    return {kind,year,quarters,start:`${year}-01-01`,end,available:quarters>0,
+    return {kind,year,quarters,automaticQuarters,quarterMode:manualQuarter?'manual':'auto',start:`${year}-01-01`,end,available:quarters>0,
       asOf:`${currentYear}-${String(month).padStart(2,'0')}-${String(part('day')).padStart(2,'0')}`,
       label:kind==='annual'?`${year} год`:quarters?`${quarters===1?'1 квартал':`1–${quarters} кварталы`} ${year}`:'В текущем году ещё нет полных кварталов'};
   }
@@ -115,11 +119,13 @@
       return selected.length;
     };
   }
-  async function calculate({kind,year,students,programs,templates,now,manual={},signal,onProgress=()=>{}}){
-    const p=period(kind,year,now);if(!p.available)throw Error(p.label);
+  async function calculate({kind,year,quarter,students,programs,templates,now,manual={},signal,onProgress=()=>{}}){
+    const p=period(kind,year,now,quarter);if(!p.available)throw Error(p.label);
+    onProgress({stage:'Проверка данных слушателей'});
     const {rows,issues}=prepare(students,programs,p),values={},sections=[],check=()=>{if(signal?.aborted)throw new DOMException('Формирование отчёта прервано.','AbortError');};
     check();
     if(kind==='quarterly'){
+      onProgress({stage:'Расчёт квартальных показателей',completed:0,total:4});
       const eligible=rows.filter(r=>r.age!=null&&r.age>=15);
       const n=(type,women)=>eligible.filter(r=>r.educationType===type&&(!women||r.gender==='Ж')).length;
       values['1-ПК квартальный']={C8:n('КПК'),D8:n('КПК',true),E8:n('ППП'),F8:n('ППП',true),D11:manual['1-ПК квартальный']?.D11||''};
@@ -131,17 +137,18 @@
           check();
           if(c.note){try{result[c.address]=compileNote(c.note)(rows);}catch(e){throw Error(`${section.name}!${c.address}: ${e.message}`);}completed++;}
           else if(c.editable&&Object.hasOwn(manual[section.name]||{},c.address))result[c.address]=manual[section.name][c.address];
-          if(completed%40===0){onProgress({completed,total});await new Promise(resolve=>setTimeout(resolve,0));}
+          if(completed%40===0){onProgress({stage:'Расчёт показателей',completed,total});await new Promise(resolve=>setTimeout(resolve,0));}
         }
         sections.push({name:section.name,automatic:section.cells.filter(c=>c.note).length,manual:section.cells.filter(c=>c.editable).length});
       }
       values['Настройки']={B3:p.year};
       values['Титульный лист']={...values['Титульный лист'],AO20:p.year};
     }
-    check();onProgress({completed:1,total:1});
+    check();onProgress({stage:'Расчёт завершён',completed:1,total:1});
     return {period:p,values,sections,issues,students:rows.length,generatedAt:(now||new Date()).toISOString(),manual};
   }
-  function exportXlsx(report,templates,X){
+  function exportXlsx(report,templates,X,onProgress=()=>{}){
+    onProgress({stage:'Открытие шаблона Excel'});
     const kind=report.period.kind,cfb=X.CFB.read(templates[kind],{type:'base64'}),files=new Map();
     for(let i=0;i<cfb.FullPaths.length;i++)files.set(cfb.FullPaths[i].replace(/^Root Entry\//,''),cfb.FileIndex[i]);
     const decode=file=>new TextDecoder().decode(file.content),encode=s=>new TextEncoder().encode(s);
@@ -176,10 +183,34 @@
         xml=xml.replace(rx,(_,start,body,end)=>start+body+cell+end);
       }
       file.content=encode(xml);file.size=file.content.length;
+      onProgress({stage:'Заполнение листов Excel',completed:index,total:workbook.SheetNames.length});
     }
     const wf=files.get('xl/workbook.xml');let wx=decode(wf).replace(/<calcPr\b[^>]*\/>/g,'');wx=wx.replace('</workbook>','<calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');
     wf.content=encode(wx);wf.size=wf.content.length;
+    onProgress({stage:'Упаковка файла Excel'});
     return X.CFB.write(cfb,{fileType:'zip',type:'array',compression:true});
   }
   return {period,date,ageAt,prepare,compileNote,calculate,exportXlsx};
 });
+
+// Use this same public module as a dedicated worker: heavy calculation/ZIP work
+// must not freeze progress animation or the cancellation button in the interface.
+if(typeof WorkerGlobalScope!=='undefined'&&globalThis instanceof WorkerGlobalScope){
+  globalThis.onmessage=async({data})=>{
+    const onProgress=progress=>postMessage({type:'progress',progress});
+    try{
+      onProgress({stage:'Загрузка формы отчёта'});
+      const resource=name=>new URL(name+location.search,location.href).href;
+      importScripts(resource('pk-report-templates.js'));
+      if(data.action==='calculate'){
+        const result=await AIS_PK_REPORTING.calculate({...data.options,templates:AIS_PK_TEMPLATES,onProgress});
+        postMessage({type:'result',result});
+      }else if(data.action==='export'){
+        importScripts(resource('vendor/sheetjs/xlsx.full.min.js'));
+        const bytes=AIS_PK_REPORTING.exportXlsx(data.report,AIS_PK_TEMPLATES,XLSX,onProgress);
+        const buffer=bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes).buffer;
+        postMessage({type:'result',result:buffer},[buffer]);
+      }else throw Error('Неизвестная операция отчётности.');
+    }catch(error){postMessage({type:'error',message:error.message});}
+  };
+}

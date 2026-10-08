@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.586",
-    releasedAt: "2026-10-07"
+    version: "1.7.587",
+    releasedAt: "2026-10-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.587",
+      releasedAt: "2026-10-08",
+      changes: ["В отчётности отображаются этап формирования, динамичный индикатор и прошедшее время, включая подготовку Excel. Расчёт и выгрузка выполняются без блокировки интерфейса и могут быть прерваны. Для квартального 1-ПК виден автоматически определённый квартал и доступен выбор другого завершённого квартала нарастающим итогом."]
+    },
     {
       version: "1.7.586",
       releasedAt: "2026-10-07",
@@ -7985,7 +7990,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let sharedStateBaseData = null;
   let sharedStatePendingPatch = sharedStateRecovery.pendingPatch;
   window.addEventListener("ais-local-update-readiness", event => {
-    event.detail.busy ||= Boolean(state.modal || state.adminSettingsDirty || recordFormSavePending
+    event.detail.busy ||= Boolean(state.modal || state.adminSettingsDirty || recordFormSavePending || pkReportUi.loading
       || sharedStateDirty || sharedStateSaveRunning || sharedStatePendingCount || sharedStateConflict
       || isSettingsDraftSessionActive() || document.querySelector("[data-student-program-promo-dialog], [data-attestation-tasks]"));
   });
@@ -15362,11 +15367,59 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   const pkReportCurrentYear = () => Number(new Intl.DateTimeFormat("en", {timeZone:"Europe/Moscow",year:"numeric"}).format(new Date()));
-  const pkReportUi = {kind: "annual", year: pkReportCurrentYear() - 1, result: null, section: "", loading: false, message: "", error: "", controller: null, manual: {}};
+  const pkReportUi = {kind: "annual", year: pkReportCurrentYear() - 1, quarter: "", result: null, section: "", loading: false, message: "", error: "", controller: null, manual: {}, progress: {}, startedAt: 0, timer: null};
+  function pkReportAutomaticQuarter(year, now = new Date()) {
+    const parts = new Intl.DateTimeFormat("en", {timeZone:"Europe/Moscow",year:"numeric",month:"numeric"}).formatToParts(now);
+    const currentYear = Number(parts.find(p => p.type === "year").value);
+    return Number(year) < currentYear ? 4 : Number(year) === currentYear ? Math.floor((Number(parts.find(p => p.type === "month").value) - 1) / 3) : 0;
+  }
+  function pkReportManualKey() {
+    const ui = pkReportUi;
+    return `${ui.kind}:${ui.year}${ui.kind === "quarterly" ? `:${ui.quarter || pkReportAutomaticQuarter(ui.year)}` : ""}`;
+  }
+  function pkReportProgressMarkup() {
+    const ui = pkReportUi;
+    if (!ui.loading) return escapeHtml(ui.message);
+    const p = ui.progress, measured = Number.isFinite(p.completed) && p.total > 0;
+    const elapsed = Math.floor((Date.now() - ui.startedAt) / 1000);
+    return `<div class="pk-report-progress"><span class="pk-report-spinner" aria-hidden="true"></span><div><strong>${escapeHtml(p.stage || ui.message)}</strong><div>${measured ? `<progress aria-label="Выполнение текущего этапа" max="${p.total}" value="${p.completed}"></progress> ${p.completed} из ${p.total}` : '<progress aria-label="Формирование отчёта"></progress>'} <span>Прошло: ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}</span></div></div></div>`;
+  }
+  function updatePkReportProgress(progress) {
+    if (progress) pkReportUi.progress = progress;
+    const host = document.querySelector("[data-pk-report-progress]");
+    if (host) host.innerHTML = pkReportProgressMarkup();
+  }
+  function startPkReportOperation(message) {
+    const ui = pkReportUi;
+    ui.loading = true; ui.error = ""; ui.message = message; ui.progress = {}; ui.startedAt = Date.now(); ui.controller = new AbortController();
+    clearInterval(ui.timer); ui.timer = setInterval(() => updatePkReportProgress(), 1000); render();
+  }
+  function finishPkReportOperation() {
+    const ui = pkReportUi;
+    clearInterval(ui.timer); ui.timer = null; ui.loading = false; ui.controller = null;
+    if (state.view === "reporting") render();
+  }
+  function runPkReportWorker(request) {
+    const signal = pkReportUi.controller.signal;
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) { reject(new DOMException("Формирование прервано.", "AbortError")); return; }
+      const worker = new Worker(new URL(`pk-reporting.js?v=${APPLICATION_RELEASE.version}`, APP_BASE_URL));
+      const finish = (error, result) => { signal.removeEventListener("abort", abort); worker.terminate(); error ? reject(error) : resolve(result); };
+      const abort = () => finish(new DOMException("Формирование прервано.", "AbortError"));
+      signal.addEventListener("abort", abort, {once:true});
+      worker.onmessage = ({data}) => {
+        if (data.type === "progress") updatePkReportProgress(data.progress);
+        else if (data.type === "result") finish(null, data.result);
+        else if (data.type === "error") finish(new Error(data.message));
+      };
+      worker.onerror = () => finish(new Error("Не удалось сформировать отчёт. Проверьте соединение и повторите."));
+      try { worker.postMessage(request); } catch (error) { finish(error); }
+    });
+  }
   let pkReportModulesPromise = null;
   function loadPkReportModules() {
     if (!pkReportModulesPromise) pkReportModulesPromise = (async () => {
-      for (const [file, global] of [["vendor/sheetjs/xlsx.full.min.js", "XLSX"], ["pk-reporting.js", "AIS_PK_REPORTING"], ["pk-report-templates.js", "AIS_PK_TEMPLATES"]]) {
+      for (const [file, global] of [["pk-report-templates.js", "AIS_PK_TEMPLATES"]]) {
         if (window[global]) continue;
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
@@ -15384,19 +15437,20 @@ MAX - https://bizvmax.ru/zifra_plus
     const sections = window.AIS_PK_TEMPLATES?.sections || [];
     const section = sections.find(s => s.name === ui.section) || sections[0];
     const quarter = result?.values?.["1-ПК квартальный"];
-    const manualKey = `${ui.kind}:${ui.year}`;
-    return `<section class="panel pk-report-panel">
+    const manualKey = pkReportManualKey(), automaticQuarter = pkReportAutomaticQuarter(ui.year), quarterNames = ["", "I", "II", "III", "IV"];
+    return `<section class="panel pk-report-panel" aria-busy="${ui.loading}">
       <div class="panel-head"><div><p class="eyebrow">Статистические формы</p><h2>Отчетность</h2></div></div>
       <form data-pk-report-form class="pk-report-controls">
         <label>Отчёт<select name="kind" ${ui.loading ? "disabled" : ""}><option value="annual" ${ui.kind === "annual" ? "selected" : ""}>1-ПК (годовой)</option><option value="quarterly" ${ui.kind === "quarterly" ? "selected" : ""}>1-ПК (квартальный)</option></select></label>
         <label>Год<input name="year" type="number" min="2000" max="${pkReportCurrentYear()}" value="${ui.year}" required ${ui.loading ? "disabled" : ""}></label>
+        ${ui.kind === "quarterly" ? `<label>По квартал включительно<select name="quarter" ${ui.loading ? "disabled" : ""}><option value="" ${!ui.quarter ? "selected" : ""}>Автоматически — ${automaticQuarter ? `${quarterNames[automaticQuarter]} квартал` : "нет полных кварталов"}</option>${[1,2,3,4].map(q => `<option value="${q}" ${Number(ui.quarter) === q ? "selected" : ""} ${q > automaticQuarter ? "disabled" : ""}>${quarterNames[q]} квартал${q > automaticQuarter ? " — ещё не завершён" : ""}</option>`).join("")}</select></label>` : ""}
         <button class="primary" type="submit" ${ui.loading ? "disabled" : ""}>Рассчитать</button>
         ${ui.loading ? '<button type="button" data-pk-cancel>Прервать</button>' : ""}
         ${result ? `<button type="button" data-pk-download ${ui.loading ? "disabled" : ""}>Скачать Excel</button>` : ""}
       </form>
-      <p class="muted">${ui.kind === "annual" ? "Годовой отчёт за завершённый год. Используется предоставленная форма 2025 года; перед официальной подачей проверьте её актуальность." : "Период определяется автоматически по Москве: с 1 января по конец последнего полного квартала выбранного года. Незавершённый квартал не включается."}</p>
+      <p class="muted">${ui.kind === "annual" ? "Годовой отчёт за завершённый год. Используется предоставленная форма 2025 года; перед официальной подачей проверьте её актуальность." : `Автоматически определён: ${automaticQuarter ? `${quarterNames[automaticQuarter]} квартал ${ui.year} года` : "в этом году ещё нет полных кварталов"}. Можно выбрать другой завершённый квартал. Данные учитываются нарастающим итогом с 1 января по конец выбранного квартала.`}</p>
       <p class="muted">По условиям исходной формы: КПК и ППП с номером бланка, дата отчисления или окончания обучения попадает в период. Возраст — ${ui.kind === "annual" ? "на 1 января следующего года (раздел 2.4)" : "на конец отчётного периода"}. Списки и фильтры на других вкладках не ограничивают расчёт.</p>
-      <div data-pk-report-progress role="status" aria-live="polite">${ui.loading ? `<progress></progress> ${escapeHtml(ui.message)}` : escapeHtml(ui.message)}</div>
+      <div data-pk-report-progress role="status" aria-live="polite">${pkReportProgressMarkup()}</div>
       ${ui.error ? `<p class="error" role="alert">${escapeHtml(ui.error)}</p>` : ""}
       ${result ? `<h3>${escapeHtml(result.period.label)} · ${escapeHtml(formatDate(result.period.start))} — ${escapeHtml(formatDate(result.period.end))}</h3><p>Записей с выданными документами за период: ${result.students}. Расчёт выполнен ${escapeHtml(new Date(result.generatedAt).toLocaleString("ru-RU"))}.</p>
         ${quarter ? `<div class="pk-report-controls"><label>Название / организация<input data-pk-manual data-sheet="1-ПК квартальный" data-cell="A1" style="width:min(480px,80vw)" value="${escapeAttr(quarter.A1 || "")}"></label><label>ФИО руководителя<input data-pk-manual data-sheet="1-ПК квартальный" data-cell="D11" style="width:min(320px,80vw)" value="${escapeAttr(quarter.D11 || "")}"></label></div>` : ""}
@@ -15412,49 +15466,48 @@ MAX - https://bizvmax.ru/zifra_plus
     const form = document.querySelector("[data-pk-report-form]");
     if (!form) return;
     const ui = pkReportUi;
-    form.elements.kind.addEventListener("change", () => { ui.kind = form.elements.kind.value; ui.year = pkReportCurrentYear() - (ui.kind === "annual" ? 1 : 0); ui.result = null; ui.error = ""; ui.message = ""; render(); });
-    form.elements.year.addEventListener("change", () => { ui.year = Number(form.elements.year.value); ui.result = null; ui.error = ""; ui.message = ""; render(); });
+    form.elements.kind.addEventListener("change", () => { ui.kind = form.elements.kind.value; ui.year = pkReportCurrentYear() - (ui.kind === "annual" ? 1 : 0); ui.quarter = ""; ui.result = null; ui.error = ""; ui.message = ""; render(); });
+    form.elements.year.addEventListener("change", () => { ui.year = Number(form.elements.year.value); ui.quarter = ""; ui.result = null; ui.error = ""; ui.message = ""; render(); });
+    form.elements.quarter?.addEventListener("change", () => { ui.quarter = form.elements.quarter.value; ui.result = null; ui.error = ""; ui.message = ""; render(); });
     document.querySelector("[data-pk-section]")?.addEventListener("change", event => { ui.section = event.target.value; render(); });
     document.querySelectorAll("[data-pk-manual]").forEach(input => input.addEventListener("input", () => {
-      const sections = ui.manual[`${ui.kind}:${ui.year}`] ||= {}, cells = sections[input.dataset.sheet] ||= {};
+      const sections = ui.manual[pkReportManualKey()] ||= {}, cells = sections[input.dataset.sheet] ||= {};
       const v = input.value.trim(); cells[input.dataset.cell] = /^-?\d+(?:[.,]\d+)?$/.test(v) && !/^0\d/.test(v) ? Number(v.replace(",", ".")) : v;
       if (ui.result) ui.result.values[input.dataset.sheet][input.dataset.cell] = cells[input.dataset.cell];
     }));
+    document.querySelectorAll("[data-pk-manual], [data-pk-section]").forEach(input => { input.disabled = ui.loading; });
     document.querySelector("[data-pk-cancel]")?.addEventListener("click", () => ui.controller?.abort());
     form.addEventListener("submit", async event => {
       event.preventDefault(); if (ui.loading || !form.reportValidity()) return;
-      ui.loading = true; ui.error = ""; ui.message = "Подготовка форм и расчёт показателей…"; ui.result = null; ui.controller = new AbortController(); render();
+      ui.result = null; startPkReportOperation("Подготовка форм и расчёт показателей…");
       try {
-        await loadPkReportModules();
-        ui.result = await window.AIS_PK_REPORTING.calculate({kind:ui.kind,year:ui.year,students:state.data.collections.students,programs:state.data.collections.programs,templates:window.AIS_PK_TEMPLATES,manual:ui.manual[`${ui.kind}:${ui.year}`] || {},signal:ui.controller.signal,onProgress:({completed,total}) => {
-          ui.message = `Расчёт: ${completed} из ${total}`;
-          const host = document.querySelector("[data-pk-report-progress]"); if (host) host.innerHTML = `<progress max="${total}" value="${completed}"></progress> ${escapeHtml(ui.message)}`;
-        }});
+        const [, result] = await Promise.all([loadPkReportModules(), runPkReportWorker({action:"calculate",options:{kind:ui.kind,year:ui.year,quarter:ui.quarter,students:state.data.collections.students,programs:state.data.collections.programs,manual:ui.manual[pkReportManualKey()] || {}}})]);
+        ui.result = result;
         if (ui.kind === "annual" && !ui.result.values["Титульный лист"].X29) {
           ui.result.values["Титульный лист"].X29 = state.data.meta.organization || "";
-          const manual = ui.manual[`${ui.kind}:${ui.year}`] ||= {};
+          const manual = ui.manual[pkReportManualKey()] ||= {};
           (manual["Титульный лист"] ||= {}).X29 = ui.result.values["Титульный лист"].X29;
         }
         if (ui.kind === "quarterly") {
-          const manual = ui.manual[`${ui.kind}:${ui.year}`]?.["1-ПК квартальный"] || {};
+          const manual = ui.manual[pkReportManualKey()]?.["1-ПК квартальный"] || {};
           ui.result.values["1-ПК квартальный"].A1 = manual.A1 ?? `Отчет 1-ПК квартальный · ${state.data.meta.organization || ""}`.trim();
           ui.result.values["1-ПК квартальный"].D11 = manual.D11 ?? (DEFAULT_REPRESENTATIVE_NAME === "Представитель учебного центра" ? "" : DEFAULT_REPRESENTATIVE_NAME);
         }
         ui.message = "Расчёт завершён. Проверьте показатели перед выгрузкой.";
       } catch(error) { ui.error = error.name === "AbortError" ? "" : error.message; ui.message = error.name === "AbortError" ? "Формирование прервано. Данные АИС не изменены." : ""; }
-      finally { ui.loading = false; ui.controller = null; if (state.view === "reporting") render(); }
+      finally { ui.controller?.abort(); finishPkReportOperation(); }
     });
     document.querySelector("[data-pk-download]")?.addEventListener("click", async event => {
       if (!ui.result || ui.loading) return;
       if (ui.result.issues.length && !confirm("В исходных данных есть предупреждения. Выгрузить отчёт для проверки?")) return;
-      const button = event.currentTarget; button.disabled = true; button.textContent = "Подготовка Excel…";
-      await new Promise(resolve => setTimeout(resolve, 20));
+      startPkReportOperation("Подготовка файла Excel…");
       try {
-        const bytes = window.AIS_PK_REPORTING.exportXlsx(ui.result,window.AIS_PK_TEMPLATES,window.XLSX);
+        const bytes = await runPkReportWorker({action:"export",report:ui.result});
         const blob = new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), url = URL.createObjectURL(blob), a = document.createElement("a");
         a.href = url; a.download = `1-ПК_${ui.kind === "annual" ? "годовой" : `1-${ui.result.period.quarters}_кварталы`}_${ui.year}.xlsx`; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url),60000);
-      } catch(error) { ui.error = error.message; render(); }
-      finally { if (button.isConnected) { button.disabled = false; button.textContent = "Скачать Excel"; } }
+        ui.message = "Файл Excel сформирован и передан на скачивание.";
+      } catch(error) { ui.error = error.name === "AbortError" ? "" : error.message; ui.message = error.name === "AbortError" ? "Подготовка Excel прервана. Расчёт сохранён, можно повторить выгрузку." : ""; }
+      finally { finishPkReportOperation(); }
     });
   }
 
