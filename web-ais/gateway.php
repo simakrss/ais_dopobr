@@ -3455,6 +3455,43 @@ SQL);
     return true;
 }
 
+function gateway_decode_shared_state_json(string $body, int &$unicodeReplacements): ?array
+{
+    $unicodeReplacements = 0;
+    $payload = json_decode($body, true);
+    if (json_last_error() !== JSON_ERROR_UTF16) return is_array($payload) ? $payload : null;
+
+    // JSON.stringify can encode an isolated JS UTF-16 code unit as "\ud83d".
+    // PHP rejects it. Repair only such escapes in string VALUES, never field
+    // names (normalizing keys could silently merge two different properties).
+    // Possessive runs avoid backtracking over large HTML/email text fields.
+    $normalized = preg_replace_callback(
+        '~"(?:[^"\\\\]++|\\\\.)*+"[ \t\r\n]*:?~s',
+        static function (array $token) use (&$unicodeReplacements): string {
+            if (str_ends_with($token[0], ':')) return $token[0];
+            return preg_replace_callback(
+                '~\\\\(?:u[dD][89aAbB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)~s',
+                static function (array $match) use (&$unicodeReplacements): string {
+                    $escape = $match[0];
+                    // Paired surrogates (12 bytes), escaped backslashes and all
+                    // other escapes are copied byte-for-byte, not reinterpreted.
+                    if (strlen($escape) !== 6 || substr($escape, 0, 2) !== '\u') return $escape;
+                    $code = hexdec(substr($escape, 2));
+                    if ($code < 0xd800 || $code > 0xdfff) return $escape;
+                    $unicodeReplacements++;
+                    return '\ufffd';
+                },
+                $token[0]
+            ) ?? $token[0];
+        },
+        $body
+    );
+    if ($normalized === null || $unicodeReplacements === 0) return null;
+    $payload = json_decode($normalized, true);
+    if (!is_array($payload)) $unicodeReplacements = 0;
+    return is_array($payload) ? $payload : null;
+}
+
 function gateway_shared_state_json_error(int $jsonError, int $receivedBytes, int $declaredBytes): string
 {
     $reason = match ($jsonError) {
@@ -3503,7 +3540,8 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
     if (strlen($body) > 40 * 1024 * 1024) {
         gateway_fail(413, 'Пакет синхронизации превышает допустимый размер.');
     }
-    $payload = json_decode($body, true);
+    $unicodeReplacements = 0;
+    $payload = gateway_decode_shared_state_json($body, $unicodeReplacements);
     if (!is_array($payload)) {
         gateway_fail(400, gateway_shared_state_json_error(
             json_last_error(), strlen($body), max(0, (int) ($_SERVER['CONTENT_LENGTH'] ?? 0))
@@ -3600,7 +3638,7 @@ SQL);
         $savedMeta = gateway_shared_state_meta($pdo);
         $merged = $patch !== null && $requestedRevision !== $currentRevision;
         $savedData = null;
-        if ($data !== null || $merged) {
+        if ($data !== null || $merged || $unicodeReplacements > 0) {
             $savedData = gateway_shared_state_read_data($pdo);
         }
         $pdo->commit();
@@ -3616,7 +3654,7 @@ SQL);
             'merged' => $merged,
             ...gateway_shared_state_public_meta($savedMeta),
         ];
-        if ($response['merged']) {
+        if ($response['merged'] || $unicodeReplacements > 0) {
             $response['data'] = $savedData;
         } else {
             $response['data'] = null;

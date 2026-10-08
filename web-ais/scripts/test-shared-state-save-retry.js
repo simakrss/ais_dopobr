@@ -182,6 +182,25 @@ function harness() {
     assert.equal(h.timers.size, 0);
   }
 
+  const normalized = harness();
+  normalized.c.state.data.collections.students[0].note = "queued \ud83d";
+  normalized.c.persistSharedStateRecovery();
+  normalized.fail(400, "JSON UTF-16 error");
+  assert.equal(await normalized.c.flushSharedApplicationStateThroughGeneration(1), false);
+  normalized.setReply(async () => {
+    const data = clone(normalized.c.state.data);
+    data.collections.students[0].note = "queued \ufffd";
+    return { revision: 11, data, offline: false, pendingCount: 0 };
+  });
+  await normalized.advance(5000);
+  assert.equal(normalized.c.state.data.collections.students[0].note, "queued \ufffd");
+  assert.equal(normalized.c.sharedStateBaseData.collections.students[0].note, "queued \ufffd");
+  assert.equal(normalized.c.sharedStatePendingPatch, null);
+  assert.equal(normalized.storage.has("pending"), false);
+  assert.equal(normalized.c.sharedStatePersistedGeneration, 1);
+  assert.equal(normalized.c.sharedStateDirty, false);
+  assert.equal(normalized.timers.size, 0, "A repaired response drains the existing queue without reloading");
+
   const concurrent = harness();
   let resolveRequest;
   concurrent.setReply(() => new Promise(resolve => { resolveRequest = resolve; }));

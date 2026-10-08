@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.590",
+    version: "1.7.591",
     releasedAt: "2026-10-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.591",
+      releasedAt: "2026-10-08",
+      changes: ["Исправлена передача накопленных изменений при ошибке JSON 10: сервер заменяет только непарные Unicode-символы в текстовых значениях на знак замены, сохраняя корректные эмодзи и остальной текст. После записи браузер получает подтверждённые данные, очередь не требует очистки."]
+    },
     {
       version: "1.7.590",
       releasedAt: "2026-10-08",
