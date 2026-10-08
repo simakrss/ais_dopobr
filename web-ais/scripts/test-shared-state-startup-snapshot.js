@@ -206,7 +206,7 @@ assert.match(gatewayInvalidateSource, /if \(\$currentRevision >= \$revision\)/u)
 assert.match(gatewayInvalidateSource, /'meta' => \$markerMeta/u);
 
 const gatewayGetSource = sourceBetween(
-  gatewaySource,
+  sourceBetween(gatewaySource, "function gateway_handle_shared_state", "function gateway_trash_error"),
   "if ($method === 'GET')",
   "if ($method !== 'POST')"
 );

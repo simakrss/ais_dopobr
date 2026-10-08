@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.589",
+    version: "1.7.590",
     releasedAt: "2026-10-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.590",
+      releasedAt: "2026-10-08",
+      changes: ["Устранено зацикливание передачи изменений в MySQL: при временной ошибке работает одна отложенная попытка с увеличением интервала до минуты, при ошибке входа или доступа автоматические повторы приостанавливаются. Причина ошибки видна в индикаторе; неподтверждённые изменения остаются в очереди браузера и не считаются сохранёнными на сервере."]
+    },
     {
       version: "1.7.589",
       releasedAt: "2026-10-08",
@@ -4521,6 +4526,8 @@
   const ADVERTISING_EMAIL_VIEW_CACHE_MAX_ROWS = 5000;
   const BROWSER_OFFLINE_MODE_STORAGE_KEY = "ais-dopobr-web-offline-storage-v1";
   const SHARED_STATE_SAVE_DELAY_MS = 700;
+  const SHARED_STATE_SAVE_RETRY_MIN_MS = 5000;
+  const SHARED_STATE_SAVE_RETRY_MAX_MS = 60000;
   const SHARED_STATE_PROGRESS_TICK_MS = 700;
   const SHARED_STATE_PROGRESS_COMPLETE_VISIBLE_MS = 1400;
   const SHARED_STATE_PROGRESS_ERROR_VISIBLE_MS = 4000;
@@ -7981,6 +7988,7 @@ MAX - https://bizvmax.ru/zifra_plus
   let sharedStateSaveTimer = 0;
   let sharedStateSaveRunning = false;
   let sharedStateSavePromise = null;
+  let sharedStateSaveFailure = null;
   let sharedStateChangeGeneration = 0;
   let sharedStatePersistedGeneration = 0;
   let sharedStatePollRunning = false;
@@ -11469,7 +11477,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (progressId) {
         failSharedStateTransferProgress(
           progressId,
-          progressOptions.errorMessage || "Обмен с общей MySQL-базой прерван"
+          [progressOptions.errorMessage || "Обмен с общей MySQL-базой прерван", error.message].filter(Boolean).join(": ")
         );
       }
       throw error;
@@ -11526,6 +11534,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getSharedStateStatusLabel(tone = getSharedStateStatusTone()) {
     if (tone === "conflict") return "Конфликт общей базы";
+    if (sharedStateSaveFailure && !sharedStateSaveRunning) {
+      return `Изменения не переданы: ${sharedStateSaveFailure.message}`;
+    }
     if (tone === "offline") {
       return sharedStatePendingCount
         ? `Автономно · ожидают выгрузки: ${sharedStatePendingCount}`
@@ -11545,6 +11556,12 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateRevision ? `Ревизия: ${sharedStateRevision}` : "",
       sharedStateSource ? `Источник: ${sharedStateSource}` : "",
       sharedStatePendingCount ? `Ожидают выгрузки: ${sharedStatePendingCount}` : "",
+      sharedStateSaveFailure ? sharedStateSaveFailure.message : "",
+      sharedStateSaveFailure?.paused
+        ? "Автоматические повторы приостановлены. Проверьте вход в систему и права записи; изменения остаются в очереди браузера."
+        : sharedStateSaveFailure
+          ? "Изменения остаются в очереди браузера. Повторная передача запланирована с задержкой."
+          : "",
       sharedStateSyncBlockedReason === "locked" ? "Выгрузка ожидает освобождения записи" : "",
       sharedStateSyncBlockedReason === "conflict" ? "Выгрузка ожидает разрешения конфликта" : "",
       sharedStateUpdatedBy ? `Последнее изменение: ${sharedStateUpdatedBy}` : "",
@@ -11553,10 +11570,13 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderSharedStateStatusContents(label = getSharedStateStatusLabel()) {
-    if (!sharedStateTransferProgress.active) {
+    if (!sharedStateTransferProgress.active || sharedStateTransferProgress.failed) {
+      const statusLabel = sharedStateTransferProgress.failed && !sharedStateSaveFailure
+        ? sharedStateTransferProgress.message || label
+        : label;
       return `
         <span class="shared-state-dot" aria-hidden="true"></span>
-        <span class="shared-state-label">${escapeHtml(label)}</span>
+        <span class="shared-state-label">${escapeHtml(statusLabel)}</span>
       `;
     }
     const percent = Math.max(0, Math.min(100, Math.round(sharedStateTransferProgress.percent || 0)));
@@ -11613,7 +11633,7 @@ MAX - https://bizvmax.ru/zifra_plus
     ].filter(Boolean).join(" ");
     pill.title = getSharedStateStatusTitle(label);
     pill.innerHTML = renderSharedStateStatusContents(label);
-    pill.setAttribute("aria-label", sharedStateTransferProgress.active
+    pill.setAttribute("aria-label", sharedStateTransferProgress.active && !sharedStateTransferProgress.failed
       ? `${sharedStateTransferProgress.message}, ${sharedStateTransferProgress.percent}%`
       : label);
   }
@@ -11736,14 +11756,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function scheduleSharedApplicationStateSave(delay = SHARED_STATE_SAVE_DELAY_MS) {
-    if (!sharedStateReady || sharedStateConflict) return;
+    if (!sharedStateReady || sharedStateConflict || sharedStateSaveFailure?.paused) return;
     window.clearTimeout(sharedStateSaveTimer);
     sharedStateSaveTimer = window.setTimeout(() => {
       sharedStateSaveTimer = 0;
       flushSharedApplicationState().catch((error) => {
         console.warn("Не удалось сохранить общую базу", error);
       });
-    }, Math.max(0, delay));
+    }, Math.max(0, delay, (sharedStateSaveFailure?.retryAt || 0) - Date.now()));
   }
 
   function flushSharedApplicationState(options = {}) {
@@ -11776,6 +11796,14 @@ MAX - https://bizvmax.ru/zifra_plus
       || sharedStateConflict
       || !sharedStateDirty
     ) return !sharedStateConflict;
+    // All callers share the retry deadline, including explicit generation flushes.
+    // A new edit must not turn a failed background save into an immediate retry loop.
+    if (sharedStateSaveFailure?.retryAt > Date.now()) {
+      scheduleSharedApplicationStateSave(0);
+      return false;
+    }
+    window.clearTimeout(sharedStateSaveTimer);
+    sharedStateSaveTimer = 0;
     sharedStateSaveRunning = true;
     const generation = sharedStateChangeGeneration;
     const data = clone(state.data);
@@ -11790,6 +11818,7 @@ MAX - https://bizvmax.ru/zifra_plus
       buildSharedApplicationStatePatch(sharedStateBaseData, data)
     );
     if (!patch) {
+      sharedStateSaveFailure = null;
       sharedStateDirty = false;
       sharedStatePendingPatch = null;
       sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
@@ -11841,6 +11870,7 @@ MAX - https://bizvmax.ru/zifra_plus
         persistStateToLocalStorage(state.data);
       }
       sharedStateBaseData = clone(confirmedData || data);
+      sharedStateSaveFailure = null;
       sharedStatePendingPatch = null;
       sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
       if (generation === sharedStateChangeGeneration) {
@@ -11889,15 +11919,26 @@ MAX - https://bizvmax.ru/zifra_plus
       sharedStateReady = true;
       sharedStateSource = "local-browser";
       sharedStatePendingCount = Math.max(1, sharedStatePendingCount);
-      saved = true;
-      sharedStatePersistedGeneration = Math.max(sharedStatePersistedGeneration, generation);
+      const attempts = (sharedStateSaveFailure?.attempts || 0) + 1;
+      const retryDelay = Math.min(
+        SHARED_STATE_SAVE_RETRY_MAX_MS,
+        SHARED_STATE_SAVE_RETRY_MIN_MS * (2 ** Math.min(attempts - 1, 4))
+      );
+      const status = Number(error.status) || 0;
+      const paused = status === 401 || status === 403;
+      sharedStateSaveFailure = {
+        attempts,
+        paused,
+        retryAt: paused ? 0 : Date.now() + retryDelay,
+        message: [status ? `HTTP ${status}` : "", String(error.message || "Нет связи с сервером")].filter(Boolean).join(": ")
+      };
       persistSharedStateRecovery();
-      window.setTimeout(() => scheduleSharedApplicationStateSave(0), 5000);
+      scheduleSharedApplicationStateSave(retryDelay);
     } finally {
       sharedStateSaveRunning = false;
       updateSharedStateStatusUi();
     }
-    if (sharedStateDirty) scheduleSharedApplicationStateSave(0);
+    if (saved && sharedStateDirty) scheduleSharedApplicationStateSave(0);
     return saved;
   }
 
