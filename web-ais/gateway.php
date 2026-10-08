@@ -3455,6 +3455,24 @@ SQL);
     return true;
 }
 
+function gateway_shared_state_json_error(int $jsonError, int $receivedBytes, int $declaredBytes): string
+{
+    $reason = match ($jsonError) {
+        JSON_ERROR_DEPTH => 'превышена глубина вложенности',
+        JSON_ERROR_STATE_MISMATCH => 'нарушена структура JSON',
+        JSON_ERROR_CTRL_CHAR => 'недопустимый управляющий символ',
+        JSON_ERROR_SYNTAX => 'нарушен синтаксис JSON',
+        JSON_ERROR_UTF8 => 'повреждена кодировка UTF-8',
+        JSON_ERROR_UTF16 => 'непарный символ Unicode (возможно, обрезанный эмодзи)',
+        default => 'ожидался объект JSON',
+    };
+    if ($receivedBytes === 0) $reason = 'сервер получил пустое тело запроса';
+    elseif ($declaredBytes > $receivedBytes) $reason = 'тело запроса получено не полностью';
+    $size = (string) $receivedBytes;
+    if ($declaredBytes > 0) $size .= ' из ' . $declaredBytes;
+    return 'Некорректный JSON общей базы: ' . $reason . '. Получено ' . $size . ' байт; код JSON ' . $jsonError . '.';
+}
+
 function gateway_handle_shared_state(string $method, string $body, array $currentUser): void
 {
     $pdo = gateway_record_locks_pdo();
@@ -3487,7 +3505,9 @@ function gateway_handle_shared_state(string $method, string $body, array $curren
     }
     $payload = json_decode($body, true);
     if (!is_array($payload)) {
-        gateway_fail(400, 'Некорректный JSON общей базы.');
+        gateway_fail(400, gateway_shared_state_json_error(
+            json_last_error(), strlen($body), max(0, (int) ($_SERVER['CONTENT_LENGTH'] ?? 0))
+        ));
     }
     $patch = is_array($payload['patch'] ?? null) ? $payload['patch'] : null;
     $data = is_array($payload['data'] ?? null) ? $payload['data'] : null;
