@@ -144,8 +144,8 @@
       values['Настройки']={B3:p.year};
       values['Титульный лист']={...values['Титульный лист'],AO20:p.year};
     }
-    check();onProgress({stage:'Расчёт завершён',completed:1,total:1});
-    return {period:p,values,sections,issues,students:rows.length,generatedAt:(now||new Date()).toISOString(),manual};
+    check();onProgress({stage:'Подготовка результатов',completed:1,total:1});
+    return {period:p,values,sections,formSections:kind==='annual'?templates.sections:[],issues,students:rows.length,generatedAt:(now||new Date()).toISOString(),manual};
   }
   function exportXlsx(report,templates,X,onProgress=()=>{}){
     onProgress({stage:'Открытие шаблона Excel'});
@@ -199,11 +199,15 @@ if(typeof WorkerGlobalScope!=='undefined'&&globalThis instanceof WorkerGlobalSco
   globalThis.onmessage=async({data})=>{
     const onProgress=progress=>postMessage({type:'progress',progress});
     try{
-      onProgress({stage:'Загрузка формы отчёта'});
       const resource=name=>new URL(name+location.search,location.href).href;
-      importScripts(resource('pk-report-templates.js'));
+      // Quarterly counts do not need an Excel template. Load it only for annual
+      // calculation or an explicit download, never as a second UI dependency.
+      if(data.action==='export'||(data.action==='calculate'&&data.options.kind==='annual')){
+        onProgress({stage:'Загрузка формы отчёта'});
+        importScripts(resource('pk-report-templates.js'));
+      }
       if(data.action==='calculate'){
-        const result=await AIS_PK_REPORTING.calculate({...data.options,templates:AIS_PK_TEMPLATES,onProgress});
+        const result=await AIS_PK_REPORTING.calculate({...data.options,templates:globalThis.AIS_PK_TEMPLATES,onProgress});
         postMessage({type:'result',result});
       }else if(data.action==='export'){
         importScripts(resource('vendor/sheetjs/xlsx.full.min.js'));

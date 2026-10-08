@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.587",
+    version: "1.7.588",
     releasedAt: "2026-10-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.588",
+      releasedAt: "2026-10-08",
+      changes: ["Исправлено ожидание после расчёта 1-ПК: квартальные результаты выводятся на экран без загрузки Excel-шаблонов, файл формируется отдельно по кнопке «Скачать Excel». Добавлены ограничение ожидания и обработка ошибок обмена с фоновым расчётом; при отмене или ошибке скачивания результаты сохраняются на экране."]
+    },
     {
       version: "1.7.587",
       releasedAt: "2026-10-08",
@@ -15404,37 +15409,40 @@ MAX - https://bizvmax.ru/zifra_plus
     return new Promise((resolve, reject) => {
       if (signal.aborted) { reject(new DOMException("Формирование прервано.", "AbortError")); return; }
       const worker = new Worker(new URL(`pk-reporting.js?v=${APPLICATION_RELEASE.version}`, APP_BASE_URL));
-      const finish = (error, result) => { signal.removeEventListener("abort", abort); worker.terminate(); error ? reject(error) : resolve(result); };
+      let settled = false, idleTimer, deadlineTimer;
+      const finish = (error, result) => {
+        if (settled) return;
+        settled = true; clearTimeout(idleTimer); clearTimeout(deadlineTimer);
+        signal.removeEventListener("abort", abort); worker.terminate();
+        error ? reject(error) : resolve(result);
+      };
+      const timeout = () => finish(new Error("Не удалось дождаться результата формирования отчёта. Проверьте соединение и повторите. Данные АИС не изменены."));
+      const heartbeat = () => { clearTimeout(idleTimer); idleTimer = setTimeout(timeout, 60000); };
       const abort = () => finish(new DOMException("Формирование прервано.", "AbortError"));
       signal.addEventListener("abort", abort, {once:true});
       worker.onmessage = ({data}) => {
-        if (data.type === "progress") updatePkReportProgress(data.progress);
+        if (settled) return;
+        if (data.type === "progress") { heartbeat(); updatePkReportProgress(data.progress); }
         else if (data.type === "result") finish(null, data.result);
         else if (data.type === "error") finish(new Error(data.message));
       };
       worker.onerror = () => finish(new Error("Не удалось сформировать отчёт. Проверьте соединение и повторите."));
+      worker.onmessageerror = () => finish(new Error("Не удалось получить результаты отчёта. Повторите расчёт."));
+      heartbeat(); deadlineTimer = setTimeout(timeout, 10 * 60000);
       try { worker.postMessage(request); } catch (error) { finish(error); }
     });
   }
-  let pkReportModulesPromise = null;
-  function loadPkReportModules() {
-    if (!pkReportModulesPromise) pkReportModulesPromise = (async () => {
-      for (const [file, global] of [["pk-report-templates.js", "AIS_PK_TEMPLATES"]]) {
-        if (window[global]) continue;
-        await new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = new URL(`${file}?v=${APPLICATION_RELEASE.version}`, APP_BASE_URL).href;
-          script.onload = resolve;
-          script.onerror = () => { script.remove(); reject(new Error("Не удалось загрузить формы отчётности. Проверьте соединение и повторите.")); };
-          document.head.append(script);
-        });
-      }
-    })().catch(error => { pkReportModulesPromise = null; throw error; });
-    return pkReportModulesPromise;
+  function pkReportDataSnapshot() {
+    // Send only the report inputs, not photos, documents or payment histories.
+    const pick = (rows, fields) => (rows || []).map(row => Object.fromEntries(fields.map(key => [key, row[key]])));
+    return {
+      students: pick(state.data.collections.students, ["id", "name", "program", "educationType", "gender", "birthDate", "expulsionDate", "endDate", "startDate", "diplomaBlankNo", "fundingSource", "studyForm", "educationDocument", "employmentCategory", "qualification", "ovzStatus", "deleted", "deletedAt", "isDeleted"]),
+      programs: pick(state.data.collections.programs, ["name", "type", "economicActivity", "minimumEducationLevel", "studyForm"])
+    };
   }
   function renderPkReporting() {
     const ui = pkReportUi, result = ui.result;
-    const sections = window.AIS_PK_TEMPLATES?.sections || [];
+    const sections = result?.formSections || [];
     const section = sections.find(s => s.name === ui.section) || sections[0];
     const quarter = result?.values?.["1-ПК квартальный"];
     const manualKey = pkReportManualKey(), automaticQuarter = pkReportAutomaticQuarter(ui.year), quarterNames = ["", "I", "II", "III", "IV"];
@@ -15481,7 +15489,7 @@ MAX - https://bizvmax.ru/zifra_plus
       event.preventDefault(); if (ui.loading || !form.reportValidity()) return;
       ui.result = null; startPkReportOperation("Подготовка форм и расчёт показателей…");
       try {
-        const [, result] = await Promise.all([loadPkReportModules(), runPkReportWorker({action:"calculate",options:{kind:ui.kind,year:ui.year,quarter:ui.quarter,students:state.data.collections.students,programs:state.data.collections.programs,manual:ui.manual[pkReportManualKey()] || {}}})]);
+        const result = await runPkReportWorker({action:"calculate",options:{kind:ui.kind,year:ui.year,quarter:ui.quarter,...pkReportDataSnapshot(),manual:ui.manual[pkReportManualKey()] || {}}});
         ui.result = result;
         if (ui.kind === "annual" && !ui.result.values["Титульный лист"].X29) {
           ui.result.values["Титульный лист"].X29 = state.data.meta.organization || "";
@@ -15502,7 +15510,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (ui.result.issues.length && !confirm("В исходных данных есть предупреждения. Выгрузить отчёт для проверки?")) return;
       startPkReportOperation("Подготовка файла Excel…");
       try {
-        const bytes = await runPkReportWorker({action:"export",report:ui.result});
+        const {formSections, ...report} = ui.result;
+        const bytes = await runPkReportWorker({action:"export",report});
         const blob = new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}), url = URL.createObjectURL(blob), a = document.createElement("a");
         a.href = url; a.download = `1-ПК_${ui.kind === "annual" ? "годовой" : `1-${ui.result.period.quarters}_кварталы`}_${ui.year}.xlsx`; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url),60000);
         ui.message = "Файл Excel сформирован и передан на скачивание.";
