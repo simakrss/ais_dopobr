@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.588",
+    version: "1.7.589",
     releasedAt: "2026-10-08"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.589",
+      releasedAt: "2026-10-08",
+      changes: ["Исправлена ошибка вывода дат периода в отчётности 1-ПК, из-за которой после завершения расчёта оставался экран «Подготовка результатов». Квартальная и годовая формы показывают рассчитанные данные и кнопку скачивания Excel."]
+    },
     {
       version: "1.7.588",
       releasedAt: "2026-10-08",
@@ -15460,7 +15465,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <p class="muted">По условиям исходной формы: КПК и ППП с номером бланка, дата отчисления или окончания обучения попадает в период. Возраст — ${ui.kind === "annual" ? "на 1 января следующего года (раздел 2.4)" : "на конец отчётного периода"}. Списки и фильтры на других вкладках не ограничивают расчёт.</p>
       <div data-pk-report-progress role="status" aria-live="polite">${pkReportProgressMarkup()}</div>
       ${ui.error ? `<p class="error" role="alert">${escapeHtml(ui.error)}</p>` : ""}
-      ${result ? `<h3>${escapeHtml(result.period.label)} · ${escapeHtml(formatDate(result.period.start))} — ${escapeHtml(formatDate(result.period.end))}</h3><p>Записей с выданными документами за период: ${result.students}. Расчёт выполнен ${escapeHtml(new Date(result.generatedAt).toLocaleString("ru-RU"))}.</p>
+      ${result ? `<h3>${escapeHtml(result.period.label)} · ${escapeHtml(formatContractDate(result.period.start))} — ${escapeHtml(formatContractDate(result.period.end))}</h3><p>Записей с выданными документами за период: ${result.students}. Расчёт выполнен ${escapeHtml(new Date(result.generatedAt).toLocaleString("ru-RU"))}.</p>
         ${quarter ? `<div class="pk-report-controls"><label>Название / организация<input data-pk-manual data-sheet="1-ПК квартальный" data-cell="A1" style="width:min(480px,80vw)" value="${escapeAttr(quarter.A1 || "")}"></label><label>ФИО руководителя<input data-pk-manual data-sheet="1-ПК квартальный" data-cell="D11" style="width:min(320px,80vw)" value="${escapeAttr(quarter.D11 || "")}"></label></div>` : ""}
         ${result.issues.length ? `<details class="pk-report-warning" open><summary>Нужно проверить данные: ${result.issues.length} записей</summary><p>Отсутствующие данные не заменяются предположениями. В квартальном отчёте записи без даты рождения не включаются; неизвестный пол не считается женским. Уточните карточки и повторите расчёт.</p><ul>${result.issues.map(i => `<li>${escapeHtml(i.name)} — ${escapeHtml(i.fields.join(", "))}</li>`).join("")}</ul></details>` : ""}
         ${quarter ? `<div class="table-wrap"><table><thead><tr><th rowspan="2">Показатель</th><th colspan="2">Повышение квалификации</th><th colspan="2">Переподготовка</th></tr><tr><th>Всего</th><th>Женщины</th><th>Всего</th><th>Женщины</th></tr></thead><tbody><tr><td>Обучено в возрасте 15 лет и старше</td><td>${quarter.C8}</td><td>${quarter.D8}</td><td>${quarter.E8}</td><td>${quarter.F8}</td></tr></tbody></table></div>` : `

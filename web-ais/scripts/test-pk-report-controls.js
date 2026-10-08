@@ -2,17 +2,21 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../app.js'),'utf8');
 const block=source.slice(source.indexOf('  const pkReportCurrentYear'),source.indexOf('  function statisticsDateParts'));
+const realHelpers=['escapeHtml','escapeAttr','formatContractDate'].map(name=>{
+  const match=source.match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  }`,'m'));
+  assert.ok(match,`Production helper ${name} must exist`);return match[0];
+}).join('\n');
 class FixedDate extends Date{constructor(...args){super(...(args.length?args:['2026-10-08T09:00:00Z']));}static now(){return new Date('2026-10-08T09:00:00Z').getTime();}}
 const workers=[];class WorkerStub{constructor(url){this.url=url;workers.push(this);}postMessage(data){this.request=data;}terminate(){this.terminated=true;}}
 const timers=new Map();let timerId=0;
 const handlers={},form={elements:Object.fromEntries(['kind','year','quarter'].map(k=>[k,{addEventListener(){}}])),reportValidity:()=>true,addEventListener:(type,fn)=>{handlers[type]=fn;}};
 const download={addEventListener:(type,fn)=>{handlers.download=fn;}};
-const host={innerHTML:''},context=vm.createContext({Date:FixedDate,Intl,URL,Worker:WorkerStub,AbortController,DOMException,setInterval,clearInterval,
+const screen={innerHTML:''},host={innerHTML:''},context=vm.createContext({Date:FixedDate,Intl,URL,Worker:WorkerStub,AbortController,DOMException,setInterval,clearInterval,
   setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
   document:{querySelector:s=>s==='[data-pk-report-form]'?form:s==='[data-pk-report-progress]'?host:s==='[data-pk-download]'?download:null,querySelectorAll:()=>[],createElement(){throw Error('No script loading should block displayed results');}},window:{},
   state:{view:'reporting',data:{meta:{organization:'Тестовый центр'},collections:{students:[],programs:[]}}},DEFAULT_REPRESENTATIVE_NAME:'Тестовый Руководитель',confirm:()=>true,
-  render(){},escapeHtml:v=>String(v??''),escapeAttr:v=>String(v??''),formatDate:v=>v,APP_BASE_URL:new URL('https://example.invalid/lms/'),APPLICATION_RELEASE:{version:'test'}});
-vm.runInContext(block+'\nglobalThis.api={pkReportUi,pkReportAutomaticQuarter,pkReportManualKey,renderPkReporting,bindPkReporting,pkReportDataSnapshot,startPkReportOperation,finishPkReportOperation,runPkReportWorker,pkReportProgressMarkup};',context);
+  render(){screen.innerHTML=context.api.renderPkReporting();},APP_BASE_URL:new URL('https://example.invalid/lms/'),APPLICATION_RELEASE:{version:'test'}});
+vm.runInContext(realHelpers+'\n'+block+'\nglobalThis.api={pkReportUi,pkReportAutomaticQuarter,pkReportManualKey,renderPkReporting,bindPkReporting,pkReportDataSnapshot,startPkReportOperation,finishPkReportOperation,runPkReportWorker,pkReportProgressMarkup};',context);
 (async()=>{
   const a=context.api,u=a.pkReportUi;u.kind='quarterly';u.year=2026;
   assert.equal(a.pkReportAutomaticQuarter(2026),3);assert.equal(a.pkReportAutomaticQuarter(2025),4);
@@ -49,6 +53,10 @@ vm.runInContext(block+'\nglobalThis.api={pkReportUi,pkReportAutomaticQuarter,pkR
   const report={period:{kind:'quarterly',quarters:2,year:2026,label:'1–2 кварталы 2026',start:'2026-01-01',end:'2026-06-30'},values:{'1-ПК квартальный':{C8:4,D8:3,E8:2,F8:1}},students:6,issues:[],generatedAt:'2026-10-08T09:00:00Z'};
   qw.onmessage({data:{type:'progress',progress:{stage:'Подготовка результатов',completed:1,total:1}}});
   qw.onmessage({data:{type:'result',result:report}});await submitted;
+  // Assert the HTML actually replaced on completion, not merely state.loading.
+  // Never stub date helpers: a nonexistent formatDate caused the production hang.
+  assert.match(screen.innerHTML,/01\.01\.2026 — 30\.06\.2026/);
+  assert.match(screen.innerHTML,/Скачать Excel/);assert.doesNotMatch(screen.innerHTML,/pk-report-spinner/);
   assert.equal(u.loading,false);assert.equal(u.timer,null);assert.equal(timers.size,0);
   assert.match(a.renderPkReporting(),/Скачать Excel/);assert.match(a.renderPkReporting(),/<td>4<\/td><td>3<\/td><td>2<\/td><td>1<\/td>/);
   assert.match(a.renderPkReporting(),/aria-busy="false"/);assert.doesNotMatch(a.renderPkReporting(),/pk-report-spinner/);
@@ -62,4 +70,4 @@ vm.runInContext(block+'\nglobalThis.api={pkReportUi,pkReportAutomaticQuarter,pkR
   assert.match(block,/form\.elements\.quarter\?\.addEventListener\("change",.*ui\.result = null/);
   assert.match(source,/event\.detail\.busy \|\|= Boolean\([^;]*pkReportUi\.loading/);
   console.log('PASS: quarter controls; screen results without template loading; Excel failure/cancel keeps results; worker timeout, decode error, stale replies and timer cleanup; annual field metadata.');
-})().catch(e=>{context.api.finishPkReportOperation();console.error(e.stack);process.exitCode=1;});
+})().catch(e=>{clearInterval(context.api.pkReportUi.timer);console.error(e.stack);process.exitCode=1;});
