@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.596",
+    version: "1.7.597",
     releasedAt: "2026-10-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.597",
+      releasedAt: "2026-10-09",
+      changes: ["Исправлено обращение в типовых сообщениях слушателей и сотрудников при записи ФИО в порядке «Имя Отчество Фамилия»: с галочкой «Обращаться по имени» используется имя, без неё — имя и отчество. Для приветствий используется тот же разбор ФИО, что и для документов."]
+    },
     {
       version: "1.7.596",
       releasedAt: "2026-10-09",
@@ -43103,8 +43108,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentCommunicationAddressee(record) {
-    const words = String(record.name || "").trim().split(/\s+/).filter(Boolean);
-    return [words[1], isChecked(record.addressByFirstName) ? "" : words[2]].filter(Boolean).join(" ");
+    const { firstName, patronymic } = splitFullName(record.name);
+    return [firstName, isChecked(record.addressByFirstName) ? "" : patronymic].filter(Boolean).join(" ");
   }
 
   function isStudentDpoProgram(record) {
