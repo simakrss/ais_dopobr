@@ -32152,3 +32152,27 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .pk-report-spinner { width: 24px; height: 24px; flex: 0 0 24px; border: 3px solid var(--line); border-top-color: var(--teal); border-radius: 50%; animation: pk-report-spin .8s linear infinite; }
 @keyframes pk-report-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .pk-report-spinner { animation: none; } }
+.rusender-panel { min-width: 0; }
+.rusender-panel summary { cursor: pointer; }
+.rusender-connection { padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; }
+.rusender-connection form, .rusender-search, .rusender-progress { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.rusender-connection .field { flex: 1; min-width: 220px; }
+.rusender-search { margin: 14px 0; }
+.rusender-search .field { flex: 1; min-width: 180px; }
+.rusender-progress { align-items: center; padding: 14px; background: var(--panel-soft); border-radius: 8px; }
+.rusender-error { padding: 12px; color: #a22222; background: #fff3f3; border: 1px solid #f1b4b4; border-radius: 8px; }
+.rusender-error-text { color: #a22222; }
+.rusender-table-wrap { max-height: 60vh; overflow: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 8px; }
+.rusender-table-wrap table { width: 100%; border-collapse: collapse; }
+.rusender-table-wrap th { position: sticky; top: 0; z-index: 1; background: var(--panel-soft); text-align: left; }
+.rusender-table-wrap td, .rusender-table-wrap th { padding: 10px; vertical-align: top; border-bottom: 1px solid var(--line); white-space: normal; }
+.rusender-table-wrap td:first-child { min-width: 240px; max-width: 450px; overflow-wrap: anywhere; }
+.rusender-table-wrap small { display: block; margin-top: 4px; color: var(--muted); }
+.rusender-table-wrap select { min-width: 240px; max-width: min(420px, 50vw); width: 100%; }
+.rusender-table-wrap button { margin: 2px 0; }
+.rusender-plan { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.rusender-plan select[multiple] { min-height: 100px; }
+.rusender-preview { padding: 16px; border: 2px solid var(--teal); border-radius: 10px; margin-top: 16px; }
+.rusender-preview iframe { width: 100%; height: 480px; background: white; border: 1px solid var(--line); margin: 10px 0; }
+.rusender-preview label { display: block; margin-bottom: 14px; }
+@media(max-width:700px) { .rusender-plan { grid-template-columns: 1fr; } .rusender-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }

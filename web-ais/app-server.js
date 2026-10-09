@@ -66,6 +66,19 @@ const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
 const documentRelay = require("./document-relay.js");
 const vituEmailSource = require("./vitu-email-source.js");
+const rusenderService = require("./rusender.js").createService({
+  getPool: getSharedRecordLocksMySqlPool,
+  getPrograms: async () => {
+    const shared = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
+    if (shared.offline || shared.syncPending || shared.pendingCount) {
+      throw Object.assign(new Error("Сначала дождитесь сохранения изменений программ в общей базе. Планирование по неподтверждённой копии недоступно."), { statusCode: 409 });
+    }
+    return (shared.document?.data?.collections?.programs || []).map(program => ({
+      id: String(program.id), name: String(program.name || ""), type: String(program.type || ""),
+      status: String(program.status || ""), hours: String(program.hours || "")
+    })).filter(program => program.name);
+  }
+});
 let documentRelayWorker = null;
 let documentRelayClientPromise = null;
 const programSiteProgress = require("./program-site-progress.js").createProgressStore();
@@ -40920,6 +40933,37 @@ async function route(req, res) {
       return;
     }
     sendJson(res, 200, await buildExternalServicesAdminPayload());
+    return;
+  }
+  if (requestUrl.pathname === "/api/advertising/rusender" || requestUrl.pathname.startsWith("/api/advertising/rusender/")) {
+    if (authUser?.role !== "admin") {
+      sendError(res, 403, "Управление массовыми рассылками доступно только администратору.");
+      return;
+    }
+    try {
+      const route = requestUrl.pathname.slice("/api/advertising/rusender".length);
+      let result;
+      if (!route && req.method === "GET") result = await rusenderService.snapshot();
+      else if (req.method === "POST") {
+        const body = await readJsonBody(req, 32768);
+        if (route === "/connection") result = await rusenderService.configure(body.token);
+        else if (route === "/sync-page") result = await rusenderService.syncPage(body);
+        else if (route === "/binding") result = await rusenderService.bind(body);
+        else if (route === "/auto-bind") result = await rusenderService.autoBind();
+        else if (route === "/plans") result = await rusenderService.savePlan(body, authUser.login);
+        else {
+          const match = route.match(/^\/plans\/([a-f0-9-]{36})\/(draft|preview|schedule|cancel)$/i);
+          if (!match) { sendError(res, 404, "Операция не найдена."); return; }
+          result = await rusenderService.action(match[1], match[2], body);
+        }
+        if (route !== "/sync-page" && !route.endsWith("/preview")) {
+          await safelyAppendAuditEntry({ area: "Реклама / Почтовые рассылки", action: "Rusender: " + route, entityId: result.plan?.id || "", details: result.plan ? `План: ${result.plan.name}; состояние: ${result.plan.state}; Rusender ID: ${result.plan.campaignId || "не создан"}` : "Операция выполнена" }, authUser, req);
+        }
+      } else { sendError(res, 405, "Метод не поддерживается."); return; }
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendError(res, Number(error.statusCode) || 503, error.statusCode ? error.message : "Общая база рассылок временно недоступна. Изменения и отправки не подтверждены; обновите состояние перед повтором.");
+    }
     return;
   }
   const adminOnlyRequest = (

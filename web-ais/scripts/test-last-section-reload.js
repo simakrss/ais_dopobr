@@ -62,7 +62,7 @@ assert.equal(fixture(new Map()).c.loadLastAisSection(), null, "New browser tab i
 assert.equal(fixture(first.store, { id: "a", role: "admin" }, "/other/").c.loadLastAisSection(), null, "Application path isolation");
 assert.equal(fixture(first.store, {}).c.loadLastAisSection(), null, "No anonymous preferences");
 const manager = fixture(first.store, { id: "a", role: "manager" }).c;
-assert.equal(manager.loadLastAisSection().advertisingTab, "collector", "Restricted subtab cannot be restored");
+assert.equal(manager.loadLastAisSection().advertisingTab, "mailings", "Restricted subtab cannot be restored; first advertising tab is mailings");
 for (const invalid of [null, [], {}, { version: 1, view: "unknown" }, { version: 2, view: "students" }, { version: 1, view: ["students"] }, { version: 1, view: "admin" }, { version: 1, view: "settings" }]) {
   assert.equal(manager.normalizeLastAisSection(invalid), null);
 }
