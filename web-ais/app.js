@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.594",
+    version: "1.7.595",
     releasedAt: "2026-10-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.595",
+      releasedAt: "2026-10-09",
+      changes: ["Для программ ДОП заявление и договор формируются без сведений о предыдущем документе об образовании. Паспортные данные и остальные реквизиты заявления и договора по-прежнему проверяются; требования для других видов программ сохранены."]
+    },
     {
       version: "1.7.594",
       releasedAt: "2026-10-09",
@@ -72676,6 +72681,12 @@ MAX - https://bizvmax.ru/zifra_plus
       programType || getStudentProgramTypeCode(record)
     );
     const isCertificateProgram = ["ДОП", "ПРО"].includes(normalizedProgramType);
+    const priorEducationFields = normalizedProgramType === "ДОП" ? [] : [
+      { key: "educationDocument", label: "Документ об образовании" },
+      { key: "educationDocumentNumber", label: "Номер документа об образовании" },
+      { key: "educationDocumentDate", label: "Дата выдачи документа об образовании" },
+      { key: "educationDocumentIssuer", label: "Кем выдан документ об образовании" }
+    ];
     const common = [
       { key: "name", label: "ФИО" },
       { key: "program", label: "Программа" }
@@ -72696,10 +72707,7 @@ MAX - https://bizvmax.ru/zifra_plus
         { key: "passportDate", label: "Дата выдачи паспорта" },
         { key: "passportNumber", label: "Серия и номер паспорта" },
         { key: "passportIssuer", label: "Кем выдан паспорт" },
-        { key: "educationDocument", label: "Документ об образовании" },
-        { key: "educationDocumentNumber", label: "Номер документа об образовании" },
-        { key: "educationDocumentDate", label: "Дата выдачи документа об образовании" },
-        { key: "educationDocumentIssuer", label: "Кем выдан документ об образовании" },
+        ...priorEducationFields,
         { key: "fundingSource", label: "Источник финансирования" },
         { key: "contractAmount", label: "Сумма договора", positive: true },
         { key: "contractNo", label: "Номер договора" },
@@ -72750,10 +72758,7 @@ MAX - https://bizvmax.ru/zifra_plus
         { key: "passportDate", label: "Дата выдачи паспорта" },
         { key: "passportNumber", label: "Серия и номер паспорта" },
         { key: "passportIssuer", label: "Кем выдан паспорт" },
-        { key: "educationDocument", label: "Документ об образовании" },
-        { key: "educationDocumentNumber", label: "Номер документа об образовании" },
-        { key: "educationDocumentDate", label: "Дата выдачи документа об образовании" },
-        { key: "educationDocumentIssuer", label: "Кем выдан документ об образовании" },
+        ...priorEducationFields,
         { key: "startDate", label: "Дата начала обучения" },
         { key: "endDate", label: "Дата окончания обучения" }
       ],
