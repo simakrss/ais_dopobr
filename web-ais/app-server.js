@@ -14799,6 +14799,36 @@ function publicStudentDocumentRecognitionJob(job) {
   };
 }
 
+function isTrustedPortlessLocalOcrOrigin(req, origin, requestHost) {
+  // A local client can strip Origin's port while leaving the browser's actual
+  // same-origin metadata intact. Do not treat arbitrary loopback ports as equal:
+  // require both the authenticated local gateway and independent browser proof.
+  if (!requestHasConfiguredGatewaySecret(req)
+    || !/^\/api\/students\/recognize-documents\/(?:files|start|direct|status|result|page|field-region)(?:\?|$)/u.test(String(req.url || ""))
+    || String(req.headers["sec-fetch-site"] || "") !== "same-origin"
+    || String(req.headers["x-forwarded-proto"] || "") !== "http"
+    || (!["GET", "HEAD"].includes(req.method)
+      && String(req.headers["x-requested-with"] || "") !== "AIS-Web")) return false;
+  const loopbackAddresses = ["127.0.0.1", "::1", "::ffff:127.0.0.1"];
+  if (!loopbackAddresses.includes(String(req.socket?.remoteAddress || ""))
+    || !loopbackAddresses.includes(String(req.headers["x-forwarded-for"] || ""))) return false;
+  try {
+    const originUrl = new URL(origin);
+    const targetUrl = new URL(`http://${requestHost}`);
+    const refererUrl = new URL(String(req.headers.referer || ""));
+    return originUrl.protocol === "http:"
+      && originUrl.origin === origin
+      && !originUrl.port && Boolean(targetUrl.port)
+      && ["127.0.0.1", "localhost", "[::1]"].includes(targetUrl.hostname)
+      && originUrl.hostname === targetUrl.hostname
+      && !targetUrl.username && !targetUrl.password
+      && !refererUrl.username && !refererUrl.password
+      && refererUrl.origin === targetUrl.origin;
+  } catch {
+    return false;
+  }
+}
+
 function isTrustedBrowserOrigin(req) {
   const origin = String(req.headers.origin || "").trim();
   if (!origin || origin === "null") return true;
@@ -14807,7 +14837,8 @@ function isTrustedBrowserOrigin(req) {
       ? String(req.headers["x-forwarded-host"] || req.headers.host || "")
       : String(req.headers.host || "");
     return new URL(origin).host.toLocaleLowerCase("en-US")
-      === requestHost.trim().toLocaleLowerCase("en-US");
+      === requestHost.trim().toLocaleLowerCase("en-US")
+      || isTrustedPortlessLocalOcrOrigin(req, origin, requestHost);
   } catch {
     return false;
   }

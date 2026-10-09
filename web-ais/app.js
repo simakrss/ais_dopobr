@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.593",
+    version: "1.7.594",
     releasedAt: "2026-10-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.594",
+      releasedAt: "2026-10-09",
+      changes: ["Исправлен отказ HTTP 403 при распознавании документов из локальной папки, если клиент передаёт Origin без порта. Исключение действует только для запросов распознавания через доверенный локальный шлюз с подтверждением исходной страницы АИС; посторонние сайты и другие порты не разрешаются."]
+    },
     {
       version: "1.7.593",
       releasedAt: "2026-10-09",
