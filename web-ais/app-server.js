@@ -4377,7 +4377,14 @@ function getRussianPluralIndex(value) {
 }
 
 function splitFullName(name) {
-  const [surname = "", firstName = "", patronymic = ""] = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  // A full patronymic in the middle identifies ИОФ, not ФИО. Do not
+  // guess the order of abbreviated, two-word or ambiguous names.
+  const isPatronymic = (word) => /(?:вна|ична|вич|ич)$/iu.test(word || "");
+  if (words.length === 3 && isPatronymic(words[1]) && !isPatronymic(words[2])) {
+    return { surname: words[2], firstName: words[0], patronymic: words[1] };
+  }
+  const [surname = "", firstName = "", patronymic = ""] = words;
   return { surname, firstName, patronymic };
 }
 

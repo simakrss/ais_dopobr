@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.595",
+    version: "1.7.596",
     releasedAt: "2026-10-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.596",
+      releasedAt: "2026-10-09",
+      changes: ["Исправлено склонение ФИО, записанного в порядке «Имя Отчество Фамилия»: женские фамилии получают правильное окончание (например, Почкаловой), а части имени и инициалы определяются по назначению. Правило применяется в клиентских и серверных формулах документов, включая двойные фамилии; исходные записи не изменяются."]
+    },
     {
       version: "1.7.595",
       releasedAt: "2026-10-09",
@@ -77133,7 +77138,14 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function splitFullName(name) {
-    const [surname = "", firstName = "", patronymic = ""] = String(name || "").trim().split(/\s+/).filter(Boolean);
+    const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+    // A full patronymic in the middle identifies ИОФ, not ФИО. Do not
+    // guess the order of abbreviated, two-word or ambiguous names.
+    const isPatronymic = (word) => /(?:вна|ична|вич|ич)$/iu.test(word || "");
+    if (words.length === 3 && isPatronymic(words[1]) && !isPatronymic(words[2])) {
+      return { surname: words[2], firstName: words[0], patronymic: words[1] };
+    }
+    const [surname = "", firstName = "", patronymic = ""] = words;
     return { surname, firstName, patronymic };
   }
 

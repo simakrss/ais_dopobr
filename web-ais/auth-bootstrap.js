@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261009-dop-document-validation";
+  const AUTH_BUILD = "20261009-fio-name-order";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
