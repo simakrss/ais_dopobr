@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.592",
+    version: "1.7.593",
     releasedAt: "2026-10-09"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.593",
+      releasedAt: "2026-10-09",
+      changes: ["Уточнено оформление полей планирования рассылок Rusender; серверный модуль интеграции публикуется только вне общедоступной папки сайта."]
+    },
     {
       version: "1.7.592",
       releasedAt: "2026-10-09",

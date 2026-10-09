@@ -709,6 +709,16 @@ $results = if ($VituEmailExportRoot) {
     Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime"
     continue
   }
+  if ($relativeFile -eq "rusender.js") {
+    Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime only"
+    # This server module needs no public URL. Preserve an earlier public copy
+    # outside public_html (some hosting proxies serve JS before .htaccess).
+    $rusenderBackupRoot = "/edu-plus.ru/lms-runtime/publisher-backups"
+    Ensure-FtpDirectory $rusenderBackupRoot
+    $rusenderBackupName = "rusender-" + [Guid]::NewGuid().ToString('N') + ".js"
+    Rename-FtpFileIfExists "$remoteRoot/rusender.js" "$rusenderBackupRoot/$rusenderBackupName" | Out-Null
+    continue
+  }
   Publish-FileTarget $relativeFile "$remoteRoot/$relativeFile" "public"
   $mirrorToRuntime = ($runtimeMirrorFiles -contains $relativeFile) -or `
     $relativeFile.StartsWith("storage/document-templates/employee-contract-", [StringComparison]::OrdinalIgnoreCase)
