@@ -3,6 +3,9 @@
 const crypto = require("node:crypto");
 const BASE = "https://api.rusender.ru/api";
 const RESOURCES = Object.freeze({ campaigns: "/v1/public/campaigns", templates: "/v2/public/templates", lists: "/v1/public/lists", senders: "/v1/public/senders" });
+// Documented v2 list currently returns 404 on some Rusender deployments.
+const LEGACY_TEMPLATES = "/v1/public/templates";
+const RESOURCE_ACCESS = Object.freeze({ campaigns: ["рассылки", "campaigns.read"], templates: ["шаблоны", "templates.read"], lists: ["списки получателей", "contacts.read"], senders: ["отправители", "senders.read"] });
 const uuid = value => /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(String(value || ""));
 const id = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;
 const hash = value => crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -98,11 +101,21 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
     try {
       const response = await fetchImpl(BASE + path, { method, redirect: "error", signal: controller.signal, headers: { Authorization: `Bearer ${secret}`, Accept: "application/json", ...(data ? { "Content-Type": "application/json" } : {}), ...(key ? { "Idempotency-Key": key } : {}) }, ...(data ? { body: JSON.stringify({ data, meta: { requestId: key || crypto.randomUUID() } }) } : {}) });
       if (response.status === 429) fail(`Rusender ограничил частоту запросов. Повторите через ${Math.max(1, Math.min(600, Number(response.headers.get("retry-after")) || 60))} сек.`, 429);
-      if ([401, 403].includes(response.status)) fail("Rusender отклонил API-ключ или его права. Проверьте подключение и тариф.", 403);
       const body = await response.json().catch(() => null);
       if (!response.ok || body?.ok !== true || !body.data) {
         const code = /^[A-Z0-9_]{1,80}$/.test(body?.error?.code || "") ? ` (${body.error.code})` : "";
-        fail(`Rusender: запрос не выполнен, HTTP ${response.status}${code}. Проверьте данные в кабинете сервиса.`, 502);
+        const route = path.split("?")[0];
+        const resource = route.match(/^\/v[12]\/public\/(campaigns|templates|lists|senders)(?:\/|$)/)?.[1];
+        const [label, readScope] = RESOURCE_ACCESS[resource] || ["данные", ""];
+        const scope = method === "GET" ? readScope : resource === "campaigns" ? "campaigns.write" : "";
+        let detail = "Проверьте данные в кабинете сервиса.";
+        if (body?.error?.code === "INVALID_API_TOKEN" || response.status === 401) detail = "Rusender не принял API-ключ. Проверьте, что он активен и скопирован полностью.";
+        else if (body?.error?.code === "SCOPE_REQUIRED") detail = `У ключа нет нужного разрешения${scope ? ` ${scope}` : ""}. Добавьте его в настройках ключа Rusender.`;
+        else if (body?.error?.code === "PUBLIC_API_DISABLED") detail = "Публичный API отключён для аккаунта Rusender. Проверьте доступ к API в кабинете сервиса.";
+        else if (response.status === 403) detail = `Rusender запретил доступ. Проверьте разрешение${scope ? ` ${scope}` : ""} и доступ аккаунта к API.`;
+        else if (response.status === 404) detail = "Метод API или запрошенная запись не найдены. Это не означает, что API-ключ неверен.";
+        // Only our fixed route and a bounded code, never provider messages or credentials.
+        throw Object.assign(new Error(`Rusender — ${label}: HTTP ${response.status}${code}, ${method} ${route}. ${detail}`), { statusCode: [401, 403].includes(response.status) ? 403 : 502, providerStatus: response.status });
       }
       return body;
     } catch (error) {
@@ -110,6 +123,18 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
       // No provider body/URL/token in logs or user-facing exception.
       fail("Нет ответа Rusender за 20 секунд или соединение прервано. Обновите состояние; повтор операции защищён от дублирования.", 504);
     } finally { clearTimeout(timer); }
+  }
+  async function listApi(resource, query, { token, endpoint } = {}) {
+    const selected = endpoint || RESOURCES[resource];
+    if (selected !== RESOURCES[resource] && !(resource === "templates" && selected === LEGACY_TEMPLATES)) fail("Неизвестный метод загрузки Rusender.", 409);
+    try {
+      return { response: await api(`${selected}?${query}`, { token }), endpoint: selected };
+    } catch (error) {
+      // Read-only compatibility fallback, never retry denied access or a write.
+      // Pin the selected endpoint for every later page of this generation.
+      if (resource !== "templates" || endpoint || error.providerStatus !== 404) throw error;
+      return { response: await api(`${LEGACY_TEMPLATES}?${query}`, { token }), endpoint: LEGACY_TEMPLATES };
+    }
   }
   async function datasets() {
     return Object.fromEntries(await Promise.all(Object.keys(RESOURCES).map(async key => [key, await read(`dataset:${key}`) || { items: [], syncedAt: "", complete: false }])));
@@ -130,7 +155,7 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
   async function configure(token) {
     token = String(token || "").trim();
     if (!/^rs_ck_v1_[A-Za-z0-9_-]{16,500}$/.test(token)) fail("Укажите публичный API-ключ Rusender вида rs_ck_v1_… (не пароль аккаунта).");
-    await Promise.all(Object.values(RESOURCES).map(path => api(`${path}?page=1&limit=1`, { token })));
+    await Promise.all(Object.keys(RESOURCES).map(resource => listApi(resource, "page=1&limit=1", { token })));
     await write("secret", { token, configuredAt: new Date(now()).toISOString() });
     return { ok: true, connected: true };
   }
@@ -139,7 +164,7 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
     return locked(`sync:${resource}`, async connection => {
       const previous = page === 1 ? { items: [], generation, page: 0 } : await read(`stage:${resource}`, connection);
       if (!previous || previous.generation !== generation || previous.page !== page - 1) fail("Синхронизация изменена в другой копии АИС. Начните обновление заново.", 409);
-      const response = await api(`${RESOURCES[resource]}?page=${page}&limit=100${resource === "campaigns" ? "&withStats=true" : ""}`);
+      const { response, endpoint } = await listApi(resource, `page=${page}&limit=100${resource === "campaigns" ? "&withStats=true" : ""}`, { endpoint: page > 1 ? previous.endpoint || RESOURCES[resource] : undefined });
       if (!Array.isArray(response.data.items)) fail("Rusender вернул неизвестный формат списка. Сохранённые данные не изменены.", 502);
       const items = response.data.items.map(item => publicItem(resource, item));
       if (items.some(item => !item.id)) fail("В ответе Rusender нет идентификаторов. Сохранённые данные не изменены.", 502);
@@ -149,7 +174,7 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
       const map = new Map(previous.items.map(item => [item.id, item]));
       if (page > 1 && items.length && items.every(item => map.has(item.id))) fail("Rusender повторил страницу. Полнота истории не подтверждена.", 502);
       items.forEach(item => map.set(item.id, item));
-      const stage = { items: [...map.values()], generation, page, totalPages };
+      const stage = { items: [...map.values()], generation, page, totalPages, endpoint };
       const complete = page >= totalPages;
       if (complete && Number.isFinite(Number(pagination?.totalItems)) && stage.items.length !== Number(pagination.totalItems)) fail("Число записей изменилось во время загрузки. Повторите синхронизацию для полного аудита.", 409);
       await write(`stage:${resource}`, stage, connection);

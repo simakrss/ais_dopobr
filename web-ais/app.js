@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.597",
-    releasedAt: "2026-10-09"
+    version: "1.7.598",
+    releasedAt: "2026-10-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.598",
+      releasedAt: "2026-10-10",
+      changes: ["Исправлено подключение Rusender при HTTP 404 нового метода списка шаблонов: используется документированный совместимый метод, выбранный на всю загрузку. Ошибки API теперь указывают проблемный запрос и различают неверный ключ, недостающие права и отключённый API."]
+    },
     {
       version: "1.7.597",
       releasedAt: "2026-10-09",

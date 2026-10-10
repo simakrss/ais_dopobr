@@ -10,6 +10,7 @@ const lists = [{ id: 2, name: "Подписчики", contactsCount: 12 }];
 const senders = [{ id: 3, email: "sender@example.invalid", verified: "enabled" }];
 const token = "rs_ck_v1_UNIT_TEST_NOT_A_REAL_SECRET";
 const store = new Map(), locks = new Set(), calls = [], remote = new Map(), dedup = new Map();
+const httpFailures = new Map();
 let remoteNext = 500, failPath = "", changedHtml = false, badPagination = false, loseCreateResponse = false, loseScheduleResponse = false;
 const pool = {
   async query(sql, args = []) {
@@ -28,6 +29,14 @@ async function fakeFetch(url, opts) {
   const parsed = new URL(url); const route = parsed.pathname.replace(/^\/api/, "");
   calls.push({ route, method: opts.method, body: opts.body ? JSON.parse(opts.body) : null, key: opts.headers["Idempotency-Key"] });
   assert.equal(parsed.origin, "https://api.rusender.ru"); assert.equal(opts.redirect, "error"); assert.equal(opts.headers.Authorization, `Bearer ${token}`);
+  assert.match(route, /^\/(?:v1\/public\/(?:campaigns(?:\/\d+(?:\/schedule)?)?|templates(?:\/\d+)?|lists|senders)|v2\/public\/templates)$/);
+  if (httpFailures.has(route)) {
+    const { status, code, plain } = httpFailures.get(route);
+    return { ok: false, status, headers: new Headers(), json: async () => {
+      if (plain) throw Error(`provider text contains ${token}`);
+      return { ok: false, error: { code, message: `private provider details ${token}` } };
+    } };
+  }
   if (route === failPath) throw Error(`private network details ${token}`);
   if (opts.method === "POST") {
     const key = opts.headers["Idempotency-Key"];
@@ -68,12 +77,50 @@ async function plan() {
   assert.equal(publicItem("campaigns", { id: 1, dashboardUrl: "javascript:alert(1)" }).dashboardUrl, "https://app.rusender.ru/mail-distributions");
   assert.equal((await service.snapshot()).connected, false);
   await assert.rejects(service.configure("account password"), /API-ключ/);
+  // Authentication and scope errors must explain the failing request without leaking bodies.
+  for (const [status, code, expected] of [[401, "INVALID_API_TOKEN", /скопирован полностью/], [403, "SCOPE_REQUIRED", /templates.read/], [403, "PUBLIC_API_DISABLED", /API отключён/], [403, undefined, /запретил доступ/], [500, "INTERNAL_ERROR", /HTTP 500/], [429, undefined, /частоту/]]) {
+    httpFailures.set("/v2/public/templates", { status, code });
+    const start = calls.length;
+    await assert.rejects(service.configure(token), error => expected.test(error.message) && !error.message.includes(token) && !error.message.includes("private provider"));
+    assert.ok(!store.has("secret"));
+    assert.ok(!calls.slice(start).some(call => call.route === "/v1/public/templates"));
+  }
+  httpFailures.set("/v2/public/templates", { status: 404, plain: true });
+  httpFailures.set("/v1/public/templates", { status: 404, plain: true });
+  await assert.rejects(service.configure(token), error => /GET \/v1\/public\/templates/.test(error.message) && /не означает/.test(error.message));
+  assert.ok(!store.has("secret"));
+  httpFailures.delete("/v1/public/templates");
+  await service.configure(token); // A missing v2 endpoint must not block a valid key.
+  assert.ok(store.has("secret"));
+  assert.ok(calls.some(call => call.route === "/v1/public/templates"));
+  const generation = crypto.randomUUID();
+  assert.equal((await service.syncPage({ resource: "templates", page: 1, generation })).complete, false);
+  assert.equal(JSON.parse(store.get("stage:templates")).endpoint, "/v1/public/templates");
+  httpFailures.clear(); // v2 recovers between pages: finish using the same v1 source.
+  const next = calls.length;
+  assert.equal((await service.syncPage({ resource: "templates", page: 2, generation })).complete, true);
+  assert.equal(calls[next].route, "/v1/public/templates");
+  assert.equal(JSON.parse(store.get("dataset:templates")).items.length, 2);
+  const savedSecret = store.get("secret");
+  httpFailures.set("/v1/public/campaigns", { status: 404, plain: true });
+  await assert.rejects(service.configure(token), /GET \/v1\/public\/campaigns/);
+  assert.equal(store.get("secret"), savedSecret);
+  httpFailures.clear();
   await service.configure(token);
   for (const resource of ["templates", "campaigns", "senders", "lists"]) await sync(resource);
   const snapshot = await service.snapshot();
   assert.equal(snapshot.templates.items.length, 2); assert.equal(snapshot.connected, true);
   assert.ok(!JSON.stringify(snapshot).includes(token)); assert.ok(!JSON.stringify(snapshot).includes("Письмо"));
   const original = store.get("dataset:templates");
+  // Do not mix versions when v2 fails midway; retain the last complete snapshot.
+  const interrupted = crypto.randomUUID();
+  await service.syncPage({ resource: "templates", page: 1, generation: interrupted });
+  httpFailures.set("/v2/public/templates", { status: 404, plain: true });
+  const beforeFailure = calls.length;
+  await assert.rejects(service.syncPage({ resource: "templates", page: 2, generation: interrupted }), /HTTP 404/);
+  assert.equal(calls.length, beforeFailure + 1);
+  assert.equal(store.get("dataset:templates"), original);
+  httpFailures.clear();
   badPagination = true; await assert.rejects(sync("templates"), /пагинация/); badPagination = false;
   assert.equal(store.get("dataset:templates"), original);
   failPath = "/v1/public/campaigns";
