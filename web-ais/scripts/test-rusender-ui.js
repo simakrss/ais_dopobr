@@ -46,6 +46,9 @@ vm.runInContext(helpers + "\n" + block + "\nthis.api={rusenderUi,renderRusender,
   await assert.rejects(api.loadRusenderTemplateContext(), /Подбор прерван/);
   ui.cancelRequested = false; ui.data = structuredClone(data);
   api.startRusenderPlan("p1"); html = api.renderRusender(); assert.match(html, /Сохранить план без запуска/); assert.match(html, /Москва, UTC\+3/);
+  assert.match(html, /class="rusender-plans-intro"><p>[\s\S]*?<\/p><button[^>]*data-rs-action="new-plan"[^>]*>Новый план<\/button><\/div>/);
+  const css = fs.readFileSync(path.join(__dirname, "../styles.css"), "utf8");
+  assert.match(css, /\.rusender-plans-intro\s*\{[^}]*gap: 12px;[^}]*margin: 16px 0 20px;[^}]*padding: 0 12px;/);
   assert.deepEqual(JSON.parse(JSON.stringify(ui.form.listIds)), []); assert.ok(!html.includes('value="2" selected')); // Recipients never preselected.
   assert.match(api.rusenderUuid(), /^[a-f0-9-]{36}$/);
   context.crypto = { getRandomValues: bytes => crypto.webcrypto.getRandomValues(bytes) };
