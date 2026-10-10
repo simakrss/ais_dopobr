@@ -32174,6 +32174,11 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .rusender-table-wrap small { display: block; margin-top: 4px; color: var(--muted); }
 .rusender-table-wrap select { min-width: 240px; max-width: min(420px, 50vw); width: 100%; }
 .rusender-table-wrap button { margin: 2px 0; }
+.rusender-program-recommended > td:first-child { border-left: 3px solid var(--teal); }
+.rusender-recommendation { padding: 9px 11px; margin-bottom: 8px; max-width: 420px; background: #edf8f5; border: 1px solid #a8d5c9; border-radius: 7px; overflow-wrap: anywhere; }
+.rusender-recommendation.is-ambiguous { background: #fff8e9; border-color: #e7ce97; }
+.rusender-template-recommended { font-weight: 700; color: #08685b; }
+.rusender-table-wrap .rusender-error-text { color: #a22222; }
 .rusender-plan { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .rusender-plan select[multiple] { min-height: 100px; }
 .rusender-preview { padding: 16px; border: 2px solid var(--teal); border-radius: 10px; margin-top: 16px; }

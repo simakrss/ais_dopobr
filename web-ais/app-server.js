@@ -40986,6 +40986,7 @@ async function route(req, res) {
         const body = await readJsonBody(req, 32768);
         if (route === "/connection") result = await rusenderService.configure(body.token);
         else if (route === "/sync-page") result = await rusenderService.syncPage(body);
+        else if (route === "/template-context") result = await rusenderService.templateContext(body);
         else if (route === "/binding") result = await rusenderService.bind(body);
         else if (route === "/auto-bind") result = await rusenderService.autoBind();
         else if (route === "/plans") result = await rusenderService.savePlan(body, authUser.login);
@@ -40994,7 +40995,7 @@ async function route(req, res) {
           if (!match) { sendError(res, 404, "Операция не найдена."); return; }
           result = await rusenderService.action(match[1], match[2], body);
         }
-        if (route !== "/sync-page" && !route.endsWith("/preview")) {
+        if (!["/sync-page", "/template-context"].includes(route) && !route.endsWith("/preview")) {
           await safelyAppendAuditEntry({ area: "Реклама / Почтовые рассылки", action: "Rusender: " + route, entityId: result.plan?.id || "", details: result.plan ? `План: ${result.plan.name}; состояние: ${result.plan.state}; Rusender ID: ${result.plan.campaignId || "не создан"}` : "Операция выполнена" }, authUser, req);
         }
       } else { sendError(res, 405, "Метод не поддерживается."); return; }

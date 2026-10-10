@@ -54,6 +54,94 @@ function suggestBindings(programs, templates, campaigns) {
   return [...result].map(([programId, ids]) => ({ programId, templateIds: [...ids], source: "exact-name" }));
 }
 
+// Matching is local to AIS: letter text is never sent to an external AI service.
+// HTML is converted to plain search text, not executed or rendered.
+function templateText(row) {
+  const source = text(row.html, 2000000).replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|head|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<[^>]*>/g, " ");
+  const entities = { nbsp: " ", amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", laquo: "«", raquo: "»", ndash: "—", mdash: "—" };
+  return `${text(row.text, 100000)} ${source}`.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (all, entity) => {
+    if (!entity.startsWith("#")) return entities[entity.toLowerCase()] || " ";
+    const code = entity[1].toLowerCase() === "x" ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : " ";
+  }).replace(/\s+/g, " ").trim().slice(0, 60000);
+}
+function hasTemplateContent(row) { return typeof row.html === "string" || typeof row.text === "string"; }
+function wordRoot(word) {
+  if (/^стат(?:ья|ьи|ье|ью|ей|ьям|ьями|ьях)$/.test(word)) return "статья";
+  if (/^нейросет/.test(word)) return "нейросеть";
+  if (/^нейронн/.test(word)) return "нейронн";
+  return word.length > 5 ? word.replace(/(?:иями|ями|ами|ого|его|ому|ему|ыми|ими|иях|ах|ях|иям|ий|ый|ой|ая|яя|ое|ее|ые|ие|ую|юю|ов|ев|ам|ям|ом|ем|ей|ия|ию|ии|а|я|ы|и|у|ю|е|о|ь)$/u, "") : word;
+}
+const CONTEXT_STOP = new Set("в на и или по с со из для о об от до к ко у за при через без под над это как что чтобы вы ваш мы наш все этот тот добрый день здравствуйте уважаемый приглашаем приглашение запись зарегистрироваться регистрация участие участник обучение образовательный образование программа курс семинар вебинар онлайн он лайн мастер класс повышение квалификация профессиональный переподготовка дополнительный общеобразовательный дистанционный очный центр учебный цифровизация плюс письмо рассылка шаблон копия скидка цена стоимость акция бесплатно руб рублей час часов ч подробнее сайт ссылка нажмите отписаться рассмотреть предложение предложение добрый будет состоится начало дата время мск январь февраль март апрель май июнь июль август сентябрь октябрь ноябрь декабрь год 2026".split(" ").map(wordRoot));
+function contextWords(value) {
+  return (text(value, 60000).normalize("NFKC").toLowerCase().replace(/ё/g, "е").replace(/https?:\/\/\S+|\S+@\S+/g, " ").match(/[\p{L}\p{N}]+/gu) || [])
+    .filter(word => word.length > 1 && !/^\d+$/.test(word)).map(wordRoot).filter(word => !CONTEXT_STOP.has(word));
+}
+function contextDocument(value, label) {
+  const words = contextWords(value), positions = new Map();
+  words.forEach((word, index) => { const items = positions.get(word) || []; items.push(index); positions.set(word, items); });
+  return { words, positions, label };
+}
+function recommendTemplates(programs, templates, campaigns) {
+  const titles = new Map();
+  for (const campaign of campaigns) {
+    const items = titles.get(id(campaign.templateId)) || [];
+    items.push(campaign.subject, campaign.name); titles.set(id(campaign.templateId), items);
+  }
+  const documents = templates.map(template => ({ template,
+    fields: [contextDocument(template.name, "Название шаблона"), ...[...new Set(titles.get(id(template.id)) || [])].filter(Boolean).map(value => contextDocument(value, "Тема / название рассылки")), contextDocument(template.contextText || "", "Текст письма")],
+    hours: new Set([...`${template.name} ${template.contextText || ""}`.matchAll(/\b(\d{1,4})\s*(?:час[а-я]*|ч(?![а-я]))/giu)].map(match => Number(match[1])))
+  }));
+  const queries = programs.map(program => ({ program, words: [...new Set(contextWords(program.name))] }));
+  const frequency = new Map(), index = new Map();
+  for (const { words } of queries) for (const word of words) frequency.set(word, (frequency.get(word) || 0) + 1);
+  documents.forEach((doc, i) => {
+    for (const word of new Set(doc.fields.flatMap(field => [...field.positions.keys()]))) { const hits = index.get(word) || []; hits.push(i); index.set(word, hits); }
+  });
+  const result = [];
+  for (const { program, words } of queries) {
+    if (!words.length) continue;
+    const weight = word => 1 + Math.log(1 + programs.length / (frequency.get(word) || 1)) + Math.log(1 + documents.length / (index.get(word)?.length || 1));
+    const total = words.reduce((sum, word) => sum + weight(word), 0);
+    const possible = new Set(words.flatMap(word => index.get(word) || []));
+    const candidates = [];
+    for (const i of possible) {
+      const doc = documents[i], evidence = [];
+      for (const field of doc.fields) {
+        const hits = words.flatMap(word => (field.positions.get(word) || []).map(position => ({ word, position }))).sort((a, b) => a.position - b.position);
+        let best = null;
+        for (let start = 0, end = 0; start < hits.length; start++) {
+          while (end < hits.length && hits[end].position - hits[start].position <= 55) end++;
+          const matched = [...new Set(hits.slice(start, end).map(hit => hit.word))];
+          if (matched.length < Math.min(words.length, 2)) continue;
+          const coverage = matched.reduce((sum, word) => sum + weight(word), 0) / total;
+          const precision = matched.length / Math.max(matched.length, Math.min(field.words.length, 55));
+          const score = Math.round(100 * coverage * (0.84 + 0.16 * precision));
+          if (!best || score > best.score) best = { score, label: field.label, matched };
+        }
+        if (best && best.score >= 65) evidence.push(best);
+      }
+      if (!evidence.length) continue;
+      evidence.sort((a, b) => b.score - a.score);
+      let score = Math.min(100, evidence[0].score + (new Set(evidence.map(item => item.label)).size > 1 ? 3 : 0));
+      const hours = Number(program.hours), hoursMatch = hours > 0 && doc.hours.has(hours);
+      if (hours > 0 && doc.hours.size && !hoursMatch) score -= 30;
+      if (score < 65) continue;
+      candidates.push({ templateId: id(doc.template.id), score, reasons: [...new Set(evidence.map(item => item.label))], hoursMatch });
+    }
+    candidates.sort((a, b) => b.score - a.score || a.templateId - b.templateId);
+    if (!candidates.length) continue;
+    const best = candidates[0];
+    const similarPrograms = queries.filter(other => String(other.program.id) !== String(program.id) && other.words.length === words.length && other.words.every(word => words.includes(word)));
+    const variantAmbiguous = similarPrograms.some(other => !best.hoursMatch || Number(other.program.hours) === Number(program.hours));
+    const ambiguous = variantAmbiguous || Boolean(candidates[1] && best.score - candidates[1].score < 8);
+    result.push({ programId: String(program.id), templateId: best.templateId, score: best.score, reasons: best.reasons, ambiguous, variantAmbiguous, candidates: candidates.slice(0, 3) });
+  }
+  return result;
+}
+
 function validateSchedule(value, now = Date.now()) {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(String(value || ""))) fail("Укажите дату и время отправки (Москва).");
   const time = Date.parse(value);
@@ -150,7 +238,30 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
   async function snapshot() {
     const data = await datasets();
     const programs = await getPrograms();
-    return { ok: true, connected: Boolean((await read("secret"))?.token), ...data, programs, bindings: await all("binding"), plans: (await all("plan")).map(publicPlan), suggestions: suggestBindings(programs, data.templates.items, data.campaigns.items) };
+    const pendingTemplateIds = data.templates.complete ? data.templates.items.filter(item => item.contextVersion !== 1).map(item => item.id) : [];
+    return { ok: true, connected: Boolean((await read("secret"))?.token), ...data,
+      // Full letter text stays in the server cache; only scores/reasons go to the UI.
+      templates: { ...data.templates, items: data.templates.items.map(item => publicItem("templates", item)) },
+      templateContext: { pendingTemplateIds, total: data.templates.items.length, checked: data.templates.items.filter(item => item.contextVersion === 1).length },
+      recommendations: recommendTemplates(programs, data.templates.items, data.campaigns.items),
+      programs, bindings: await all("binding"), plans: (await all("plan")).map(publicPlan), suggestions: suggestBindings(programs, data.templates.items, data.campaigns.items) };
+  }
+  async function templateContext({ templateIds }) {
+    if (!Array.isArray(templateIds) || !templateIds.length || templateIds.length > 3 || templateIds.some(value => !id(value))) fail("Выберите до трёх шаблонов для одного этапа анализа.");
+    return locked("sync:templates", async connection => {
+      const dataset = await read("dataset:templates", connection);
+      if (!dataset?.complete) fail("Сначала полностью загрузите список шаблонов.", 409);
+      const selected = [...new Set(templateIds.map(id))].map(value => dataset.items.find(item => item.id === value));
+      if (selected.some(item => !item)) fail("Список шаблонов изменился. Обновите данные и повторите подбор.", 409);
+      const updates = await Promise.all(selected.filter(item => item.contextVersion !== 1).map(async item => {
+        const detail = (await api(`/v1/public/templates/${item.id}`)).data;
+        if (id(detail.id) !== item.id || !hasTemplateContent(detail)) fail("Rusender не вернул содержимое выбранного шаблона. Повторите загрузку позже.", 502);
+        return { ...item, contextText: templateText(detail), contextVersion: 1 };
+      }));
+      dataset.items = dataset.items.map(item => updates.find(update => update.id === item.id) || item);
+      if (updates.length) await write("dataset:templates", dataset, connection);
+      return { ok: true, checked: selected.length };
+    });
   }
   async function configure(token) {
     token = String(token || "").trim();
@@ -166,7 +277,18 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
       if (!previous || previous.generation !== generation || previous.page !== page - 1) fail("Синхронизация изменена в другой копии АИС. Начните обновление заново.", 409);
       const { response, endpoint } = await listApi(resource, `page=${page}&limit=100${resource === "campaigns" ? "&withStats=true" : ""}`, { endpoint: page > 1 ? previous.endpoint || RESOURCES[resource] : undefined });
       if (!Array.isArray(response.data.items)) fail("Rusender вернул неизвестный формат списка. Сохранённые данные не изменены.", 502);
-      const items = response.data.items.map(item => publicItem(resource, item));
+      const cached = resource === "templates" ? (await read("dataset:templates", connection))?.items || [] : [];
+      const items = response.data.items.map(item => {
+        const clean = publicItem(resource, item);
+        if (resource === "templates") {
+          if (hasTemplateContent(item)) Object.assign(clean, { contextText: templateText(item), contextVersion: 1 });
+          else {
+            const old = cached.find(value => value.id === clean.id);
+            if (clean.updatedAt && old?.updatedAt === clean.updatedAt && old.contextVersion === 1) Object.assign(clean, { contextText: old.contextText, contextVersion: 1 });
+          }
+        }
+        return clean;
+      });
       if (items.some(item => !item.id)) fail("В ответе Rusender нет идентификаторов. Сохранённые данные не изменены.", 502);
       const pagination = response.meta?.pagination;
       const totalPages = pagination ? Number(pagination.totalPages) : 1;
@@ -281,6 +403,6 @@ function createService({ getPool, getPrograms, fetchImpl = global.fetch, now = D
       return { ok: true, plan: publicPlan(plan) };
     });
   }
-  return { snapshot, configure, syncPage, bind, autoBind, savePlan, action };
+  return { snapshot, configure, syncPage, templateContext, bind, autoBind, savePlan, action };
 }
-module.exports = { createService, publicItem, suggestBindings, validateSchedule, normalizedName };
+module.exports = { createService, publicItem, suggestBindings, recommendTemplates, templateText, validateSchedule, normalizedName };

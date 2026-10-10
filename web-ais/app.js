@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.598",
+    version: "1.7.599",
     releasedAt: "2026-10-10"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.599",
+      releasedAt: "2026-10-10",
+      changes: ["В разделе «Шаблоны и программы» добавлен контекстный подбор Rusender по названию, теме рассылки и содержимому письма: рекомендуемый шаблон выделяется в списке, показываются причины и сходство. Ручные привязки сохраняются, неоднозначные варианты требуют выбора. Содержимое загружается с индикатором и возможностью прерывания; рассылки при подборе не создаются и не отправляются."]
+    },
     {
       version: "1.7.598",
       releasedAt: "2026-10-10",
@@ -18385,7 +18390,7 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  const rusenderUi = { loaded: false, busy: false, progress: "", error: "", notice: "", data: null, section: "history", query: "", missingOnly: false, limit: 100, preview: null, form: null, controller: null };
+  const rusenderUi = { loaded: false, busy: false, progress: "", error: "", notice: "", data: null, section: "history", query: "", missingOnly: false, limit: 100, preview: null, form: null, controller: null, cancelRequested: false };
   const rusenderStateLabel = value => ({ completed: "Завершена", draft: "Черновик", created: "Черновик в Rusender", creating: "Создание — проверьте результат", scheduling: "Запуск — проверьте результат", scheduled: "Передана в расписание Rusender", cancelled: "Отменён в АИС", moderation: "Модерация", sending: "Отправляется" }[value] || value || "—");
   const rusenderDate = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "short", timeStyle: "short" }) : "—";
   const rusenderNumber = value => new Intl.NumberFormat("ru-RU").format(Number(value) || 0);
@@ -18410,14 +18415,26 @@ MAX - https://bizvmax.ru/zifra_plus
   }
   async function rusenderRun(label, action) {
     if (rusenderUi.busy) return;
-    rusenderUi.busy = true; rusenderUi.progress = label; rusenderUi.error = ""; rusenderUi.notice = "";
+    rusenderUi.busy = true; rusenderUi.cancelRequested = false; rusenderUi.progress = label; rusenderUi.error = ""; rusenderUi.notice = "";
     paintRusender();
     try { await action(); }
     catch (error) { rusenderUi.error = error.message || "Не удалось выполнить операцию Rusender."; }
     finally { rusenderUi.busy = false; rusenderUi.progress = ""; rusenderUi.loaded = true; paintRusender(); }
   }
   async function loadRusender() {
-    return rusenderRun("Загрузка общих планов и истории…", async () => { rusenderUi.data = await rusenderRequest(); });
+    return rusenderRun("Загрузка общих планов и истории…", async () => { rusenderUi.data = await rusenderRequest(); await loadRusenderTemplateContext(); });
+  }
+  async function loadRusenderTemplateContext() {
+    const data = rusenderUi.data;
+    if (!data?.connected || !data.templates.complete) return;
+    const ids = data.templateContext?.pendingTemplateIds || [];
+    for (let offset = 0; offset < ids.length; offset += 3) {
+      if (rusenderUi.cancelRequested) throw new Error("Подбор прерван. Уже прочитанные шаблоны сохранены; следующий запуск продолжит анализ.");
+      rusenderUi.progress = `Анализ содержимого писем: ${offset} из ${ids.length}…`; paintRusender();
+      await rusenderRequest("/template-context", { templateIds: ids.slice(offset, offset + 3) });
+      if (offset + 3 < ids.length) await new Promise(resolve => setTimeout(resolve, 800));
+    }
+    if (ids.length) rusenderUi.data = await rusenderRequest();
   }
   async function syncRusender() {
     return rusenderRun("Подключение к Rusender…", async () => {
@@ -18425,20 +18442,42 @@ MAX - https://bizvmax.ru/zifra_plus
         const generation = rusenderUuid();
         let page = 1;
         do {
+          if (rusenderUi.cancelRequested) throw new Error("Загрузка прервана. Сохранённые данные не удалены.");
           rusenderUi.progress = `${label}: страница ${page}…`; paintRusender();
           const response = await rusenderRequest("/sync-page", { resource, page, generation });
           page = response.nextPage;
         } while (page);
       }
+      rusenderUi.data = await rusenderRequest();
+      await loadRusenderTemplateContext();
       const linked = await rusenderRequest("/auto-bind", {});
       rusenderUi.data = await rusenderRequest();
-      rusenderUi.notice = `Загрузка завершена. Новых однозначных привязок: ${linked.count}. Неоднозначные названия проверьте вручную.`;
+      rusenderUi.notice = `Загрузка завершена. Новых точных привязок: ${linked.count}. Рекомендации по названию, теме и тексту писем выделены в разделе «Шаблоны и программы».`;
     });
   }
   function rusenderProgramTemplates(programId) {
     const data = rusenderUi.data;
     const binding = data?.bindings.find(item => String(item.programId) === String(programId));
     return (data?.templates.items || []).filter(item => binding?.templateIds.includes(item.id));
+  }
+  function rusenderTemplateChoice(programId) {
+    const data = rusenderUi.data;
+    const recommendation = data?.recommendations?.find(item => String(item.programId) === String(programId));
+    const binding = data?.bindings.find(item => String(item.programId) === String(programId));
+    const selected = binding ? binding.templateIds : recommendation && !recommendation.ambiguous ? [recommendation.templateId] : [];
+    return { recommendation, binding, selected };
+  }
+  function renderRusenderProgramRow(program, disabled) {
+    const { recommendation, binding, selected } = rusenderTemplateChoice(program.id);
+    const templates = rusenderUi.data.templates.items;
+    const best = templates.find(item => item.id === recommendation?.templateId);
+    const bound = rusenderProgramTemplates(program.id);
+    const rank = template => recommendation?.candidates?.findIndex(item => item.templateId === template.id) ?? -1;
+    const sorted = [...templates].sort((a, b) => (rank(a) < 0 ? 100 : rank(a)) - (rank(b) < 0 ? 100 : rank(b)) || a.name.localeCompare(b.name, "ru"));
+    return `<tr data-rs-program="${escapeAttr(program.id)}" class="${best ? 'rusender-program-recommended' : ''}"><td>${escapeHtml(program.name)}<small>${escapeHtml([program.type, program.hours ? program.hours + " ч" : "", program.status].filter(Boolean).join(" · "))}</small></td><td>
+      ${best ? `<div class="rusender-recommendation ${recommendation.ambiguous ? 'is-ambiguous' : ''}"><strong>${recommendation.ambiguous ? "Возможный вариант — проверьте" : "★ Рекомендуется"}: ${escapeHtml(best.name)} · №${best.id}</strong><small>Сходство: ${recommendation.score}/100 · ${escapeHtml(recommendation.reasons.join("; "))}</small><small>${recommendation.variantAmbiguous ? "Есть программы с похожим названием — уточните вариант и количество часов." : recommendation.ambiguous ? "Несколько шаблонов подходят примерно одинаково; автоматический выбор не сделан." : binding ? "Сохранённая привязка оставлена без изменений." : "Выделен автоматически. Для привязки нажмите «Сохранить привязку»."}</small></div>` : '<small>Подходящий шаблон по загруженным названиям и текстам не найден.</small>'}
+      <select multiple size="5" aria-label="Шаблоны для ${escapeAttr(program.name)}" data-rs-binding ${disabled}>${sorted.map(template => `<option value="${template.id}" class="${template.id === best?.id ? 'rusender-template-recommended' : ''}" ${selected.includes(template.id) ? "selected" : ""}>${template.id === best?.id ? "★ " : rank(template) >= 0 ? "◇ " : ""}${escapeHtml(template.name)} · №${template.id}</option>`).join("")}</select>
+      ${!bound.length ? '<small class="rusender-error-text">Нет сохранённой привязки к действующему шаблону</small>' : ""}</td><td><button type="button" class="ghost-button" data-rs-action="bind" ${disabled}>Сохранить привязку</button><button type="button" class="ghost-button" data-rs-action="plan-program" ${disabled} ${!bound.length ? "disabled" : ""}>Запланировать</button></td></tr>`;
   }
   function renderRusender() {
     if (!isAdminUser()) return '<section class="panel"><h2>Почтовые рассылки</h2><p>Подключение и управление массовыми рассылками доступно администратору.</p></section>';
@@ -18458,7 +18497,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `<section class="panel rusender-panel">
       <div class="advertising-heading"><div><p class="eyebrow">Реклама · Rusender</p><h2>Почтовые рассылки</h2><p>${data?.connected ? "API подключён. Планы и привязки общие для сайта и локальной АИС." : "Подключите API Rusender. Пароль аккаунта для интеграции не используется."}</p></div>
       <div class="advertising-heading-actions"><button type="button" class="ghost-button" data-rs-action="reload" ${disabled}>Обновить состояние</button><button type="button" class="primary-button" data-rs-action="sync" ${disabled} ${!data?.connected ? "disabled" : ""}>Получить данные Rusender</button></div></div>
-      ${ui.busy ? `<div class="rusender-progress" role="status" aria-live="polite"><span class="auth-spinner" aria-hidden="true"></span>${escapeHtml(ui.progress)}${ui.progress.includes("страница") ? '<button type="button" class="ghost-button" data-rs-action="abort">Прервать загрузку</button>' : ""}</div>` : ""}
+      ${ui.busy ? `<div class="rusender-progress" role="status" aria-live="polite"><span class="auth-spinner" aria-hidden="true"></span>${escapeHtml(ui.progress)}${ui.progress.includes("страница") || ui.progress.startsWith("Анализ") ? '<button type="button" class="ghost-button" data-rs-action="abort">Прервать загрузку</button>' : ""}</div>` : ""}
       ${ui.error ? `<p class="rusender-error" role="alert">${escapeHtml(ui.error)}</p>` : ""}${ui.notice ? `<p role="status">${escapeHtml(ui.notice)}</p>` : ""}
       <details class="rusender-connection" ${!data?.connected ? "open" : ""}><summary>Подключение API</summary><p>Ключ хранится только в закрытой серверной базе и не передаётся обратно в браузер. Права: contacts.read, senders.read, templates.read, campaigns.read, campaigns.write. Записи контактов АИС не выгружаются.</p><form data-rs-connection><label class="field"><span>Новый API-ключ (не пароль)</span><input name="token" type="password" autocomplete="off" placeholder="rs_ck_v1_…" required ${disabled}></label><button type="submit" class="ghost-button" ${disabled}>Проверить и сохранить ключ</button><a href="https://app.rusender.ru/automation/api" target="_blank" rel="noopener noreferrer">Ключи в Rusender ↗</a></form></details>
       ${!data ? "" : !data.templates.complete ? "<p>Загрузите данные Rusender, чтобы определить программы без шаблонов и провести аудит. До загрузки отсутствие шаблонов не устанавливается.</p>" : `<div class="advertising-kpi-grid rusender-kpis"><article class="statistics-kpi-card"><span>Завершённые рассылки</span><strong>${completed.length}</strong><small>Со статистикой: ${measured.length}</small></article><article class="statistics-kpi-card"><span>Отправлений в статистике</span><strong>${rusenderNumber(total("total"))}</strong><small>Включая досылки</small></article><article class="statistics-kpi-card"><span>Открытия / клики</span><strong>${rusenderNumber(total("open"))} / ${rusenderNumber(total("click"))}</strong><small>Не уникальные люди между рассылками</small></article><article class="statistics-kpi-card tone-red"><span>Ошибки / жалобы</span><strong>${rusenderNumber(total("error"))} / ${rusenderNumber(total("complaint"))}</strong><small>Отписки: ${rusenderNumber(total("unsubscribe"))}</small></article><article class="statistics-kpi-card tone-amber"><span>Программы без шаблонов</span><strong>${missing.length}</strong><small>Из ${programs.length} программ АИС</small></article></div>
@@ -18470,7 +18509,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const metric = key => !item.stats ? "—" : `${rusenderNumber(item.stats[key]?.count)}${item.stats.total ? ` (${((item.stats[key]?.count || 0) / item.stats.total * 100).toFixed(2)}%)` : ""}`;
         return `<tr><td><a href="${escapeAttr(item.dashboardUrl || 'https://app.rusender.ru/mail-distributions')}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.name || item.subject)} ↗</a><small>${escapeHtml(bound.map(program => program.name).join("; ") || "Шаблон не привязан к программе")}</small><small>${escapeHtml(item.lists.map(list => list.name).join(", "))}</small></td><td>${rusenderDate(item.startedAt || item.scheduledAt || item.createdAt)}<small>${escapeHtml(rusenderStateLabel(item.status))}</small></td><td>${item.stats ? rusenderNumber(item.stats.total) : "—"}</td><td>${metric("open")}</td><td>${metric("click")}</td><td>${metric("error")}</td><td>${item.stats ? `${rusenderNumber(item.stats.unsubscribe.count)} / ${rusenderNumber(item.stats.complaint.count)}` : "—"}</td></tr>`;
       }).join("") || '<tr><td colspan="7">Нет данных по выбранному фильтру.</td></tr>'}</tbody></table></div>${historyRows.length > ui.limit ? '<button type="button" class="ghost-button" data-rs-action="more">Показать ещё 100</button>' : ""}` : ""}
-      ${ui.section === "templates" ? `<p>Автопривязка выполняется только при однозначном совпадении названия программы с шаблоном или выполненной рассылкой. Ручные привязки не заменяются. Без привязки осталось шаблонов: ${templates.filter(item => !data.bindings.some(binding => binding.templateIds.includes(item.id))).length}.</p><div class="rusender-table-wrap"><table><thead><tr><th>Программа</th><th>Шаблоны Rusender</th><th>Действия</th></tr></thead><tbody>${programRows.slice(0, ui.limit).map(program => `<tr data-rs-program="${escapeAttr(program.id)}"><td>${escapeHtml(program.name)}<small>${escapeHtml([program.type, program.hours ? program.hours + " ч" : "", program.status].filter(Boolean).join(" · "))}</small></td><td><select multiple size="3" aria-label="Шаблоны для ${escapeAttr(program.name)}" data-rs-binding ${disabled}>${[...templates].sort((a, b) => a.name.localeCompare(b.name, "ru")).map(template => `<option value="${template.id}" ${rusenderProgramTemplates(program.id).some(item => item.id === template.id) ? "selected" : ""}>${escapeHtml(template.name)} · №${template.id}</option>`).join("")}</select>${!rusenderProgramTemplates(program.id).length ? '<small class="rusender-error-text">Нет привязанного действующего шаблона</small>' : ""}</td><td><button type="button" class="ghost-button" data-rs-action="bind" ${disabled}>Сохранить привязку</button><button type="button" class="ghost-button" data-rs-action="plan-program" ${disabled} ${!rusenderProgramTemplates(program.id).length ? "disabled" : ""}>Запланировать</button></td></tr>`).join("") || '<tr><td colspan="3">Программы не найдены.</td></tr>'}</tbody></table></div>${programRows.length > ui.limit ? '<button type="button" class="ghost-button" data-rs-action="more">Показать ещё 100</button>' : ""}<details><summary>Шаблоны без привязки</summary><ul>${templates.filter(item => !data.bindings.some(binding => binding.templateIds.includes(item.id))).map(item => `<li>${escapeHtml(item.name)} · №${item.id}</li>`).join("") || "<li>Все шаблоны привязаны.</li>"}</ul></details>` : ""}
+      ${ui.section === "templates" ? `<p>Подбор учитывает название шаблона, темы рассылок и текст письма, включая формы слов. ★ — наиболее подходящий вариант; ◇ — другие близкие варианты. Сходство — оценка совпадения тем, не гарантия актуальности цен и дат. Ручные привязки не заменяются.</p><p>Содержимое прочитано: ${data.templateContext?.checked || 0} из ${data.templateContext?.total ?? templates.length}. ${data.templateContext?.pendingTemplateIds?.length ? "Анализ текстов ещё не завершён; рекомендации пока могут учитывать только названия и темы." : ""} <button type="button" class="ghost-button" data-rs-action="match-templates" ${disabled}>Подобрать шаблоны</button></p><div class="rusender-table-wrap"><table><thead><tr><th>Программа</th><th>Шаблоны Rusender</th><th>Действия</th></tr></thead><tbody>${programRows.slice(0, ui.limit).map(program => renderRusenderProgramRow(program, disabled)).join("") || '<tr><td colspan="3">Программы не найдены.</td></tr>'}</tbody></table></div>${programRows.length > ui.limit ? '<button type="button" class="ghost-button" data-rs-action="more">Показать ещё 100</button>' : ""}<details><summary>Шаблоны без привязки</summary><ul>${templates.filter(item => !data.bindings.some(binding => binding.templateIds.includes(item.id))).map(item => `<li>${escapeHtml(item.name)} · №${item.id}</li>`).join("") || "<li>Все шаблоны привязаны.</li>"}</ul></details>` : ""}
       ${ui.section === "plans" ? `<p>Сначала сохраните план, затем создайте черновик, проверьте письмо и подтвердите отправку. После подтверждения Rusender отправит его автоматически в выбранное время (после модерации), даже если АИС закрыта. Один план — одна отправка, без автоматических повторов.</p><button type="button" class="primary-button" data-rs-action="new-plan" ${disabled}>Новый план</button>
       ${form ? `<form data-rs-plan class="rusender-plan"><label class="field"><span>Программа</span><select name="programId" required ${disabled}>${options(programs.filter(item => rusenderProgramTemplates(item.id).length), form.programId)}</select></label><label class="field"><span>Шаблон программы</span><select name="templateId" required ${disabled}>${options(rusenderProgramTemplates(form.programId), form.templateId)}</select></label><label class="field"><span>Название рассылки</span><input name="name" value="${escapeAttr(form.name || "")}" maxlength="250" required ${disabled}></label><label class="field"><span>Тема письма</span><input name="subject" value="${escapeAttr(form.subject || "")}" maxlength="250" required ${disabled}></label><label class="field"><span>Подтверждённый отправитель</span><select name="senderId" required ${disabled}>${options(data.senders.items.filter(item => item.verified === "enabled"), form.senderId, item => item.email)}</select></label><label class="field"><span>Отправить (Москва, UTC+3)</span><input name="scheduledLocal" type="datetime-local" value="${escapeAttr(form.scheduledLocal || "")}" required ${disabled}></label><label class="field"><span>Списки получателей — выберите явно</span><select name="listIds" multiple size="4" required ${disabled}>${data.lists.items.map(item => `<option value="${item.id}" ${(form.listIds || []).includes(String(item.id)) ? "selected" : ""}>${escapeHtml(item.name)}${item.contactsCount == null ? "" : ` (${item.contactsCount})`}</option>`).join("")}</select></label><div><button class="primary-button" ${disabled}>Сохранить план без запуска</button><button type="button" class="ghost-button" data-rs-action="close-plan" ${disabled}>Отмена</button></div></form>` : ""}
       <div class="rusender-table-wrap"><table><thead><tr><th>Программа / тема</th><th>Отправить, мск</th><th>Состояние</th><th>Действия</th></tr></thead><tbody>${data.plans.map(plan => `<tr data-rs-plan-id="${escapeAttr(plan.id)}"><td>${escapeHtml(plan.programName)}<small>${escapeHtml(plan.subject)}</small><small>${escapeHtml(plan.listIds.map(id => data.lists.items.find(list => list.id === id)?.name || `Список №${id}`).join(", "))}</small></td><td>${rusenderDate(plan.scheduledAt)}</td><td>${escapeHtml(rusenderStateLabel(plan.state))}${plan.remoteStatus ? `<small>Rusender: ${escapeHtml(rusenderStateLabel(plan.remoteStatus))}</small>` : ""}</td><td>${["draft", "creating"].includes(plan.state) ? `<button type="button" class="ghost-button" data-rs-action="draft" ${disabled}>Создать черновик в Rusender</button>` : ""}${["created", "scheduling"].includes(plan.state) ? `<button type="button" class="primary-button" data-rs-action="preview" ${disabled}>Просмотр и подтверждение</button>` : ""}${plan.state === "draft" ? `<button type="button" class="ghost-button" data-rs-action="cancel" ${disabled}>Отменить план</button>` : ""}${plan.campaignId ? `<a href="${escapeAttr(plan.dashboardUrl || 'https://app.rusender.ru/mail-distributions')}" target="_blank" rel="noopener noreferrer">Открыть / отменить в Rusender ↗</a>` : ""}</td></tr>`).join("") || '<tr><td colspan="4">Планов пока нет. Ничего не отправляется автоматически.</td></tr>'}</tbody></table></div>` : ""}`}
@@ -18516,9 +18555,10 @@ MAX - https://bizvmax.ru/zifra_plus
     root.querySelector("[data-rs-confirm]")?.addEventListener("change", event => { root.querySelector('[data-rs-action="schedule"]').disabled = !event.target.checked || rusenderUi.busy; });
     root.querySelectorAll("[data-rs-action]").forEach(button => button.addEventListener("click", () => {
       const action = button.dataset.rsAction;
-      if (action === "abort") { rusenderUi.controller?.abort(); return; }
+      if (action === "abort") { rusenderUi.cancelRequested = true; rusenderUi.controller?.abort(); return; }
       if (rusenderUi.busy) return;
       if (action === "reload") { loadRusender(); return; }
+      if (action === "match-templates") { loadRusender(); return; }
       if (action === "sync") { syncRusender(); return; }
       if (action === "clear-search") { rusenderUi.query = ""; paintRusender(); return; }
       if (action === "more") { rusenderUi.limit += 100; paintRusender(); return; }

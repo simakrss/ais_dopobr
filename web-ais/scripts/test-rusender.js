@@ -55,7 +55,10 @@ async function fakeFetch(url, opts) {
     return result(campaign);
   }
   if (/\/campaigns\/\d+$/.test(route)) return result(remote.get(Number(route.split("/").at(-1))));
-  if (/\/templates\/\d+$/.test(route)) return result({ ...templates[0], html: changedHtml ? "Changed" : templates[0].html });
+  if (/\/templates\/\d+$/.test(route)) {
+    const item = templates.find(value => value.id === Number(route.split("/").at(-1)));
+    return result({ ...item, html: changedHtml ? "Changed" : item.html || "<p>Содержимое шаблона</p>" });
+  }
   const resource = route.split("/").at(-1), page = Number(parsed.searchParams.get("page"));
   const values = { templates, lists, senders, campaigns: [{ id: 11, name: "Подготовка статей ВАК", templateId: 100, status: "completed", stats: { total: 20, open: { count: 5 } } }] }[resource];
   const selected = resource === "templates" ? values.slice(page - 1, page) : values;
@@ -125,6 +128,19 @@ async function plan() {
   assert.equal(store.get("dataset:templates"), original);
   failPath = "/v1/public/campaigns";
   await assert.rejects(sync("campaigns"), error => !error.message.includes(token) && error.statusCode === 504); failPath = "";
+  assert.deepEqual((await service.snapshot()).templateContext.pendingTemplateIds, [101]);
+  await assert.rejects(service.templateContext({ templateIds: [100, 101, 102, 103] }), /трёх/);
+  await assert.rejects(service.templateContext({ templateIds: [999] }), /изменился/);
+  failPath = "/v1/public/templates/101";
+  await assert.rejects(service.templateContext({ templateIds: [101] }), /Нет ответа/); failPath = "";
+  assert.equal(store.get("dataset:templates"), original); // Partial failures never mark content complete.
+  await service.templateContext({ templateIds: [100, 101] });
+  assert.equal((await service.snapshot()).templateContext.checked, 2);
+  assert.ok(!JSON.stringify(await service.snapshot()).includes("Содержимое шаблона"));
+  const afterContext = calls.length;
+  await service.templateContext({ templateIds: [101] });
+  assert.equal(calls.length, afterContext); // Cached content is not downloaded again on every render.
+  assert.equal(JSON.parse(store.get("dataset:templates")).items[1].contextText, "Содержимое шаблона");
   assert.equal((await service.autoBind()).count, 1);
   await service.bind({ programId: "p1", templateIds: [] });
   assert.equal((await service.autoBind()).count, 0); // Explicit manual unlink is retained.
