@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.608",
+    version: "1.7.609",
     releasedAt: "2026-10-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.609",
+      releasedAt: "2026-10-13",
+      changes: ["Автоматическая рекомендация к оплате прямых затрат по слушателю появляется только со следующего дня после даты окончания обучения. При пустой, неверной или ещё не наступившей дате рекомендация не ставится; прежняя автоматическая отметка снимается при переносе окончания. Ручные отметки и проведённые выплаты сохраняются."]
+    },
     {
       version: "1.7.608",
       releasedAt: "2026-10-13",
@@ -10332,17 +10337,28 @@ MAX - https://bizvmax.ru/zifra_plus
     return isChecked(expense.recommendationManual);
   }
 
-  function applyAutomaticEmployeePaymentRecommendationsForCollections(collections = {}) {
+  function isStudentPastTrainingEndDate(student = {}, todayKey = getMoscowCalendarDateKey()) {
+    const endDateKey = normalizeContractCalendarDateKey(student.endDate);
+    const normalizedTodayKey = normalizeContractCalendarDateKey(todayKey);
+    return Boolean(endDateKey && normalizedTodayKey && endDateKey < normalizedTodayKey);
+  }
+
+  function applyAutomaticEmployeePaymentRecommendationsForCollections(collections = {}, todayKey = getMoscowCalendarDateKey()) {
     const employeeNames = new Set((collections.contracts || [])
       .map((contract) => normalizeEmployeeActPersonName(contract?.name))
       .filter(Boolean));
     if (!employeeNames.size) return 0;
     let changed = 0;
-    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense }) => {
+    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense, student }) => {
+      // Only linked student expenses are eligible for automatic recommendations.
+      // Other expenses and explicitly confirmed/paid rows retain their values.
+      if (!student) return;
       if (!employeeNames.has(normalizeEmployeeActPersonName(expense?.note))) return;
       if (hasManualEmployeePaymentRecommendation(expense)) return;
-      if (String(expense?.recommendation || "").trim() === "+") return;
-      expense.recommendation = "+";
+      if (isEmployeePaymentSettled(expense) || isChecked(expense.isPaid)) return;
+      const recommendation = isStudentPastTrainingEndDate(student, todayKey) ? "+" : "";
+      if (String(expense?.recommendation || "").trim() === recommendation) return;
+      expense.recommendation = recommendation;
       changed += 1;
     });
     return changed;
