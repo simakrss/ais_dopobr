@@ -56,6 +56,12 @@ assert.ok(
 
 for (const [name, source] of userLauncherSources) {
   assert.match(source, /AIS_LAUNCHER_VALIDATE_ONLY/u, name);
+  if (name === "root start") {
+    assert.match(source, /start "" \/b "%AIS_LAUNCHER_PS%"[^\r\n]+-WindowStyle Hidden/u);
+    assert.doesNotMatch(source, /\bpause\b/iu);
+    assert.match(source, /Get-AuthenticodeSignature/u);
+    continue;
+  }
   assert.match(
     source,
     /start "" \/b "%SystemRoot%\\System32\\wscript\.exe" \/\/NoLogo/u,

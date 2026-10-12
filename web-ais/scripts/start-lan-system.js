@@ -49,6 +49,7 @@ const skipDocker = argumentsLower.has("--skip-docker") || argumentsLower.has("-s
 const runOnce = argumentsLower.has("--once");
 const openBrowser = argumentsLower.has("--open-browser");
 const serviceMode = process.env.AIS_SERVICE_MODE === "1";
+const cloudClient = argumentsLower.has("--cloud-client") || process.env.AIS_CLOUD_CLIENT === "1";
 const localBrowserUrl = "http://127.0.0.1:8081/";
 const managedChildren = new Map();
 const activeServerOperations = new Set();
@@ -83,7 +84,7 @@ const serverDefinitions = [
     key: "localServer",
     name: "LAN web server",
     scriptName: "local-server.js",
-    host: "0.0.0.0",
+    host: cloudClient ? "127.0.0.1" : "0.0.0.0",
     port: 8081,
     startupTimeoutMilliseconds: 60000,
     environment: { AIS_APP_SERVER_ORIGIN: "http://127.0.0.1:19081" },
@@ -913,6 +914,7 @@ function startDocumentServices(commonEnvironment) {
 }
 
 function startRemoteServicesSupervisor() {
+  if (cloudClient) return "disabled-cloud-client";
   if (runOnce) return "skipped";
   if (process.platform !== "win32" || !fs.existsSync(remoteServicesScriptPath)) {
     console.warn("Сценарий внешнего туннеля не найден; удалённое формирование документов недоступно.");
@@ -1123,6 +1125,7 @@ async function main() {
   const commonEnvironment = {
     ONLYOFFICE_JWT_SECRET: getOnlyOfficeSecret(),
     AIS_TRUST_GATEWAY: "1",
+    AIS_CLOUD_CLIENT: cloudClient ? "1" : "0",
     AIS_GATEWAY_SHARED_SECRET: getLocalServiceGatewaySecret(),
     AIS_TUNNEL_ONLY: "1"
   };

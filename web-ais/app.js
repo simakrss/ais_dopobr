@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.601",
+    version: "1.7.602",
     releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.602",
+      releasedAt: "2026-10-12",
+      changes: ["Добавлен самостоятельный BAT-запуск: проверка подписи установщика, загрузка АИС и Node.js, подготовка Docker/WSL, редактора и OCR с индикатором. Новая установка открывает общую АИС на сайте, оставляя обработку документов локально; база и пароли не входят в пакет."]
+    },
     {
       version: "1.7.601",
       releasedAt: "2026-10-12",

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-  [ValidateSet("Start", "Validate")]
+  [ValidateSet("Start", "Validate", "Prepare")]
   [string]$Action = "Start",
   [string]$LauncherArguments = ""
 )
@@ -98,11 +98,11 @@ function Invoke-VerifiedDownload([string]$Url, [string]$Destination) {
   $temporary = "$Destination.part"
   Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $temporary
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $temporary -TimeoutSec 1800
   } catch {
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     if (-not $curl) { throw }
-    & $curl.Source --fail --location --retry 3 --connect-timeout 20 --output $temporary $Url
+    & $curl.Source --fail --location --retry 3 --connect-timeout 20 --max-time 1800 --output $temporary $Url
     if ($LASTEXITCODE -ne 0) { throw "Не удалось скачать $Url" }
   }
   Move-Item -LiteralPath $temporary -Destination $Destination -Force
@@ -208,19 +208,45 @@ function Find-DockerDesktop {
 function Test-DockerEngine([string]$DockerPath) {
   if ([string]::IsNullOrWhiteSpace($DockerPath)) { return $false }
   try {
-    $output = & $DockerPath info --format "{{.ServerVersion}}" 2>$null
-    return $LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($output | Out-String))
+    $probe = Invoke-BootstrapProbe $DockerPath 'info --format "{{.ServerVersion}}"' 10000
+    return $probe.Code -eq 0 -and -not [string]::IsNullOrWhiteSpace($probe.Text)
   } catch {
     return $false
   }
+}
+
+function Invoke-BootstrapProbe([string]$FilePath, [string]$Arguments, [int]$TimeoutMilliseconds = 15000) {
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = $FilePath
+  $info.Arguments = $Arguments
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $info
+  try {
+    [void]$process.Start()
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $errors = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+      # Only the diagnostic child created here is terminated, never Docker Desktop.
+      try { $process.Kill() } catch { }
+      return [pscustomobject]@{ Code = -1; Text = "Превышено время проверки" }
+    }
+    return [pscustomobject]@{ Code = $process.ExitCode; Text = $output.GetAwaiter().GetResult().Replace([string][char]0, "") }
+  } finally { $process.Dispose() }
 }
 
 function Test-WslReady {
   $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
   if (-not $wsl) { return $false }
   try {
-    & $wsl.Source --version *> $null
-    return $LASTEXITCODE -eq 0
+    $probe = Invoke-BootstrapProbe $wsl.Source "--version"
+    $version = [regex]::Match($probe.Text, '\b\d+\.\d+\.\d+(?:\.\d+)?\b')
+    if ($probe.Code -ne 0 -or -not $version.Success -or [version]$version.Value -lt [version]"2.1.5") { return $false }
+    $feature = Get-CimInstance Win32_OptionalFeature -Filter "Name='VirtualMachinePlatform'" -ErrorAction Stop
+    return $feature -and [int]$feature.InstallState -eq 1
   } catch {
     return $false
   }
@@ -253,10 +279,18 @@ function Install-WslPrerequisite {
   try {
     $process = Start-Process -FilePath $wsl.Source -ArgumentList @(
       "--install", "--no-distribution", "--web-download"
-    ) -Verb RunAs -Wait -PassThru
+    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) {
       Write-Warning "Установка WSL завершилась с кодом $($process.ExitCode)."
       return $false
+    }
+    if ($process.ExitCode -eq 0 -and -not (Test-WslReady)) {
+      Write-Step "Обновление WSL с официального сервера Microsoft..."
+      $process = Start-Process -FilePath $wsl.Source -ArgumentList @("--update", "--web-download") -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+      if ($process.ExitCode -notin @(0, 3010)) {
+        Write-Warning "Обновление WSL завершилось с кодом $($process.ExitCode)."
+        return $false
+      }
     }
     if ($process.ExitCode -eq 3010 -or -not (Test-WslReady)) {
       $script:dockerRestartRequired = $true
@@ -272,7 +306,10 @@ function Install-WslPrerequisite {
 
 function Install-DockerDesktop {
   if ($skipInstall) { throw "Docker Desktop не найден, а автоматическая установка отключена." }
-  [void](Install-WslPrerequisite)
+  Assert-DockerComputerSupported
+  if (-not (Install-WslPrerequisite)) {
+    throw "WSL 2 ещё не готов. Перезагрузите Windows после установки WSL и снова запустите АИС."
+  }
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
   $dockerArchitecture = if ($architecture -eq "arm64") { "arm64" } else { "amd64" }
@@ -337,6 +374,11 @@ function Ensure-DockerReady {
   }
   $dockerPath = Find-DockerCli
   if (-not $dockerPath) { $dockerPath = Install-DockerDesktop }
+  elseif (-not (Test-DockerEngine $dockerPath)) {
+    Assert-DockerComputerSupported
+    if (-not (Install-WslPrerequisite)) { throw "WSL 2 ещё не готов. Проверьте сообщения выше и повторите запуск после подготовки Windows." }
+  }
+  if ($dockerRestartRequired) { throw "Сохраните работу, перезагрузите Windows и снова запустите АИС." }
   $env:AIS_DOCKER_PATH = [IO.Path]::GetFullPath($dockerPath)
   $dockerDirectory = Split-Path -Parent $env:AIS_DOCKER_PATH
   if (-not (($env:Path -split ';') -contains $dockerDirectory)) {
@@ -346,10 +388,24 @@ function Ensure-DockerReady {
     $suffix = if ($dockerRestartRequired) { " Перезагрузите Windows и запустите АИС снова." } else { "" }
     throw "Docker Desktop не перешёл в рабочее состояние за 3 минуты.$suffix"
   }
-  & $env:AIS_DOCKER_PATH compose version *> $null
-  if ($LASTEXITCODE -ne 0) { throw "В установленном Docker отсутствует команда Compose." }
+  $compose = Invoke-BootstrapProbe $env:AIS_DOCKER_PATH "compose version"
+  if ($compose.Code -ne 0) { throw "В установленном Docker отсутствует команда Compose. Обновите Docker Desktop официальным установщиком." }
   Write-Step "Docker Desktop готов."
   return $env:AIS_DOCKER_PATH
+}
+
+function Assert-DockerComputerSupported {
+  $os = Get-CimInstance Win32_OperatingSystem
+  $build = [int]$os.BuildNumber
+  if ([int]$os.ProductType -ne 1 -or $build -lt 19045 -or ($build -ge 22000 -and $build -lt 22631)) {
+    throw "Для локальной обработки документов нужна поддерживаемая 64-битная Windows 10 22H2 / Windows 11 23H2 или новее. Docker Desktop не поддерживает Windows Server. Общая АИС доступна через сайт."
+  }
+  $system = Get-CimInstance Win32_ComputerSystem
+  if ($system.TotalPhysicalMemory -lt 7.5GB) { throw "Для локальных Docker-компонентов требуется не менее 8 ГБ оперативной памяти. Общая АИС доступна через сайт." }
+  $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
+  if (-not $system.HypervisorPresent -and $processor.VirtualizationFirmwareEnabled -eq $false) {
+    throw "В BIOS/UEFI выключена виртуализация. Включите Intel VT-x / AMD-V и повторите запуск. Общая АИС доступна через сайт."
+  }
 }
 
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
@@ -363,7 +419,10 @@ if (-not (Test-Path -LiteralPath $stopScriptPath -PathType Leaf)) {
 }
 
 $nodeRuntime = Find-NodeRuntime
-if (-not $nodeRuntime) { $nodeRuntime = Install-PortableNode }
+if (-not $nodeRuntime) {
+  if ($validateOnly) { throw "Node.js 20 или новее не найден. Режим проверки не устанавливает компоненты." }
+  $nodeRuntime = Install-PortableNode
+}
 $env:AIS_NODE_PATH = $nodeRuntime.Path
 $nodeDirectory = Split-Path -Parent $nodeRuntime.Path
 if (-not (($env:Path -split ';') -contains $nodeDirectory)) { $env:Path = "$nodeDirectory;$env:Path" }
@@ -372,11 +431,24 @@ Write-Step "Node.js $($nodeRuntime.Version) готов: $($nodeRuntime.Path)"
 if ($validateOnly) {
   & $nodeRuntime.Path --check $launcherPath
   if ($LASTEXITCODE -ne 0) { throw "Сценарий запуска АИС содержит синтаксическую ошибку." }
-  & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File $startupUpdatePath -Action Validate
-  if ($LASTEXITCODE -ne 0) { throw "Проверка синхронизации GitHub и FTP-публикации завершилась ошибкой." }
+  # Runtime validation must also work on clients without publisher FTP/Git access.
+  $tokens = $null; $parseErrors = $null
+  [void][Management.Automation.Language.Parser]::ParseFile($startupUpdatePath, [ref]$tokens, [ref]$parseErrors)
+  if ($parseErrors.Count) { throw "Сценарий подготовки содержит синтаксическую ошибку." }
   Write-Step "Сценарий запуска и окружение проверены. Установка и запуск служб не выполнялись."
   exit 0
+}
+
+if ($Action -eq "Prepare") {
+  try {
+    [void](Ensure-DockerReady)
+    Write-Step "Компоненты готовы. OCR и редактор документов будут загружены при первом запуске."
+    exit 0
+  } catch {
+    Write-Step $_.Exception.Message
+    if ($dockerRestartRequired) { exit 3010 }
+    exit 10
+  }
 }
 
 Write-Step "Синхронизация с GitHub и обновление edu-plus.ru/lms..."

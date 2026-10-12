@@ -26,9 +26,9 @@ const serviceInstallerSource = read(serviceInstallerPath);
 const startupUpdateSource = read(startupUpdatePath);
 const deploySource = read(deployPath);
 const rootLauncherSource = read(rootLauncherPath);
-const localLauncherSource = read(localLauncherPath);
-const rootStopSource = read(rootStopPath);
-const localStopSource = read(localStopPath);
+const localLauncherSource = read(localLauncherPath).replace(/\^\r?\n\s*/gu, "");
+const rootStopSource = read(rootStopPath).replace(/\^\r?\n\s*/gu, "");
+const localStopSource = read(localStopPath).replace(/\^\r?\n\s*/gu, "");
 const startSource = read(path.join(__dirname, "start-lan-system.js"));
 const stopSource = read(path.join(__dirname, "stop-lan-system.ps1"));
 const localServerSource = read(path.join(appRoot, "local-server.js"));
@@ -81,7 +81,10 @@ assert.doesNotMatch(generatedSafePaths[1], /employee-contract-education\.docx/u)
 assert.doesNotMatch(generatedSafePaths[1], /employee-contract-general\.docx/u);
 assert.match(generatedSafePaths[1], /employee-contract-education-no-stamp\.docx/u);
 assert.match(generatedSafePaths[1], /employee-contract-general-no-stamp\.docx/u);
-for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
+assert.match(rootLauncherSource, /updates\/launcher\/install-ais\.ps1/u);
+assert.match(rootLauncherSource, /Get-AuthenticodeSignature/u);
+assert.doesNotMatch(rootLauncherSource, /InstallIfMissing/u);
+for (const launcherSource of [localLauncherSource]) {
   assert.match(launcherSource, /control-ais-service\.ps1/u);
   assert.match(
     launcherSource,
@@ -92,10 +95,9 @@ for (const launcherSource of [rootLauncherSource, localLauncherSource]) {
   assert.equal(
     (launcherSource.match(/control-ais-service\.ps1" -Action Start/gu) || []).length,
     1,
-    "Launcher must use one synchronous service controller in its only visible window"
+    "Existing distribution launcher must invoke one service controller"
   );
-  assert.doesNotMatch(launcherSource, /\bstart\s+""[\s\S]*?control-ais-service/u);
-  assert.match(launcherSource, /Этапы подготовки будут показаны ниже/u);
+  assert.match(launcherSource, /ais-hidden-process\.vbs/u);
 }
 for (const launcherSource of [rootStopSource, localStopSource]) {
   assert.match(launcherSource, /control-ais-service\.ps1" -Action Stop/u);
@@ -141,7 +143,7 @@ assert.ok(
 assert.match(startSource, /spawn\([\s\S]*?"cmd\.exe"[\s\S]*?localBrowserUrl/u);
 assert.match(
   startSource,
-  /existingSystemRuntimeMatches[\s\S]*?printExistingSystemStatus\(previousStatus\);\s*openLocalBrowser\(\);\s*return;/u
+  /existingSystemRuntimeMatches[\s\S]*?printExistingSystemStatus\(previousStatus\);\s*openLocalBrowser\(\);\s*await releaseLauncherGuard\(\);\s*return;/u
 );
 const readyMessageIndex = startSource.indexOf('console.log("\\n[AIS] System is ready")');
 const readyBrowserIndex = startSource.indexOf("openLocalBrowser();", readyMessageIndex);
@@ -347,7 +349,7 @@ if ($resolved.Count -ne 1 -or
   ], { cwd: repositoryRoot, env: environment, encoding: "utf8", timeout: 30000 });
   assert.equal(validation.status, 0, `${validation.stdout}\n${validation.stderr}`);
   assert.match(validation.stdout, /Node\.js v\d+/u);
-  assert.match(validation.stdout, /Конфигурация проверена/u);
+  assert.match(validation.stdout, /Сценарий запуска и окружение проверены/u);
   assert.match(validation.stdout, /Установка и запуск служб не выполнялись/u);
 
   const launcherValidation = spawnSync("cmd.exe", [
@@ -359,7 +361,7 @@ if ($resolved.Count -ne 1 -or
     timeout: 30000
   });
   assert.equal(launcherValidation.status, 0, `${launcherValidation.stdout}\n${launcherValidation.stderr}`);
-  assert.match(launcherValidation.stdout, /Конфигурация службы проверена/u);
+  assert.match(launcherValidation.stdout, /Standalone launcher: OK/u);
 }
 
 console.log("local bootstrap tests: OK");

@@ -90,7 +90,10 @@ const {
   redactDemoAuthUser,
   demoModePhotoToken
 } = require(path.join(SERVER_CODE_ROOT, "demo-mode-privacy.js"));
-const CLIENT_PRIVATE_DEFAULTS = require(path.join(SERVER_CODE_ROOT, "data", "private-defaults.js"));
+// A standalone cloud client ships code only, never the organisation's private data.
+const privateDefaultsPath = path.join(SERVER_CODE_ROOT, "data", "private-defaults.js");
+const CLIENT_PRIVATE_DEFAULTS = process.env.AIS_CLOUD_CLIENT === "1" && !fsSync.existsSync(privateDefaultsPath)
+  ? Object.freeze({}) : require(privateDefaultsPath);
 const LOCAL_ONLYOFFICE_JWT_SECRET_PATH = path.join(
   ROOT,
   "tmp",

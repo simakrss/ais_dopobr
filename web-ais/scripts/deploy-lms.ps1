@@ -770,6 +770,7 @@ if (-not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -
   $bootstrapRelative = "updates/install-$($release.version).zip"
   $bootstrapPath = Join-Path $appRoot $bootstrapRelative
   if (-not (Test-Path -LiteralPath $bootstrapPath)) {
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $bootstrapTemp = "$bootstrapPath.$([Guid]::NewGuid().ToString('N')).tmp"
     $archive = [IO.Compression.ZipFile]::Open($bootstrapTemp, [IO.Compression.ZipArchiveMode]::Create)
@@ -783,4 +784,11 @@ if (-not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -
   }
   $updateResults += Publish-FileTarget $bootstrapRelative "$remoteRoot/$bootstrapRelative" 'first-time local update package'
   $updateResults | Format-Table -AutoSize
+  if ($nativePublisherReady) {
+    & (Join-Path $PSScriptRoot 'build-standalone-launcher.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Standalone installer build failed.' }
+    foreach ($launcherFile in @('updates/launcher/install-ais.ps1', 'updates/launcher/start-ais.bat')) {
+      Publish-FileTarget $launcherFile "$remoteRoot/$launcherFile" 'standalone launcher' | Format-Table -AutoSize
+    }
+  }
 }
