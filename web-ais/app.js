@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.600",
-    releasedAt: "2026-10-10"
+    version: "1.7.601",
+    releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.601",
+      releasedAt: "2026-10-12",
+      changes: ["После успешного экспорта в ФРДО автоматически открывается официальный портал в новой вкладке. Если браузер блокирует вкладку, доступна отдельная ссылка без повторного экспорта файла."]
+    },
     {
       version: "1.7.600",
       releasedAt: "2026-10-10",
@@ -21275,6 +21280,51 @@ MAX - https://bizvmax.ru/zifra_plus
       .filter(Boolean);
   }
 
+  function prepareFrdoPortalAfterExport() {
+    const portalUrl = "https://open-dpo.obrnadzor.gov.ru/";
+    let portalWindow = null;
+    const closePendingWindow = () => {
+      try { portalWindow?.close(); } catch (_) { /* A closed tab must not interrupt the export. */ }
+      portalWindow = null;
+    };
+    // Reserve the tab during the click, before fetch loses the browser's user activation.
+    // No records or file contents are sent to the portal; navigate only on export success.
+    try {
+      portalWindow = window.open("about:blank", "_blank");
+      if (portalWindow) {
+        portalWindow.opener = null;
+        portalWindow.document.title = "Экспорт в ФРДО";
+        portalWindow.document.body.textContent = "Формируется файл выгрузки. После успешного экспорта здесь откроется портал ФРДО.";
+      }
+    } catch (_) { closePendingWindow(); }
+    return (success) => {
+      if (!success) {
+        closePendingWindow();
+        return;
+      }
+      document.querySelector("[data-frdo-portal-notice]")?.remove();
+      try {
+        if (portalWindow && !portalWindow.closed) {
+          portalWindow.location.replace(portalUrl);
+          return;
+        }
+      } catch (_) { closePendingWindow(); }
+      const notice = document.createElement("div");
+      notice.className = "document-generation-notice";
+      notice.dataset.frdoPortalNotice = "";
+      notice.setAttribute("role", "status");
+      notice.setAttribute("aria-live", "polite");
+      notice.innerHTML = `
+        <span>Файл выгрузки сформирован. Портал ФРДО не открылся автоматически.
+          <a href="${portalUrl}" target="_blank" rel="noopener noreferrer">Открыть ФРДО ↗</a>
+        </span>
+        <button class="icon-button" type="button" aria-label="Закрыть уведомление" title="Закрыть">×</button>
+      `;
+      notice.querySelector("button")?.addEventListener("click", () => notice.remove());
+      document.body.appendChild(notice);
+    };
+  }
+
   async function exportIssuedDocumentsToFrdo(button) {
     if (state.issuedDocumentExportRunning) return;
     const records = buildIssuedDocumentFrdoExportRecords();
@@ -21283,6 +21333,8 @@ MAX - https://bizvmax.ru/zifra_plus
       return;
     }
     state.issuedDocumentExportRunning = true;
+    const finishPortal = prepareFrdoPortalAfterExport();
+    let exportCompleted = false;
     const originalText = button?.textContent || "Экспорт в ФРДО";
     if (button) {
       button.disabled = true;
@@ -21309,8 +21361,10 @@ MAX - https://bizvmax.ru/zifra_plus
       const saved = response.headers.get("X-Frdo-Saved") === "true";
       if (!saved) {
         downloadBlob(fileName, blob);
-        return;
       }
+      exportCompleted = true;
+      finishPortal(true);
+      if (!saved) return;
       const storage = response.headers.get("X-Frdo-Storage") || "";
       const warning = decodeURIComponent(response.headers.get("X-Frdo-Warning") || "");
       if (storage === "webdav") {
@@ -21326,8 +21380,11 @@ MAX - https://bizvmax.ru/zifra_plus
         alert(`Файл «${fileName}» сохранён. ${warning}`);
       }
     } catch (error) {
-      alert(error.message || "Не удалось сформировать выгрузку ФРДО.");
+      alert(exportCompleted
+        ? `Файл выгрузки ФРДО сохранён, но не удалось показать результат: ${error.message || "ошибка открытия папки"}.`
+        : (error.message || "Не удалось сформировать выгрузку ФРДО."));
     } finally {
+      if (!exportCompleted) finishPortal(false);
       state.issuedDocumentExportRunning = false;
       if (button?.isConnected) {
         button.disabled = false;
