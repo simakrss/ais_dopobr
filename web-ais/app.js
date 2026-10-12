@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.609",
+    version: "1.7.610",
     releasedAt: "2026-10-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.610",
+      releasedAt: "2026-10-13",
+      changes: ["В списке сотрудников суммы «Выплата», «К зачислению», «Услуги» и «Агентские» рассчитываются по текущим строкам «К выплате», как в карточке по умолчанию. Сформированные и отправленные акты не попадают в этот отбор; сами начисления и история выплат не меняются. Общий остаток сохраняется, поиск, сортировка и выгрузка используют актуальные суммы."]
+    },
     {
       version: "1.7.609",
       releasedAt: "2026-10-13",
@@ -10600,6 +10605,60 @@ MAX - https://bizvmax.ru/zifra_plus
         agencyAmount: accounting.agencyAmount,
         balance: accounting.balance
       });
+    });
+  }
+
+  function getEmployeeContractListRows(records, collections = state.data.collections) {
+    const paymentSettings = state.data?.dictionaries?.paymentSettings;
+    // Index once per list render, not once per cell/contract. Never write these
+    // filtered display totals back to the saved contract or payment sources.
+    const sourcesByEmployee = new Map();
+    records.forEach((record) => {
+      const name = normalizeEmployeeActPersonName(record.name);
+      if (name && !sourcesByEmployee.has(name)) sourcesByEmployee.set(name, {
+        directEntries: [], generalEntries: [], partnerStudents: [], partnerRows: []
+      });
+    });
+    getDirectExpenseEntriesFromCollections(collections).forEach((entry) => {
+      sourcesByEmployee.get(normalizeEmployeeActPersonName(entry.expense.note))?.directEntries.push(entry);
+    });
+    (collections.generalExpenses || []).forEach((expense) => {
+      sourcesByEmployee.get(normalizeEmployeeActPersonName(expense?.counterparty))?.generalEntries.push({
+        expense, identity: String(expense.id || "").trim()
+      });
+    });
+    (collections.students || []).forEach((student) => {
+      const sources = sourcesByEmployee.get(normalizeEmployeeActPersonName(student?.agent));
+      if (!sources) return;
+      sources.partnerStudents.push(student);
+      sources.partnerRows.push(...getEmployeePartnerPaymentRows(student, collections, paymentSettings));
+    });
+    const payableKeysByEmployee = new Map();
+    sourcesByEmployee.forEach((sources, name) => {
+      const keys = new Set();
+      const include = (type, id, source) => {
+        if (getEmployeePaymentStatusFilterValue(normalizeEmployeePaymentSourceRow(type, source)) === "payable") {
+          keys.add(`${type}:${String(id || "").trim()}`);
+        }
+      };
+      sources.directEntries.forEach(({ expense, identity }) => include("direct", expense.id || identity, expense));
+      sources.generalEntries.forEach(({ expense, identity }) => include("general", identity, expense));
+      sources.partnerRows.forEach(({ source, sourceId }) => include("partner", sourceId, source));
+      payableKeysByEmployee.set(name, keys);
+    });
+    return records.map((record) => {
+      const name = normalizeEmployeeActPersonName(record.name);
+      const sources = sourcesByEmployee.get(name) || {
+        directEntries: [], generalEntries: [], partnerStudents: [], partnerRows: []
+      };
+      const full = getEmployeePaymentAccounting(record, collections, paymentSettings, null, sources);
+      const payable = getEmployeePaymentAccounting(
+        record, collections, paymentSettings, payableKeysByEmployee.get(name) || new Set(), full
+      );
+      return {
+        ...record, amount: payable.amount, paid: payable.paid, agencyAmount: payable.agencyAmount,
+        balance: full.balance
+      };
     });
   }
 
@@ -22035,6 +22094,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <button class="ghost-button" data-action="clear-student-imported-view" type="button">Показать всех</button>
           </div>
         ` : ""}
+        ${state.view === "contracts" ? '<p class="employee-payment-formula-hint">Выплата — по строкам «К выплате», как в карточке по умолчанию. Остаток — по всему учёту выплат. Временные фильтры и выделение в карточке не меняют суммы этого списка.</p>' : ""}
         ${renderBulkToolbar(config, rows, state.view)}
         ${renderTable(config, rows, state.view)}
       </section>
@@ -25172,7 +25232,8 @@ MAX - https://bizvmax.ru/zifra_plus
     const isDocumentTemplateTable = config.collection === "documentTemplates";
     const isGeneralExpenseTable = config.collection === "generalExpenses";
     const query = (isDocumentTemplateTable ? state.documentTemplateSearch : state.search).trim().toLowerCase();
-    const rows = getRowsForConfig(config, rowsOverride);
+    const sourceRows = getRowsForConfig(config, rowsOverride);
+    const rows = config.collection === "contracts" ? getEmployeeContractListRows(sourceRows) : sourceRows;
     const selectedProgramTypes = state.view === "students"
       ? state.studentProgramTypeFilter
       : [];
