@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.605",
+    version: "1.7.606",
     releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.606",
+      releasedAt: "2026-10-12",
+      changes: ["Ускорены дублирование расходов и фильтрация в оплате сотрудников: новая строка добавляется без перерисовки интерфейса, сохраняются выделение и прокрутка. Отбор использует подготовленные данные сотрудника, а изменения выплат обновляют расчёт; исключены повторные обработки фильтров и расчёты агентских выплат посторонних слушателей."]
+    },
     {
       version: "1.7.605",
       releasedAt: "2026-10-12",
@@ -10483,31 +10488,36 @@ MAX - https://bizvmax.ru/zifra_plus
     record = {},
     collections = {},
     paymentSettings = state.data?.dictionaries?.paymentSettings,
-    includedRowKeys = null
+    includedRowKeys = null,
+    sourceAccounting = null
   ) {
     // Selection limits the displayed summary and act, never stored contract totals.
     const includesRow = (sourceType, sourceId) => !includedRowKeys
       || includedRowKeys.has(`${sourceType}:${String(sourceId || "").trim()}`);
     const employeeName = normalizeEmployeeActPersonName(record.name);
-    const directEntries = employeeName
+    const directEntries = sourceAccounting
+      ? sourceAccounting.directEntries.filter(({ expense, identity }) => includesRow("direct", expense.id || identity))
+      : employeeName
       ? getDirectExpenseEntriesFromCollections(collections).filter(({ expense }) => (
           normalizeEmployeeActPersonName(expense.note) === employeeName
         )).filter(({ expense, identity }) => includesRow("direct", expense.id || identity))
       : [];
-    const generalEntries = employeeName
+    const generalEntries = sourceAccounting
+      ? sourceAccounting.generalEntries.filter(({ identity }) => includesRow("general", identity))
+      : employeeName
       ? (collections.generalExpenses || [])
           .filter((expense) => normalizeEmployeeActPersonName(expense?.counterparty) === employeeName)
           .map((expense) => ({ expense, identity: String(expense.id || "").trim() }))
           .filter(({ identity }) => includesRow("general", identity))
       : [];
-    const partnerStudents = employeeName
+    const partnerStudents = sourceAccounting ? sourceAccounting.partnerStudents : employeeName
       ? (collections.students || []).filter((student) => (
           normalizeEmployeeActPersonName(student?.agent) === employeeName
         ))
       : [];
-    const partnerRows = partnerStudents.flatMap((student) => (
+    const partnerRows = (sourceAccounting?.partnerRows || partnerStudents.flatMap((student) => (
       getEmployeePartnerPaymentRows(student, collections, paymentSettings)
-    )).filter((row) => includesRow("partner", row.sourceId));
+    ))).filter((row) => includesRow("partner", row.sourceId));
     const unpaidGeneralTotal = generalEntries.reduce((sum, { expense }) => (
       isEmployeePaymentSettled(expense) ? sum : sum + Number(expense?.amount || 0)
     ), 0);
@@ -34117,7 +34127,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function applyEmployeePaymentSortToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
+  function applyEmployeePaymentSortToDom(section = document.querySelector("[data-employee-payment-accounting]"), reuseAccounting = false) {
     const tbody = section?.querySelector(".employee-payment-table tbody");
     if (!tbody) return;
     const sort = getEmployeePaymentSort();
@@ -34133,7 +34143,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (row) tbody.insertBefore(row, emptyRow || null);
     });
     syncEmployeePaymentSortHeader(section);
-    applyEmployeePaymentFiltersToDom(section);
+    applyEmployeePaymentFiltersToDom(section, reuseAccounting);
   }
 
   function updateEmployeePaymentSort(event, section) {
@@ -34497,6 +34507,24 @@ MAX - https://bizvmax.ru/zifra_plus
     return `<td ${attrs}></td>`;
   }
 
+  function renderEmployeePaymentAccountingRow(row, columns, filters, sort) {
+    const editable = Boolean(row.sourceId);
+    const isExpenseSource = row.sourceType === "direct" || row.sourceType === "general";
+    const amountReadOnly = Boolean(row.automaticAmount);
+    const deletable = editable && row.deletable !== false;
+    const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
+    const displayComment = getEmployeePaymentDisplayComment(row.comment, row.details);
+    const actCheckboxState = getEmployeePaymentActCheckboxState(row);
+    return `
+      <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+        ${columns.map((column) => renderEmployeePaymentTableCell(column, row, {
+          editable, isExpenseSource, amountReadOnly, sourceLabel, displayComment, actCheckboxState,
+          filtersActive: employeePaymentFiltersAreActive(filters), sort
+        })).join("")}
+      </tr>
+    `;
+  }
+
   function renderEmployeePaymentAccounting(record) {
     const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     const directRows = accounting.directEntries.map(({ expense, identity, student }) => ({
@@ -34533,7 +34561,6 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = sortEmployeePaymentRows([...directRows, ...generalRows, ...partnerRows], sort);
     const filters = getEmployeePaymentFilters();
     const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
-    const filtersActive = employeePaymentFiltersAreActive(filters);
     const visibleRowCount = rows.filter((row) => employeePaymentRowMatchesFilters(row, filters)).length;
     const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
     return `
@@ -34620,29 +34647,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </tr>
             </thead>
             <tbody>
-              ${rows.map((row) => {
-                const editable = Boolean(row.sourceId);
-                const isExpenseSource = row.sourceType === "direct" || row.sourceType === "general";
-                const amountReadOnly = Boolean(row.automaticAmount);
-                const deletable = editable && row.deletable !== false;
-                const sourceLabel = row.source || getEmployeePaymentDefaultSourceLabel(row.sourceType);
-                const displayComment = getEmployeePaymentDisplayComment(row.comment, row.details);
-                const actCheckboxState = getEmployeePaymentActCheckboxState(row);
-                return `
-                  <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
-                    ${columns.map((column) => renderEmployeePaymentTableCell(column, row, {
-                      editable,
-                      isExpenseSource,
-                      amountReadOnly,
-                      sourceLabel,
-                      displayComment,
-                      actCheckboxState,
-                      filtersActive,
-                      sort
-                    })).join("")}
-                  </tr>
-                `;
-              }).join("")}
+              ${rows.map((row) => renderEmployeePaymentAccountingRow(row, columns, filters, sort)).join("")}
               <tr data-employee-payment-filter-empty ${visibleRowCount ? "hidden" : ""}>
                 <td colspan="${columns.length}" class="employee-payment-empty">${rows.length ? "По заданным фильтрам выплаты не найдены." : "Выплаты для сотрудника пока не найдены."}</td>
               </tr>
@@ -34757,14 +34762,26 @@ MAX - https://bizvmax.ru/zifra_plus
     }).format(Number(value || 0));
   }
 
-  function syncEmployeePaymentSummaryUi(section) {
+  function syncEmployeePaymentSummaryUi(section, reuseAccounting = false) {
     if (!section) return;
     const { selectedRows, visibleRows, restricted, includedRowKeys } = getEmployeePaymentSummaryScope(section);
+    const collections = getEmployeePaymentCollections();
+    const paymentSettings = state.data?.dictionaries?.paymentSettings;
+    const currentName = section.closest?.("form")?.elements?.name?.value;
+    let snapshot = reuseAccounting ? section.employeePaymentAccountingSnapshot : null;
+    if (!snapshot || snapshot.collections !== collections || snapshot.paymentSettings !== paymentSettings
+      || snapshot.modal !== state.modal || (currentName !== undefined && currentName !== snapshot.record.name)) {
+      const record = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
+      snapshot = {
+        record, collections, paymentSettings, modal: state.modal,
+        accounting: getEmployeePaymentAccounting(record, collections, paymentSettings)
+      };
+      section.employeePaymentAccountingSnapshot = snapshot;
+    }
+    // Filters/checkboxes change only the scope. Reuse this table's source rows;
+    // payment edits refresh the snapshot through the default (non-reuse) path.
     const accounting = getEmployeePaymentAccounting(
-      getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false }),
-      getEmployeePaymentCollections(),
-      state.data?.dictionaries?.paymentSettings,
-      includedRowKeys
+      snapshot.record, collections, paymentSettings, includedRowKeys, snapshot.accounting
     );
     const summary = { ...accounting, netAmount: getEmployeeNetPayment(accounting.amount) };
     ["netAmount", "amount", "paid", "agencyAmount", "balance"].forEach((key) => {
@@ -34782,7 +34799,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
   }
 
-  function syncEmployeePaymentSelectionUi(section) {
+  function syncEmployeePaymentSelectionUi(section, reuseAccounting = false) {
     if (!section) return;
     const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
     const visibleSelectors = rows
@@ -34807,7 +34824,7 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     section.querySelector("[data-employee-payment-group-actions]")
       ?.classList.toggle("has-selection", Boolean(selectedRows.length));
-    syncEmployeePaymentSummaryUi(section);
+    syncEmployeePaymentSummaryUi(section, reuseAccounting);
   }
 
   function updateEmployeePaymentSelection(event, section) {
@@ -34819,11 +34836,11 @@ MAX - https://bizvmax.ru/zifra_plus
         const selector = row.querySelector("[data-action='select-employee-payment-row']");
         if (selector instanceof HTMLInputElement && !selector.disabled) selector.checked = target.checked;
       });
-      syncEmployeePaymentSelectionUi(section);
+      syncEmployeePaymentSelectionUi(section, true);
       return true;
     }
     if (target.matches("[data-action='select-employee-payment-row']")) {
-      syncEmployeePaymentSelectionUi(section);
+      syncEmployeePaymentSelectionUi(section, true);
       return true;
     }
     return false;
@@ -34833,7 +34850,7 @@ MAX - https://bizvmax.ru/zifra_plus
     section?.querySelectorAll("[data-action='select-employee-payment-row']").forEach((control) => {
       control.checked = false;
     });
-    syncEmployeePaymentSelectionUi(section);
+    syncEmployeePaymentSelectionUi(section, true);
   }
 
   function applyEmployeePaymentGroupOperation(event, section) {
@@ -34966,7 +34983,7 @@ MAX - https://bizvmax.ru/zifra_plus
     commitEmployeePaymentAccountingChange(draft, {}, true);
   }
 
-  function applyEmployeePaymentFiltersToDom(section = document.querySelector("[data-employee-payment-accounting]")) {
+  function applyEmployeePaymentFiltersToDom(section = document.querySelector("[data-employee-payment-accounting]"), reuseAccounting = false) {
     if (!section) return;
     const filters = getEmployeePaymentFilters();
     const active = employeePaymentFiltersAreActive(filters);
@@ -35007,22 +35024,25 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const reset = section.querySelector("[data-action='reset-employee-payment-filters']");
     if (reset instanceof HTMLButtonElement) reset.disabled = !active;
-    syncEmployeePaymentSelectionUi(section);
+    syncEmployeePaymentSelectionUi(section, reuseAccounting);
   }
 
   function updateEmployeePaymentFilters(panel) {
     if (!panel) return;
     const getValue = (key) => String(
       panel.querySelector(`[data-employee-payment-filter="${key}"]`)?.value || ""
-    );
-    state.employeePaymentFilters = {
+    ).trim();
+    const nextFilters = {
       comment: getValue("comment"),
       description: getValue("description"),
       source: getValue("source"),
       payment: getValue("payment"),
       act: getValue("act")
     };
-    applyEmployeePaymentFiltersToDom(panel.closest("[data-employee-payment-accounting]"));
+    const previousFilters = getEmployeePaymentFilters();
+    if (Object.keys(nextFilters).every((key) => nextFilters[key] === previousFilters[key])) return;
+    state.employeePaymentFilters = nextFilters;
+    applyEmployeePaymentFiltersToDom(panel.closest("[data-employee-payment-accounting]"), true);
   }
 
   function resetEmployeePaymentFilters(panel) {
@@ -35030,7 +35050,7 @@ MAX - https://bizvmax.ru/zifra_plus
     panel?.querySelectorAll("[data-employee-payment-filter]").forEach((control) => {
       control.value = "";
     });
-    applyEmployeePaymentFiltersToDom(panel?.closest("[data-employee-payment-accounting]"));
+    applyEmployeePaymentFiltersToDom(panel?.closest("[data-employee-payment-accounting]"), true);
     panel?.querySelector('[data-employee-payment-filter="comment"]')?.focus({ preventScroll: true });
   }
 
@@ -49848,6 +49868,31 @@ MAX - https://bizvmax.ru/zifra_plus
     applyEmployeePaymentFiltersToDom(section);
   }
 
+  function insertEmployeePaymentDuplicateRow(accounting, focus) {
+    const afterRow = focus.afterRow;
+    const section = afterRow?.closest("[data-employee-payment-accounting]");
+    if (!section?.isConnected || !["direct", "general"].includes(focus.sourceType)) return null;
+    const entries = focus.sourceType === "direct" ? accounting.directEntries : accounting.generalEntries;
+    const entry = entries.find(({ expense, identity }) => String(expense.id || identity || "") === focus.sourceId);
+    if (!entry) return null;
+    const model = {
+      sourceType: focus.sourceType, sourceId: focus.sourceId,
+      details: focus.sourceType === "direct" ? [
+        entry.student?.name || "", entry.expense.uid ? `UID ${entry.expense.uid}` : ""
+      ].filter(Boolean).join(" · ") : "",
+      ...normalizeEmployeePaymentSourceRow(focus.sourceType, entry.expense)
+    };
+    const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
+    afterRow.insertAdjacentHTML("afterend", renderEmployeePaymentAccountingRow(
+      model, columns, getEmployeePaymentFilters(), getEmployeePaymentSort()
+    ));
+    const insertedRow = afterRow.nextElementSibling;
+    bindComboFieldEvents(insertedRow);
+    bindMoneyInputStepControls(insertedRow);
+    syncEmployeePaymentActCheckboxes(insertedRow);
+    return section;
+  }
+
   function commitEmployeePaymentAccountingChange(draft, focus = {}, renderAfter = false) {
     const collections = getEmployeePaymentCollections({ create: true });
     const accounting = getEmployeePaymentAccounting(draft, collections);
@@ -49872,7 +49917,17 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     scheduleEmployeePaymentAccountingPersist();
     if (renderAfter) {
-      render();
+      const section = insertEmployeePaymentDuplicateRow(accounting, focus);
+      if (section) {
+        section.employeePaymentAccountingSnapshot = {
+          record: nextDraft, collections, paymentSettings: state.data?.dictionaries?.paymentSettings,
+          modal: state.modal, accounting
+        };
+        if (getEmployeePaymentSort().key) applyEmployeePaymentSortToDom(section, true);
+        else applyEmployeePaymentFiltersToDom(section, true);
+      } else {
+        render();
+      }
     } else {
       updateEmployeePaymentAccountingUi(accounting, focus);
     }
@@ -50028,9 +50083,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
-  function buildEmployeePaymentSourceLookup() {
+  function buildEmployeePaymentSourceLookup(tbody = null) {
     const collections = getEmployeePaymentCollections({ create: true });
     const lookup = new Map();
+    const partnerIds = tbody ? new Set([...tbody.querySelectorAll("[data-employee-payment-row]")]
+      .filter((row) => row.dataset.paymentSource === "partner")
+      .map((row) => parseEmployeePartnerPaymentSourceId(row.dataset.paymentSourceId).studentId)) : null;
     const add = (sourceType, sourceId, source) => {
       const id = String(sourceId || "").trim();
       if (id && source) lookup.set(`${sourceType}\u0000${id}`, source);
@@ -50040,9 +50098,15 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     (collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
     (collections.students || []).forEach((student) => {
-      getEmployeePartnerPaymentRows(student).forEach((row) => add("partner", row.sourceId, row.source));
       const legacyId = String(student?.id || student?.uid || "").trim();
-      if (legacyId) add("partner", legacyId, createEmployeePartnerPaymentSource(student, "due"));
+      if (partnerIds && !partnerIds.has(legacyId)) return;
+      const rows = getEmployeePartnerPaymentRows(student, collections);
+      rows.forEach((row) => add("partner", row.sourceId, row.source));
+      if (legacyId) {
+        add("partner", legacyId, rows.find((row) => row.slot === "due")?.source
+          || createEmployeePartnerPaymentSource(student, "due", rows[0]?.calculation
+            || getStudentAgentCommissionCalculation(student, collections)));
+      }
     });
     (collections.contracts || []).forEach((contract) => add("contract", contract?.id, contract));
     const activeContract = (collections.contracts || []).find((contract) => (
@@ -50052,7 +50116,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return lookup;
   }
 
-  function syncEmployeePaymentOrderFromTable(tbody, sourceLookup = buildEmployeePaymentSourceLookup()) {
+  function syncEmployeePaymentOrderFromTable(tbody, sourceLookup = buildEmployeePaymentSourceLookup(tbody)) {
     let changed = false;
     [...tbody.querySelectorAll("[data-employee-payment-row]")].forEach((row, index) => {
       const sourceType = String(row.dataset.paymentSource || "");
@@ -50067,7 +50131,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function commitEmployeePaymentOrderFromTable(tbody) {
     const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
-    const sourceLookup = buildEmployeePaymentSourceLookup();
+    const sourceLookup = buildEmployeePaymentSourceLookup(tbody);
     if (!syncEmployeePaymentOrderFromTable(tbody, sourceLookup)) return false;
     addEmployeePaymentAudit("Изменён порядок выплат", "Договоры сотрудников", draft.name || "Сотрудник", {
       entityType: "contracts",
@@ -50278,7 +50342,7 @@ MAX - https://bizvmax.ru/zifra_plus
         source: "employee-payment-accounting"
       }
     );
-    commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, field: "amount" }, true);
+    commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, sourceType, afterRow: row, field: "amount" }, true);
     showDocumentGenerationNotice(
       `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Текущая дата: ${formatContractDate(duplicate.date)}.`
     );
