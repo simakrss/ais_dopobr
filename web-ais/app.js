@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.604",
+    version: "1.7.605",
     releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.605",
+      releasedAt: "2026-10-12",
+      changes: ["Для бесплатных программ и вебинаров со стоимостью 0 в реестре не добавляются автоматические расходы на оплату авторам-преподавателям. Неоплаченные заявки на платные программы не считаются бесплатными; ранее внесённые расходы сохраняются."]
+    },
     {
       version: "1.7.604",
       releasedAt: "2026-10-12",
@@ -24139,6 +24144,9 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function buildProgramAuthorExpenseSpecifications(record, program, rule) {
     if (!program || !rule) return [];
+    // Only an explicit zero registry price means a free program. Missing prices
+    // and registrations awaiting payment must retain the usual accrual rules.
+    if (normalizeOptionalNumber(program.price) === 0) return [];
     const paymentTotal = Math.round(sumStudentPayments(record) * 100) / 100;
     const authors = normalizeProgramAuthorPayments(
       program.authorPayments,
