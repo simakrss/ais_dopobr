@@ -82,12 +82,17 @@ const context = {
   getEmployeePaymentAccounting: (record, collections = persisted) => {
     accountingCollections.push(collections);
     return {
-      directEntries: (collections.directExpenses || []).map((expense) => ({ expense })),
-      generalEntries: (collections.generalExpenses || []).map((expense) => ({ expense })),
+      paid: collections === draft ? 1110 : 300,
+      agencyAmount: collections === draft ? 44 : 0,
+      amount: collections === draft ? 1154 : 300,
+      directEntries: (collections.directExpenses || []).map((expense) => ({ expense, identity: expense.id })),
+      generalEntries: (collections.generalExpenses || []).map((expense) => ({ expense, identity: expense.id })),
       partnerStudents: collections === draft ? [{}] : [],
       partnerRows: collections === draft ? [{
         payable: true,
+        affectsAccounting: true,
         slot: "due",
+        sourceId: "student::agent-due",
         source: { recommendation: true, act: false, amount: 44 },
         calculation: { payableAmount: 44, rate: 10, receiptsTotal: 440 },
         student: { name: "Петров Пётр", program: "Черновая программа" }
@@ -105,6 +110,8 @@ vm.runInContext(`
   ${extractFunction("normalizeEmployeeActPersonName")}
   ${extractFunction("formatEmployeeActAmount")}
   ${extractFunction("formatEmployeeActPaymentRows")}
+  ${extractFunction("normalizePaymentConstantNumber")}
+  ${extractFunction("getEmployeeNetPayment")}
   ${extractFunction("getEmployeeActVariablePaymentRows")}
   ${extractFunction("getEmployeeActPartnerPaymentRows")}
   ${extractFunction("getEmployeeActPaymentSummary")}
@@ -142,7 +149,7 @@ assert.equal(generated.employeeActDocumentValues["Сумма"], "1154");
 assert.match(generated.employeeActDocumentValues["Переменные выплаты"], /Черновая прямая услуга\t777/u);
 assert.match(generated.employeeActDocumentValues["Переменные выплаты"], /Черновая общая услуга \(на дату 28\.08\.2026\)\t333/u);
 assert.match(generated.employeeActDocumentValues["Партнерская программа"], /Петров Пётр[\s\S]*\t44/u);
-assert.ok(accountingCollections.length >= 4);
+assert.ok(accountingCollections.length >= 2);
 assert.ok(accountingCollections.every((collections) => collections === draft), "Все расчёты акта должны использовать черновую коллекцию выплат.");
 
 const recordWithoutContractNumber = { ...record, contractNo: "" };
@@ -171,17 +178,18 @@ assert.match(
 
 const markSentSource = extractFunction("markEmployeeActPaymentRowsAsSent");
 assert.doesNotMatch(markSentSource, /state\.data\.collections/u);
-assert.match(markSentSource, /getDirectExpenseEntriesFromCollections\(collections\)/u);
-assert.match(markSentSource, /\(collections\.generalExpenses \|\| \[\]\)/u);
-assert.match(markSentSource, /getEmployeePaymentAccounting\(record, collections\)/u);
+assert.match(markSentSource, /accounting\.directEntries/u);
+assert.match(markSentSource, /accounting\.generalEntries/u);
+assert.match(markSentSource, /getEmployeePaymentAccounting\(record, collections, state\.data\?\.dictionaries\?\.paymentSettings, includedRowKeys\)/u);
 
 const openDocumentSource = source.slice(
   source.indexOf("  async function openEmployeeActDocument(event) {"),
   source.indexOf("  function isStudentFundedByLegalEntity(", source.indexOf("  async function openEmployeeActDocument(event) {"))
 );
 assert.match(openDocumentSource, /const collections = getEmployeePaymentCollections\(\);/u);
-assert.match(openDocumentSource, /validateEmployeeActDocumentFields\(record, documentTemplate, collections\)/u);
-assert.match(openDocumentSource, /prepareEmployeeActDocumentRecord\(record, collections\)/u);
-assert.match(openDocumentSource, /markEmployeeActPaymentRowsAsSent\(record, collections\)/u);
+assert.match(openDocumentSource, /getEmployeePaymentSummaryScope\(\)\.includedRowKeys/u);
+assert.match(openDocumentSource, /validateEmployeeActDocumentFields\(record, documentTemplate, collections, summary\)/u);
+assert.match(openDocumentSource, /prepareEmployeeActDocumentRecord\(record, collections, summary\)/u);
+assert.match(openDocumentSource, /markEmployeeActPaymentRowsAsSent\(record, collections, summary\.includedRowKeys\)/u);
 
 console.log("Employee act unsaved payment draft tests passed.");

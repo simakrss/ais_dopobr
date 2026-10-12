@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8").rep
 const css = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
 
 function extract(name) {
-  const match = source.match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  }`, "m"));
+  const match = source.match(new RegExp(`^  (?:async )?function ${name}\\([\\s\\S]*?^  }`, "m"));
   assert.ok(match, name);
   return match[0];
 }
@@ -71,24 +71,41 @@ const context = vm.createContext({
   normalizeEmployeeActPersonName: (value) => String(value || "").trim().toLowerCase(),
   getDirectExpenseEntriesFromCollections: (values) => (values.directExpenses || [])
     .map((expense) => ({ expense, identity: expense.id })),
-  getEmployeePartnerPaymentRows: (student) => student.partnerPaymentRows || [],
+  getEmployeePartnerPaymentRows: (student) => (student.partnerPaymentRows || []).map((row) => ({ ...row, student })),
   normalizeEmployeePaymentSourceRow: (_type, value) => value,
   isEmployeePaymentSettled: (value = {}) => Boolean(value.historicalPayment || value.paid
     || ["Получен", "Без акта"].includes(value.actStatus)),
   getEmployeePaymentAccountingDraft: () => record,
   getEmployeePaymentCollections: () => collections,
   employeePaymentFiltersAreActive: () => filtersActive,
+  formatContractDate: (value) => String(value || ""),
+  splitFullName: () => ({ firstName: "Иван", patronymic: "Иванович" }),
+  numberToRussianWords: (value) => `Прописью ${value}`,
+  formatEmployeeContractShortName: () => "Иванов И.И.",
+  formatEmployeeActCurrentDate: () => "12.10.2026",
+  addAudit: () => {},
+  commitEmployeePaymentAccountingChange: () => {},
   money: String
 });
 vm.runInContext([
   "getEmployeePaymentAccounting", "normalizePaymentConstantNumber", "getEmployeeNetPayment",
-  "getSelectedEmployeePaymentRows", "syncEmployeePaymentSummaryUi", "syncEmployeePaymentSelectionUi",
-  "updateEmployeePaymentSelection", "clearEmployeePaymentSelection"
+  "getSelectedEmployeePaymentRows", "getEmployeePaymentSummaryScope", "syncEmployeePaymentSummaryUi", "syncEmployeePaymentSelectionUi",
+  "updateEmployeePaymentSelection", "clearEmployeePaymentSelection",
+  "formatEmployeeActAmount", "formatEmployeeActPaymentRows", "getEmployeeActVariablePaymentRows",
+  "getEmployeeActPartnerPaymentRows", "getEmployeeActPaymentSummary", "prepareEmployeeActDocumentRecord",
+  "getEmployeeActDocumentRequiredFields", "getMissingEmployeeActDocumentFields", "markEmployeeActPaymentRowsAsSent"
 ].map(extract).join("\n"), context);
 
 const rows = collections.directExpenses.map((expense) => row("direct", expense.id));
 const section = sectionFor(rows);
-const summary = (key) => Number(section.nodes[`[data-employee-payment-summary="${key}"]`].textContent);
+const summary = (key) => {
+  const value = Number(section.nodes[`[data-employee-payment-summary="${key}"]`].textContent);
+  const act = context.getEmployeeActPaymentSummary(record, collections, context.getEmployeePaymentSummaryScope(section).includedRowKeys);
+  if (key === "amount") assert.equal(act.total, value, "Act and visible gross payout must always match");
+  if (key === "paid") assert.equal(act.variableTotal, value);
+  if (key === "agencyAmount") assert.equal(act.partnerTotal, value);
+  return value;
+};
 const scope = () => section.nodes["[data-employee-payment-summary-scope]"].textContent;
 const selectAll = section.nodes["[data-action='select-visible-employee-payments']"];
 const originalCollections = JSON.stringify(collections);
@@ -107,6 +124,13 @@ assert.equal(summary("balance"), 0);
 assert.equal(section.nodes["[data-employee-payment-selected-count]"].textContent, "4");
 assert.equal(scope(), "По выбранным строкам: 4.");
 assert.equal(selectAll.indeterminate, true);
+const selectedAct = context.getEmployeeActPaymentSummary(record, collections, context.getEmployeePaymentSummaryScope(section).includedRowKeys);
+const generatedAct = context.prepareEmployeeActDocumentRecord(record, collections, selectedAct);
+assert.equal(generatedAct.employeeActDocumentValues["Сумма"], "1400");
+assert.equal(generatedAct.employeeActDocumentValues["СуммаЗач"], "1218");
+assert.equal(generatedAct.amount, 1400, "Custom formulas also receive the scoped gross payout");
+assert.equal(generatedAct.employeeActDocumentValues["Переменные выплаты"].split("\n").length, 4);
+assert.equal(record.paid, 9999, "Generating an act must not overwrite the employee record");
 
 selectAll.checked = true;
 assert.equal(context.updateEmployeePaymentSelection({ target: selectAll }, section), true);
@@ -137,6 +161,10 @@ context.syncEmployeePaymentSelectionUi(section);
 assert.equal(summary("amount"), 0, "Empty filter must not fall back to stored contract totals");
 assert.equal(summary("balance"), 0);
 assert.equal(selectAll.disabled, true);
+const emptyAct = context.getEmployeeActPaymentSummary(record, collections, context.getEmployeePaymentSummaryScope(section).includedRowKeys);
+assert.ok(context.getMissingEmployeeActDocumentFields(record, collections, emptyAct).some((item) => item.key === "amount"));
+assert.equal(emptyAct.variableRows.length, 0);
+assert.equal(emptyAct.partnerRows.length, 0);
 assert.equal(JSON.stringify(collections), originalCollections, "Selection and filtering never change stored data");
 assert.equal(context.getEmployeePaymentAccounting(record, collections).amount, 2800);
 
@@ -150,6 +178,12 @@ collections.directExpenses[0].amount = 500;
 context.syncEmployeePaymentSelectionUi(section);
 assert.equal(summary("amount"), 500);
 assert.equal(summary("netAmount"), 400);
+const changedRateAct = context.getEmployeeActPaymentSummary(record, collections, context.getEmployeePaymentSummaryScope(section).includedRowKeys);
+assert.equal(context.prepareEmployeeActDocumentRecord(record, collections, changedRateAct).employeeActDocumentValues["СуммаЗач"], "400");
+collections.directExpenses[0].act = "+";
+collections.directExpenses[0].actStatus = "Отправлен";
+context.syncEmployeePaymentSelectionUi(section);
+assert.equal(summary("amount"), 500, "Sent but unpaid act rows remain in the same payout calculation");
 collections.directExpenses[0].recommendation = "";
 context.syncEmployeePaymentSelectionUi(section);
 assert.equal(summary("amount"), 0);
@@ -169,9 +203,9 @@ const mixed = {
     { id: "same", counterparty: record.name, amount: 250 },
     { id: "received", counterparty: record.name, amount: 900, actStatus: "Получен" }
   ],
-  students: [{ agent: record.name, partnerPaymentRows: [
-    { sourceId: "student::agent-due", source: {}, amount: 75.5, affectsAccounting: true,
-      calculation: { payableAmount: 75.5 } },
+  students: [{ name: "Слушатель", agent: record.name, partnerPaymentRows: [
+    { sourceId: "student::agent-due", source: {}, amount: 75.5, affectsAccounting: true, payable: true, slot: "due",
+      calculation: { payableAmount: 75.5, rate: 10, receiptsTotal: 755 } },
     { sourceId: "student::agent-paid1", source: { historicalPayment: true }, amount: 400, affectsAccounting: false }
   ] }]
 };
@@ -188,6 +222,28 @@ assert.equal(selectedAccounting("partner:student::agent-paid1").amount, 0, "Hist
 assert.equal(selectedAccounting().amount, 0);
 assert.equal(selectedAccounting().balance, 0);
 assert.equal(context.getEmployeePaymentAccounting(record, {}).amount, record.paid, "Unrestricted legacy accounting is unchanged");
+const scopedAct = (...keys) => context.getEmployeeActPaymentSummary(record, mixed, new Set(keys));
+assert.equal(scopedAct("partner:student::agent-due").total, 75.5);
+assert.equal(scopedAct("partner:student::agent-due").variableRows.length, 0);
+assert.equal(scopedAct("partner:student::agent-paid1").total, 0);
+assert.equal(scopedAct("general:received").total, 0);
+assert.equal(scopedAct("direct:same").variableRows[0].amount, 100);
+assert.equal(scopedAct("general:same").variableRows[0].amount, 250);
+const actSnapshot = scopedAct("general:same", "partner:student::agent-due");
+assert.equal(context.markEmployeeActPaymentRowsAsSent(record, mixed, actSnapshot.includedRowKeys), 2);
+assert.equal(mixed.directExpenses[0].act, undefined, "Excluded rows must not be marked as sent");
+assert.equal(mixed.generalExpenses[0].actStatus, "Отправлен");
+assert.equal(mixed.students[0].agentPaymentActStatus, "Отправлен");
+assert.equal(mixed.generalExpenses[1].actStatus, "Получен");
+assert.equal(context.markEmployeeActPaymentRowsAsSent(record, mixed, new Set()), 0);
+
+mixed.directExpenses[0].amount = 100.75;
+const rounded = scopedAct("direct:same");
+assert.equal(rounded.total, 100, "Existing panel rounding is preserved");
+assert.equal(rounded.variableRows.reduce((sum, row) => sum + row.amount, 0), rounded.total, "Detail rows explain rounding and match the total");
+assert.match(rounded.variableRows[1].description, /Округление/);
+assert.equal(mixed.directExpenses[0].amount, 100.75);
+assert.equal(context.getEmployeeActPaymentSummary({ name: record.name, paid: 0, amount: 9999 }, {}).total, 0, "Never fall back to the full contract amount");
 
 const render = extract("renderEmployeePaymentAccounting");
 assert.ok(render.indexOf('data-employee-payment-summary="netAmount"') < render.indexOf('data-employee-payment-summary="amount"'));
@@ -196,4 +252,47 @@ assert.match(css, /\.employee-payment-formula-summary\s*\{\s*display: grid;\s*gr
 assert.match(css, /\.employee-payment-formula-summary\s*\{\s*grid-template-columns: repeat\(2,/u);
 assert.match(extract("applyEmployeePaymentFiltersToDom"), /syncEmployeePaymentSelectionUi\(section\)/u);
 assert.match(extract("commitEmployeePaymentAccountingChange"), /getEmployeePaymentAccounting\(draft, collections\)/u);
-console.log("Employee payment selection summary: OK");
+async function testActWorkflowSnapshot() {
+  const draftRecord = { ...record, id: "employee-1", contractDate: "2026-10-12", subject: "Услуги" };
+  let generated = null, sends = 0, emailed = true, warnings = 0;
+  Object.assign(context, {
+    document: { querySelector: () => section },
+    collectContractFormDraft: () => draftRecord,
+    getEmployeeActDocumentTemplate: () => ({ title: "Акт" }),
+    getEmployeeDocumentStorageRequest: () => ({}),
+    alert: () => { warnings++; },
+    formatStudentDocumentMissingFields: (fields) => fields.map((item) => item.label).join(", "),
+    focusEmployeeContractDocumentField: () => {},
+    downloadStudentDocumentFromTemplate: async (_template, prepared) => {
+      sends++; generated = prepared;
+      // Changing the UI while preview/email is open must not broaden the sent act.
+      rows.forEach((row) => { row.control.checked = false; row.hidden = false; });
+      filtersActive = false;
+      return { emailed };
+    }
+  });
+  vm.runInContext(["validateEmployeeActDocumentFields", "openEmployeeActDocument"].map(extract).join("\n"), context);
+  collections.directExpenses.forEach((expense) => {
+    expense.amount = 350; expense.recommendation = "+";
+    delete expense.act; delete expense.actStatus; delete expense.paid;
+  });
+  rows.forEach((row, index) => { row.control.checked = index < 2; row.hidden = false; });
+  await context.openEmployeeActDocument({ currentTarget: {} });
+  assert.equal(generated.amount, 700);
+  assert.equal(generated.employeeActDocumentValues["Сумма"], "700");
+  assert.equal(collections.directExpenses.filter((expense) => expense.actStatus === "Отправлен").length, 2);
+  assert.equal(draftRecord.paid, 9999);
+  assert.equal(warnings, 0);
+  emailed = false;
+  rows[2].control.checked = true;
+  await context.openEmployeeActDocument({ currentTarget: {} });
+  assert.equal(generated.amount, 350);
+  assert.equal(collections.directExpenses[2].act, undefined, "Preview/save without email does not mark rows sent");
+  filtersActive = true;
+  rows.forEach((row) => { row.hidden = true; row.control.checked = false; });
+  await context.openEmployeeActDocument({ currentTarget: {} });
+  assert.equal(sends, 2, "An empty filtered payout must not generate a full-list act");
+  assert.equal(warnings, 1);
+  console.log("Employee payment selection and act: OK (filters, checkboxes, draft, rounding, zero, email snapshot)");
+}
+testActWorkflowSnapshot().catch((error) => { console.error(error); process.exitCode = 1; });
