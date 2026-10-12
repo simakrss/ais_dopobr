@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.606",
+    version: "1.7.607",
     releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.607",
+      releasedAt: "2026-10-12",
+      changes: ["При дублировании общих затрат поле «Оплачено» остаётся пустым — как в списке общих затрат, так и в оплате сотрудника. Дата самого расхода по-прежнему устанавливается текущей; исходные записи не изменяются."]
+    },
     {
       version: "1.7.606",
       releasedAt: "2026-10-12",
@@ -61651,7 +61656,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...duplicate,
       id: makeId("general-expense"),
       date: currentDate,
-      paid: currentDate,
+      paid: "",
       isPaid: "",
       accountingClosed: "",
       bkExpenseNo: /^личная\s+карта$/iu.test(String(source.bkExpenseNo || "").trim()) ? source.bkExpenseNo : "",
@@ -61684,7 +61689,7 @@ MAX - https://bizvmax.ru/zifra_plus
     persist();
     render();
     showDocumentGenerationNotice(
-      `Продублировано общих расходов: ${copies.length}. Дата расхода и оплаты — сегодня; номер «личная карта» сохраняется.`
+      `Продублировано общих расходов: ${copies.length}. Дата расхода — сегодня; поле «Оплачено» не заполняется. Номер «личная карта» сохраняется.`
     );
   }
 
