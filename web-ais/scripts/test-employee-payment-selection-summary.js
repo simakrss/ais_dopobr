@@ -89,7 +89,7 @@ const context = vm.createContext({
 });
 vm.runInContext([
   "getEmployeePaymentAccounting", "normalizePaymentConstantNumber", "getEmployeeNetPayment",
-  "getSelectedEmployeePaymentRows", "getEmployeePaymentSummaryScope", "syncEmployeePaymentSummaryUi", "syncEmployeePaymentSelectionUi",
+  "getSelectedEmployeePaymentRows", "getEmployeePaymentSummaryScope", "formatEmployeePaymentSummaryAmount", "syncEmployeePaymentSummaryUi", "syncEmployeePaymentSelectionUi",
   "updateEmployeePaymentSelection", "clearEmployeePaymentSelection",
   "formatEmployeeActAmount", "formatEmployeeActPaymentRows", "getEmployeeActVariablePaymentRows",
   "getEmployeeActPartnerPaymentRows", "getEmployeeActPaymentSummary", "prepareEmployeeActDocumentRecord",
@@ -99,7 +99,7 @@ vm.runInContext([
 const rows = collections.directExpenses.map((expense) => row("direct", expense.id));
 const section = sectionFor(rows);
 const summary = (key) => {
-  const value = Number(section.nodes[`[data-employee-payment-summary="${key}"]`].textContent);
+  const value = Number(section.nodes[`[data-employee-payment-summary="${key}"]`].textContent.replace(/[^\d,.-]/g, "").replace(",", "."));
   const act = context.getEmployeeActPaymentSummary(record, collections, context.getEmployeePaymentSummaryScope(section).includedRowKeys);
   if (key === "amount") assert.equal(act.total, value, "Act and visible gross payout must always match");
   if (key === "paid") assert.equal(act.variableTotal, value);
@@ -217,6 +217,9 @@ const selectedMixed = selectedAccounting("direct:same", "general:same", "partner
 assert.equal(selectedMixed.amount, 425.5);
 assert.equal(selectedMixed.agencyAmount, 75.5);
 assert.equal(context.getEmployeeNetPayment(selectedMixed.amount, []), 370.19);
+assert.match(context.formatEmployeePaymentSummaryAmount(selectedMixed.amount), /425,5/);
+assert.match(context.formatEmployeePaymentSummaryAmount(370.19), /370,19/);
+assert.doesNotMatch(context.formatEmployeePaymentSummaryAmount(350), /,/);
 assert.equal(selectedAccounting("partner:student::agent-due").amount, 75.5, "No legacy service fallback for agency-only selection");
 assert.equal(selectedAccounting("partner:student::agent-paid1").amount, 0, "Historical payments are not paid twice");
 assert.equal(selectedAccounting().amount, 0);

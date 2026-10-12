@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.603",
+    version: "1.7.604",
     releasedAt: "2026-10-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.604",
+      releasedAt: "2026-10-12",
+      changes: ["В итогах таблицы оплаты показываются копейки, когда они есть: отображаемая «Выплата» и сумма акта совпадают также при дробных агентских выплатах."]
+    },
     {
       version: "1.7.603",
       releasedAt: "2026-10-12",
@@ -34536,11 +34541,11 @@ MAX - https://bizvmax.ru/zifra_plus
           </div>
         </div>
         <div class="employee-payment-formula-summary" aria-label="Итоги расчёта выплат">
-          <span title="Выплата за вычетом подоходного налога по ставке из настроек системы"><small>К зачислению</small><strong data-employee-payment-summary="netAmount">${escapeHtml(money(getEmployeeNetPayment(accounting.amount)))}</strong></span>
-          <span><small>Выплата</small><strong data-employee-payment-summary="amount">${escapeHtml(money(accounting.amount))}</strong></span>
-          <span><small>Услуги</small><strong data-employee-payment-summary="paid">${escapeHtml(money(accounting.paid))}</strong></span>
-          <span><small>Агентские</small><strong data-employee-payment-summary="agencyAmount">${escapeHtml(money(accounting.agencyAmount))}</strong></span>
-          <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(money(accounting.balance))}</strong></span>
+          <span title="Выплата за вычетом подоходного налога по ставке из настроек системы"><small>К зачислению</small><strong data-employee-payment-summary="netAmount">${escapeHtml(formatEmployeePaymentSummaryAmount(getEmployeeNetPayment(accounting.amount)))}</strong></span>
+          <span><small>Выплата</small><strong data-employee-payment-summary="amount">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.amount))}</strong></span>
+          <span><small>Услуги</small><strong data-employee-payment-summary="paid">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.paid))}</strong></span>
+          <span><small>Агентские</small><strong data-employee-payment-summary="agencyAmount">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.agencyAmount))}</strong></span>
+          <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.balance))}</strong></span>
         </div>
         <p class="employee-payment-formula-hint"><span data-employee-payment-summary-scope>По всему списку.</span> Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
         <div class="employee-payment-group-actions" data-employee-payment-group-actions>
@@ -34738,6 +34743,12 @@ MAX - https://bizvmax.ru/zifra_plus
     return { selectedRows, visibleRows, restricted, includedRowKeys };
   }
 
+  function formatEmployeePaymentSummaryAmount(value) {
+    return new Intl.NumberFormat("ru-RU", {
+      style: "currency", currency: "RUB", minimumFractionDigits: 0, maximumFractionDigits: 2
+    }).format(Number(value || 0));
+  }
+
   function syncEmployeePaymentSummaryUi(section) {
     if (!section) return;
     const { selectedRows, visibleRows, restricted, includedRowKeys } = getEmployeePaymentSummaryScope(section);
@@ -34750,7 +34761,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const summary = { ...accounting, netAmount: getEmployeeNetPayment(accounting.amount) };
     ["netAmount", "amount", "paid", "agencyAmount", "balance"].forEach((key) => {
       const output = section.querySelector(`[data-employee-payment-summary="${key}"]`);
-      if (output) output.textContent = money(summary[key]);
+      if (output) output.textContent = formatEmployeePaymentSummaryAmount(summary[key]);
     });
     section.querySelector("[data-employee-payment-balance-card]")
       ?.classList.toggle("has-balance", Boolean(summary.balance));
