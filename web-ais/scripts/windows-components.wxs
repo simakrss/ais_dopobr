@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="AIS Windows Components" Language="1033" Version="$(var.Version)"
+           Manufacturer="DIGITALIZATION PLUS" UpgradeCode="5191D790-B0F6-4885-9947-E0AD8465E622">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <MajorUpgrade DowngradeErrorMessage="A newer AIS component version is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREMOVE" Value="1" />
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <Property Id="AIS_EXISTING_SERVICE">
+      <RegistrySearch Id="ExistingService" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\AisDopobrWeb"
+                      Name="ImagePath" Type="raw" Win64="yes" />
+    </Property>
+    <Condition Message="Install the AIS Windows service before updating its components.">Installed OR AIS_EXISTING_SERVICE</Condition>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="AIS_COMPONENTS" Name="AisDopobrWeb">
+          <!-- Permanent: removing the update product must not delete a pre-existing
+               service or its files. MSI owns upgrade rollback, never user data/tasks. -->
+          <Component Id="HostComponent" Guid="509B6550-9DD8-429C-8AE8-3E3A8C005064" Win64="yes" Permanent="yes">
+            <File Id="Host" Source="$(var.Payload)\AisDopobrService.exe" KeyPath="yes" />
+            <ServiceControl Id="ServiceUpdate" Name="AisDopobrWeb" Stop="install" Start="install" Wait="yes" />
+            <File Id="StopScript" Source="$(var.Payload)\stop-lan-system.ps1" CompanionFile="Host" />
+            <File Id="Controller" Source="$(var.Payload)\control-ais-service.ps1" CompanionFile="Host" />
+            <File Id="Tray" Source="$(var.Payload)\ais-service-tray.ps1" CompanionFile="Host" />
+            <File Id="LogViewer" Source="$(var.Payload)\show-ais-service-log.ps1" CompanionFile="Host" />
+            <File Id="Setup" Source="$(var.Payload)\setup-ais-windows-service.ps1" CompanionFile="Host" />
+            <File Id="HiddenHost" Source="$(var.Payload)\ais-hidden-process.vbs" CompanionFile="Host" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="Components" Title="AIS Windows Components" Level="1">
+      <ComponentRef Id="HostComponent" />
+    </Feature>
+  </Product>
+</Wix>

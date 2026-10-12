@@ -1,0 +1,162 @@
+"use strict";
+const assert=require("node:assert/strict"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),crypto=require("node:crypto");
+const up=require("../local-update");
+const keys=crypto.generateKeyPairSync("ed25519"),publicKey=keys.publicKey.export({format:"der",type:"spki"}).toString("base64");
+const roots=[];
+const sign=release=>{const payload=Buffer.from(JSON.stringify(release));return{payload:payload.toString("base64"),signature:crypto.sign(null,payload,keys.privateKey).toString("base64")};};
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function fixture(next="1.0.1"){
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"ais-update-test-"));roots.push(root);
+  const contents=new Map(),old=new Map();
+  const release={protocol:1,version:next,build:"test-release-new",commit:"a".repeat(40),files:[]};
+  for(const name of up.FILES){
+    const a=name==="app.js"?'const APPLICATION_RELEASE = Object.freeze({version: "1.0.0"});':name==="index.html"?'const build = "test-release-old";':"// OLD "+name;
+    const b=Buffer.from(name==="app.js"?`const APPLICATION_RELEASE = Object.freeze({version: "${next}"});`:name==="index.html"?'const build = "test-release-new";':"// NEW "+name);
+    const target=path.join(root,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,a);old.set(name,a);
+    const sha256=up.hash(b);contents.set(sha256,b);release.files.push({path:name,sha256,size:b.length});
+  }
+  fs.mkdirSync(path.join(root,"storage"));fs.writeFileSync(path.join(root,"storage","settings.json"),"KEEP PRIVATE SETTINGS");
+  const envelope=sign(release),requests=[];
+  const fetcher=async url=>{requests.push(url);if(url.includes("latest.json"))return new Response(JSON.stringify(envelope));const sha=url.match(/([a-f0-9]{64})\.bin$/)?.[1];return new Response(contents.get(sha)||"missing");};
+  return{root,release,contents,old,envelope,fetcher,requests};
+}
+async function main(){
+  const one=fixture();assert.equal(up.validateEnvelope(one.envelope,publicKey).version,"1.0.1");
+  const historical=structuredClone(one.release);historical.version="1.7.541";historical.files=historical.files.filter(file=>file.path!=="document-relay.js");
+  assert.equal(up.validateEnvelope(sign(historical),publicKey).version,"1.7.541");
+  historical.version="1.7.542";assert.throws(()=>up.validateEnvelope(sign(historical),publicKey),/Неполный/);
+  const withoutViewer=structuredClone(one.release);withoutViewer.version="1.7.542";withoutViewer.files=withoutViewer.files.filter(file=>file.path!=="pdf-preview.js"&&!file.path.startsWith("pdfjs-"));
+  assert.equal(up.validateEnvelope(sign(withoutViewer),publicKey).version,"1.7.542");
+  withoutViewer.version="1.7.543";assert.throws(()=>up.validateEnvelope(sign(withoutViewer),publicKey),/Неполный/);
+  assert.throws(()=>up.validateEnvelope({...one.envelope,payload:Buffer.from("{}").toString("base64")},publicKey),/Подпись/);
+  for(const bad of ["../app.js","storage/settings.json",".runtime/key.pem","C:/app.js"]){const data=structuredClone(one.release);data.files[0].path=bad;assert.throws(()=>up.validateEnvelope(sign(data),publicKey),/состав/);assert.throws(()=>up.safeTarget(one.root,bad));}
+  const dup=structuredClone(one.release);dup.files[1]=dup.files[0];assert.throws(()=>up.validateEnvelope(sign(dup),publicKey));
+  let restarts=0;
+  const updater=up.createUpdater(one.root,{idle:async()=>true,restart:async()=>{restarts++;assert.equal(up.version(one.root),"1.0.1");assert.equal(up.readStatus(one.root).phase,"restarting");}},{publicKey,fetcher:one.fetcher,pollMs:5,warningMs:5,drainMs:5});
+  await updater.checkNow();updater.dispose();assert.equal(restarts,1);assert.equal(up.readStatus(one.root).phase,"complete");
+  for(const file of one.release.files)assert.equal(up.hash(fs.readFileSync(path.join(one.root,file.path))),file.sha256);
+  assert.equal(fs.readFileSync(path.join(one.root,"storage/settings.json"),"utf8"),"KEEP PRIVATE SETTINGS");
+  assert.ok(fs.readdirSync(path.join(up.runtimeDir(one.root),"backups")).length>0);
+  const rollback=fixture();let attempts=0;
+  const failed=up.createUpdater(rollback.root,{idle:async()=>true,restart:async()=>{if(++attempts===1)throw Error("test failed health");}},{publicKey,fetcher:rollback.fetcher,pollMs:1,warningMs:1,drainMs:1});
+  await failed.checkNow();failed.dispose();assert.equal(attempts,2);assert.equal(up.readStatus(rollback.root).phase,"error");
+  for(const [name,bytes]of rollback.old)assert.equal(fs.readFileSync(path.join(rollback.root,name),"utf8"),bytes);
+  const blocked=fixture();const client=crypto.randomUUID();up.writeLease(blocked.root,client,false);
+  let calls=0;const waiting=up.createUpdater(blocked.root,{idle:async()=>true,restart:async()=>{calls++;}},{publicKey,fetcher:blocked.fetcher,pollMs:5,warningMs:5,drainMs:5});
+  const running=waiting.checkNow();
+  for(let i=0;i<100&&up.readStatus(blocked.root).phase!=="waiting";i++)await pause(5);
+  assert.equal(up.readStatus(blocked.root).phase,"waiting");assert.equal(calls,0);assert.equal(up.version(blocked.root),"1.0.0");
+  up.writeLease(blocked.root,client,true);await running;waiting.dispose();assert.equal(calls,1);
+  const immediate=fixture();let immediateRestarts=0,serverIdle=true;
+  const now=up.createUpdater(immediate.root,{idle:async()=>serverIdle,restart:async()=>{immediateRestarts++;}},{publicKey,fetcher:immediate.fetcher,pollMs:5,warningMs:60000,drainMs:5});
+  const nowRunning=now.checkNow();
+  async function phase(root,name){for(let i=0;i<400;i++){const value=up.readStatus(root);if(value.phase===name)return value;await pause(5);}throw Error("Expected phase "+name);}
+  try {
+    const warning=await phase(immediate.root,"warning");assert.equal(warning.canUpdateNow,true);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:false}),/Сначала/);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true,warningId:"stale"}),/отсчёт/);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true,targetVersion:"8.0.0"}),/отсчёт/);
+    const busyClient=crypto.randomUUID();up.writeLease(immediate.root,busyClient,false);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/Сначала/);
+    up.writeLease(immediate.root,busyClient,true);
+    up.requestImmediateUpdate(immediate.root,{...warning,ready:true});
+    // New unsaved UI work invalidates the accepted shortcut, not background polls.
+    up.writeLease(immediate.root,busyClient,false);await phase(immediate.root,"waiting");up.writeLease(immediate.root,busyClient,true);
+    const renewed=await phase(immediate.root,"warning");assert.notEqual(renewed.warningId,warning.warningId);
+    await pause(25);assert.equal(immediateRestarts,0);assert.equal(up.version(immediate.root),"1.0.0");
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...warning,ready:true}),/отсчёт/);
+    up.requestImmediateUpdate(immediate.root,{...renewed,ready:true});
+    up.requestImmediateUpdate(immediate.root,{...renewed,ready:true});
+    await Promise.race([nowRunning,pause(2000).then(()=>{throw Error("Immediate update kept the 60-second countdown");})]);
+    assert.equal(immediateRestarts,1);assert.equal(up.version(immediate.root),"1.0.1");
+    assert.equal(up.readStatus(immediate.root).canUpdateNow,false);
+    assert.throws(()=>up.requestImmediateUpdate(immediate.root,{...renewed,ready:true}),/отсчёт/);
+  } finally {now.dispose();await nowRunning;}
+  const background=fixture();let backgroundIdle=true,backgroundRestarts=0;
+  const backgroundUpdater=up.createUpdater(background.root,{idle:async()=>backgroundIdle,restart:async()=>{assert.equal(backgroundIdle,true);backgroundRestarts++;}},
+    {publicKey,fetcher:background.fetcher,pollMs:5,warningMs:80,drainMs:5});
+  const backgroundRun=backgroundUpdater.checkNow();
+  try {
+    const firstWarning=await phase(background.root,"warning");
+    backgroundIdle=false;
+    await pause(25);
+    const continued=up.readStatus(background.root);
+    assert.equal(continued.phase,"warning","Background traffic must not reset countdown");
+    assert.equal(continued.warningId,firstWarning.warningId);
+    await phase(background.root,"draining");
+    assert.equal(backgroundRestarts,0,"Active operations must still finish before restart");
+    assert.equal(up.version(background.root),"1.0.0","Never replace files while operations are active");
+    backgroundIdle=true;
+    await backgroundRun;
+    assert.equal(backgroundRestarts,1);
+  } finally {backgroundIdle=true;backgroundUpdater.dispose();await backgroundRun;}
+  const old=fixture("0.9.0"),older=up.createUpdater(old.root,{idle:async()=>true,restart:async()=>assert.fail("downgrade")},{publicKey,fetcher:old.fetcher});await older.checkNow();older.dispose();assert.equal(old.requests.length,1);
+  const corrupt=fixture();corrupt.contents.set(corrupt.release.files[0].sha256,Buffer.from("WRONG"));
+  const bad=up.createUpdater(corrupt.root,{idle:async()=>true,restart:async()=>assert.fail("corrupt")},{publicKey,fetcher:corrupt.fetcher});await bad.checkNow();bad.dispose();assert.equal(up.version(corrupt.root),"1.0.0");assert.match(up.readStatus(corrupt.root).label,/сумма/);
+  const crashed=fixture(),dir=up.runtimeDir(crashed.root),file=crashed.release.files[0],before=Buffer.from(crashed.old.get(file.path));
+  fs.mkdirSync(path.join(dir,"backups"),{recursive:true});fs.writeFileSync(path.join(dir,"backups",up.hash(before)),before);
+  up.atomicJson(path.join(dir,"journal.json"),{files:[{path:file.path,before:up.hash(before),after:file.sha256}]});fs.writeFileSync(path.join(crashed.root,file.path),crashed.contents.get(file.sha256));
+  assert.equal(up.readStatus(crashed.root).phase,"recovery-error");assert.equal(up.restore(crashed.root),true);assert.equal(up.version(crashed.root),"1.0.0");
+  assert.throws(()=>up.writeLease(crashed.root,"../../escape",true));
+  const syntax=fixture(),syntaxFile=syntax.release.files.find(file=>file.path==="app-server.js"),invalid=Buffer.from("let = ;");
+  syntaxFile.sha256=up.hash(invalid);syntaxFile.size=invalid.length;syntax.contents.set(syntaxFile.sha256,invalid);Object.assign(syntax.envelope,sign(syntax.release));
+  const badCode=up.createUpdater(syntax.root,{idle:async()=>true,restart:async()=>assert.fail("Bad syntax must not restart working server")},{publicKey,fetcher:syntax.fetcher,pollMs:1,warningMs:1,drainMs:1});
+  await badCode.checkNow();badCode.dispose();assert.equal(up.readStatus(syntax.root).phase,"error");assert.equal(up.version(syntax.root),"1.0.0");
+  const shared=fixture();let sharedRestarts=0;
+  const sharedUpdater=up.createUpdater(shared.root,{idle:async()=>true,restart:async()=>{sharedRestarts++;}},{publicKey,fetcher:shared.fetcher,pollMs:1,warningMs:1,drainMs:1});
+  // Files changed by an external folder sync; the old process still needs restarting.
+  for(const file of shared.release.files)fs.writeFileSync(path.join(shared.root,file.path),shared.contents.get(file.sha256));
+  await sharedUpdater.checkNow();sharedUpdater.dispose();assert.equal(sharedRestarts,1);
+  const partial=fixture();
+  for(const file of partial.release.files)fs.writeFileSync(path.join(partial.root,file.path),partial.contents.get(file.sha256));
+  const extra=Buffer.from('# new OCR component');const extraFile={path:'services/ocr/server.py',size:extra.length,sha256:up.hash(extra)};
+  partial.release.components=[extraFile];partial.contents.set(extraFile.sha256,extra);Object.assign(partial.envelope,sign(partial.release));
+  let componentRestarts=0;
+  const components=up.createUpdater(partial.root,{idle:async()=>true,restart:async()=>{componentRestarts++;}},{publicKey,fetcher:partial.fetcher,pollMs:1,warningMs:1,drainMs:1});
+  await components.checkNow();components.dispose();assert.equal(componentRestarts,1,'Same-version bootstrap must finish components');
+  assert.equal(fs.readFileSync(path.join(partial.root,extraFile.path),'utf8'),extra.toString());
+  const retry=fixture();let deny=true,retryRestarts=0;
+  const retryUpdater=up.createUpdater(retry.root,{idle:async()=>true,restart:async()=>{retryRestarts++;}},
+    {publicKey,fetcher:async url=>{if(deny)throw Object.assign(Error("EPERM: rename private status.json"),{code:"EPERM"});return retry.fetcher(url);},pollMs:1,warningMs:1,drainMs:1});
+  try {
+    await retryUpdater.checkNow();
+    const error=up.readStatus(retry.root);assert.equal(error.phase,"error");assert.equal(error.canRetry,true);
+    assert.match(error.label,/автоматически/);assert.doesNotMatch(error.label,/EPERM|private/);
+    assert.match(error.errorDetails,/EPERM/);assert.ok(error.retryAt>Date.now());
+    assert.throws(()=>up.requestUpdateRetry(retry.root,{ready:true,errorId:"stale"}),/изменилось/);
+    assert.throws(()=>up.requestUpdateRetry(retry.root,{ready:false,errorId:error.errorId}),/Сначала/);
+    up.requestUpdateRetry(retry.root,{ready:true,errorId:error.errorId});
+    await retryUpdater.check();
+    const second=up.readStatus(retry.root);assert.notEqual(second.errorId,error.errorId);
+    deny=false;
+    await retryUpdater.check();assert.equal(retryRestarts,0,"Old retry requests must not replay against a new error");
+    up.requestUpdateRetry(retry.root,{ready:true,errorId:second.errorId});
+    await retryUpdater.check();assert.equal(retryRestarts,1);assert.equal(up.readStatus(retry.root).phase,"complete");
+  } finally {retryUpdater.dispose();}
+  const automatic=fixture();let transient=true,automaticRestarts=0;
+  const automaticUpdater=up.createUpdater(automatic.root,{idle:async()=>true,restart:async()=>{automaticRestarts++;}},
+    {publicKey,fetcher:async url=>{if(transient)throw Object.assign(Error("busy"),{code:"EBUSY"});return automatic.fetcher(url);},retryMs:1,pollMs:1,warningMs:1,drainMs:1});
+  try {await automaticUpdater.checkNow();transient=false;await pause(5);await automaticUpdater.check();assert.equal(automaticRestarts,1);}
+  finally {automaticUpdater.dispose();}
+  const guarded=fixture();up.atomicJson(path.join(up.runtimeDir(guarded.root),"journal.json"),{files:[]});
+  up.atomicJson(path.join(up.runtimeDir(guarded.root),"status.json"),{phase:"error",canRetry:true,errorId:"old",updatedAt:Date.now()});
+  assert.throws(()=>up.requestUpdateRetry(guarded.root,{ready:true,errorId:"old"}),/изменилось/);
+  const guardedUpdater=up.createUpdater(guarded.root,{idle:async()=>true,restart:async()=>assert.fail("Journal must block retry")},{publicKey,fetcher:guarded.fetcher});
+  await guardedUpdater.checkNow();guardedUpdater.dispose();assert.equal(guarded.requests.length,0);
+  const reporting=fixture(),reportStage=path.join(up.runtimeDir(reporting.root),"test-stage");
+  fs.mkdirSync(reportStage,{recursive:true});
+  for(const file of reporting.release.files)fs.writeFileSync(path.join(reportStage,file.sha256),reporting.contents.get(file.sha256));
+  let restored=0;
+  await assert.rejects(()=>up.install(reporting.root,reporting.release,reportStage,{
+    report(){throw Object.assign(Error("Simulated progress file lock"),{code:"EPERM"});},
+    async restart(){restored++;}
+  }),/Simulated/);
+  assert.equal(restored,1,"Even if rollback reporting fails, restore the original program");
+  for(const [name,bytes]of reporting.old)assert.equal(fs.readFileSync(path.join(reporting.root,name),"utf8"),bytes);
+  assert.equal(fs.existsSync(path.join(up.runtimeDir(reporting.root),"journal.json")),false);
+  assert.equal(fs.existsSync(path.join(reporting.root,".runtime","local-update-install.lock")),false);
+  console.log("PASS: signed manifests, exact allowlist, downgrade prevention, download hashes, immediate update/countdown scope, waiting for drafts and operations, install/restart, backup/rollback, crash journal, settings untouched");
+}
+main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{
+  for(const root of roots){if(path.dirname(root)===os.tmpdir()&&path.basename(root).startsWith("ais-update-test-"))fs.rmSync(root,{recursive:true,force:true});}
+});
