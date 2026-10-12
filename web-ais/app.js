@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.607",
-    releasedAt: "2026-10-12"
+    version: "1.7.608",
+    releasedAt: "2026-10-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.608",
+      releasedAt: "2026-10-13",
+      changes: ["Поле «Кем выдан» в карточке сотрудника позволяет вводить произвольный текст и выбирать из выпадающего списка в одном поле. Список включает справочник и сохранённые значения сотрудников и слушателей; свободный ввод доступен также при проверке распознанных документов сотрудника."]
+    },
     {
       version: "1.7.607",
       releasedAt: "2026-10-12",
@@ -6871,7 +6876,7 @@ MAX - https://bizvmax.ru/zifra_plus
         field("identityDocument", "Серия и номер"),
         field("identityIssueDate", "Дата выдачи", "date"),
         field("identityDepartmentCode", "Код подразделения"),
-        field("identityIssuer", "Кем выдан", "select", false, "passportIssuers", { wide: true }),
+        field("identityIssuer", "Кем выдан", "combo", false, "passportIssuers", { wide: true }),
         field("address", "Адрес регистрации", "textarea", false, null, { wide: true, rows: 2 }),
         field("snils", "СНИЛС"),
         field("inn", "ИНН"),
@@ -37713,7 +37718,9 @@ MAX - https://bizvmax.ru/zifra_plus
       return `${label}<textarea name="${item.key}" ${rows ? `rows="${rows}"` : ""} ${required} ${layoutOptions.readOnly ? 'readonly aria-readonly="true"' : ""}>${escapeHtml(value)}</textarea>${hint}</label>`;
     }
     if (item.type === "combo") {
-      const dictionaryOptions = state.data.dictionaries[item.dict] || [];
+      const dictionaryOptions = item.key === "identityIssuer"
+        ? getPassportIssuerOptions(value)
+        : (state.data.dictionaries[item.dict] || []);
       return `${label}${renderComboField({
         name: item.key,
         value,
@@ -41223,7 +41230,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getPassportIssuerOptions(currentValue = "") {
     return getLookupOptions({
       dict: "passportIssuers",
-      fields: [["students", "passportIssuer"], ["students", "customerPassportIssuer"]]
+      fields: [["students", "passportIssuer"], ["students", "customerPassportIssuer"], ["contracts", "identityIssuer"]]
     }, [currentValue]);
   }
 
@@ -57765,7 +57772,8 @@ MAX - https://bizvmax.ru/zifra_plus
       mode = "combo";
       dictionary = searchableStudentFields[key].dict;
       options = makeOptions(getLookupOptions(searchableStudentFields[key], [value]));
-    } else if (!isContract && ["passportIssuer", "educationDocumentIssuer"].includes(key)) {
+    } else if ((!isContract && ["passportIssuer", "educationDocumentIssuer"].includes(key))
+      || (isContract && key === "identityIssuer")) {
       mode = "combo";
       dictionary = key === "educationDocumentIssuer" ? "educationDocumentIssuers" : "passportIssuers";
       options = makeOptions(key === "educationDocumentIssuer"
