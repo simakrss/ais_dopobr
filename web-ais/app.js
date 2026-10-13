@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.610",
+    version: "1.7.611",
     releasedAt: "2026-10-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.611",
+      releasedAt: "2026-10-13",
+      changes: ["Исправлена сумма к выплате в списке сотрудников и одноимённый отбор в карточке: сформированные и отправленные акты остаются к выплате до получения акта или отметки оплаты. Отдельные фильтры по состоянию акта сохранены; начисления, рекомендации и история выплат не изменяются."]
+    },
     {
       version: "1.7.610",
       releasedAt: "2026-10-13",
@@ -10637,7 +10642,7 @@ MAX - https://bizvmax.ru/zifra_plus
     sourcesByEmployee.forEach((sources, name) => {
       const keys = new Set();
       const include = (type, id, source) => {
-        if (getEmployeePaymentStatusFilterValue(normalizeEmployeePaymentSourceRow(type, source)) === "payable") {
+        if (getEmployeePaymentStatusFilterValues(normalizeEmployeePaymentSourceRow(type, source)).includes("payable")) {
           keys.add(`${type}:${String(id || "").trim()}`);
         }
       };
@@ -22094,7 +22099,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <button class="ghost-button" data-action="clear-student-imported-view" type="button">Показать всех</button>
           </div>
         ` : ""}
-        ${state.view === "contracts" ? '<p class="employee-payment-formula-hint">Выплата — по строкам «К выплате», как в карточке по умолчанию. Остаток — по всему учёту выплат. Временные фильтры и выделение в карточке не меняют суммы этого списка.</p>' : ""}
+        ${state.view === "contracts" ? '<p class="employee-payment-formula-hint">Выплата — по строкам «К выплате», включая сформированные и отправленные акты до получения акта или оплаты. Остаток — по всему учёту выплат. Временные фильтры и выделение в карточке не меняют суммы этого списка.</p>' : ""}
         ${renderBulkToolbar(config, rows, state.view)}
         ${renderTable(config, rows, state.view)}
       </section>
@@ -34304,9 +34309,16 @@ MAX - https://bizvmax.ru/zifra_plus
     return "awaitingRecommendation";
   }
 
+  function getEmployeePaymentStatusFilterValues(row = {}) {
+    const status = getEmployeePaymentStatusFilterValue(row);
+    // Act preparation/delivery is not settlement. Retain the exact status
+    // as well, so the dedicated act filters and row badges stay available.
+    return status === "actFormed" || status === "actSent" ? [status, "payable"] : [status];
+  }
+
   function employeePaymentRowMatchesFilters(row, filters = getEmployeePaymentFilters(), ignoredFilter = "") {
     if (ignoredFilter !== "source" && filters.source && row.sourceType !== filters.source) return false;
-    if (ignoredFilter !== "payment" && filters.payment && getEmployeePaymentStatusFilterValue(row) !== filters.payment) return false;
+    if (ignoredFilter !== "payment" && filters.payment && !getEmployeePaymentStatusFilterValues(row).includes(filters.payment)) return false;
     if (ignoredFilter !== "act" && filters.act && getEmployeePaymentActFilterValue(row) !== filters.act) return false;
     const commentTokens = normalizeEmployeePaymentFilterText(filters.comment).split(" ").filter(Boolean);
     const commentText = normalizeEmployeePaymentFilterText(getEmployeePaymentDisplayComment(row.comment, row.details));
@@ -34357,7 +34369,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const collect = (filterKey, valueForRow) => new Set(
       rows
         .filter((row) => employeePaymentRowMatchesFilters(row, filters, filterKey))
-        .map(valueForRow)
+        .flatMap(valueForRow)
         .map((value) => String(value || "").trim())
         .filter(Boolean)
     );
@@ -34365,7 +34377,7 @@ MAX - https://bizvmax.ru/zifra_plus
       source: collect("source", (row) => row.sourceType),
       description: collect("description", (row) => row.description),
       act: collect("act", getEmployeePaymentActFilterValue),
-      payment: collect("payment", getEmployeePaymentStatusFilterValue)
+      payment: collect("payment", getEmployeePaymentStatusFilterValues)
     };
   }
 
