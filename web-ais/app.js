@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.613",
+    version: "1.7.614",
     releasedAt: "2026-10-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.614",
+      releasedAt: "2026-10-26",
+      changes: ["В рекламе все вкладки, включая «Почтовые рассылки», свободно меняются местами. Убрано принудительное закрепление рассылок первой вкладкой. «Сборщик» расположен первым и открывается по умолчанию; сохранённый пользовательский порядок и общая синхронизация сохраняются."]
+    },
     {
       version: "1.7.613",
       releasedAt: "2026-10-26",
@@ -7862,7 +7867,7 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     },
     advertising: {
-      tab: "mailings",
+      tab: "collector",
       sourcePickerExpanded: false,
       loading: false,
       collectionStartedAt: 0,
@@ -14395,7 +14400,7 @@ MAX - https://bizvmax.ru/zifra_plus
     } else if (section.view === "statistics") {
       tab("statisticsTab", getAvailableStatisticsTabs().map((item) => item.id));
     } else if (section.view === "advertising") {
-      tab("advertisingTab", ["mailings", "collector", "exclusions", ...(isAdminUser() ? ["sources", "sites"] : [])]);
+      tab("advertisingTab", ["collector", "mailings", "exclusions", ...(isAdminUser() ? ["sources", "sites"] : [])]);
     } else if (section.view === "settings") {
       const dictionary = typeof value.selectedDictionary === "string" ? value.selectedDictionary : "";
       section.selectedDictionary = Object.hasOwn(dictionaryDefaults, dictionary)
@@ -18731,15 +18736,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const advertising = state.advertising;
     const busy = advertising.loading || advertising.resultLoading;
     const advertisingTabs = getOrderedTabs("advertising", [
-      { id: "mailings", label: "Почтовые рассылки" },
       { id: "collector", label: "Сборщик" },
+      { id: "mailings", label: "Почтовые рассылки" },
       ...(isAdminUser() ? [{ id: "sources", label: "Источники" }] : []),
       ...(isAdminUser() ? [{ id: "sites", label: "Сайты" }] : []),
       { id: "exclusions", label: "Исключения" }
-    ]).sort((a, b) => Number(b.id === "mailings") - Number(a.id === "mailings"));
+    ]);
     const advertisingTab = advertisingTabs.some((tab) => tab.id === advertising.tab)
       ? advertising.tab
-      : "mailings";
+      : "collector";
     advertising.tab = advertisingTab;
     const transferredToAdvertising = isAdvertisingCurrentRunTransferred();
     const summary = getAdvertisingEffectiveNewSummary(

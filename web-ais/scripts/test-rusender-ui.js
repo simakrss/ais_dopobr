@@ -57,7 +57,7 @@ vm.runInContext(helpers + "\n" + block + "\nthis.api={rusenderUi,renderRusender,
   assert.equal(ui.busy, false); assert.equal(ui.error, "Сеть недоступна");
   assert.match(api.renderRusender(), /Сеть недоступна/);
   assert.match(source, /rusenderUi\.busy \|\| rusenderUi\.form \|\| rusenderUi\.preview/);
-  assert.match(source, /sort\(\(a, b\) => Number\(b.id === "mailings"\) - Number\(a.id === "mailings"\)\)/);
+  assert.doesNotMatch(source, /sort\(\(a, b\) => Number\(b.id === "mailings"\) - Number\(a.id === "mailings"\)\)/);
   // Execute the actual handler with the CGI response surface (no setHeader).
   const server = fs.readFileSync(path.join(__dirname, "../app-server.js"), "utf8");
   const start = server.indexOf('  if (requestUrl.pathname === "/api/advertising/rusender"');
@@ -72,7 +72,7 @@ vm.runInContext(helpers + "\n" + block + "\nthis.api={rusenderUi,renderRusender,
   routeContext.authUser.role = "admin"; routeContext.readJsonBody = async () => ({ templateIds: [100] });
   routeContext.rusenderService.templateContext = async body => ({ ok: true, checked: body.templateIds.length });
   await vm.runInContext(`(async()=>{${handler}})()`, routeContext); assert.equal(routeContext.res.status, 200);
-  console.log("PASS Rusender UI: real render helpers, escaping, CTR denominator, missing-program filter, explicit recipients, Moscow time, LAN UUID, error cleanup, updater readiness, first tab and CGI/role guards.");
+  console.log("PASS Rusender UI: real render helpers, escaping, CTR denominator, missing-program filter, explicit recipients, Moscow time, LAN UUID, error cleanup, updater readiness, movable mailings tab and CGI/role guards.");
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 
 if (process.argv.includes("--preview")) {
