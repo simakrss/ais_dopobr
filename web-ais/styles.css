@@ -9418,39 +9418,6 @@ body.long-press-dragging * {
   display: none;
 }
 
-.sql-mini-ide-keyword-tooltip {
-  position: absolute;
-  z-index: 140;
-  width: max-content;
-  transform: translate(-50%, -100%);
-  border: 1px solid #23463f;
-  border-radius: 6px;
-  background: #173d36;
-  padding: 6px 8px;
-  color: #fff;
-  box-shadow: 0 8px 22px rgba(23, 61, 54, 0.24);
-  font-family: var(--font-family, inherit);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.35;
-  white-space: normal;
-  pointer-events: none;
-}
-
-.sql-mini-ide-keyword-tooltip::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: #173d36;
-}
-
-.sql-mini-ide-keyword-tooltip[hidden] {
-  display: none;
-}
-
 .sql-mini-ide-suggestion {
   display: grid;
   grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
@@ -12871,9 +12838,17 @@ body.card-window-moving {
 
 .system-help-tooltip {
   position: fixed;
-  z-index: 12000;
+  /* Fallback for browsers without Popover API. Modern browsers use top layer. */
+  z-index: 2147483647;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
   width: max-content;
   max-width: min(420px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
   padding: 9px 11px;
   border: 1px solid #b9d4cc;
   border-radius: 7px;
@@ -12884,6 +12859,15 @@ body.card-window-moving {
   line-height: 1.4;
   pointer-events: none;
   animation: system-help-tooltip-in 0.18s ease-out both;
+}
+
+.system-help-tooltip.is-scrollable {
+  pointer-events: auto;
+}
+
+.system-help-tooltip::backdrop {
+  background: transparent;
+  pointer-events: none;
 }
 
 @keyframes system-help-tooltip-in {

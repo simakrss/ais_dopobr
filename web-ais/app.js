@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.612",
+    version: "1.7.613",
     releasedAt: "2026-10-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.613",
+      releasedAt: "2026-10-26",
+      changes: ["Все всплывающие примечания и подсказки, включая SQL-редактор, используют общий верхний слой: не перекрываются вкладками и диалогами и не обрезаются окнами. Размещение учитывает края экрана; длинные подсказки можно прокручивать. Подсказки закрываются при Escape, прокрутке окна и удалении исходного поля."]
+    },
     {
       version: "1.7.612",
       releasedAt: "2026-10-26",
@@ -8017,6 +8022,8 @@ MAX - https://bizvmax.ru/zifra_plus
   let systemHelpTouchHideTimer = 0;
   let systemHelpTwoFingerGesture = null;
   let systemHelpTouchActionSuppression = null;
+  let systemHelpTooltipHideTimer = 0;
+  let systemHelpActiveTarget = null;
   let employeePaymentPersistTimer = 0;
   const pendingEmployeePaymentActChanges = new WeakMap();
   let studentApplicationsSearchTimer = 0;
@@ -30605,7 +30612,6 @@ MAX - https://bizvmax.ru/zifra_plus
             >${renderAdminSqlQuerySyntax(query)}</div>
           </div>
           <div class="sql-mini-ide-suggestions" data-sql-suggestions role="listbox" aria-label="Подсказки SQL" hidden></div>
-          <div class="sql-mini-ide-keyword-tooltip" data-sql-keyword-tooltip role="tooltip" hidden></div>
         </div>
         <div class="sql-mini-ide-footer">
           <span class="sql-mini-ide-diagnostic" data-sql-diagnostic role="status" aria-live="polite"></span>
@@ -45086,20 +45092,30 @@ MAX - https://bizvmax.ru/zifra_plus
     return purpose ? { purpose, details } : null;
   }
 
-  function getSystemHelpTooltipElement() {
+  function getSystemHelpTooltipElement(target = null) {
     let tooltip = document.querySelector("[data-system-help-tooltip]");
-    if (tooltip) return tooltip;
+    // A modal dialog makes its siblings inert. Keep the tooltip in that dialog
+    // for accessibility; the browser top layer still escapes its clipping.
+    const host = target?.closest?.("dialog[open]") || document.fullscreenElement || document.body;
+    if (tooltip) {
+      if (tooltip.parentElement !== host) {
+        if (tooltip.hasAttribute("popover") && tooltip.matches(":popover-open")) tooltip.hidePopover();
+        host.appendChild(tooltip);
+      }
+      return tooltip;
+    }
     tooltip = document.createElement("div");
     tooltip.className = "system-help-tooltip";
     tooltip.dataset.systemHelpTooltip = "true";
     tooltip.id = "system-help-tooltip";
     tooltip.setAttribute("role", "tooltip");
+    if (typeof tooltip.showPopover === "function") tooltip.setAttribute("popover", "manual");
     tooltip.hidden = true;
     tooltip.innerHTML = `
       <strong class="system-help-tooltip-purpose" data-system-help-purpose></strong>
       <span class="system-help-tooltip-details" data-system-help-details></span>
     `;
-    document.body.appendChild(tooltip);
+    host.appendChild(tooltip);
     return tooltip;
   }
 
@@ -45180,11 +45196,12 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getSystemHelpTarget(node) {
     if (!(node instanceof Element)) return null;
+    if (node.closest("[data-system-help-tooltip]")) return null;
     const tableHeader = getTableHeaderTooltipTarget(node);
     if (tableHeader) return tableHeader;
     const tableCell = getTableCellTooltipTarget(node);
     if (tableCell) return tableCell;
-    return node.closest("[data-mobile-field-help-source], [title], [data-system-help-source], [data-tooltip]");
+    return node.closest("[data-mobile-field-help-source], [title], [data-system-help-source], [data-tooltip], [data-sql-keyword-help]");
   }
 
   function prepareSystemHelpTooltipTarget(target) {
@@ -45199,6 +45216,7 @@ MAX - https://bizvmax.ru/zifra_plus
       || target.dataset.mobileFieldHelpSource
       || target.dataset.systemHelpSource
       || target.dataset.tooltip
+      || target.dataset.sqlKeywordHelp
     );
   }
 
@@ -45240,6 +45258,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function scheduleSystemHelpTooltip(target) {
     const content = prepareSystemHelpTooltipTarget(target);
     if (!content) return;
+    window.clearTimeout(systemHelpTooltipHideTimer);
     cancelPendingSystemHelpTooltip();
     const delay = getSystemHelpTooltipDelay(target);
     if (!delay) {
@@ -45256,24 +45275,35 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function positionSystemHelpTooltip(tooltip, target) {
     const margin = 10;
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportWidth = viewport?.width || window.innerWidth;
+    const viewportHeight = viewport?.height || window.innerHeight;
+    tooltip.style.maxWidth = `${Math.max(1, Math.min(420, viewportWidth - 2 * margin))}px`;
+    tooltip.style.maxHeight = `${Math.max(1, viewportHeight - 2 * margin)}px`;
     const targetRect = target.getBoundingClientRect();
-    const tooltipRect = tooltip.getBoundingClientRect();
+    // offset sizes are unaffected by the entrance animation's transform.
+    const tooltipWidth = tooltip.offsetWidth;
+    const tooltipHeight = tooltip.offsetHeight;
     const left = Math.max(
-      margin,
+      viewportLeft + margin,
       Math.min(
-        window.innerWidth - tooltipRect.width - margin,
-        targetRect.left + targetRect.width / 2 - tooltipRect.width / 2
+        viewportLeft + viewportWidth - tooltipWidth - margin,
+        targetRect.left + targetRect.width / 2 - tooltipWidth / 2
       )
     );
     let top = targetRect.bottom + 8;
-    if (top + tooltipRect.height > window.innerHeight - margin) {
-      top = Math.max(margin, targetRect.top - tooltipRect.height - 8);
+    if (top + tooltipHeight > viewportTop + viewportHeight - margin) {
+      top = targetRect.top - tooltipHeight - 8;
       tooltip.classList.add("is-above");
     } else {
       tooltip.classList.remove("is-above");
     }
+    top = Math.max(viewportTop + margin, Math.min(top, viewportTop + viewportHeight - tooltipHeight - margin));
     tooltip.style.left = `${Math.round(left)}px`;
     tooltip.style.top = `${Math.round(top)}px`;
+    tooltip.classList.toggle("is-scrollable", tooltip.scrollHeight > tooltip.clientHeight + 1);
   }
 
   function removeSystemHelpDescription(target) {
@@ -45286,15 +45316,24 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function showSystemHelpTooltip(target) {
-    if (!(target instanceof Element)) return;
+    if (!(target instanceof Element) || !target.isConnected) return;
+    if (!target.getClientRects().length) { hideSystemHelpTooltip(); return; }
     const content = prepareSystemHelpTooltipTarget(target);
     if (!content) return;
-    const tooltip = getSystemHelpTooltipElement();
+    cancelPendingSystemHelpTooltip();
+    window.clearTimeout(systemHelpTooltipHideTimer);
+    const tooltip = getSystemHelpTooltipElement(target);
     tooltip.querySelector("[data-system-help-purpose]").textContent = content.purpose;
     const details = tooltip.querySelector("[data-system-help-details]");
     details.textContent = content.details;
     details.hidden = !content.details;
     tooltip.hidden = false;
+    tooltip.scrollTop = 0;
+    if (tooltip.hasAttribute("popover")) {
+      // Reopen to be above even a newly opened modal/top-layer window.
+      if (tooltip.matches(":popover-open")) tooltip.hidePopover();
+      tooltip.showPopover();
+    }
     const describedBy = String(target.getAttribute("aria-describedby") || "")
       .split(/\s+/)
       .filter(Boolean);
@@ -45307,20 +45346,26 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     });
     target.dataset.systemHelpActive = "true";
+    systemHelpActiveTarget = target;
     positionSystemHelpTooltip(tooltip, target);
   }
 
   function hideSystemHelpTooltip(target = null) {
     cancelPendingSystemHelpTooltip();
+    window.clearTimeout(systemHelpTooltipHideTimer);
     if (systemHelpTouchHideTimer) window.clearTimeout(systemHelpTouchHideTimer);
     systemHelpTouchHideTimer = 0;
     const tooltip = document.querySelector("[data-system-help-tooltip]");
-    if (tooltip) tooltip.hidden = true;
+    if (tooltip) {
+      if (tooltip.hasAttribute("popover") && tooltip.matches(":popover-open")) tooltip.hidePopover();
+      tooltip.hidden = true;
+    }
     const active = target?.matches?.("[data-system-help-active]")
       ? target
-      : document.querySelector("[data-system-help-active]");
+      : systemHelpActiveTarget || document.querySelector("[data-system-help-active]");
     active?.removeAttribute("data-system-help-active");
     removeSystemHelpDescription(active);
+    systemHelpActiveTarget = null;
   }
 
   function showSystemHelpTooltipTemporarily(target) {
@@ -45426,14 +45471,26 @@ MAX - https://bizvmax.ru/zifra_plus
     if (systemHelpTooltipBound) return;
     systemHelpTooltipBound = true;
     document.addEventListener("pointerover", (event) => {
+      if (event.target.closest?.("[data-system-help-tooltip]")) {
+        window.clearTimeout(systemHelpTooltipHideTimer);
+        return;
+      }
       const target = getSystemHelpTarget(event.target);
       if (!target || target.contains(event.relatedTarget)) return;
       scheduleSystemHelpTooltip(target);
     });
     document.addEventListener("pointerout", (event) => {
+      const overTooltip = event.relatedTarget instanceof Element && event.relatedTarget.closest("[data-system-help-tooltip]");
+      if (overTooltip) return;
+      if (event.target.closest?.("[data-system-help-tooltip]")) {
+        if (systemHelpActiveTarget?.contains(event.relatedTarget)) return;
+        systemHelpTooltipHideTimer = window.setTimeout(() => hideSystemHelpTooltip(), 160);
+        return;
+      }
       const target = getSystemHelpTarget(event.target);
       if (!target || target.contains(event.relatedTarget)) return;
-      hideSystemHelpTooltip(target);
+      // Allow moving over the small gap into a long, scrollable note.
+      systemHelpTooltipHideTimer = window.setTimeout(() => hideSystemHelpTooltip(target), 160);
     });
     document.addEventListener("focusin", (event) => {
       const target = getSystemHelpTarget(event.target);
@@ -45465,10 +45522,23 @@ MAX - https://bizvmax.ru/zifra_plus
     document.addEventListener("touchcancel", () => { systemHelpTwoFingerGesture = null; }, { capture: true, passive: true });
     document.addEventListener("click", suppressTwoFingerSystemHelpAction, { capture: true });
     document.addEventListener("contextmenu", suppressTwoFingerSystemHelpAction, { capture: true });
-    document.addEventListener("pointerdown", () => hideSystemHelpTooltip(), { capture: true });
+    document.addEventListener("pointerdown", (event) => {
+      if (!event.target.closest?.("[data-system-help-tooltip]")) hideSystemHelpTooltip();
+    }, { capture: true });
     document.addEventListener("contextmenu", () => hideSystemHelpTooltip(), { capture: true });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideSystemHelpTooltip(); }, { capture: true });
+    document.addEventListener("close", (event) => {
+      if (event.target.contains?.(systemHelpActiveTarget) || event.target.contains?.(pendingSystemHelpTooltipTarget)) hideSystemHelpTooltip();
+    }, { capture: true });
     window.addEventListener("resize", () => hideSystemHelpTooltip());
-    window.addEventListener("scroll", () => hideSystemHelpTooltip(), { capture: true });
+    window.addEventListener("scroll", (event) => {
+      if (!event.target.closest?.("[data-system-help-tooltip]")) hideSystemHelpTooltip();
+    }, { capture: true });
+    window.visualViewport?.addEventListener("resize", () => hideSystemHelpTooltip());
+    window.visualViewport?.addEventListener("scroll", () => hideSystemHelpTooltip());
+    new MutationObserver(() => {
+      if (systemHelpActiveTarget && !systemHelpActiveTarget.isConnected) hideSystemHelpTooltip();
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   function isTableValueFilterHoverSupported(event = null) {
@@ -67321,35 +67391,18 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function hideSqlMiniIdeKeywordTooltip(editor) {
-    const tooltip = editor?.closest?.("[data-sql-mini-ide]")?.querySelector("[data-sql-keyword-tooltip]");
-    if (!tooltip) return;
-    tooltip.hidden = true;
-    tooltip.textContent = "";
-    tooltip.style.left = "";
-    tooltip.style.top = "";
-    tooltip.style.maxWidth = "";
+    if (editor?.contains(systemHelpActiveTarget)) hideSystemHelpTooltip();
   }
 
   function showSqlMiniIdeKeywordTooltip(editor, token) {
     const keyword = String(token?.textContent || "").trim().toUpperCase();
     const help = String(ADMIN_SQL_KEYWORD_HELP[keyword] || "").trim();
-    const shell = editor?.closest?.(".sql-mini-ide-editor-shell");
-    const tooltip = shell?.querySelector("[data-sql-keyword-tooltip]");
-    if (!help || !shell || !tooltip) {
+    if (!help || !editor?.contains(token)) {
       hideSqlMiniIdeKeywordTooltip(editor);
       return;
     }
-    tooltip.textContent = help;
-    tooltip.hidden = false;
-    const shellRect = shell.getBoundingClientRect();
-    const tokenRect = token.getBoundingClientRect();
-    const maxWidth = Math.max(180, Math.min(360, shellRect.width - 16));
-    tooltip.style.maxWidth = `${maxWidth}px`;
-    const tooltipWidth = Math.min(maxWidth, tooltip.offsetWidth || maxWidth);
-    const preferredLeft = tokenRect.left - shellRect.left + tokenRect.width / 2;
-    const left = Math.max(8 + tooltipWidth / 2, Math.min(shellRect.width - 8 - tooltipWidth / 2, preferredLeft));
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${tokenRect.top - shellRect.top - 7}px`;
+    token.dataset.sqlKeywordHelp = help;
+    showSystemHelpTooltip(token);
   }
 
   function createSqlMiniIdeTextRange(editor, startOffset, endOffset) {

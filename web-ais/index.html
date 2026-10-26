@@ -13,8 +13,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="АИС">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="stylesheet" href="styles.css?v=20261026-field-notes-overlay">
-  <script src="pwa-client.js?v=20261026-field-notes-overlay" defer></script>
+  <link rel="stylesheet" href="styles.css?v=20261026-all-tooltips-overlay">
+  <script src="pwa-client.js?v=20261026-all-tooltips-overlay" defer></script>
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -26,10 +26,10 @@
       </main>
       <noscript>Для работы системы нужен включенный JavaScript.</noscript>
     </div>
-  <script src="local-update-client.js?v=20261026-field-notes-overlay" defer></script>
+  <script src="local-update-client.js?v=20261026-all-tooltips-overlay" defer></script>
   <script>
     (() => {
-      const build = "20261026-field-notes-overlay";
+      const build = "20261026-all-tooltips-overlay";
       const message = document.querySelector("[data-startup-message]");
       const fail = (error) => {
         if (!message?.isConnected) return;

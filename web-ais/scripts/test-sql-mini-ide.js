@@ -209,7 +209,8 @@ assert.match(appSource, /ADMIN_SQL_SUGGESTIONS/u);
 assert.match(appSource, /showSqlMiniIdeSuggestions\(editor, true\)/u);
 assert.doesNotMatch(appSource, /data-sql-open-suggestions/u);
 assert.match(appSource, /data-sql-keyword-help/u);
-assert.match(appSource, /data-sql-keyword-tooltip/u);
+assert.doesNotMatch(appSource, /data-sql-keyword-tooltip/u);
+assert.match(sliceSource("function showSqlMiniIdeKeywordTooltip(", "function createSqlMiniIdeTextRange("), /showSystemHelpTooltip\(token\)/u);
 assert.match(appSource, /function updateSqlMiniIdeBracketHighlight\(/u);
 assert.doesNotMatch(
   appSource,
@@ -251,7 +252,7 @@ assert.match(sqlEditorStyle, /overflow-x:\s*hidden;/u);
 assert.match(sqlEditorStyle, /overflow-wrap:\s*anywhere;/u);
 assert.match(sqlEditorStyle, /white-space:\s*pre-wrap;/u);
 assert.match(sqlEditorStyle, /cursor:\s*text;/u);
-assert.match(stylesSource, /\.sql-mini-ide-keyword-tooltip/u);
+assert.doesNotMatch(stylesSource, /\.sql-mini-ide-keyword-tooltip/u);
 assert.match(stylesSource, /\.sql-mini-ide-editor-frame/u);
 assert.match(stylesSource, /\.sql-mini-ide-line-numbers/u);
 assert.match(stylesSource, /\.sql-mini-ide-format-button/u);
