@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.611",
-    releasedAt: "2026-10-13"
+    version: "1.7.612",
+    releasedAt: "2026-10-26"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.612",
+      releasedAt: "2026-10-26",
+      changes: ["Примечание к итоговой оценке отображается в общем слое подсказок поверх вкладок и не обрезается областью прокрутки карточки. Убрана дублирующая локальная подсказка; сохранены показ при наведении, фокусе и мобильные жесты."]
+    },
     {
       version: "1.7.611",
       releasedAt: "2026-10-13",
