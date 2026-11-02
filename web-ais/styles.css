@@ -5164,6 +5164,16 @@ tr.is-table-value-filtered-out {
   font-weight: 650;
 }
 
+.data-table tr.is-duplicated-expense > td,
+.editable-grid-row.is-duplicated-expense {
+  background: #e0f3ee;
+}
+
+.data-table tr.is-duplicated-expense > td:first-child,
+.editable-grid-row.is-duplicated-expense {
+  box-shadow: inset 4px 0 0 #0f766e;
+}
+
 .data-table tr.contract-accounting-pending td {
   background: #fff7c7;
   box-shadow: inset 0 1px 0 rgba(202, 138, 4, 0.12), inset 0 -1px 0 rgba(202, 138, 4, 0.12);

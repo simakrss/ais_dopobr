@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.615",
+    version: "1.7.616",
     releasedAt: "2026-11-02"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.616",
+      releasedAt: "2026-11-02",
+      changes: ["После дублирования расхода новая строка выделяется и показывается для редактирования даже вне текущего фильтра. Фильтры сохраняются; временный показ копии завершается при изменении фильтра."]
+    },
     {
       version: "1.7.615",
       releasedAt: "2026-11-02",
@@ -25382,6 +25387,15 @@ MAX - https://bizvmax.ru/zifra_plus
         return textComparison * dir;
       });
     }
+    if (isGeneralExpenseTable) {
+      const duplicateIds = new Set(getGeneralExpenseDuplicateIds());
+      if (duplicateIds.size) {
+        filtered = [
+          ...rows.filter((row) => duplicateIds.has(row.id)),
+          ...filtered.filter((row) => !duplicateIds.has(row.id))
+        ];
+      }
+    }
     return filtered;
   }
 
@@ -25749,6 +25763,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const fields = getTableFields(config, configId);
     const selected = getSelected(configId);
     const lastEdited = state.lastEditedRow || {};
+    const duplicateIds = new Set(configId === "generalExpenses" ? getGeneralExpenseDuplicateIds() : []);
     const valueFilterChips = renderTableValueFilterChips(configId);
     if (!rows.length) {
       return `
@@ -25819,6 +25834,7 @@ MAX - https://bizvmax.ru/zifra_plus
               const accountingPending = configId === "contracts" && !isChecked(row.accountingRecorded);
               const trainingDeadlinePassed = configId === "students" && isStudentTrainingDeadlinePassed(row);
               const rowClasses = [
+                duplicateIds.has(row.id) ? "is-duplicated-expense" : "",
                 lastEdited.config === configId && String(lastEdited.id || "") === String(row.id || "") ? "is-last-edited" : "",
                 lockedByOther ? "is-record-locked" : "",
                 lockedByCurrentSession ? "is-record-locked-by-current" : "",
@@ -34628,6 +34644,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderEmployeePaymentAccountingRow(row, columns, filters, sort) {
+    const duplicate = getEmployeePaymentDuplicateKey() === `${row.sourceType}:${row.sourceId}`;
     const editable = Boolean(row.sourceId);
     const isExpenseSource = row.sourceType === "direct" || row.sourceType === "general";
     const amountReadOnly = Boolean(row.automaticAmount);
@@ -34636,7 +34653,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const displayComment = getEmployeePaymentDisplayComment(row.comment, row.details);
     const actCheckboxState = getEmployeePaymentActCheckboxState(row);
     return `
-      <tr data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
+      <tr class="${duplicate ? "is-duplicated-expense" : ""}" data-employee-payment-row data-payment-source="${escapeAttr(row.sourceType)}" data-payment-source-id="${escapeAttr(row.sourceId)}" data-payment-order="${escapeAttr(row.order)}" data-payment-details="${escapeAttr(row.details)}" data-payment-deletable="${deletable ? "true" : "false"}" ${duplicate || employeePaymentRowMatchesFilters(row, filters) ? "" : "hidden"}>
         ${columns.map((column) => renderEmployeePaymentTableCell(column, row, {
           editable, isExpenseSource, amountReadOnly, sourceLabel, displayComment, actCheckboxState,
           filtersActive: employeePaymentFiltersAreActive(filters), sort
@@ -34681,7 +34698,9 @@ MAX - https://bizvmax.ru/zifra_plus
     const rows = sortEmployeePaymentRows([...directRows, ...generalRows, ...partnerRows], sort);
     const filters = getEmployeePaymentFilters();
     const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
-    const visibleRowCount = rows.filter((row) => employeePaymentRowMatchesFilters(row, filters)).length;
+    const duplicateKey = getEmployeePaymentDuplicateKey();
+    const visibleRowCount = rows.filter((row) => duplicateKey === `${row.sourceType}:${row.sourceId}`
+      || employeePaymentRowMatchesFilters(row, filters)).length;
     const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
     return `
       <section class="form-section contract-card-section employee-payment-accounting-section" data-employee-payment-accounting>
@@ -35108,12 +35127,15 @@ MAX - https://bizvmax.ru/zifra_plus
     const filters = getEmployeePaymentFilters();
     const active = employeePaymentFiltersAreActive(filters);
     const sortActive = Boolean(getEmployeePaymentSort().key);
+    const duplicateKey = getEmployeePaymentDuplicateKey();
     const rows = [...section.querySelectorAll("[data-employee-payment-row]")];
     const rowModels = rows.map((row) => ({ row, model: getEmployeePaymentDomRowFilterModel(row) }));
     refreshEmployeePaymentFilterOptions(section, rowModels.map(({ model }) => model), filters);
     let visibleCount = 0;
     rowModels.forEach(({ row, model }) => {
-      const visible = employeePaymentRowMatchesFilters(model, filters);
+      const duplicate = duplicateKey === `${row.dataset.paymentSource}:${row.dataset.paymentSourceId}`;
+      const visible = duplicate || employeePaymentRowMatchesFilters(model, filters);
+      row.classList.toggle("is-duplicated-expense", duplicate);
       row.hidden = !visible;
       if (visible) visibleCount += 1;
       const handle = row.querySelector(".employee-payment-row-drag-handle");
@@ -42524,7 +42546,7 @@ MAX - https://bizvmax.ru/zifra_plus
             const type = expense.type || "";
             const editLabel = `Редактировать расход ${rowNumber}: ${type || "вид не указан"}, ${money(expense.amount || 0)}`;
             return `
-              <div class="editable-grid-row expense-grid-row" data-student-finance-row data-finance-row-key="direct-${index}">
+              <div class="editable-grid-row expense-grid-row ${state.modal?.duplicatedExpenseId && state.modal.duplicatedExpenseId === expense.id ? "is-duplicated-expense" : ""}" data-student-finance-row data-finance-row-key="direct-${index}">
                 <div class="editable-grid-cell row-number-cell finance-row-number-cell" data-label="№">
                   ${renderFinanceRowDragHandle(`Перетащить расход ${rowNumber}`)}
                   <strong class="editable-grid-row-number" data-finance-row-number>${rowNumber}</strong>
@@ -42889,6 +42911,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...draft,
       directExpenses: [...directExpenses, duplicate]
     };
+    state.modal.duplicatedExpenseId = duplicate.id;
     state.modal.hasDraftChanges = true;
     render();
     requestAnimationFrame(() => {
@@ -50121,9 +50144,20 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     if (renderAfter && focus.sourceId && focus.field) {
       requestAnimationFrame(() => {
-        document.querySelector(
+        const input = document.querySelector(
           `[data-employee-payment-row][data-payment-source-id="${CSS.escape(focus.sourceId)}"] [data-employee-payment-field="${CSS.escape(focus.field)}"]`
-        )?.focus({ preventScroll: true });
+        );
+        if (focus.revealDuplicate && input) {
+          const row = input.closest("[data-employee-payment-row]");
+          const section = row?.closest("[data-employee-payment-accounting]");
+          section?.querySelectorAll("[data-action='select-employee-payment-row']").forEach((selector) => {
+            selector.checked = selector.closest("[data-employee-payment-row]") === row;
+          });
+          syncEmployeePaymentSelectionUi(section, true);
+          input.scrollIntoView({ block: "nearest", inline: "nearest" });
+          input.select?.();
+        }
+        input?.focus({ preventScroll: true });
       });
     }
   }
@@ -50531,9 +50565,15 @@ MAX - https://bizvmax.ru/zifra_plus
         source: "employee-payment-accounting"
       }
     );
-    commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, sourceType, afterRow: row, field: "amount" }, true);
+    if (state.modal) state.modal.employeePaymentDuplicate = {
+      key: `${sourceType}:${nextId}`,
+      filters: JSON.stringify(getEmployeePaymentFilters())
+    };
+    commitEmployeePaymentAccountingChange(draft, {
+      sourceId: nextId, sourceType, afterRow: row, field: "amount", revealDuplicate: true
+    }, true);
     showDocumentGenerationNotice(
-      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода и оплаты: ${formatContractDate(duplicate.date)}.`
+      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода и оплаты: ${formatContractDate(duplicate.date)}. Новая строка показана независимо от фильтра до его изменения.`
     );
   }
 
@@ -61825,6 +61865,33 @@ MAX - https://bizvmax.ru/zifra_plus
     render();
   }
 
+  function getEmployeePaymentDuplicateKey() {
+    const duplicate = state.modal?.employeePaymentDuplicate;
+    if (!duplicate) return "";
+    if (duplicate.filters !== JSON.stringify(getEmployeePaymentFilters())) {
+      delete state.modal.employeePaymentDuplicate;
+      return "";
+    }
+    return duplicate.key;
+  }
+
+  function getGeneralExpenseDuplicateFilterSignature() {
+    return JSON.stringify([
+      state.search, state.statusFilter, state.generalExpenseSectionFilter,
+      state.generalExpenseWorkTypeFilter, state.tableValueFilters?.generalExpenses
+    ]);
+  }
+
+  function getGeneralExpenseDuplicateIds() {
+    const duplicate = state.generalExpenseDuplicate;
+    if (!duplicate) return [];
+    if (duplicate.filters !== getGeneralExpenseDuplicateFilterSignature()) {
+      state.generalExpenseDuplicate = null;
+      return [];
+    }
+    return duplicate.ids;
+  }
+
   function createGeneralExpenseDuplicate(source, currentDate = todayIso()) {
     const duplicate = clone(source);
     [
@@ -61862,6 +61929,10 @@ MAX - https://bizvmax.ru/zifra_plus
       ...(state.data.collections.generalExpenses || [])
     ];
     state.selected.generalExpenses = copies.map((record) => record.id);
+    state.generalExpenseDuplicate = {
+      ids: copies.map((record) => record.id),
+      filters: getGeneralExpenseDuplicateFilterSignature()
+    };
     state.lastEditedRow = {
       config: "generalExpenses",
       id: copies[copies.length - 1]?.id || ""
@@ -61873,8 +61944,15 @@ MAX - https://bizvmax.ru/zifra_plus
     });
     persist();
     render();
+    requestAnimationFrame(() => {
+      const button = document.querySelector(
+        `[data-action="edit"][data-config="generalExpenses"][data-id="${CSS.escape(copies[0].id)}"]`
+      );
+      button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      button?.focus({ preventScroll: true });
+    });
     showDocumentGenerationNotice(
-      `Продублировано общих расходов: ${copies.length}. Дата расхода и оплаты — сегодня. Номер «личная карта» сохраняется.`
+      `Продублировано общих расходов: ${copies.length}. Дата расхода и оплаты — сегодня. Номер «личная карта» сохраняется. Новые строки показаны в начале списка независимо от фильтра до его изменения.`
     );
   }
 

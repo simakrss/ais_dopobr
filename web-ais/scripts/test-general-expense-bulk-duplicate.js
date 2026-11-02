@@ -61,6 +61,9 @@ const state = {
 };
 const context = {
   state,
+  requestAnimationFrame: (fn) => fn(),
+  document: { querySelector: () => null },
+  CSS: { escape: String },
   configs: { generalExpenses: { title: "Общие затраты" } },
   todayIso: () => "2026-09-10",
   clone: (value) => JSON.parse(JSON.stringify(value)),
@@ -92,7 +95,7 @@ vm.createContext(context);
 vm.runInContext(
   extractBetween(
     appSource,
-    "  function createGeneralExpenseDuplicate",
+    "  function getGeneralExpenseDuplicateFilterSignature",
     "\n  const studentBulkDocumentOperations"
   ) + "\nthis.runDuplicate = bulkDuplicateGeneralExpenses;",
   context
