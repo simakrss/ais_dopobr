@@ -151,7 +151,7 @@ Object.assign(c, {
   setEmployeePaymentSourceOrder: (_type, expense, order) => { expense.employeePaymentOrder = order; return true; },
   getEmployeePaymentSourceValues: (_type, expense) => ({ description: expense.type || "Услуга" }),
   normalizeGeneralExpenseRecord: (expense) => expense,
-  createGeneralExpenseDuplicate: (expense) => ({ ...expense, id: `duplicate-${++ids}`, date: "2026-10-12", paid: "", act: "", actStatus: "" }),
+  createGeneralExpenseDuplicate: (expense, currentDate) => ({ ...expense, id: `duplicate-${++ids}`, date: currentDate, paid: currentDate, act: "", actStatus: "" }),
   addEmployeePaymentAudit: () => {},
   buildAuditChanges: () => [],
   getEmployeePaymentEditorAuditRecord: (_type, expense) => expense,
@@ -178,7 +178,8 @@ const duplicate = collections.students[0].directExpenses[1];
 assert.equal(duplicate.id, "duplicate-1");
 assert.equal(duplicate.date, "2026-10-12");
 assert.equal(duplicate.amount, original.amount);
-for (const key of ["act", "actStatus", "paid", "isPaid"]) assert.equal(duplicate[key], "");
+assert.equal(duplicate.paid, "2026-10-12");
+for (const key of ["act", "actStatus", "isPaid"]) assert.equal(duplicate[key], "");
 assert.equal(original.actStatus, "Получен", "The source record is preserved");
 assert.equal(domRow.unsavedComment, "Не сохранённое поле");
 assert.equal(domSection.selectedCount, 2);
@@ -197,6 +198,7 @@ assert.equal(renderCount, 0);
 assert.equal(sortCalls, 1, "An active sort is reapplied after inserting the duplicate");
 assert.equal(insertedModels[1].sourceType, "general");
 assert.equal(collections.generalExpenses[1].id, "duplicate-2");
+assert.equal(collections.generalExpenses[1].paid, "2026-10-12");
 assert.equal(notices, 2);
 
 console.log(`Employee payment performance: OK; 20,000 students / 30 filter passes: ${baselineMs.toFixed(1)} ms full scan, ${optimizedMs.toFixed(1)} ms scoped snapshot. Duplicate inserts one row; unrelated partner calculations skipped.`);

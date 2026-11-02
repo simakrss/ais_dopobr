@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.614",
-    releasedAt: "2026-10-26"
+    version: "1.7.615",
+    releasedAt: "2026-11-02"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.615",
+      releasedAt: "2026-11-02",
+      changes: ["При дублировании общих и прямых расходов дата оплаты заполняется текущей датой: в общем списке, оплате сотрудника и расходах слушателя. Исходные записи и суммы не меняются."]
+    },
     {
       version: "1.7.614",
       releasedAt: "2026-10-26",
@@ -42872,11 +42877,13 @@ MAX - https://bizvmax.ru/zifra_plus
         : null);
     if (!source) return;
     const nextIndex = directExpenses.length;
+    const currentDate = todayIso();
     const duplicate = {
       ...source,
       id: makeId("direct-expense"),
       uid: draft.uid || source.uid || "",
-      date: todayIso()
+      date: currentDate,
+      paid: currentDate
     };
     state.modal.draft = {
       ...draft,
@@ -50463,14 +50470,15 @@ MAX - https://bizvmax.ru/zifra_plus
     }
     const tbody = row.closest("tbody");
     if (tbody && !getEmployeePaymentSort().key) syncEmployeePaymentOrderFromTable(tbody);
+    const currentDate = todayIso();
     const duplicate = {
-      ...(sourceType === "general" ? createGeneralExpenseDuplicate(source) : {
+      ...(sourceType === "general" ? createGeneralExpenseDuplicate(source, currentDate) : {
         ...source,
         id: makeId("direct-expense"),
-        date: todayIso(),
+        date: currentDate,
         act: "",
         actStatus: "",
-        paid: "",
+        paid: currentDate,
         isPaid: "",
         accountingClosed: ""
       }),
@@ -50525,7 +50533,7 @@ MAX - https://bizvmax.ru/zifra_plus
     );
     commitEmployeePaymentAccountingChange(draft, { sourceId: nextId, sourceType, afterRow: row, field: "amount" }, true);
     showDocumentGenerationNotice(
-      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Текущая дата: ${formatContractDate(duplicate.date)}.`
+      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода и оплаты: ${formatContractDate(duplicate.date)}.`
     );
   }
 
@@ -61833,7 +61841,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ...duplicate,
       id: makeId("general-expense"),
       date: currentDate,
-      paid: "",
+      paid: currentDate,
       isPaid: "",
       accountingClosed: "",
       bkExpenseNo: /^личная\s+карта$/iu.test(String(source.bkExpenseNo || "").trim()) ? source.bkExpenseNo : "",
@@ -61866,7 +61874,7 @@ MAX - https://bizvmax.ru/zifra_plus
     persist();
     render();
     showDocumentGenerationNotice(
-      `Продублировано общих расходов: ${copies.length}. Дата расхода — сегодня; поле «Оплачено» не заполняется. Номер «личная карта» сохраняется.`
+      `Продублировано общих расходов: ${copies.length}. Дата расхода и оплаты — сегодня. Номер «личная карта» сохраняется.`
     );
   }
 

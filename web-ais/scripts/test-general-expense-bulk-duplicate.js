@@ -138,8 +138,8 @@ assert.equal(copies[0].section, first.section);
 assert.equal(copies[0].workType, first.workType);
 assert.equal(copies[0].otherExpenses, first.otherExpenses);
 assert.equal(copies[0].date, "2026-09-10");
-assert.equal(copies[0].paid, "", "Старая дата оплаты не переносится в дубликат.");
-assert.equal(copies[1].paid, "", "Дата оплаты остаётся пустой и для ранее неоплаченного расхода.");
+assert.equal(copies[0].paid, "2026-09-10", "Старая дата оплаты заменяется текущей датой.");
+assert.equal(copies[1].paid, "2026-09-10", "Текущая дата оплаты проставляется и для ранее неоплаченного расхода.");
 assert.equal(copies[1].bkExpenseNo, "личная карта", "Личная карта сохраняется при массовом дублировании.");
 ["isPaid", "accountingClosed", "bkExpenseNo", "act", "actStatus"].forEach((field) => {
   assert.equal(copies[0][field], "", "Не очищено поле нового расхода: " + field);
@@ -171,9 +171,8 @@ assert.equal(state.lastEditedRow.id, "general-expense-copy-2");
 assert.match(confirmation, /Выбрано записей: 2/u);
 assert.equal(audit[0], "Продублированы общие расходы");
 assert.match(notice, /Продублировано общих расходов: 2/u);
-assert.match(notice, /Дата расхода — сегодня/u);
-assert.match(notice, /«Оплачено» не заполняется/u);
-assert.doesNotMatch(notice, /Дата расхода и оплаты — сегодня/u);
+assert.match(notice, /Дата расхода и оплаты — сегодня/u);
+assert.doesNotMatch(notice, /«Оплачено» не заполняется/u);
 assert.equal(persistCount, 1);
 assert.equal(renderCount, 1);
 assert.match(
@@ -186,7 +185,7 @@ for (const expenseNumber of ["личная карта", "Личная карта
   const source = { ...first, bkExpenseNo: expenseNumber };
   const duplicate = context.createGeneralExpenseDuplicate(source);
   assert.equal(duplicate.bkExpenseNo, expenseNumber, "Значение личной карты сохраняется без изменения.");
-  assert.equal(duplicate.paid, "");
+  assert.equal(duplicate.paid, "2026-09-10");
   assert.equal(source.paid, "2026-08-02");
   assert.equal(source.bkExpenseNo, expenseNumber);
 }
@@ -194,25 +193,25 @@ for (const expenseNumber of ["15", 15, "", null, undefined, "корпорати�
   const duplicate = context.createGeneralExpenseDuplicate({ ...first, bkExpenseNo: expenseNumber }, "2026-12-31");
   assert.equal(duplicate.bkExpenseNo, "", "Прочие номера не переносятся в новый расход.");
   assert.equal(duplicate.date, "2026-12-31");
-  assert.equal(duplicate.paid, "", "Дата оплаты не проставляется даже при явно переданной дате операции.");
+  assert.equal(duplicate.paid, "2026-12-31", "Дата оплаты совпадает с датой операции.");
 }
 
 const employeeHandler = extractBetween(appSource, "  function duplicateEmployeePaymentAccountingRow", "  function removeEmployeePaymentSourceRecord");
-const employeeDuplicateBlock = extractBetween(employeeHandler, "  const duplicate = {", "  let inserted = false;");
+const employeeDuplicateBlock = extractBetween(employeeHandler, "  const currentDate = todayIso();", "  let inserted = false;");
 const buildEmployeeDuplicate = vm.runInContext(`(function(source, sourceType) { ${employeeDuplicateBlock}; return duplicate; })`, context);
 const generalPaymentCopy = buildEmployeeDuplicate({ ...first, bkExpenseNo: "Личная карта" }, "general");
-assert.equal(generalPaymentCopy.paid, "", "Общая затрата из карточки сотрудника дублируется без даты оплаты.");
+assert.equal(generalPaymentCopy.paid, "2026-09-10", "Общая затрата из карточки сотрудника получает текущую дату оплаты.");
 assert.equal(generalPaymentCopy.bkExpenseNo, "Личная карта");
 assert.equal(generalPaymentCopy.employeePaymentOrder, 25);
 assert.equal(generalPaymentCopy.databaseSync, undefined);
 const directPaymentCopy = buildEmployeeDuplicate(first, "direct");
 assert.equal(directPaymentCopy.date, "2026-09-10");
-assert.equal(directPaymentCopy.paid, "", "Правило оплаты прямых расходов не изменяется.");
+assert.equal(directPaymentCopy.paid, "2026-09-10", "Прямая затрата из карточки сотрудника получает текущую дату оплаты.");
 assert.equal(directPaymentCopy.isPaid, "");
 assert.equal(directPaymentCopy.bkExpenseNo, "15");
 assert.equal(directPaymentCopy.employeePaymentOrder, 25);
 
-// Opening an unsaved duplicate must not reapply new-expense payment defaults.
+// Opening the duplicate preserves the date; manually clearing it remains possible.
 vm.runInContext(extractBetween(appSource, "  function ensureRecordUid(", "  function download("), context);
 context.normalizeGeneralExpenseSection = (value) => value || "Организации";
 for (const paid of [undefined, null, "", "2025-01-01"]) {
@@ -220,8 +219,46 @@ for (const paid of [undefined, null, "", "2025-01-01"]) {
   const duplicate = context.createGeneralExpenseDuplicate(original);
   const draft = context.ensureRecordUid({ collection: "generalExpenses" }, duplicate);
   assert.equal(draft.date, "2026-09-10");
-  assert.equal(draft.paid, "", "Открытие карточки дубликата не подставляет дату оплаты обратно.");
+  assert.equal(draft.paid, "2026-09-10", "Открытие карточки сохраняет дату оплаты дубликата.");
+  draft.paid = "";
+  assert.equal(context.ensureRecordUid({ collection: "generalExpenses" }, draft).paid, "", "Явно очищенная дата не подставляется повторно.");
   assert.equal(original.paid, paid);
+}
+
+// Read today on each operation, but only once for a duplicate (midnight-safe).
+for (const type of ["general", "direct"]) {
+  let calls = 0;
+  context.todayIso = () => (++calls === 1 ? "2027-01-01" : "2027-01-02");
+  const duplicate = buildEmployeeDuplicate(first, type);
+  assert.equal(duplicate.date, "2027-01-01");
+  assert.equal(duplicate.paid, duplicate.date);
+  assert.equal(calls, 1);
+  assert.equal(first.paid, "2026-08-02");
+}
+
+// Both legacy expense rows and direct expenses in a student's card.
+vm.runInContext(extractBetween(appSource, "  function duplicateStudentExpenseRow(", "  function addStudentExpenseRow("), context);
+context.requestAnimationFrame = callback => callback();
+context.document = { querySelector: () => null };
+context.expenseRowHasData = () => true;
+for (const direct of [false, true]) {
+  for (const paid of [undefined, "", "2025-01-01"]) {
+    const source = { id: "student-expense", amount: 400, paid, date: "2025-01-01", type: "Услуги", note: "Тест" };
+    const draft = { uid: "15", directExpenses: [source], expense1Amount: 400, expense1Type: "Услуги" };
+    const before = JSON.stringify(draft);
+    state.modal = { draft };
+    context.collectStudentFormDraft = () => draft;
+    let calls = 0;
+    context.todayIso = () => (++calls === 1 ? "2027-01-01" : "2027-01-02");
+    context.duplicateStudentExpenseRow(direct ? 0 : 1, direct);
+    const duplicate = state.modal.draft.directExpenses.at(-1);
+    assert.equal(duplicate.date, "2027-01-01");
+    assert.equal(duplicate.paid, duplicate.date);
+    assert.equal(duplicate.amount, 400);
+    assert.notEqual(duplicate.id, source.id);
+    assert.equal(calls, 1);
+    assert.equal(JSON.stringify(draft), before, "Дублирование не меняет исходную запись слушателя.");
+  }
 }
 
 console.log("General expense bulk duplicate checks: OK");
