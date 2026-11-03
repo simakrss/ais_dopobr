@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.617",
+    version: "1.7.618",
     releasedAt: "2026-11-03"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.618",
+      releasedAt: "2026-11-03",
+      changes: ["Пункт копирования контактных данных в таблицах слушателей и импорта переименован в «Копировать контакты»."]
+    },
     {
       version: "1.7.617",
       releasedAt: "2026-11-03",
@@ -25924,7 +25929,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <strong>Опции таблицы</strong>
             <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
           </div>
-          ${canCopyStudentContacts ? `<button class="ghost-button table-option-command" data-action="copy-selected-student-contacts" data-config="${configId}" type="button" title="Выделите строки галочками. Копируются ФИО, телефон, email, организация и должность в формате карточки слушателя." ${selectedContactCount ? "" : "disabled"}>Копировать контактные данные выбранных (${selectedContactCount})</button>` : ""}
+          ${canCopyStudentContacts ? `<button class="ghost-button table-option-command" data-action="copy-selected-student-contacts" data-config="${configId}" type="button" title="Выделите строки галочками. Копируются ФИО, телефон, email, организация и должность в формате карточки слушателя." ${selectedContactCount ? "" : "disabled"}>Копировать контакты</button>` : ""}
           ${configs[configId] ? `<button class="ghost-button table-option-command" data-action="export-csv" data-config="${configId}" type="button">Экспорт CSV</button>` : ""}
           ${isStudentApplicationsImport ? "" : `<button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>`}
           <button class="ghost-button table-option-command" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
