@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.616",
-    releasedAt: "2026-11-02"
+    version: "1.7.617",
+    releasedAt: "2026-11-03"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.617",
+      releasedAt: "2026-11-03",
+      changes: ["В опциях таблиц слушателей и импорта добавлено копирование контактных данных выбранных строк в формате карточки: ФИО, телефон, email, организация и должность. Контакты разделяются пустой строкой; учитывается выбор на всех страницах."]
+    },
     {
       version: "1.7.616",
       releasedAt: "2026-11-02",
@@ -24039,6 +24044,8 @@ MAX - https://bizvmax.ru/zifra_plus
     if (paymentTotal) paymentTotal.textContent = money(state.studentApplicationsImport.selectedPayment || 0);
     const addButton = document.querySelector("[data-action='add-selected-student-applications']");
     if (addButton) addButton.disabled = !selectedIds.size || state.studentApplicationsImport.importing;
+    const copyButton = document.querySelector(`[data-action="copy-selected-student-contacts"][data-config="${STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID}"]`);
+    if (copyButton) copyButton.disabled = !selectedIds.size || copyButton.dataset.copyingContacts === "true";
     if (options.updateDetail) {
       const activeRow = (state.studentApplicationsImport.rows || [])
         .find((row) => String(row.id || "") === activeId) || null;
@@ -24802,6 +24809,7 @@ MAX - https://bizvmax.ru/zifra_plus
         : STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID;
       refreshStudentApplicationsImportDialog();
     });
+    bindStudentContactCopyActions(scope);
     scope.querySelector("[data-action='reset-table-options']")?.addEventListener("click", (event) => {
       if (event.currentTarget.dataset.config !== STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID) return;
       resetTableOptions(STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID);
@@ -25904,6 +25912,10 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderTableOptions(configId) {
     const isOpen = state.tableOptions === configId;
     const isStudentApplicationsImport = configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID;
+    const canCopyStudentContacts = configId === "students" || isStudentApplicationsImport;
+    const selectedContactCount = canCopyStudentContacts
+      ? (isStudentApplicationsImport ? state.studentApplicationsImport.selected || [] : getSelected("students")).length
+      : 0;
     return `
       ${isOpen ? `
         <div class="table-options-backdrop ${isStudentApplicationsImport ? "student-applications-table-options-backdrop" : ""}" data-action="close-table-options"></div>
@@ -25912,6 +25924,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <strong>Опции таблицы</strong>
             <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
           </div>
+          ${canCopyStudentContacts ? `<button class="ghost-button table-option-command" data-action="copy-selected-student-contacts" data-config="${configId}" type="button" title="Выделите строки галочками. Копируются ФИО, телефон, email, организация и должность в формате карточки слушателя." ${selectedContactCount ? "" : "disabled"}>Копировать контактные данные выбранных (${selectedContactCount})</button>` : ""}
           ${configs[configId] ? `<button class="ghost-button table-option-command" data-action="export-csv" data-config="${configId}" type="button">Экспорт CSV</button>` : ""}
           ${isStudentApplicationsImport ? "" : `<button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>`}
           <button class="ghost-button table-option-command" data-action="reset-table-options" data-config="${configId}" type="button">Восстановить исходный вид</button>
@@ -43544,11 +43557,8 @@ MAX - https://bizvmax.ru/zifra_plus
     }, 900);
   }
 
-  async function copyStudentDetails(event) {
-    const button = event.currentTarget;
-    const isContract = document.getElementById("recordForm")?.dataset.config === "contracts";
-    const record = isContract ? collectContractFormDraft() : collectStudentFormDraft();
-    const lines = [
+  function formatContactDetailsText(record = {}) {
+    return [
       record.name,
       record.phone,
       record.email,
@@ -43556,13 +43566,66 @@ MAX - https://bizvmax.ru/zifra_plus
       record.position
     ]
       .map((value) => String(value || "").trim())
-      .filter(Boolean);
-    if (!lines.length) {
+      .filter(Boolean)
+      .join("\r\n");
+  }
+
+  function getSelectedStudentContactRows(configId) {
+    const isImport = configId === STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID;
+    if (!isImport && configId !== "students") return [];
+    const selected = new Set((isImport ? state.studentApplicationsImport.selected || [] : getSelected("students")).map(String));
+    const rows = isImport ? state.studentApplicationsImport.rows || [] : state.data.collections.students || [];
+    return rows.filter((row) => selected.has(String(row.id)));
+  }
+
+  async function copySelectedStudentContacts(event) {
+    const button = event.currentTarget;
+    if (button.dataset.copyingContacts === "true") return;
+    const contacts = getSelectedStudentContactRows(button.dataset.config)
+      .map(formatContactDetailsText).filter(Boolean);
+    if (!contacts.length) {
+      alert("Выберите строки с заполненными контактными данными для копирования.");
+      return;
+    }
+    const initialText = button.textContent;
+    button.dataset.copyingContacts = "true";
+    button.disabled = true;
+    try {
+      await copyTextToClipboard(contacts.join("\r\n\r\n"));
+      button.textContent = `Скопировано контактов: ${contacts.length}`;
+      button.classList.add("is-complete");
+      window.setTimeout(() => {
+        if (!button.isConnected) return;
+        button.textContent = initialText;
+        button.classList.remove("is-complete");
+      }, 1500);
+    } catch (error) {
+      alert("Не удалось скопировать контактные данные. Повторите копирование.");
+    } finally {
+      delete button.dataset.copyingContacts;
+      button.disabled = !getSelectedStudentContactRows(button.dataset.config).length;
+    }
+  }
+
+  function bindStudentContactCopyActions(scope = document) {
+    scope.querySelectorAll('[data-action="copy-selected-student-contacts"]').forEach((button) => {
+      if (button.dataset.contactCopyBound) return;
+      button.dataset.contactCopyBound = "true";
+      button.addEventListener("click", copySelectedStudentContacts);
+    });
+  }
+
+  async function copyStudentDetails(event) {
+    const button = event.currentTarget;
+    const isContract = document.getElementById("recordForm")?.dataset.config === "contracts";
+    const record = isContract ? collectContractFormDraft() : collectStudentFormDraft();
+    const text = formatContactDetailsText(record);
+    if (!text) {
       alert("В карточке нет заполненных данных для копирования.");
       return;
     }
 
-    await copyTextToClipboard(lines.join("\r\n"));
+    await copyTextToClipboard(text);
     const initialTitle = button.title;
     const initialLabel = button.getAttribute("aria-label") || initialTitle;
     const initialIcon = button.innerHTML;
@@ -47824,6 +47887,7 @@ MAX - https://bizvmax.ru/zifra_plus
         render();
       });
     });
+    bindStudentContactCopyActions();
 
     document.querySelectorAll("[data-action='reset-table-options']").forEach((button) => {
       button.addEventListener("click", () => resetTableOptions(button.dataset.config));
