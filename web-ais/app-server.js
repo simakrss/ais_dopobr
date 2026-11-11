@@ -25170,9 +25170,9 @@ function getStudentEnrollmentService() {
       return current.document;
     },
     save: (revision, students, user) => saveSharedApplicationState({ baseRevision: revision, strictRevision: true,
-      patch: { collections: { students: { upserts: students } }, recordKeys: students.map(row => `students:${row.id}`) } }, user),
-    audit: (action, record, user) => appendAuditEntry({ action, area: "Слушатели", entityType: "students", entityId: record.id,
-      entityLabel: record.name, source: "student-portal" }, user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
+      patch: { collections: { students: { upserts: students } }, recordKeys: students.map(row => `students:${row.id}`) } }, user?.actingStaff || user),
+    audit: (action, record, user) => appendAuditEntry({ action: user?.actingStaff ? `Сотрудник в кабинете слушателя: ${action}` : action, area: "Слушатели", entityType: "students", entityId: record.id,
+      entityLabel: record.name, source: "student-portal" }, user?.actingStaff || user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
     loginLimit: studentEnrollmentLoginLimit,
     loginSuccess: (login, clientKey) => studentEnrollmentLoginLimit(login, clientKey, true),
     lock: studentEnrollmentLock,
@@ -25269,6 +25269,25 @@ async function handleStudentPortal(req, res, user, url) {
   if (req.method === "POST" && url.pathname === "/api/student-portal/upload") return sendJson(res, 200, await service.upload(user, id, await readJsonBody(req, 29 * 1024 * 1024)));
   if (req.method === "POST" && url.pathname === "/api/student-portal/submit") return sendJson(res, 200, await service.submit(user, id));
   throw Object.assign(new Error("Раздел недоступен в кабинете слушателя."), { statusCode: 403 });
+}
+async function handleStaffStudentPortal(req, res, actor, url) {
+  if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
+  const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
+  if (!(req.method === "GET" && ["", "/file", "/sdo-open"].includes(action))
+    && !(req.method === "POST" && ["/profile", "/upload", "/submit"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+  const session = await getStudentEnrollmentService().staffSession(actor, url.searchParams.get("studentId"), url.searchParams.get("id"));
+  const target = new URL(url);
+  target.pathname = `/api/student-portal${action}`;
+  target.searchParams.set("id", session.id);
+  if (req.method === "GET" && action === "") {
+    await safelyAppendAuditEntry({ action: "Открыт личный кабинет от имени слушателя", area: "Слушатели", entityType: "students",
+      entityId: session.record.id, entityLabel: session.record.name, source: "student-portal" }, actor, req);
+  }
+  if (action === "/sdo-open") {
+    await safelyAppendAuditEntry({ action: "Переход сотрудника в СДО из кабинета слушателя", area: "Слушатели", entityType: "students",
+      entityId: session.id, entityLabel: session.record.name, source: "student-portal" }, actor, req);
+  }
+  await handleStudentPortal(req, res, session.user, target);
 }
 
 async function runStudentApplicationsQuery(filters) {
@@ -41136,6 +41155,11 @@ async function route(req, res) {
   }
   if (authUser?.role === "partner" && protectedRequest) {
     sendError(res, 403, "Этот раздел недоступен в кабинете партнёра.");
+    return;
+  }
+  if (requestUrl.pathname === "/api/students/portal-preview" || requestUrl.pathname.startsWith("/api/students/portal-preview/")) {
+    try { await handleStaffStudentPortal(req, res, authUser, requestUrl); }
+    catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось открыть кабинет слушателя. Повторите позже."); }
     return;
   }
   if (requestUrl.pathname === "/api/client-private-defaults" && req.method === "GET") {

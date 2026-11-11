@@ -1,10 +1,13 @@
 (() => {
   "use strict";
   const api = window.AIS_AUTH_API, root = document.getElementById("app");
+  const previewStudentId = String(window.AIS_STUDENT_PORTAL_PREVIEW_ID || "");
   const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
   const money = value => new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB" }).format(value || 0);
   let state, tab = "main", busy = false, dirty = false;
-  const url = (action = "", id = state?.record.id) => `api/student-portal${action}?id=${encodeURIComponent(id || "")}`;
+  const url = (action = "", id = state?.record.id) => previewStudentId
+    ? `api/students/portal-preview${action}?studentId=${encodeURIComponent(previewStudentId)}&id=${encodeURIComponent(id || "")}`
+    : `api/student-portal${action}?id=${encodeURIComponent(id || "")}`;
   async function request(action, body) {
     return api.request(url(action), body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
@@ -38,7 +41,8 @@
   }
   function render() {
     dirty = false;
-    root.innerHTML = `<main class="student-portal"><header><div><small>Учебный центр «Цифровизация Плюс»</small><h1>Кабинет слушателя</h1><p>${esc(state.user.name)} · ${esc(state.user.email)}</p></div><button type="button" data-logout>Выйти</button></header>
+    root.innerHTML = `<main class="student-portal"><header><div><small>Учебный центр «Цифровизация Плюс»</small><h1>Кабинет слушателя</h1><p>${esc(state.user.name)} · ${esc(state.user.email)}</p></div><button type="button" data-logout>${previewStudentId ? "Закрыть кабинет" : "Выйти"}</button></header>
+      ${previewStudentId ? '<p class="student-portal-staff-notice" role="status">Кабинет открыт от имени слушателя. Вы продолжаете работать как сотрудник; действия записываются в журнал под вашей учётной записью.</p>' : ""}
       <section class="panel"><label>Программа обучения<select data-application aria-label="Программа обучения">${state.applications.map(row => `<option value="${esc(row.id)}" ${row.id === state.record.id ? "selected" : ""}>${esc(row.program)} · ${esc(row.status)}</option>`).join("")}</select></label>
       <nav aria-label="Разделы кабинета">${[["main", "Основное"], ["documents", "Документы"], ["finances", "Финансы"]].map(([key, label]) => `<button type="button" data-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join("")}${state.sdoAvailable ? `<a class="primary-button" data-sdo href="${esc(api.appUrl(url("/sdo-open")))}" target="_blank" rel="noopener noreferrer">Открыть СДО ↗</a>` : '<span class="muted">Вход в СДО откроется после отправки данных для доступа учебным центром.</span>'}</nav>
       <div data-message role="alert" hidden></div><div data-progress role="status" hidden><progress aria-label="Выполняется операция"></progress><span></span></div>
@@ -60,6 +64,7 @@
     root.querySelector("[data-submit]").addEventListener("click", () => run("Проверка документов на Яндекс Диске…", async () => { state = await request("/submit", {}); render(); message("Комплект отправлен на проверку в учебный центр."); }));
     root.querySelector("[data-logout]").addEventListener("click", () => run("Выход…", async () => {
       if (dirty) await request("/profile", profile());
+      if (previewStudentId) { dirty = false; busy = false; window.close(); if (!window.closed) window.location.assign(api.appUrl("")); return; }
       await api.request("api/auth/logout", { method: "POST" }); api.redirectToLogin();
     }));
     availability();

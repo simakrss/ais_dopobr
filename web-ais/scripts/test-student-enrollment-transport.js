@@ -3,7 +3,7 @@ const { test } = require("node:test"), assert = require("node:assert/strict"), f
 const { Readable } = require("node:stream"), crypto = require("node:crypto"), generator = require("../program-site-generator.js");
 const source = fs.readFileSync(path.join(__dirname, "../app-server.js"), "utf8");
 function handlers() {
-  const calls = [], key = "a".repeat(64), context = { Buffer, crypto, JSON, Date, Number, String, Object, path,
+  const calls = [], key = "a".repeat(64), context = { Buffer, crypto, JSON, Date, Number, String, Object, path, URL,
     SERVER_CODE_ROOT: "/test", ROOT: "/test", STORAGE_ROOT: "/storage", isDatabaseDemoModeEnabled: () => false,
     programSiteGenerator: { signature: generator.signature, readKeys: async () => ({ shop: key }) },
     getStudentEnrollmentService: () => ({ provisionOrder: async id => { calls.push(id); return { ok: true }; }, portal: async (user, id) => ({ id, role: user.role }) }),
@@ -21,6 +21,30 @@ test("payment HMAC binds method, body and resource; expired and unsigned request
   await assert.rejects(context.handlePaidStudentEnrollment(req(body, { ...headers, "x-ais-timestamp": "1000000000" }), {}), { statusCode: 403 });
   assert.equal(calls.length, 0);
   await context.handlePaidStudentEnrollment(req(body, headers), {}); assert.deepEqual(calls, ["101"]);
+});
+
+test("staff preview checks roles and demo mode, maps only portal operations and audits the original actor", async () => {
+  const { context } = handlers(), actor = { id: "staff", login: "staff", role: "manager" }, audit = [], seen = [];
+  context.getStudentEnrollmentService = () => ({
+    staffSession: async (user, anchor, id) => { seen.push({ user, anchor, id }); return { user: { role: "student", actingStaff: user }, id: id || anchor, record: { id: anchor, name: "Fixture" } }; },
+    portal: async (user, id) => ({ id, role: user.role }), update: async (user, id, body) => ({ id, role: user.role, body })
+  });
+  let response;
+  context.sendJson = (_res, status, body) => { response = { status, body }; };
+  context.safelyAppendAuditEntry = async (entry, user) => audit.push({ entry, user });
+  const endpoint = new URL("https://example.test/api/students/portal-preview?studentId=a&id=b");
+  for (const role of [undefined, "partner", "student"]) await assert.rejects(context.handleStaffStudentPortal({ method: "GET" }, {}, { role }, endpoint), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handleStaffStudentPortal({ method: "GET" }, {}, actor, endpoint), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => false;
+  await context.handleStaffStudentPortal({ method: "GET" }, {}, actor, endpoint);
+  assert.equal(response.status, 200); assert.equal(response.body.id, "b"); assert.equal(response.body.role, "student");
+  assert.equal(seen[0].anchor, "a"); assert.equal(audit[0].user, actor); assert.equal(actor.role, "manager");
+  await assert.rejects(context.handleStaffStudentPortal({ method: "DELETE" }, {}, actor, endpoint), { statusCode: 405 });
+  const foreign = new URL("https://example.test/api/students/portal-preview/admin/users?studentId=a");
+  await assert.rejects(context.handleStaffStudentPortal({ method: "GET" }, {}, actor, foreign), { statusCode: 405 });
+  const route = source.slice(source.indexOf("async function route("));
+  assert.ok(route.indexOf('authUser?.role === "student"') < route.indexOf('requestUrl.pathname === "/api/students/portal-preview"'));
 });
 test("portal works with CGI response interface and denies employee roles and all nonportal paths", async () => {
   const { context } = handlers(), user = { role: "student", studentId: "s" };

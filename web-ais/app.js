@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.620",
+    version: "1.7.621",
     releasedAt: "2026-11-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.621",
+      releasedAt: "2026-11-11",
+      changes: ["В карточке слушателя добавлена кнопка открытия личного кабинета от его имени в новом окне. Сессия сотрудника сохраняется; действия в кабинете записываются под его учётной записью."]
+    },
     {
       version: "1.7.620",
       releasedAt: "2026-11-11",
@@ -37976,6 +37981,13 @@ MAX - https://bizvmax.ru/zifra_plus
     return `${label}<input name="${item.key}" type="${item.type}" value="${escapeAttr(value)}" ${required} ${layoutOptions.readOnly ? "readonly" : ""} ${moneyStepAttribute} ${programExternalLinkAttrs}></label>`;
   }
 
+  function renderStudentPortalOpenButton(record) {
+    if (!record.id || !record.studentPortalEnabled || record.studentPortalBlocked || isDatabaseDemoMode()
+      || !["admin", "manager"].includes(getCurrentAuthUser().role)) return "";
+    const href = window.AIS_AUTH_API.appUrl(`?student-cabinet=${encodeURIComponent(record.id)}`);
+    return `<a class="ghost-button compact-button student-portal-open-link" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" title="Открыть кабинет слушателя в новом окне">Открыть личный кабинет <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 3h7v7M21 3 11 13M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6"/></svg></a>`;
+  }
+
   function renderStudentModal(record) {
     if (!state.modal.id) record = { ...record, uid: record.uid || getNextUid() };
     record = calculateStudentFinance(record);
@@ -37995,6 +38007,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
                 ${record.studentPortalEnabled ? `<p class="student-enrollment-review">Кабинет слушателя · ${escapeHtml(record.enrollmentReviewStatus || "Ожидается заполнение")} ${record.enrollmentSubmittedAt ? `· ${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}` : ""}</p>${["failed", "unknown", "sending"].includes(record.enrollmentMailStatus) ? '<p>Инструкция слушателю: требуется проверить отправку в журнале почты.</p>' : ""}` : ""}
+                ${renderStudentPortalOpenButton(record)}
                 ${record.studentPortalEnabled ? `<details class="student-portal-access-details"><summary>Доступ в кабинет слушателя</summary><p><a href="https://edu-plus.ru/lms/" target="_blank" rel="noopener">edu-plus.ru/lms</a></p><label>Логин<input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label><label>Пароль<input readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label></details>` : ""}
                 ${renderCardRecordLockStatus(record)}
               </div>

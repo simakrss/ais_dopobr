@@ -194,6 +194,19 @@ function createService(deps) {
     if (!record) fail("Заявка не найдена.", 404);
     return { owner, record, records };
   }
+  async function staffSession(actor, studentId, applicationId = "") {
+    if (!["admin", "manager"].includes(actor?.role)) fail("Кабинет слушателя может открыть только сотрудник учебного центра.", 403);
+    const current = await deps.readState(), students = current.data.collections.students || [];
+    const record = students.find(row => row.id === studentId);
+    if (!record) fail("Слушатель не найден.", 404);
+    if (!record.studentPortalEnabled || record.studentPortalBlocked) fail("Личный кабинет слушателя недоступен.", 409);
+    const owner = students.find(row => row.id === (record.studentPortalAccountId || record.id));
+    if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt) fail("Личный кабинет слушателя недоступен.", 409);
+    const id = applicationId || record.id;
+    if (!students.some(row => row.id === id && row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id)) fail("Заявка не относится к этому кабинету.", 403);
+    // Request-scoped identity only. Never replace the staff member's login or cookie.
+    return { user: { ...publicUser(owner), actingStaff: actor }, id, record };
+  }
   function view({ owner, record, records }) {
     return { user: { name: owner.name, login: portalLogin(owner), email: owner.email }, sdoAvailable: sdoAvailable(record),
       applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
@@ -347,7 +360,7 @@ function createService(deps) {
     await deps.audit("Документы для зачисления отправлены на проверку", updated, user);
     return portal(user, id);
   }
-  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo };
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
   fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

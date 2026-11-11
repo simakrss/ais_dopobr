@@ -173,3 +173,25 @@ test("SSO is gated on the saved access event, ownership and current session, not
   const updated = f.snapshot.data.collections.students[0]; updated.event_portalCredentialsSent_state = "unchecked"; updated.event_portalCredentialsSent_date = "2026-01-01";
   await assert.rejects(f.service.sdo(user, r.id), { statusCode: 403 }); assert.equal(calls.length, 1);
 });
+
+test("staff can open a scoped student cabinet without modifying the staff identity or credentials", async () => {
+  const f = fixture(); await f.service.provisionOrder("101");
+  const first = f.snapshot.data.collections.students[0];
+  f.rows[0] = { ...f.rows[0], id: "102-1", orderId: "102" }; await f.service.provisionOrder("102");
+  const second = f.snapshot.data.collections.students[1];
+  f.rows[0] = { ...f.rows[0], id: "103-1", orderId: "103", name: "Другой человек" }; await f.service.provisionOrder("103");
+  const other = f.snapshot.data.collections.students[2];
+  for (const role of ["admin", "manager"]) {
+    const actor = Object.freeze({ id: "employee", login: "staff", name: "Сотрудник", role });
+    const session = await f.service.staffSession(actor, second.id);
+    assert.equal(session.id, second.id); assert.equal(session.user.studentId, first.id);
+    assert.equal(session.user.actingStaff, actor); assert.equal(actor.role, role);
+    assert.deepEqual(await f.service.portal(session.user, session.id), await f.service.portal(enrollment.publicUser(first), second.id));
+    assert.equal((await f.service.staffSession(actor, second.id, first.id)).id, first.id);
+    await assert.rejects(f.service.staffSession(actor, first.id, other.id), { statusCode: 403 });
+  }
+  for (const role of [undefined, "partner", "student", "system"]) await assert.rejects(f.service.staffSession({ role }, first.id), { statusCode: 403 });
+  await assert.rejects(f.service.staffSession({ role: "admin" }, "absent"), { statusCode: 404 });
+  first.studentPortalBlocked = true;
+  await assert.rejects(f.service.staffSession({ role: "admin" }, second.id), { statusCode: 409 });
+});
