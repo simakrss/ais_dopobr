@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.618",
-    releasedAt: "2026-11-03"
+    version: "1.7.619",
+    releasedAt: "2026-11-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.619",
+      releasedAt: "2026-11-11",
+      changes: ["Оплаченные заявки КПК и ППП из магазина автоматически поступают на зачисление. Кабинет слушателя: личные данные, загрузка документов на Яндекс Диск, отправка на проверку и письмо-инструкция."]
+    },
     {
       version: "1.7.618",
       releasedAt: "2026-11-03",
@@ -25899,6 +25904,7 @@ MAX - https://bizvmax.ru/zifra_plus
                           ${clampedValue}
                           ${recordLock ? '<span class="record-lock-indicator" aria-hidden="true">🔒</span>' : ""}
                         </button>
+                        ${configId === "students" && row.enrollmentReviewStatus === "На проверке" ? '<small class="student-enrollment-review">Документы на проверке</small>' : ""}
                       </td>
                     `;
                   }
@@ -37925,6 +37931,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="student-modal-title">
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
+                ${record.studentPortalEnabled ? `<p class="student-enrollment-review">Кабинет слушателя · ${escapeHtml(record.enrollmentReviewStatus || "Ожидается заполнение")} ${record.enrollmentSubmittedAt ? `· ${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}` : ""}</p>${["failed", "unknown", "sending"].includes(record.enrollmentMailStatus) ? '<p>Инструкция слушателю: требуется проверить отправку в журнале почты.</p>' : ""}` : ""}
                 ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">

@@ -8,6 +8,8 @@ param(
   [switch]$TunnelRuntime,
   # Locate the existing local FTP shortcut without copying or exposing its secrets.
   [string]$ProfileDirectory = "",
+  # Existing private key may live in the desktop application's redirected LocalAppData.
+  [string]$SigningKeyPath = "",
   [switch]$WindowsComponents,
   # Explicit, separately approved installation only; never part of -All.
   [switch]$ProgramSites,
@@ -32,6 +34,7 @@ $shortcutPath = Get-ChildItem -LiteralPath $profileRoot -Filter "*.lnk" -File |
 $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
+  "student-enrollment.js",
   "pwa-assets.js",
   "app-server.js",
   "document-relay.js",
@@ -80,6 +83,8 @@ function Test-DeployablePath([string]$PathValue) {
   )
   if ($privateTemplatePaths -contains $path) { return $false }
   $exactFiles = @(
+    "student-enrollment.js",
+    "student-portal.js",
     "pwa-client.js",
     "pwa-assets.js",
     "manifest.webmanifest",
@@ -731,14 +736,14 @@ $results | Format-Table -AutoSize
 
 # Publish immutable signed installation files first, and switch latest.json last.
 # Only the publishing workstation owns this private signing key. It never enters FTP.
-$updateSigningKey = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem'
+$updateSigningKey = if ($SigningKeyPath) { [IO.Path]::GetFullPath($SigningKeyPath) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem' }
 if (-not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
     (Test-Path -LiteralPath $updateSigningKey)) {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   $nodePath = if ($nodeCommand) { $nodeCommand.Source } else {
     Join-Path $env:USERPROFILE '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
   }
-  & $nodePath (Join-Path $PSScriptRoot 'build-local-update.js')
+  & $nodePath (Join-Path $PSScriptRoot 'build-local-update.js') --signing-key-path $updateSigningKey
   if ($LASTEXITCODE -ne 0) { throw 'Не удалось подготовить подписанный пакет локального обновления.' }
   $envelope = Get-Content -LiteralPath (Join-Path $appRoot 'updates/latest.json') -Raw | ConvertFrom-Json
   $release = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json

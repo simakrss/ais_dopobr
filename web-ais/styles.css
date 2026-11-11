@@ -32149,4 +32149,41 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .rusender-preview { padding: 16px; border: 2px solid var(--teal); border-radius: 10px; margin-top: 16px; }
 .rusender-preview iframe { width: 100%; height: 480px; background: white; border: 1px solid var(--line); margin: 10px 0; }
 .rusender-preview label { display: block; margin-bottom: 14px; }
+.student-portal { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.student-portal > header, .student-portal-preview > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+.student-portal h1 { margin: 8px 0; font-size: 26px; }
+.student-portal .panel { padding: 20px; }
+.student-portal label { display: grid; gap: 7px; min-width: 0; }
+.student-portal button, .student-portal-preview button { border: 1px solid var(--line); border-radius: 8px; background: white; padding: 8px 12px; cursor: pointer; font: inherit; }
+.student-portal button.primary-button { background: var(--teal); color: white; }
+.student-portal button:disabled { opacity: .5; cursor: default; }
+.student-portal input:not([type=checkbox]), .student-portal select, .student-portal textarea { border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 8px; font: inherit; }
+.student-portal nav { flex-wrap: wrap; }
+.student-portal input:not([type=checkbox]), .student-portal select, .student-portal textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.student-portal nav { display: flex; gap: 8px; margin: 22px 0; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.student-portal nav [aria-pressed=true] { background: var(--teal); color: #fff; }
+.student-portal-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 22px; }
+.student-portal-fields .student-portal-check { display: flex; align-items: flex-start; grid-column: 1 / -1; }
+.student-portal input[type=checkbox] { width: 18px; height: 18px; flex-shrink: 0; }
+.student-portal b { color: #a52222; }
+.student-portal [data-message], .student-portal [data-progress] { padding: 12px; background: #eaf6f2; border-radius: 8px; margin: 12px 0; }
+.student-portal [data-message].is-error { color: #a52222; background: #fff0f0; }
+.student-portal [data-progress] progress { width: 120px; margin-right: 12px; }
+.student-portal-documents { padding: 0; list-style: none; }
+.student-portal-documents li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.student-portal-documents li > div:first-child { display: grid; gap: 6px; }
+.student-portal-file-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.student-portal-upload { max-width: 240px; }
+.student-portal footer { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); line-height: 1.6; }
+.student-portal-finances { display: flex; flex-wrap: wrap; gap: 12px; }
+.student-portal-finances > div { padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #eef7f4; }
+.student-portal-finances dd { margin: 8px 0 0; font-size: 22px; font-weight: 700; }
+.student-enrollment-review { display: block; color: #087369; font-weight: 600; }
+.student-portal [hidden] { display: none !important; }
+.student-portal-preview { width: min(94vw, 1000px); max-width: 94vw; max-height: 92vh; padding: 20px; border: 1px solid var(--line); border-radius: 12px; }
+.student-portal-preview img { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; margin: auto; }
+.student-portal-preview iframe { width: 100%; height: 70vh; border: 0; }
+.student-portal-preview header strong { overflow-wrap: anywhere; }
+.student-portal-preview::backdrop { background: #0008; }
+@media(max-width:700px) { .student-portal { padding: 12px; } .student-portal .panel { padding: 14px; } .student-portal-fields { grid-template-columns: 1fr; } .student-portal-documents li { align-items: flex-start; flex-direction: column; } }
 @media(max-width:700px) { .rusender-plan { grid-template-columns: 1fr; } .rusender-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }

@@ -803,6 +803,7 @@ function gateway_resolve_shared_auth_users(array $users, ?PDO $pdo = null): arra
 
 function gateway_resolve_shared_auth_user(array $user): array
 {
+    if (($user['role'] ?? '') === 'student') return $user;
     if (gateway_database_demo_mode_enabled()) return $user;
     $pdo = gateway_record_locks_pdo();
     gateway_ensure_shared_auth_roles($pdo);
@@ -1210,6 +1211,18 @@ function gateway_handle_auth_route(string $method, string $path, string $body): 
                 error_log('Partner authentication is temporarily unavailable: ' . $partnerLoginError->getMessage());
             }
         }
+        if ($user === null && $storedMatch === null && !gateway_database_demo_mode_enabled()) {
+            $headers = ['x-ais-client-ip' => substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 80)];
+            $response = gateway_run_node('/api/auth/student-credentials', 'POST', $headers, json_encode([
+                'login' => (string) ($payload['login'] ?? ''), 'password' => (string) ($payload['password'] ?? '')
+            ], JSON_UNESCAPED_UNICODE));
+            $studentResult = json_decode((string) ($response['body'] ?? ''), true);
+            if ((int) ($response['status'] ?? 0) === 200 && is_array($studentResult['user'] ?? null)) {
+                $user = ais_auth_login_student($studentResult['user']);
+            } elseif ((int) ($response['status'] ?? 0) !== 401) {
+                gateway_send_node_response($response);
+            }
+        }
         if ($user === null) {
             gateway_fail(401, 'Неверный логин или пароль.');
         }
@@ -1526,7 +1539,7 @@ function gateway_handle_admin_users(string $method, string $path, string $body, 
 function gateway_serve_protected_data(string $path): void
 {
     $user = gateway_require_user();
-    if ((string) ($user['role'] ?? '') === 'partner') {
+    if (in_array((string) ($user['role'] ?? ''), ['partner', 'student'], true)) {
         gateway_fail(403, 'Раздел недоступен в кабинете партнёра.');
     }
     $runtimeDataRoot = dirname(__DIR__, 2) . '/lms-runtime/data';
@@ -4139,6 +4152,15 @@ if (strlen($body) > $requestBodyLimit) {
 }
 
 try {
+    if ($requestPath === '/api/student-enrollment/paid-order' && $method === 'POST') {
+        gateway_send_node_response(gateway_run_node($requestPath, $method, gateway_request_headers(), $body));
+    }
+    $sessionUser = ais_auth_current_user();
+    if (($sessionUser['role'] ?? '') === 'student'
+        && !in_array($requestPath, ['/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/health'], true)
+        && !str_starts_with($requestPath, '/api/student-portal')) {
+        gateway_fail(403, 'Раздел недоступен в кабинете слушателя.');
+    }
     if (str_starts_with($requestPath, '/data/')) {
         if (
             gateway_database_demo_mode_enabled()
@@ -4194,11 +4216,17 @@ try {
     $authenticatedHeaders['x-ais-user-name'] = (string) ($currentUser['name'] ?? '');
     $authenticatedHeaders['x-ais-user-role'] = (string) ($currentUser['role'] ?? 'manager');
     $authenticatedHeaders['x-ais-employee-id'] = (string) ($currentUser['employeeId'] ?? '');
+    $authenticatedHeaders['x-ais-student-id'] = (string) ($currentUser['studentId'] ?? '');
+    $authenticatedHeaders['x-ais-student-version'] = (string) ($currentUser['studentCredentialVersion'] ?? '');
     $authenticatedHeaders['x-ais-session-id'] = hash('sha256', (string) session_id());
     $authenticatedHeaders['x-ais-session-expires-at'] = (string) ais_auth_session_expires_at_ms();
     unset($authenticatedHeaders['x-ais-document-backend']);
     unset($authenticatedHeaders['x-ais-demo-mode-reauthenticated']);
     unset($authenticatedHeaders['x-ais-demo-mode-id-secret']);
+    if (($currentUser['role'] ?? '') === 'student' || str_starts_with($requestPath, '/api/student-portal')) {
+        session_write_close();
+        gateway_send_node_response(gateway_run_node(gateway_api_url(), $method, $authenticatedHeaders, $body));
+    }
     if ($requestPath === '/api/admin/demo-mode') {
         gateway_require_admin($currentUser);
         if ($method === 'POST' && gateway_database_demo_mode_enabled()) {

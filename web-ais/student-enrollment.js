@@ -1,0 +1,266 @@
+"use strict";
+const crypto = require("node:crypto");
+const text = value => String(value ?? "").trim();
+const identity = value => text(value).normalize("NFKC").toLocaleLowerCase("ru-RU");
+const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
+const FIELDS = Object.freeze([
+  ["name", "ФИО", "text"], ["phone", "Телефон", "tel"],
+  ["birthDate", "Дата рождения", "date"], ["gender", "Пол", "select", ["Женский", "Мужской"]],
+  ["citizenship", "Гражданство", "text"], ["registrationAddress", "Адрес регистрации", "textarea"],
+  ["mailingAddress", "Почтовый адрес проживания с индексом", "textarea"],
+  ["workPlace", "Место работы (если не работаете — «Не работаю»)", "text"],
+  ["position", "Должность (если не работаете — «Не работаю»)", "text"],
+  ["passportType", "Вид документа, удостоверяющего личность", "text"],
+  ["passportNumber", "Серия и номер документа", "text"], ["passportDate", "Дата выдачи", "date"],
+  ["passportIssuer", "Кем выдан", "textarea"], ["snils", "СНИЛС (для граждан РФ)", "text"],
+  ["educationLevel", "Уровень образования", "text"],
+  ["enrollmentEducationMode", "Подтверждение образования", "select", ["Диплом с приложением", "Справка с места учёбы"]],
+  ["educationDocumentSurname", "Фамилия в документе об образовании", "text"],
+  ["enrollmentNameChanged", "ФИО в документе об образовании отличается от паспорта", "checkbox"]
+]);
+const DOCS = Object.freeze({ passport: "Паспорт: основная страница", registration: "Паспорт: регистрация",
+  snils: "СНИЛС", diploma: "Диплом об образовании", supplement: "Приложение к диплому",
+  study: "Справка с места учёбы", nameChange: "Документ о перемене ФИО" });
+function russianCitizen(record) { return /^(?:рф|россия|российская федерация|гражданин рф|643)$/iu.test(text(record.citizenship)); }
+function documentRequirements(record) {
+  const keys = ["passport", "registration"];
+  if (russianCitizen(record)) keys.push("snils");
+  keys.push(...(record.enrollmentEducationMode === "Справка с места учёбы" ? ["study"] : ["diploma", "supplement"]));
+  const surname = identity(record.name).split(/\s+/)[0];
+  if (record.enrollmentNameChanged === true || (text(record.educationDocumentSurname) && identity(record.educationDocumentSurname) !== surname)) keys.push("nameChange");
+  return Object.entries(DOCS).map(([key, label]) => ({ key, label, required: keys.includes(key) }));
+}
+function missingRequirements(record) {
+  const missing = FIELDS.filter(([key, , type]) => type !== "checkbox" && (key !== "snils" || russianCitizen(record)))
+    .filter(([key]) => !text(record[key])).map(([, label]) => label);
+  if (text(record.phone) && record.phone.replace(/\D/g, "").length < 10) missing.push("Корректный телефон");
+  if (russianCitizen(record) && text(record.snils) && record.snils.replace(/\D/g, "").length !== 11) missing.push("СНИЛС: 11 цифр");
+  if (russianCitizen(record) && text(record.mailingAddress) && !/\b\d{6}\b/.test(record.mailingAddress)) missing.push("Почтовый индекс: 6 цифр");
+  for (const key of ["birthDate", "passportDate"]) if (text(record[key])) {
+    const value = record[key], date = new Date(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(+date) || date.toISOString().slice(0, 10) !== value || +date > Date.now()) missing.push(key === "birthDate" ? "Корректная дата рождения" : "Корректная дата выдачи");
+  }
+  for (const doc of documentRequirements(record)) if (doc.required && !(record.enrollmentDocuments || []).some(file => file.kind === doc.key)) missing.push(doc.label);
+  return missing;
+}
+function sanitizeProfile(values) {
+  if (!values || typeof values !== "object" || Array.isArray(values)) fail("Некорректные данные профиля.");
+  const result = {};
+  for (const [key, , type, options] of FIELDS) {
+    if (!Object.hasOwn(values, key)) continue;
+    if (type === "checkbox") { result[key] = values[key] === true; continue; }
+    if (typeof values[key] !== "string" || values[key].length > 2000) fail("Недопустимое значение поля.");
+    result[key] = text(values[key]);
+    if (options && result[key] && !options.includes(result[key])) fail("Выберите значение из списка.");
+  }
+  return result;
+}
+function credentials(email, reserved) {
+  const base = identity(email).split("@")[0].replace(/[^\p{L}\p{N}._+-]/gu, "_").slice(0, 56) || "student";
+  let login = base;
+  for (let suffix = 2; reserved.has(identity(login)); suffix++) login = `${base}.${suffix}`;
+  return { login, password: String(crypto.randomInt(1000000)).padStart(6, "0") };
+}
+function matchProgram(row, programs) {
+  const matches = programs.filter(program => [program.productId, program.siteSync?.product?.id, program.sitePublication?.product?.id,
+    ...(program.siteVariants || []).map(variant => variant.productId)].some(id => text(id) && text(id) === text(row.productId)));
+  return matches.length === 1 && ["КПК", "ППП"].includes(matches[0].type) ? matches[0] : null;
+}
+// Private random salt prevents the public session version from being a six-digit-password oracle.
+const fingerprint = record => crypto.createHmac("sha256", record.studentPortalCredentialSalt || "disabled")
+  .update(`${record.id}\0${record.login}\0${record.password}`).digest("hex");
+function publicUser(record) { return { id: `student:${record.id}`, studentId: record.id, login: record.login, name: record.name,
+  role: "student", status: "active", email: record.email, authSource: "student", studentCredentialVersion: fingerprint(record) }; }
+const escapeHtml = value => text(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function welcomeMessage(record) {
+  return `<p>Добрый день, ${escapeHtml(record.name)}!</p><p>Получена оплата по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>
+<p>Для оформления на обучение войдите в <a href="https://edu-plus.ru/lms/">личный кабинет</a>.</p>
+<p>Логин: <strong>${escapeHtml(record.login)}</strong><br>Пароль: <strong>${escapeHtml(record.password)}</strong></p>
+<ol><li>На вкладке «Основное» заполните личные, паспортные данные, сведения об образовании, месте работы и должности, адрес регистрации и почтовый адрес с индексом. Если не работаете, укажите «Не работаю». Сохраните данные.</li>
+<li>На вкладке «Документы» прикрепите сканы паспорта с регистрацией, СНИЛС (для граждан РФ), диплома с приложением либо справки с места учёбы. Если ФИО в документе об образовании отличается от паспорта, приложите документ о перемене ФИО. <a href="https://zifra-plus.ru/edu_info/">Перечень документов</a>.</li>
+<li>После заполнения всех обязательных полей и загрузки документов станет активна кнопка <strong>«Отправить на проверку»</strong>. Нажмите её для передачи комплекта в учебный центр.</li></ol>
+<p>Загруженные файлы автоматически сохраняются в Вашей папке на Яндекс Диске и отображаются в кабинете. На вкладке «Финансы» можно посмотреть свои оплаты и остаток долга. Не передавайте пароль другим людям.</p><p>Учебный центр «Цифровизация Плюс»<br>mail@edu-plus.ru</p>`;
+}
+function validateUpload(body) {
+  if (!Object.hasOwn(DOCS, body.kind)) fail("Выберите вид документа.");
+  if (typeof body.base64 !== "string" || body.base64.length > 28 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.base64)) fail("Максимальный размер файла — 20 МБ.");
+  const bytes = Buffer.from(body.base64, "base64");
+  if (!bytes.length || bytes.length > 20 * 1024 * 1024) fail("Максимальный размер файла — 20 МБ.");
+  const extension = bytes.subarray(0, 5).toString() === "%PDF-" ? "pdf"
+    : bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? "png"
+      : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? "jpg" : "";
+  if (!extension) fail("Прикрепите PDF, JPEG или PNG.");
+  return { bytes, extension, contentType: extension === "pdf" ? "application/pdf" : `image/${extension === "jpg" ? "jpeg" : extension}` };
+}
+function finances(record) {
+  const number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const round = value => Math.round(value * 100) / 100;
+  const payments = Array.from({ length: 8 }, (_, index) => ({
+    date: text(record[`payment${index + 1}Date`]), amount: number(record[`payment${index + 1}Amount`])
+  })).filter(payment => payment.amount !== 0);
+  const total = round(number(record.contractAmount));
+  const paid = round(payments.reduce((sum, payment) => sum + payment.amount, 0));
+  return { total, paid, debt: Math.max(0, round(total - paid)), overpaid: Math.max(0, round(paid - total)), payments };
+}
+function createService(deps) {
+  async function mutate(id, user, change) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = await deps.readState();
+      const record = (current.data.collections.students || []).find(row => row.id === id);
+      if (!record) fail("Заявка не найдена.", 404);
+      if (user?.role === "student") {
+        const owner = current.data.collections.students.find(row => row.id === user.studentId);
+        if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
+          || fingerprint(owner) !== user.studentCredentialVersion || !record.studentPortalEnabled
+          || (record.studentPortalAccountId || record.id) !== owner.id) fail("Доступ к заявке закрыт.", 403);
+      }
+      const updated = await change(structuredClone(record));
+      const result = await deps.save(current.revision, [updated], user);
+      if (result.conflict) continue;
+      if (result.locked) fail("Карточка редактируется сотрудником. Повторите позже.", 423);
+      if (result.offline || result.syncPending) fail("Общая база недоступна. Повторите позже.", 503);
+      return updated;
+    }
+    fail("Данные изменились. Обновите кабинет.", 409);
+  }
+  async function context(user, id = "") {
+    if (user?.role !== "student" || !user.studentId) fail("Требуется вход слушателя.", 403);
+    const current = await deps.readState();
+    const students = current.data.collections.students || [];
+    const owner = students.find(row => row.id === user.studentId && row.studentPortalEnabled === true && !row.studentPortalBlocked);
+    if (!owner?.studentPortalCredentialSalt || identity(owner.login) !== identity(user.login) || fingerprint(owner) !== user.studentCredentialVersion) fail("Сессия устарела. Войдите повторно.", 401);
+    const records = students.filter(row => row.studentPortalEnabled === true && (row.studentPortalAccountId || row.id) === owner.id);
+    const record = id ? records.find(row => row.id === id) : records[0];
+    if (!record) fail("Заявка не найдена.", 404);
+    return { owner, record, records };
+  }
+  function view({ owner, record, records }) {
+    return { user: { name: owner.name, login: owner.login, email: owner.email },
+      applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
+      record: { id: record.id, email: record.email, program: record.program, status: record.status,
+        ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
+        enrollmentSubmittedAt: record.enrollmentSubmittedAt || "" },
+      fields: FIELDS.map(([key, label, type, options]) => ({ key, label, type, options,
+        required: type !== "checkbox" && (key !== "snils" || russianCitizen(record)) })),
+      requirements: documentRequirements(record), missing: missingRequirements(record), finances: finances(record),
+      documents: (record.enrollmentDocuments || []).map(({ id, kind, name, size, uploadedAt }) => ({ id, kind, name, size, uploadedAt })) };
+  }
+  async function authenticate(login, password, clientKey) {
+    await deps.loginLimit(identity(login), clientKey);
+    const current = await deps.readState();
+    const records = (current.data.collections.students || []).filter(row => row.studentPortalEnabled === true && row.studentPortalCredentialSalt && !row.studentPortalBlocked
+      && (!row.studentPortalAccountId || row.studentPortalAccountId === row.id) && identity(row.login) === identity(login));
+    if (records.length !== 1) return null;
+    const expected = Buffer.from(text(records[0].password)), actual = Buffer.from(String(password || ""));
+    if (!expected.length || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
+    await deps.loginSuccess(identity(login), clientKey);
+    return publicUser(records[0]);
+  }
+  async function provisionOrder(orderId) {
+    if (!/^[1-9]\d{0,15}$/.test(text(orderId))) fail("Некорректный номер заказа.");
+    return deps.lock("student-enrollment-provision", async () => {
+      const rows = await deps.queryOrder(orderId);
+      if (!rows.length) fail("Оплаченный заказ пока не появился в базе магазина. Проверка будет повторена.", 503);
+      const imported = [], skipped = [];
+      for (const row of rows) {
+        if (!row.paid || Number(row.paymentAmount) <= 0 || text(row.orderId) !== text(orderId)) continue;
+        if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(text(row.email)) || !text(row.name)) { skipped.push(row.id); continue; }
+        let record, resolved = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const current = await deps.readState(), data = current.data, students = data.collections.students || [];
+          const program = matchProgram(row, data.collections.programs || []);
+          if (!program) { skipped.push(row.id); resolved = true; break; }
+          const sourceKey = `mysql:${row.orderId}:${row.id}`;
+          const prior = students.find(item => item.sourceApplicationKey === sourceKey
+            || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)));
+          if (prior?.studentPortalEnabled) { record = prior; resolved = true; break; }
+          if (prior && prior.status !== "На зачисление") { skipped.push(row.id); resolved = true; break; }
+          const owner = students.find(item => item.studentPortalEnabled && !item.studentPortalBlocked
+            && (!item.studentPortalAccountId || item.studentPortalAccountId === item.id)
+            && identity(item.email) === identity(row.email) && identity(item.name) === identity(row.name));
+          const reserved = await deps.reservedLogins(data);
+          const access = owner ? { login: owner.login, password: owner.password } : credentials(row.email, reserved);
+          const id = prior?.id || `student-${crypto.randomUUID()}`;
+          const uid = String(Math.max(0, ...students.map(item => Number(item.uid) || 0)) + 1);
+          const registryPrice = Number(program.price) || Number(row.paymentAmount);
+          const installment = /(?:rass|расс)\s*(25|50)/iu.test(text(row.coupon));
+          const contractAmount = installment || !text(row.coupon) ? registryPrice : Math.min(registryPrice, Number(row.paymentAmount));
+          record = { id, uid, name: text(row.name), email: text(row.email), phone: text(row.phone),
+            status: "На зачисление", program: program.name, educationType: program.type, hours: program.hours || "",
+            studyForm: program.studyForm || "", workPlace: text(row.organization), position: text(row.position),
+            source: text(row.source) || "zifra-plus.ru", sourceOrderId: text(row.orderId), sourceProductId: text(row.productId),
+            sourceApplicationKey: sourceKey, sourceApplicationCreatedAt: text(row.dateCreated), orderNo: text(row.orderId),
+            applicationDate: text(row.dateCreated).slice(0, 10), contractAmount,
+            discount: registryPrice > 0 ? Math.round((registryPrice - contractAmount) / registryPrice * 10000) / 100 : 0,
+            discountUnit: "percent", fundingSource: "Собственные средства",
+            payment1Date: new Date().toISOString().slice(0, 10), payment1Amount: Number(row.paymentAmount),
+            payment1Note: `Оплата на zifra-plus.ru, заказ №${row.orderId}`, coupon: text(row.coupon), directExpenses: [],
+            ...prior, ...access, photoPath: prior?.photoPath || `Слушатели/${id}/Документы`, studentPortalEnabled: true,
+            studentPortalAccountId: owner?.id || id, studentPortalCredentialSalt: crypto.randomBytes(32).toString("hex"),
+            enrollmentDocuments: [], enrollmentMailStatus: "pending", citizenship: prior?.citizenship || "Российская Федерация", passportType: prior?.passportType || "Паспорт РФ" };
+          const saved = await deps.save(current.revision, [record], deps.systemUser);
+          if (saved.conflict) { record = null; continue; }
+          if (saved.offline || saved.syncPending || saved.locked) fail("Не удалось сохранить заявку в общей базе.", 503);
+          await deps.audit("Автоматически импортирована оплаченная заявка", record, deps.systemUser);
+          resolved = true;
+          break;
+        }
+        if (!resolved) fail("Общая база занята. Импорт будет повторён.", 503);
+        if (!record) continue;
+        await deps.ensureFolder(record.photoPath);
+        if (["pending", "failed"].includes(record.enrollmentMailStatus)) {
+          await mutate(record.id, deps.systemUser, item => ({ ...item, enrollmentMailStatus: "sending", enrollmentMailAttemptAt: new Date().toISOString() }));
+          try {
+            await deps.sendMail({ to: record.email, subject: `Документы для зачисления: ${record.program}`, message: welcomeMessage(record), idempotencyKey: `student-enrollment:${record.id}` });
+          } catch (error) {
+            await mutate(record.id, deps.systemUser, item => ({ ...item, enrollmentMailStatus: error.deliveryUnknown ? "unknown" : "failed" }));
+            await deps.audit(error.deliveryUnknown ? "Результат отправки инструкции неизвестен" : "Не отправлена инструкция слушателю", record, deps.systemUser);
+            throw error;
+          }
+          await mutate(record.id, deps.systemUser, item => ({ ...item, enrollmentMailStatus: "sent", enrollmentMailSentAt: new Date().toISOString() }));
+          await deps.audit("Отправлено письмо-инструкция в кабинет слушателя", record, deps.systemUser);
+        }
+        imported.push(record.id);
+      }
+      return { ok: true, imported: imported.length, skipped: skipped.length };
+    });
+  }
+  async function portal(user, id) { return view(await context(user, id)); }
+  async function update(user, id, values) {
+    await context(user, id);
+    const clean = sanitizeProfile(values);
+    const updated = await mutate(id, user, item => ({ ...item, ...clean, enrollmentSubmittedAt: "", enrollmentReviewStatus: "Заполняется" }));
+    await deps.audit("Слушатель заполнил данные для зачисления", updated, user);
+    return portal(user, id);
+  }
+  async function upload(user, id, body) {
+    const { record } = await context(user, id);
+    const file = validateUpload(body), fileId = crypto.randomUUID();
+    const name = `${DOCS[body.kind]}-${fileId}.${file.extension}`;
+    await deps.upload(record.photoPath, name, file.bytes, file.contentType);
+    const uploaded = { id: fileId, kind: body.kind, name, size: file.bytes.length, uploadedAt: new Date().toISOString() };
+    const updated = await mutate(id, user, item => ({ ...item, enrollmentSubmittedAt: "", enrollmentReviewStatus: "Заполняется", enrollmentDocuments: [...(item.enrollmentDocuments || []).filter(entry => entry.kind !== body.kind), uploaded] }));
+    await deps.audit("Слушатель загрузил документ для зачисления", updated, user);
+    return portal(user, id);
+  }
+  async function file(user, id, fileId) {
+    const { record } = await context(user, id);
+    const entry = (record.enrollmentDocuments || []).find(item => item.id === fileId);
+    if (!entry || /[\\/]/.test(entry.name)) fail("Документ не найден.", 404);
+    return { ...await deps.download(record.photoPath, entry.name), name: entry.name };
+  }
+  async function submit(user, id) {
+    const { record } = await context(user, id);
+    for (const entry of record.enrollmentDocuments || []) if (!await deps.fileExists(record.photoPath, entry.name)) fail("Один из файлов недоступен на Яндекс Диске. Загрузите его повторно.", 409);
+    const updated = await mutate(id, user, item => {
+      const missing = missingRequirements(item);
+      if (missing.length) fail(`Заполните и приложите: ${missing.join("; ")}`);
+      return { ...item, enrollmentSubmittedAt: item.enrollmentSubmittedAt || new Date().toISOString(), enrollmentReviewStatus: "На проверке" };
+    });
+    await deps.audit("Документы для зачисления отправлены на проверку", updated, user);
+    return portal(user, id);
+  }
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder };
+}
+module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
+  fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService };

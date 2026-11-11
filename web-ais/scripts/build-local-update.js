@@ -1,7 +1,9 @@
 "use strict";
 const fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),cp=require("node:child_process");
 const root=path.resolve(__dirname,".."), repo=path.dirname(root), update=require("../local-update");
-const keyFile=path.join(process.env.LOCALAPPDATA||require("node:os").homedir(),"AisDopobrPublisher","local-update-signing-private.pem");
+const keyArgument=process.argv.indexOf("--signing-key-path");
+if(keyArgument>=0&&!process.argv[keyArgument+1])throw Error("Не указан путь к ключу подписи.");
+const keyFile=keyArgument>=0?path.resolve(process.argv[keyArgument+1]):path.join(process.env.LOCALAPPDATA||require("node:os").homedir(),"AisDopobrPublisher","local-update-signing-private.pem");
 if(process.argv.includes("--init-signing-key")) {
   if(!fs.existsSync(keyFile)){
     fs.mkdirSync(path.dirname(keyFile),{recursive:true});

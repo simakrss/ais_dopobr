@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.8
+ * Version: 1.7.9
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -17,6 +17,59 @@ function ais_pg_role() {
 function ais_pg_signature($secret, $method, $resource, $timestamp, $nonce, $body) {
     return hash_hmac('sha256', implode("\n", array($method, $resource, $timestamp, $nonce, hash('sha256', $body))), $secret);
 }
+
+// Queue new payment events only; installing this module never mails historical orders.
+function ais_pg_queue_paid_enrollment($order_id, $delay = 3) {
+    if (ais_pg_role() !== 'shop' || !function_exists('wc_get_order')) return;
+    $order = wc_get_order((int) $order_id);
+    if (!$order || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_enrollment_done')) return;
+    $args = array((int) $order_id);
+    if (function_exists('as_schedule_single_action')) {
+        as_schedule_single_action(time() + max(3, (int) $delay), 'ais_pg_paid_enrollment', $args, 'ais-enrollment', true);
+    } elseif (!wp_next_scheduled('ais_pg_paid_enrollment', $args)) {
+        wp_schedule_single_event(time() + max(3, (int) $delay), 'ais_pg_paid_enrollment', $args);
+    }
+}
+function ais_pg_process_paid_enrollment($order_id) {
+    if (ais_pg_role() !== 'shop') return;
+    $order = wc_get_order((int) $order_id);
+    if (!$order || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_enrollment_done')) return;
+    $attempt = (int) $order->get_meta('_ais_enrollment_attempts') + 1;
+    $order->update_meta_data('_ais_enrollment_attempts', $attempt);
+    try {
+        $key_file = dirname(rtrim(ABSPATH, '/\\')) . '/ais-program-site.key';
+        $secret = is_readable($key_file) ? trim(file_get_contents($key_file)) : '';
+        if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) throw new RuntimeException('Ключ обмена АИС не настроен.');
+        $resource = '/api/student-enrollment/paid-order';
+        $body = wp_json_encode(array('orderId' => (string) $order_id));
+        $stamp = (string) time(); $nonce = bin2hex(random_bytes(16));
+        $response = wp_remote_post('https://edu-plus.ru/lms' . $resource, array(
+            'timeout' => 55, 'redirection' => 0, 'sslverify' => true,
+            'headers' => array('Content-Type' => 'application/json', 'X-AIS-Timestamp' => $stamp, 'X-AIS-Nonce' => $nonce,
+                'X-AIS-Signature' => ais_pg_signature($secret, 'POST', $resource, $stamp, $nonce, $body)), 'body' => $body));
+        if (is_wp_error($response)) throw new RuntimeException('Сайт АИС временно недоступен.');
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $result = json_decode(wp_remote_retrieve_body($response), true);
+        if ($status !== 200 || empty($result['ok'])) throw new RuntimeException('Обработка АИС не завершена (HTTP ' . $status . ').');
+        $order->update_meta_data('_ais_enrollment_done', gmdate('c'));
+        $order->delete_meta_data('_ais_enrollment_error');
+        if ((int) ($result['imported'] ?? 0) > 0) $order->add_order_note('АИС: оплаченная заявка обработана, кабинет слушателя подготовлен.');
+        if ((int) ($result['skipped'] ?? 0) > 0) $order->add_order_note('АИС: часть позиций не импортирована автоматически. Проверьте вид программы и код товара в реестре АИС.');
+        $order->save();
+    } catch (Throwable $error) {
+        $order->update_meta_data('_ais_enrollment_error', $error->getMessage());
+        if ($attempt === 1 || $attempt === 10) $order->add_order_note('АИС: ' . $error->getMessage() . ' Проверка оплаты будет повторена автоматически.');
+        $order->save();
+        // The current Action Scheduler task is still marked running: enqueue the successor without the unique flag.
+        $delay = min(3600, 30 * (2 ** min($attempt, 7)));
+        if (function_exists('as_schedule_single_action')) as_schedule_single_action(time() + $delay, 'ais_pg_paid_enrollment', array((int) $order_id), 'ais-enrollment');
+        else wp_schedule_single_event(time() + $delay, 'ais_pg_paid_enrollment', array((int) $order_id));
+    }
+}
+add_action('woocommerce_payment_complete', 'ais_pg_queue_paid_enrollment', 20, 1);
+add_action('woocommerce_order_status_processing', 'ais_pg_queue_paid_enrollment', 20, 1);
+add_action('woocommerce_order_status_completed', 'ais_pg_queue_paid_enrollment', 20, 1);
+add_action('ais_pg_paid_enrollment', 'ais_pg_process_paid_enrollment', 10, 1);
 function ais_pg_permission($request) {
     if (!ais_pg_role()) return ais_pg_error('Модуль не настроен для этого сайта.', 503);
     if (current_user_can('manage_options')) return true;
@@ -1367,7 +1420,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.8', 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.9', 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

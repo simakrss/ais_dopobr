@@ -187,6 +187,8 @@ function ais_auth_public_user(array $user): array
         'email' => (string) ($user['email'] ?? ''),
         'phone' => (string) ($user['phone'] ?? ''),
         'employeeId' => (string) ($user['employeeId'] ?? ''),
+        'studentId' => (string) ($user['studentId'] ?? ''),
+        'studentCredentialVersion' => (string) ($user['studentCredentialVersion'] ?? ''),
         'authSource' => (string) ($user['authSource'] ?? 'manual'),
         'createdAt' => (string) ($user['createdAt'] ?? ''),
         'updatedAt' => (string) ($user['updatedAt'] ?? ''),
@@ -209,6 +211,10 @@ function ais_auth_find_user(array $users, string $idOrLogin): ?array
 function ais_auth_current_user(): ?array
 {
     ais_auth_start_session();
+    if (is_array($_SESSION['ais_student'] ?? null)) {
+        if ((int) ($_SESSION['ais_expires_at'] ?? 0) <= time()) { ais_auth_logout(); return null; }
+        return ais_auth_public_user([...$_SESSION['ais_student'], 'role' => 'student', 'status' => 'active']);
+    }
     $partner = is_array($_SESSION['ais_partner'] ?? null) ? $_SESSION['ais_partner'] : null;
     if ($partner !== null) {
         $expiresAt = (int) ($_SESSION['ais_expires_at'] ?? 0);
@@ -271,7 +277,7 @@ function ais_auth_login(string $login, string $password): ?array
     $users[$matchIndex]['updatedAt'] = (string) ($users[$matchIndex]['updatedAt'] ?? gmdate('c'));
     ais_auth_write_users($users);
     session_regenerate_id(true);
-    unset($_SESSION['ais_partner']);
+    unset($_SESSION['ais_partner'], $_SESSION['ais_student']);
     $_SESSION['ais_user_id'] = (string) $users[$matchIndex]['id'];
     $_SESSION['ais_expires_at'] = time() + AIS_AUTH_SESSION_TTL_SECONDS;
     return ais_auth_public_user($users[$matchIndex]);
@@ -301,10 +307,24 @@ function ais_auth_login_partner(array $employee): array
         'lastLoginAt' => $now,
     ];
     session_regenerate_id(true);
-    unset($_SESSION['ais_user_id']);
+    unset($_SESSION['ais_user_id'], $_SESSION['ais_student']);
     $_SESSION['ais_partner'] = $partner;
     $_SESSION['ais_expires_at'] = time() + AIS_AUTH_SESSION_TTL_SECONDS;
     return ais_auth_public_user($partner);
+}
+
+function ais_auth_login_student(array $user): array
+{
+    if (($user['role'] ?? '') !== 'student' || empty($user['studentId'])
+        || !preg_match('/^[a-f0-9]{64}$/D', (string) ($user['studentCredentialVersion'] ?? ''))) {
+        throw new RuntimeException('Не удалось подтвердить кабинет слушателя.');
+    }
+    ais_auth_start_session();
+    session_regenerate_id(true);
+    unset($_SESSION['ais_user_id'], $_SESSION['ais_partner']);
+    $_SESSION['ais_student'] = ais_auth_public_user($user);
+    $_SESSION['ais_expires_at'] = time() + AIS_AUTH_SESSION_TTL_SECONDS;
+    return $_SESSION['ais_student'];
 }
 
 function ais_auth_logout(): void

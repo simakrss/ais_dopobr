@@ -64,6 +64,7 @@ const pwaAssets = require("./pwa-assets.js");
 let localUpdateActiveRequests = 0;
 const documentWorkflow = require("./document-workflow.js");
 const programSiteGenerator = require("./program-site-generator.js");
+const studentEnrollment = require("./student-enrollment.js");
 const documentRelay = require("./document-relay.js");
 const vituEmailSource = require("./vitu-email-source.js");
 const rusenderService = require("./rusender.js").createService({
@@ -1702,6 +1703,8 @@ function publicAuthUser(user) {
     email: String(user?.email || ""),
     phone: String(user?.phone || ""),
     employeeId: String(user?.employeeId || ""),
+    studentId: String(user?.studentId || ""),
+    studentCredentialVersion: String(user?.studentCredentialVersion || ""),
     authSource: String(user?.authSource || "manual"),
     createdAt: String(user?.createdAt || ""),
     updatedAt: String(user?.updatedAt || ""),
@@ -2043,9 +2046,11 @@ async function createAuthSession(principal) {
   const session = principal && typeof principal === "object"
     ? {
         tokenHash,
-        principalType: String(principal.role || "") === "partner" ? "partner" : "user",
+        principalType: ["partner", "student"].includes(principal.role) ? principal.role : "user",
         userId: String(principal.id || ""),
         employeeId: String(principal.employeeId || ""),
+        studentId: String(principal.studentId || ""),
+        studentCredentialVersion: String(principal.studentCredentialVersion || ""),
         login: String(principal.login || ""),
         createdAt: now,
         expiresAt
@@ -2083,7 +2088,7 @@ function requestHasConfiguredGatewaySecret(req) {
 function requestHasGatewayIdentity(req) {
   const userId = String(req.headers["x-ais-user-id"] || "").trim();
   const role = String(req.headers["x-ais-user-role"] || "").trim();
-  return Boolean(userId) && ["admin", "manager", "partner"].includes(role);
+  return Boolean(userId) && ["admin", "manager", "partner", "student"].includes(role);
 }
 
 function requestHasTrustedGatewayIdentity(req) {
@@ -2104,6 +2109,8 @@ async function getRequestAuthUser(req) {
       name: String(req.headers["x-ais-user-name"] || "Gateway").slice(0, 240),
       role,
       status: "active",
+      studentId: role === "student" ? String(req.headers["x-ais-student-id"] || "").slice(0, 160) : "",
+      studentCredentialVersion: role === "student" ? String(req.headers["x-ais-student-version"] || "").slice(0, 64) : "",
       employeeId: role === "partner"
         ? String(req.headers["x-ais-employee-id"] || "").slice(0, 160)
         : "",
@@ -2118,6 +2125,11 @@ async function getRequestAuthUser(req) {
   const sessions = await loadAuthSessions();
   const session = sessions.find((item) => item.tokenHash === tokenHash && Number(item.expiresAt) > now);
   if (!session) return null;
+  if (session.principalType === "student") {
+    const user = { ...session, id: session.userId, role: "student", status: "active" };
+    const context = await getStudentEnrollmentService().context(user).catch(() => null);
+    return context ? { ...studentEnrollment.publicUser(context.owner), sessionExpiresAt: session.expiresAt } : null;
+  }
   if (session.principalType === "partner") {
     const employee = await getPartnerEmployeeFromSharedState({
       employeeId: session.employeeId,
@@ -2242,6 +2254,14 @@ async function handleAuthLogin(req, res) {
   if (index >= 0) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     sendError(res, 401, "Неверный логин или пароль.");
+    return;
+  }
+  const studentUser = await getStudentEnrollmentService().authenticate(body.login, body.password, req.socket?.remoteAddress || "local");
+  if (studentUser) {
+    const session = await createAuthSession(studentUser);
+    sendJson(res, 200, { ok: true, user: studentUser, sessionExpiresAt: session.expiresAt, demoModeEnabled: false }, {
+      "Set-Cookie": authCookieHeader(session.token, req)
+    });
     return;
   }
   if (directorySynchronized) {
@@ -25101,6 +25121,131 @@ async function readStudentDatabaseSyncMetadata(bytes, onProgress = () => {}) {
   }
 }
 
+let studentEnrollmentService;
+async function studentEnrollmentPool() {
+  const pool = await getSharedRecordLocksMySqlPool();
+  if (!pool) throw Object.assign(new Error("Общая база недоступна."), { statusCode: 503 });
+  return pool;
+}
+async function studentEnrollmentLock(name, operation) {
+  const connection = await (await studentEnrollmentPool()).getConnection();
+  let acquired = false;
+  const key = `ais-enrollment-${crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:${name}`).digest("hex").slice(0, 40)}`;
+  try {
+    const [rows] = await connection.query("SELECT GET_LOCK(?, 2) AS acquired", [key]);
+    acquired = Number(rows[0]?.acquired) === 1;
+    if (!acquired) throw Object.assign(new Error("Обработка уже выполняется. Повторите позже."), { statusCode: 503 });
+    return await operation();
+  } finally {
+    if (acquired) await connection.query("SELECT RELEASE_LOCK(?)", [key]).catch(() => {});
+    connection.release();
+  }
+}
+async function studentEnrollmentLoginLimit(login, clientKey, reset = false) {
+  const pool = await studentEnrollmentPool();
+  await pool.query(`CREATE TABLE IF NOT EXISTS ais_student_login_limits (
+    bucket_key CHAR(64) PRIMARY KEY, attempts INT NOT NULL, expires_at BIGINT NOT NULL)`);
+  // Shared across PHP workers and local instances. Neither logins nor addresses are stored in this table.
+  const keys = [`login:${login}`, `ip:${clientKey}`].map(value => crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:${value}`).digest("hex"));
+  if (reset) { await pool.query("DELETE FROM ais_student_login_limits WHERE bucket_key = ?", [keys[0]]); return; }
+  await pool.query("DELETE FROM ais_student_login_limits WHERE expires_at < ? LIMIT 100", [Date.now()]);
+  for (const [index, key] of keys.entries()) {
+    await pool.query(`INSERT INTO ais_student_login_limits (bucket_key, attempts, expires_at) VALUES (?, 1, ?)
+      ON DUPLICATE KEY UPDATE attempts = IF(expires_at < ?, 1, attempts + 1), expires_at = IF(expires_at < ?, VALUES(expires_at), expires_at)`,
+      [key, Date.now() + 15 * 60 * 1000, Date.now(), Date.now()]);
+    const [rows] = await pool.query("SELECT attempts FROM ais_student_login_limits WHERE bucket_key = ?", [key]);
+    if (Number(rows[0]?.attempts) > (index ? 100 : 15)) throw Object.assign(new Error("Слишком много попыток входа. Повторите через 15 минут."), { statusCode: 429 });
+  }
+}
+function getStudentEnrollmentService() {
+  if (studentEnrollmentService) return studentEnrollmentService;
+  const systemUser = { id: "paid-enrollment", login: "paid-enrollment", name: "Импорт оплаченных заявок", role: "system" };
+  const location = (folder, name = "") => resolveStudentWebDavBrowserResource(folder, name).targetPath;
+  studentEnrollmentService = studentEnrollment.createService({
+    systemUser,
+    async readState() {
+      const current = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
+      if (current.offline || current.syncPending || !current.document?.data?.collections) throw Object.assign(new Error("Общая база недоступна. Повторите позже."), { statusCode: 503 });
+      return current.document;
+    },
+    save: (revision, students, user) => saveSharedApplicationState({ baseRevision: revision, strictRevision: true,
+      patch: { collections: { students: { upserts: students } }, recordKeys: students.map(row => `students:${row.id}`) } }, user),
+    audit: (action, record, user) => appendAuditEntry({ action, area: "Слушатели", entityType: "students", entityId: record.id,
+      entityLabel: record.name, source: "student-portal" }, user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
+    loginLimit: studentEnrollmentLoginLimit,
+    loginSuccess: (login, clientKey) => studentEnrollmentLoginLimit(login, clientKey, true),
+    lock: studentEnrollmentLock,
+    queryOrder: async orderId => (await runStudentApplicationsQuery({ orderId, dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: true })).rows,
+    async reservedLogins(data) {
+      const reserved = await readPartnerRegistrationReservedLogins(data.collections.contracts || []);
+      for (const row of data.collections.students || []) if (row.login) reserved.add(String(row.login).normalize("NFKC").trim().toLocaleLowerCase("ru-RU"));
+      return reserved;
+    },
+    ensureFolder: folder => ensureYandexDiskFolder(location(folder)),
+    sendMail: options => sendEmailThroughConfiguredMailbox(options),
+    async upload(folder, name, bytes, contentType) {
+      await ensureYandexDiskFolder(location(folder));
+      await requestYandexWebDav("PUT", location(folder, name), { body: bytes, contentType, acceptedStatuses: [200, 201, 204] });
+    },
+    async download(folder, name) {
+      const result = await requestYandexWebDav("GET", location(folder, name), { acceptedStatuses: [200], maxResponseBytes: 21 * 1024 * 1024 });
+      return { body: result.body, contentType: getWebDavBrowserContentType(name) };
+    },
+    async fileExists(folder, name) {
+      const response = await requestYandexWebDav("HEAD", location(folder, name), { acceptedStatuses: [200, 404] });
+      return Number(response.statusCode) === 200;
+    }
+  });
+  return studentEnrollmentService;
+}
+async function handlePaidStudentEnrollment(req, res) {
+  const chunks = []; let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 4096) throw Object.assign(new Error("Слишком большой запрос."), { statusCode: 413 });
+    chunks.push(Buffer.from(chunk));
+  }
+  const source = Buffer.concat(chunks).toString("utf8");
+  const stamp = String(req.headers["x-ais-timestamp"] || ""), nonce = String(req.headers["x-ais-nonce"] || "");
+  const provided = String(req.headers["x-ais-signature"] || "");
+  if (!/^\d{10}$/.test(stamp) || Math.abs(Date.now() / 1000 - Number(stamp)) > 300 || !/^[a-f0-9]{32,64}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(provided)) {
+    throw Object.assign(new Error("Не подтверждён источник оплаты."), { statusCode: 403 });
+  }
+  const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+  const expected = programSiteGenerator.signature(keys.shop, "POST", "/api/student-enrollment/paid-order", stamp, nonce, source);
+  if (!crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) throw Object.assign(new Error("Не подтверждён источник оплаты."), { statusCode: 403 });
+  if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Импорт недоступен в деморежиме."), { statusCode: 503 });
+  const payload = JSON.parse(source);
+  if (payload.checkOnly === true) {
+    const current = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
+    if (current.offline || current.syncPending) throw new Error("Общая база временно недоступна.");
+    await runStudentApplicationsQuery({ orderId: "0", dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: true });
+    await requestYandexWebDav("PROPFIND", resolveConfiguredYandexWebDavPath("Слушатели"), {
+      headers: { Depth: "0" }, acceptedStatuses: [207, 404], maxResponseBytes: 65536,
+      contentType: "application/xml; charset=utf-8", body: '<propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>'
+    });
+    await runAuthenticatedSmtpSession(async () => true);
+    return sendJson(res, 200, { ok: true, sharedDatabase: true, paidOrdersQuery: true, yandexDisk: true, smtp: true });
+  }
+  sendJson(res, 200, await getStudentEnrollmentService().provisionOrder(payload.orderId));
+}
+async function handleStudentPortal(req, res, user, url) {
+  if (user?.role !== "student") throw Object.assign(new Error("Требуется кабинет слушателя."), { statusCode: 403 });
+  const service = getStudentEnrollmentService(), id = String(url.searchParams.get("id") || "");
+  if (req.method === "GET" && url.pathname === "/api/student-portal") return sendJson(res, 200, await service.portal(user, id));
+  if (req.method === "GET" && url.pathname === "/api/student-portal/file") {
+    const file = await service.file(user, id, url.searchParams.get("file"));
+    return sendFile(res, 200, file.body, file.name, file.contentType, {
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"
+    });
+  }
+  if (req.method === "POST" && url.pathname === "/api/student-portal/profile") return sendJson(res, 200, await service.update(user, id, await readJsonBody(req, 64000)));
+  if (req.method === "POST" && url.pathname === "/api/student-portal/upload") return sendJson(res, 200, await service.upload(user, id, await readJsonBody(req, 29 * 1024 * 1024)));
+  if (req.method === "POST" && url.pathname === "/api/student-portal/submit") return sendJson(res, 200, await service.submit(user, id));
+  throw Object.assign(new Error("Раздел недоступен в кабинете слушателя."), { statusCode: 403 });
+}
+
 async function runStudentApplicationsQuery(filters) {
   const pool = await getStudentApplicationsMySqlPool();
   if (!pool) throw new Error("Не настроено подключение к базе заявок.");
@@ -25108,6 +25253,10 @@ async function runStudentApplicationsQuery(filters) {
   dateToExclusive.setUTCDate(dateToExclusive.getUTCDate() + 1);
   const parameterValues = [filters.dateFrom, dateToExclusive.toISOString().slice(0, 10)];
   let query = getStudentApplicationsSqlQuery();
+  if (filters.orderId) {
+    query += " AND source_order_id = ?";
+    parameterValues.push(String(filters.orderId));
+  }
   const programFilters = Array.isArray(filters.programs) ? filters.programs : [];
   if (programFilters.length) {
     const clauses = [];
@@ -40680,6 +40829,7 @@ const PUBLIC_STATIC_PATHS = new Set([
   "/vendor/sheetjs/xlsx.full.min.js",
   "/index.html",
   "/partner-app.js",
+  "/student-portal.js",
   "/styles.css"
 ]);
 
@@ -40811,8 +40961,19 @@ async function route(req, res) {
     res.end();
     return;
   }
+  if (req.method === "POST" && requestUrl.pathname === "/api/student-enrollment/paid-order") {
+    try { await handlePaidStudentEnrollment(req, res); }
+    catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) === 403 ? error.message : "Не удалось завершить импорт. Магазин повторит запрос."); }
+    return;
+  }
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/student-credentials") {
+        if (process.env.AIS_OCR_CLI !== "1" || !requestHasConfiguredGatewaySecret(req)) return sendError(res, 403, "Недоступно.");
+        const body = await readJsonBody(req, 4096);
+        const user = await getStudentEnrollmentService().authenticate(body.login, body.password, req.headers["x-ais-client-ip"] || "gateway");
+        return sendJson(res, user ? 200 : 401, user ? { user } : { error: "Неверный логин или пароль." });
+      }
       if (
         isDatabaseDemoModeEnabled()
         && requestUrl.pathname.startsWith("/api/auth/partner-registration")
@@ -40849,6 +41010,7 @@ async function route(req, res) {
         sendError(res, 401, "Требуется вход в систему.");
         return;
       }
+      if (authUser.role === "student") return sendError(res, 403, "Изменяйте данные в кабинете слушателя.");
       if (isDatabaseDemoModeEnabled()) {
         sendDatabaseDemoModeReadOnly(res);
         return;
@@ -40910,6 +41072,11 @@ async function route(req, res) {
     || requestUrl.pathname === "/send-mail.php";
   if (protectedRequest && !authUser) {
     sendError(res, 401, "Требуется вход в систему.");
+    return;
+  }
+  if (protectedRequest && (authUser?.role === "student" || requestUrl.pathname.startsWith("/api/student-portal"))) {
+    try { await handleStudentPortal(req, res, authUser, requestUrl); }
+    catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось выполнить операцию. Повторите позже."); }
     return;
   }
   if (requestUrl.pathname === "/api/admin/demo-mode") {
