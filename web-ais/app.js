@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.621",
+    version: "1.7.622",
     releasedAt: "2026-11-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.622",
+      releasedAt: "2026-11-11",
+      changes: ["В списке документов на проверке доступны принятие и возврат на доработку с комментарием в кабинете слушателя. Принятые комплекты исключаются из очереди; исправленные документы можно отправить повторно."]
+    },
     {
       version: "1.7.621",
       releasedAt: "2026-11-11",
@@ -20347,25 +20352,55 @@ MAX - https://bizvmax.ru/zifra_plus
   function openEnrollmentReviewDialog() {
     if (!canAccessView("students") || document.querySelector("[data-enrollment-review]")) return;
     if (state.modal || isSettingsDraftSessionActive()) { alert("Сначала сохраните и закройте открытую карточку или настройки."); return; }
-    const backdrop = document.createElement("div"), session = { rows: [], busy: false, running: false };
+    const backdrop = document.createElement("div"), session = { rows: [], busy: false, running: false, comments: new Map() };
     backdrop.className = "modal-backdrop attestation-tasks-backdrop";
     backdrop.dataset.enrollmentReview = "";
-    backdrop.innerHTML = `<section class="modal enrollment-review-dialog" role="dialog" aria-modal="true" aria-labelledby="enrollmentReviewTitle"><header class="modal-head"><div><p class="eyebrow">Зачисление</p><h2 id="enrollmentReviewTitle">Документы на проверке</h2></div><button class="icon-button" type="button" data-review-close aria-label="Закрыть">×</button></header><div class="attestation-tasks-toolbar"><span data-review-count></span><button class="ghost-button" type="button" data-review-refresh>Обновить список</button></div><div class="attestation-task-table-scroll"><table class="data-table enrollment-review-table"><thead><tr><th>Слушатель / программа</th><th>Отправлено на проверку</th><th>Документы</th></tr></thead><tbody></tbody></table></div><p data-review-notice role="status" aria-live="polite"></p></section>`;
+    backdrop.innerHTML = `<section class="modal enrollment-review-dialog" role="dialog" aria-modal="true" aria-labelledby="enrollmentReviewTitle"><header class="modal-head"><div><p class="eyebrow">Зачисление</p><h2 id="enrollmentReviewTitle">Документы на проверке</h2></div><button class="icon-button" type="button" data-review-close aria-label="Закрыть">×</button></header><div class="attestation-tasks-toolbar"><span data-review-count></span><button class="ghost-button" type="button" data-review-refresh>Обновить список</button></div><div class="attestation-task-table-scroll"><table class="data-table enrollment-review-table"><thead><tr><th>Слушатель / программа</th><th>Отправлено на проверку</th><th>Документы</th><th>Решение и комментарий слушателю</th></tr></thead><tbody></tbody></table></div><progress data-review-progress aria-label="Сохранение решения" hidden></progress><p data-review-notice role="status" aria-live="polite"></p></section>`;
     const notice = text => { backdrop.querySelector("[data-review-notice]").textContent = text; };
+    const setBusy = value => {
+      session.busy = value;
+      backdrop.querySelectorAll("button, textarea").forEach(element => { element.disabled = value; });
+      backdrop.querySelector("[data-review-progress]").hidden = !value;
+    };
     const paint = () => {
       session.rows = getEnrollmentReviewStudents().map(record => ({ record }));
       backdrop.querySelector("[data-review-count]").textContent = `Слушателей: ${session.rows.length}`;
-      backdrop.querySelector("tbody").innerHTML = session.rows.map(({ record }) => `<tr><td><button type="button" class="attestation-task-student-link" data-review-student="${escapeAttr(record.id)}">${escapeHtml(record.name || "Без ФИО")}</button><small>${escapeHtml(record.program || "Программа не указана")}</small></td><td>${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}</td><td><button type="button" class="ghost-button" data-review-documents="${escapeAttr(record.id)}">Просмотреть документы (${(record.enrollmentDocuments || []).length})</button></td></tr>`).join("") || '<tr><td colspan="3">Нет документов, ожидающих проверки.</td></tr>';
+      backdrop.querySelector("tbody").innerHTML = session.rows.map(({ record }) => `<tr><td><button type="button" class="attestation-task-student-link" data-review-student="${escapeAttr(record.id)}">${escapeHtml(record.name || "Без ФИО")}</button><small>${escapeHtml(record.program || "Программа не указана")}</small></td><td>${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}</td><td><button type="button" class="ghost-button" data-review-documents="${escapeAttr(record.id)}">Просмотреть документы (${(record.enrollmentDocuments || []).length})</button></td><td class="enrollment-review-decision"><label>Комментарий для слушателя<textarea data-review-comment="${escapeAttr(record.id)}" maxlength="4000" rows="3" placeholder="При возврате укажите, что нужно исправить">${escapeHtml(session.comments.get(record.id) || "")}</textarea></label><div><button type="button" class="primary-button" data-review-accept="${escapeAttr(record.id)}">Принять</button><button type="button" class="ghost-button" data-review-return="${escapeAttr(record.id)}">Вернуть на доработку</button></div></td></tr>`).join("") || '<tr><td colspan="4">Нет документов, ожидающих проверки.</td></tr>';
+      backdrop.querySelectorAll("[data-review-comment]").forEach(input => input.oninput = () => session.comments.set(input.dataset.reviewComment, input.value));
+      backdrop.querySelectorAll("[data-review-accept], [data-review-return]").forEach(button => button.onclick = async () => {
+        if (session.busy) return;
+        const id = button.dataset.reviewAccept || button.dataset.reviewReturn, decision = button.hasAttribute("data-review-accept") ? "accept" : "return";
+        const record = session.rows.find(row => row.record.id === id)?.record;
+        if (!record) return;
+        const comment = (session.comments.get(id) || "").trim(), submissionId = record.enrollmentSubmissionId || record.enrollmentSubmittedAt;
+        if (decision === "return" && !comment) {
+          notice("Укажите в комментарии, что слушателю нужно исправить.");
+          [...backdrop.querySelectorAll("[data-review-comment]")].find(input => input.dataset.reviewComment === id)?.focus();
+          return;
+        }
+        setBusy(true); notice("Сохранение решения…");
+        try {
+          const result = await authRequest("api/students/enrollment-review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, decision, comment, submissionId }) });
+          // Apply only the acknowledged review fields, without saving a stale full card.
+          const local = state.data.collections.students.find(row => row.id === id);
+          if (local && (local.enrollmentSubmissionId || local.enrollmentSubmittedAt) === submissionId) Object.assign(local, result.review);
+          session.comments.delete(id);
+          let refreshWarning = "";
+          try { await refreshAttestationTaskSnapshot(); } catch (error) { refreshWarning = ` Список не удалось обновить: ${error.message}`; }
+          paint(); notice((decision === "accept" ? "Документы приняты. Слушатель убран из списка проверки." : "Документы возвращены на доработку. Комментарий доступен в кабинете слушателя.") + refreshWarning);
+        } catch (error) { notice(error.message); }
+        finally { setBusy(false); }
+      });
       backdrop.querySelectorAll("[data-review-student]").forEach(button => button.onclick = () => openAttestationTaskStudentCard(button.dataset.reviewStudent, backdrop, session, error => { paint(); notice(error || "Список обновлён."); }));
       backdrop.querySelectorAll("[data-review-documents]").forEach(button => button.onclick = async () => {
         if (session.busy) return;
         const record = session.rows.find(row => row.record.id === button.dataset.reviewDocuments)?.record;
         if (!record) return;
-        session.busy = true; button.disabled = true; notice("Загрузка документов…");
+        setBusy(true); notice("Загрузка документов…");
         backdrop.hidden = true;
         try { await openStudentWebDavDocumentsManager(record.studentPortalDocumentsFolder || getStudentYandexDocumentsFolder(record), record.name, { selectedFileName: record.enrollmentDocuments?.[0]?.name || "", onClose: () => { backdrop.hidden = false; button.focus({ preventScroll: true }); } }); notice(""); }
         catch (error) { backdrop.hidden = false; notice(error.message); }
-        finally { session.busy = false; button.disabled = false; }
+        finally { setBusy(false); }
       });
     };
     backdrop.closeEnrollmentReview = () => {
@@ -20377,10 +20412,10 @@ MAX - https://bizvmax.ru/zifra_plus
     backdrop.querySelector("[data-review-close]").onclick = backdrop.closeEnrollmentReview;
     backdrop.querySelector("[data-review-refresh]").onclick = async event => {
       if (session.busy) return;
-      session.busy = true; event.currentTarget.disabled = true; notice("Обновление общей базы…");
+      setBusy(true); notice("Обновление общей базы…");
       try { await refreshAttestationTaskSnapshot(); paint(); notice("Список обновлён."); }
       catch (error) { notice(error.message); }
-      finally { session.busy = false; backdrop.querySelector("[data-review-refresh]").disabled = false; }
+      finally { setBusy(false); }
     };
     document.body.appendChild(backdrop); paint(); backdrop.querySelector("[data-review-close]").focus({ preventScroll: true });
   }

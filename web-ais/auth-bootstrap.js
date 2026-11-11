@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261111-student-cabinet-preview";
+  const AUTH_BUILD = "20261111-enrollment-review-decisions";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

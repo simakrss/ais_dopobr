@@ -3264,9 +3264,17 @@ html.is-database-demo-mode .contract-photo-path-field {
 .dashboard-document-tasks.with-enrollment-review .dashboard-attestation-tile { flex: 0 1 200px; }
 .modal.enrollment-review-dialog { width: min(1100px, 96vw); max-width: 96vw; max-height: 92vh; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 .enrollment-review-dialog > :not(.modal-head) { margin: 0 14px 12px; }
-.enrollment-review-table { min-width: 600px; width: 100%; }
+.enrollment-review-table { min-width: 850px; width: 100%; }
 .enrollment-review-table td { vertical-align: top; padding: 10px; }
 .enrollment-review-table small { display: block; margin-top: 5px; }
+.enrollment-review-decision { min-width: 300px; }
+.enrollment-review-decision textarea { display: block; width: 100%; min-height: 76px; resize: vertical; margin: 5px 0 8px; }
+.enrollment-review-decision > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.student-portal-review { border: 1px solid #a4c7c2; border-radius: 8px; background: #f2f8f7; padding: 12px 16px; margin: 12px 0 18px; }
+.student-portal-review > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.student-portal-review[data-review-status="На доработке"] { border-color: #d8aa55; background: #fff9eb; }
+.student-portal-review[data-review-status="Приняты"] { border-color: #6fab89; background: #f0faf3; }
+.student-portal-review-comment { white-space: pre-wrap; overflow-wrap: anywhere; }
 .student-portal-open-link { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; margin: 5px 0; text-decoration: none; white-space: normal; }
 .student-portal-open-link svg { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .student-portal-staff-notice { border: 1px solid #8bbdb6; border-radius: 8px; padding: 12px 16px; background: #eef8f6; color: #154e47; }

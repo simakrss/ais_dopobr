@@ -26,7 +26,9 @@
     const button = root.querySelector("[data-submit]");
     if (button) button.disabled = busy || dirty || state.missing.length > 0 || Boolean(state.record.enrollmentSubmittedAt);
     const hint = root.querySelector("[data-submit-hint]");
-    if (hint) hint.textContent = dirty ? "Сохраните изменённые данные перед отправкой." : state.record.enrollmentSubmittedAt
+    if (hint) hint.textContent = dirty ? "Сохраните изменённые данные перед отправкой." : state.record.enrollmentReviewStatus === "Приняты"
+      ? "Документы приняты учебным центром. Если измените данные или файлы, отправьте комплект повторно."
+      : state.record.enrollmentSubmittedAt
       ? "Документы отправлены на проверку. После изменения данных или файлов отправьте комплект повторно."
       : state.missing.length ? `Нужно заполнить или приложить: ${state.missing.join("; ")}.` : "Данные и документы готовы к отправке в учебный центр.";
   }
@@ -46,6 +48,7 @@
       <section class="panel"><label>Программа обучения<select data-application aria-label="Программа обучения">${state.applications.map(row => `<option value="${esc(row.id)}" ${row.id === state.record.id ? "selected" : ""}>${esc(row.program)} · ${esc(row.status)}</option>`).join("")}</select></label>
       <nav aria-label="Разделы кабинета">${[["main", "Основное"], ["documents", "Документы"], ["finances", "Финансы"]].map(([key, label]) => `<button type="button" data-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join("")}${state.sdoAvailable ? `<a class="primary-button" data-sdo href="${esc(api.appUrl(url("/sdo-open")))}" target="_blank" rel="noopener noreferrer">Открыть СДО ↗</a>` : '<span class="muted">Вход в СДО откроется после отправки данных для доступа учебным центром.</span>'}</nav>
       <div data-message role="alert" hidden></div><div data-progress role="status" hidden><progress aria-label="Выполняется операция"></progress><span></span></div>
+      <aside class="student-portal-review" data-review-status="${esc(state.record.enrollmentReviewStatus || "Заполняется")}" aria-label="Результат проверки документов"><div><strong>Документы: ${esc(state.record.enrollmentReviewStatus || "Заполняется")}</strong><button type="button" data-review-refresh>Обновить статус</button></div>${state.record.enrollmentReviewComment ? `<p class="muted">${["Приняты", "На доработке"].includes(state.record.enrollmentReviewStatus) ? "Комментарий учебного центра" : "Предыдущий комментарий учебного центра"}${state.record.enrollmentReviewedAt ? ` · ${esc(new Date(state.record.enrollmentReviewedAt).toLocaleString("ru-RU"))}` : ""}</p><p class="student-portal-review-comment">${esc(state.record.enrollmentReviewComment)}</p>` : ""}${state.record.enrollmentReviewStatus === "На доработке" ? "<p>Исправьте замечания, сохраните данные и нажмите «Отправить на проверку» повторно.</p>" : ""}</aside>
       <section data-panel="main" ${tab !== "main" ? "hidden" : ""}><p>Заполните обязательные поля, отмеченные *. Если не работаете, укажите «Не работаю».</p><form data-profile novalidate><div class="student-portal-fields">${state.fields.map(field).join("")}</div><button class="primary-button" type="submit">Сохранить данные</button></form></section>
       <section data-panel="documents" ${tab !== "documents" ? "hidden" : ""}><p>PDF, JPEG или PNG, до 20 МБ на файл. Файлы сохраняются в Вашей папке на Яндекс Диске. При повторной загрузке используется новый файл этого вида. <a href="https://zifra-plus.ru/edu_info/" target="_blank" rel="noopener noreferrer">Перечень документов ↗</a></p>
       <ul class="student-portal-documents">${state.requirements.map(doc => { const file = state.documents.find(item => item.kind === doc.key); return `<li><div><strong>${esc(doc.label)}</strong><small>${doc.required ? "Обязательно" : "При необходимости"}</small>${file ? `<span>✓ Загружен · ${esc(new Date(file.uploadedAt).toLocaleString("ru-RU"))}</span>` : "<span>Файл не загружен</span>"}</div><div class="student-portal-file-actions">${file ? `<button type="button" data-view="${esc(file.id)}">Просмотр</button><button type="button" data-download="${esc(file.id)}">Скачать</button>` : ""}<label class="student-portal-upload">${file ? "Заменить файл" : "Прикрепить файл"}<input aria-label="${esc(doc.label)}" type="file" accept="application/pdf,image/jpeg,image/png" data-upload="${doc.key}"></label></div></li>`; }).join("")}</ul></section>
@@ -62,6 +65,10 @@
     root.querySelectorAll("[data-upload]").forEach(input => input.addEventListener("change", () => upload(input)));
     root.querySelectorAll("[data-view], [data-download]").forEach(button => button.addEventListener("click", () => openFile(button.dataset.view || button.dataset.download, Boolean(button.dataset.view))));
     root.querySelector("[data-submit]").addEventListener("click", () => run("Проверка документов на Яндекс Диске…", async () => { state = await request("/submit", {}); render(); message("Комплект отправлен на проверку в учебный центр."); }));
+    root.querySelector("[data-review-refresh]").addEventListener("click", () => {
+      if (dirty) { message("Сначала сохраните изменённые данные.", true); return; }
+      run("Обновление статуса проверки…", async () => { state = await request(""); render(); });
+    });
     root.querySelector("[data-logout]").addEventListener("click", () => run("Выход…", async () => {
       if (dirty) await request("/profile", profile());
       if (previewStudentId) { dirty = false; busy = false; window.close(); if (!window.closed) window.location.assign(api.appUrl("")); return; }

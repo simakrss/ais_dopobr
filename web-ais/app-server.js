@@ -25270,6 +25270,13 @@ async function handleStudentPortal(req, res, user, url) {
   if (req.method === "POST" && url.pathname === "/api/student-portal/submit") return sendJson(res, 200, await service.submit(user, id));
   throw Object.assign(new Error("Раздел недоступен в кабинете слушателя."), { statusCode: 403 });
 }
+async function handleStudentEnrollmentReview(req, res, actor) {
+  if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Проверка документов доступна сотрудникам учебного центра."), { statusCode: 403 });
+  if (req.method !== "POST") throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+  const body = await readJsonBody(req, 24000);
+  const review = await getStudentEnrollmentService().review(actor, String(body.id || ""), body);
+  return sendJson(res, 200, { ok: true, review });
+}
 async function handleStaffStudentPortal(req, res, actor, url) {
   if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
   const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
@@ -41157,6 +41164,11 @@ async function route(req, res) {
     sendError(res, 403, "Этот раздел недоступен в кабинете партнёра.");
     return;
   }
+  if (requestUrl.pathname === "/api/students/enrollment-review") {
+    try { await handleStudentEnrollmentReview(req, res, authUser); }
+    catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось сохранить решение. Обновите список и повторите."); }
+    return;
+  }
   if (requestUrl.pathname === "/api/students/portal-preview" || requestUrl.pathname.startsWith("/api/students/portal-preview/")) {
     try { await handleStaffStudentPortal(req, res, authUser, requestUrl); }
     catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось открыть кабинет слушателя. Повторите позже."); }
@@ -41745,6 +41757,9 @@ if (isMainThread && require.main === module) {
 module.exports = {
   getStudentEnrollmentService,
   readSharedApplicationStateDocument,
+  saveSharedApplicationState,
+  readPartnerRegistrationReservedLogins,
+  safelyAppendAuditEntry,
   getGeneratedDocumentPreviewTiming,
   getGeneratedDocumentPreviewTimingHeaders,
   getDocumentRelayClient,

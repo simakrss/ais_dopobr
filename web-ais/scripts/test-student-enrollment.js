@@ -22,6 +22,50 @@ function fixture(options = {}) {
   return { service: enrollment.createService(deps), snapshot, rows, mails, files, audit, saves, deps };
 }
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
+test("review decisions require staff, a current submission and a return comment; preserve unrelated data", async () => {
+  const f = fixture(); await f.service.provisionOrder("101");
+  const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), staff = { role: "manager", id: "reviewer", name: "Проверяющий" };
+  Object.assign(record, { enrollmentReviewStatus: "На проверке", enrollmentSubmittedAt: "2026-11-11T10:00:00Z", enrollmentSubmissionId: "packet-1" });
+  const body = { decision: "return", comment: "Перезагрузите паспорт\nСтраница не читается <script>", submissionId: "packet-1" };
+  for (const role of ["student", "partner", "system", undefined]) await assert.rejects(f.service.review({ role }, record.id, body), { statusCode: 403 });
+  await assert.rejects(f.service.review(staff, record.id, { ...body, comment: " " }), /исправить/);
+  await assert.rejects(f.service.review(staff, record.id, { ...body, comment: "x".repeat(4001) }), /4000/);
+  await assert.rejects(f.service.review(staff, record.id, { ...body, submissionId: "old" }), { statusCode: 409 });
+  const returned = await f.service.review(staff, record.id, body);
+  assert.equal(returned.enrollmentReviewStatus, "На доработке"); assert.equal(returned.enrollmentSubmittedAt, "");
+  assert.equal(returned.enrollmentReviewedBy, staff.name); assert.equal(returned.enrollmentReviewedSubmissionAt, record.enrollmentSubmittedAt);
+  assert.ok(!("password" in returned)); assert.ok(!("email" in returned));
+  const view = await f.service.portal(user, record.id);
+  assert.equal(view.record.enrollmentReviewComment, body.comment); assert.equal(view.record.enrollmentReviewStatus, "На доработке");
+  await f.service.update(user, record.id, { phone: "+79990000000" });
+  assert.equal(f.snapshot.data.collections.students[0].enrollmentReviewStatus, "На доработке");
+  assert.equal(f.snapshot.data.collections.students[0].enrollmentReviewComment, body.comment);
+  await assert.rejects(f.service.review(staff, record.id, body), { statusCode: 409 });
+  const fresh = f.snapshot.data.collections.students[0];
+  Object.assign(fresh, { enrollmentReviewStatus: "На проверке", enrollmentSubmittedAt: "2026-11-11T12:00:00Z", enrollmentSubmissionId: "packet-2" });
+  await assert.rejects(f.service.review(staff, record.id, body), { statusCode: 409 });
+  const accepted = await f.service.review(staff, record.id, { decision: "accept", comment: "Всё верно", submissionId: "packet-2" });
+  assert.equal(accepted.enrollmentReviewStatus, "Приняты"); assert.equal(accepted.enrollmentReviewComment, "Всё верно");
+  assert.ok(accepted.enrollmentSubmittedAt); assert.equal(f.snapshot.data.collections.students[0].payment1Amount, 5000);
+  assert.equal(f.snapshot.data.collections.students[0].status, "На зачисление");
+  await assert.rejects(f.service.submit(user, record.id), /уже приняты/);
+  await assert.rejects(f.service.review(staff, record.id, { decision: "accept", submissionId: "packet-2" }), { statusCode: 409 });
+  assert.ok(f.audit.includes("Приняты документы для зачисления"));
+});
+
+test("review honors card locks and rechecks submission after a CAS conflict, including legacy submissions", async () => {
+  const f = fixture(); await f.service.provisionOrder("101");
+  const record = f.snapshot.data.collections.students[0], actor = { role: "admin" };
+  Object.assign(record, { enrollmentReviewStatus: "На проверке", enrollmentSubmittedAt: "2026-11-11T10:00:00Z" });
+  const body = { decision: "accept", submissionId: record.enrollmentSubmittedAt };
+  const locked = enrollment.createService({ ...f.deps, save: async () => ({ locked: true }) });
+  await assert.rejects(locked.review(actor, record.id, body), { statusCode: 423 });
+  assert.equal(record.enrollmentReviewStatus, "На проверке");
+  const conflict = enrollment.createService({ ...f.deps, save: async () => { record.enrollmentSubmissionId = "new-packet"; return { conflict: true }; } });
+  await assert.rejects(conflict.review(actor, record.id, body), { statusCode: 409 });
+  delete record.enrollmentSubmissionId;
+  assert.equal((await f.service.review(actor, record.id, body)).enrollmentReviewStatus, "Приняты");
+});
 test("paid import is idempotent, reserves existing logins and uses SDO numeric password", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); await f.service.provisionOrder("101");
   assert.equal(f.snapshot.data.collections.students.length, 1); assert.equal(f.mails.length, 1);
@@ -71,7 +115,13 @@ test("submission requires all fields and actual stored files; edits require resu
   assert.ok((await f.service.file(user, record.id, uploaded.documents[0].id)).body.length);
   const view = await f.service.submit(user, record.id); assert.ok(view.record.enrollmentSubmittedAt);
   assert.equal(f.snapshot.data.collections.students[0].enrollmentReviewStatus, "На проверке");
+  const firstSubmission = f.snapshot.data.collections.students[0].enrollmentSubmissionId;
+  await f.service.review({ role: "manager" }, record.id, { decision: "return", submissionId: firstSubmission, comment: "Чётче скан" });
   await f.service.upload(user, record.id, pdf); assert.equal((await f.service.portal(user, record.id)).record.enrollmentSubmittedAt, "");
+  assert.equal((await f.service.portal(user, record.id)).record.enrollmentReviewStatus, "На доработке");
+  await f.service.submit(user, record.id);
+  assert.notEqual(f.snapshot.data.collections.students[0].enrollmentSubmissionId, firstSubmission);
+  assert.equal((await f.service.portal(user, record.id)).record.enrollmentReviewStatus, "На проверке");
   assert.equal((await f.service.portal(user, record.id)).documents.length, 5);
   f.files.clear(); await assert.rejects(f.service.submit(user, record.id), /недоступен/);
 });

@@ -212,7 +212,10 @@ function createService(deps) {
       applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
       record: { id: record.id, email: record.email, program: record.program, status: record.status,
         ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
-        enrollmentSubmittedAt: record.enrollmentSubmittedAt || "" },
+        enrollmentSubmittedAt: record.enrollmentSubmittedAt || "",
+        enrollmentReviewStatus: record.enrollmentReviewStatus || "Заполняется",
+        enrollmentReviewComment: record.enrollmentReviewComment || "",
+        enrollmentReviewedAt: record.enrollmentReviewedAt || "" },
       fields: profileFields(record).map(([key, label, type, options]) => ({ key, label, type, options,
         required: type !== "checkbox" && (key !== "snils" || russianCitizen(record)) })),
       requirements: documentRequirements(record), missing: missingRequirements(record), finances: finances(record),
@@ -328,7 +331,8 @@ function createService(deps) {
   async function update(user, id, values) {
     await context(user, id);
     const clean = sanitizeProfile(values);
-    const updated = await mutate(id, user, item => ({ ...item, ...clean, enrollmentSubmittedAt: "", enrollmentReviewStatus: "Заполняется" }));
+    const updated = await mutate(id, user, item => ({ ...item, ...clean, enrollmentSubmittedAt: "", enrollmentSubmissionId: "",
+      enrollmentReviewStatus: item.enrollmentReviewStatus === "На доработке" ? "На доработке" : "Заполняется" }));
     await deps.audit("Слушатель заполнил данные для зачисления", updated, user);
     return portal(user, id);
   }
@@ -339,7 +343,9 @@ function createService(deps) {
     if (!documentRequirements(record).some(doc => doc.key === body.kind)) fail("Этот документ не требуется для выбранной программы.");
     await deps.upload(documentFolder(record), name, file.bytes, file.contentType);
     const uploaded = { id: fileId, kind: body.kind, name, size: file.bytes.length, uploadedAt: new Date().toISOString() };
-    const updated = await mutate(id, user, item => ({ ...item, enrollmentSubmittedAt: "", enrollmentReviewStatus: "Заполняется", enrollmentDocuments: [...(item.enrollmentDocuments || []).filter(entry => entry.kind !== body.kind), uploaded] }));
+    const updated = await mutate(id, user, item => ({ ...item, enrollmentSubmittedAt: "", enrollmentSubmissionId: "",
+      enrollmentReviewStatus: item.enrollmentReviewStatus === "На доработке" ? "На доработке" : "Заполняется",
+      enrollmentDocuments: [...(item.enrollmentDocuments || []).filter(entry => entry.kind !== body.kind), uploaded] }));
     await deps.audit("Слушатель загрузил документ для зачисления", updated, user);
     return portal(user, id);
   }
@@ -353,14 +359,38 @@ function createService(deps) {
     const { record } = await context(user, id);
     for (const entry of record.enrollmentDocuments || []) if (!await deps.fileExists(documentFolder(record), entry.name)) fail("Один из файлов недоступен на Яндекс Диске. Загрузите его повторно.", 409);
     const updated = await mutate(id, user, item => {
+      if (item.enrollmentReviewStatus === "Приняты") fail("Документы уже приняты учебным центром.", 409);
       const missing = missingRequirements(item);
       if (missing.length) fail(`Заполните и приложите: ${missing.join("; ")}`);
-      return { ...item, enrollmentSubmittedAt: item.enrollmentSubmittedAt || new Date().toISOString(), enrollmentReviewStatus: "На проверке" };
+      return { ...item, enrollmentSubmittedAt: item.enrollmentSubmittedAt || new Date().toISOString(),
+        enrollmentSubmissionId: item.enrollmentSubmissionId || crypto.randomUUID(), enrollmentReviewStatus: "На проверке" };
     });
     await deps.audit("Документы для зачисления отправлены на проверку", updated, user);
     return portal(user, id);
   }
-  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession };
+  async function review(actor, id, body = {}) {
+    if (!["admin", "manager"].includes(actor?.role)) fail("Проверка документов доступна сотрудникам учебного центра.", 403);
+    if (!["accept", "return"].includes(body.decision)) fail("Выберите решение по документам.");
+    const comment = text(body.comment);
+    if (comment.length > 4000) fail("Комментарий должен содержать не более 4000 символов.");
+    if (body.decision === "return" && !comment) fail("Укажите, что слушателю нужно исправить.");
+    const updated = await mutate(id, actor, item => {
+      if (item.enrollmentReviewStatus !== "На проверке" || !item.enrollmentSubmittedAt
+        || !body.submissionId || body.submissionId !== (item.enrollmentSubmissionId || item.enrollmentSubmittedAt)) {
+        fail("Комплект документов изменился или уже проверен. Обновите список и проверьте его повторно.", 409);
+      }
+      return { ...item, enrollmentReviewStatus: body.decision === "accept" ? "Приняты" : "На доработке",
+        enrollmentReviewComment: comment, enrollmentReviewedAt: new Date().toISOString(),
+        enrollmentReviewedBy: text(actor.name || actor.login), enrollmentReviewedById: text(actor.id),
+        enrollmentReviewedSubmissionAt: item.enrollmentSubmittedAt,
+        enrollmentSubmittedAt: body.decision === "accept" ? item.enrollmentSubmittedAt : "",
+        enrollmentSubmissionId: body.decision === "accept" ? item.enrollmentSubmissionId || "" : "" };
+    });
+    await deps.audit(body.decision === "accept" ? "Приняты документы для зачисления" : "Документы для зачисления возвращены на доработку", updated, actor);
+    return Object.fromEntries(["id", "enrollmentReviewStatus", "enrollmentReviewComment", "enrollmentReviewedAt", "enrollmentReviewedBy",
+      "enrollmentReviewedById", "enrollmentReviewedSubmissionAt", "enrollmentSubmittedAt", "enrollmentSubmissionId"].map(key => [key, updated[key]]));
+  }
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
   fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

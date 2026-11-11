@@ -13,7 +13,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url.startsWith("/api/student-portal")) {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     if (req.url.startsWith("/api/student-portal/profile")) { Object.assign(record, JSON.parse(Buffer.concat(chunks))); saved = true; }
-    if (req.url.startsWith("/api/student-portal/submit")) record.enrollmentSubmittedAt = new Date().toISOString();
+    if (req.url.startsWith("/api/student-portal/submit")) { record.enrollmentSubmittedAt = new Date().toISOString(); record.enrollmentReviewStatus = "На проверке"; }
     res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(payload())); return;
   }
   if (req.url === "/student-portal.js" || req.url === "/styles.css") { res.setHeader("Content-Type", req.url.endsWith("css") ? "text/css" : "application/javascript"); res.end(fs.readFileSync(path.join(root, req.url.slice(1)))); return; }
@@ -42,6 +42,17 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[data-tab="documents"]').click();
     await page.locator("[data-submit]").click(); await page.getByText("Комплект отправлен на проверку в учебный центр.", { exact: true }).waitFor();
     assert.ok(await page.locator("[data-submit]").isDisabled());
+    Object.assign(record, { enrollmentReviewStatus: "На доработке", enrollmentSubmittedAt: "", enrollmentReviewComment: 'Замените скан\n<script>window.bad=true</script>', enrollmentReviewedAt: new Date().toISOString() });
+    await page.locator('[data-review-refresh]').click();
+    await page.locator('[data-review-status="На доработке"]').waitFor();
+    assert.equal(await page.locator('.student-portal-review-comment').textContent(),record.enrollmentReviewComment);
+    assert.equal(await page.locator('.student-portal-review script').count(),0);
+    assert.ok(await page.locator('[data-submit]').isEnabled());
+    await page.locator('[data-submit]').click(); await page.locator('[data-review-status="На проверке"]').waitFor();
+    Object.assign(record, { enrollmentReviewStatus: "Приняты", enrollmentReviewComment: "Документы в порядке" });
+    await page.locator('[data-review-refresh]').click(); await page.locator('[data-review-status="Приняты"]').waitFor();
+    assert.ok(await page.locator('[data-submit]').isDisabled());
+    assert.match(await page.locator('[data-submit-hint]').textContent(),/приняты/);
     record.login = "fixture-sdo"; record.event_portalCredentialsSent_state = "checked";
     await page.reload(); await page.locator("[data-sdo]").waitFor();
     assert.equal(await page.locator("[data-sdo]").getAttribute("target"), "_blank");

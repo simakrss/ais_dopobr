@@ -55,6 +55,21 @@ test("portal works with CGI response interface and denies employee roles and all
   }
   await assert.rejects(context.handleStudentPortal({ method: "GET" }, {}, { role: "manager" }, new URL("https://example.test/api/student-portal")), { statusCode: 403 });
 });
+
+test("review endpoint denies nonstaff, demo mode and reads; forwards staff and packet version", async () => {
+  const { context } = handlers(), actor = { role: "manager", id: "staff" }, calls = [];
+  const body = { id: "student", decision: "accept", submissionId: "packet", comment: "Проверено" };
+  context.readJsonBody = async () => body;
+  context.getStudentEnrollmentService = () => ({ review: async (user, id, data) => { calls.push({ user, id, data }); return { id, enrollmentReviewStatus: "Приняты" }; } });
+  for (const role of ["student", "partner", undefined]) await assert.rejects(context.handleStudentEnrollmentReview({ method: "POST" }, {}, { role }), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handleStudentEnrollmentReview({ method: "POST" }, {}, actor), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => false;
+  await assert.rejects(context.handleStudentEnrollmentReview({ method: "GET" }, {}, actor), { statusCode: 405 });
+  const response = await context.handleStudentEnrollmentReview({ method: "POST" }, {}, actor);
+  assert.equal(response.status, 200); assert.equal(response.body.review.enrollmentReviewStatus, "Приняты");
+  assert.deepEqual(calls, [{ user: actor, id: "student", data: body }]);
+});
 test("early route guards precede shared state, admin operations and protected seed data", () => {
   const route = source.slice(source.indexOf("async function route("));
   const studentGate = route.indexOf('protectedRequest && (authUser?.role === "student"');
