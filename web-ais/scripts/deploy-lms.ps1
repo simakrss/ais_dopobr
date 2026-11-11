@@ -705,7 +705,11 @@ $results = if ($VituEmailExportRoot) {
   Publish-FileTarget 'services/wordpress/ais-document-relay.php' '/zifra-plus.ru/public_html/wp-content/mu-plugins/ais-document-relay.php' 'private document queue module'
 } elseif ($ProgramSites) {
   Install-ProgramSiteModules
-} else { foreach ($relativeFile in $pathsToDeploy) {
+} else { foreach ($relativeFile in ($pathsToDeploy | Sort-Object { if ($_ -eq 'student-enrollment.js') { 0 } else { 1 } }, { $_ })) {
+  if ($relativeFile -eq "student-enrollment.js") {
+    Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime only"
+    continue
+  }
   if ($relativeFile -eq ".runtime/tunnel-runtime.json") {
     Publish-FileTarget $relativeFile "$remoteRoot/storage/tunnel-runtime.json" "protected runtime"
     continue
