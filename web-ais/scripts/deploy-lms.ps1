@@ -14,6 +14,8 @@ param(
   # Explicit, separately approved installation only; never part of -All.
   [switch]$ProgramSites,
   [switch]$DocumentRelay,
+  [switch]$MoodleSso,
+  [switch]$MoodleCheckOnly,
   # Explicit VITU integration deployment; no changes to its database or production config.
   [string]$VituEmailExportRoot = "",
   [switch]$VituCheckOnly
@@ -176,7 +178,11 @@ if ($ListDeployable) {
   exit 0
 }
 
-if ($VituEmailExportRoot) {
+if ($MoodleSso) {
+  if ($VituEmailExportRoot -or $ValidateProfile -or $TunnelRuntime -or $ProgramSites -or $DocumentRelay -or $All -or $RelativePath.Count) { throw 'Moodle SSO deployment must be a separate operation.' }
+  $pathsToDeploy = @('services/moodle/ais-sso.php')
+} elseif ($MoodleCheckOnly) { throw '-MoodleCheckOnly requires -MoodleSso.'
+} elseif ($VituEmailExportRoot) {
   if ($ValidateProfile -or $TunnelRuntime -or $ProgramSites -or $DocumentRelay -or $All -or $RelativePath.Count) { throw "VITU deployment must be a separate operation." }
   $VituEmailExportRoot = (Resolve-Path -LiteralPath $VituEmailExportRoot).Path
   $pathsToDeploy = @('app/ais-email-export.php', 'app/developer-guide-data.php', 'app/developer-guide-pdf-data.php', 'api/ais-email-export.php')
@@ -696,7 +702,28 @@ function Publish-VituEmailExport {
   Write-Host "VITU prior files preserved outside public_html and in $backupRoot"
 }
 
-$results = if ($VituEmailExportRoot) {
+$results = if ($MoodleSso) {
+  if ((Get-FtpFileSize '/portal.edu-plus.ru/public_html/config.php') -lt 1) { throw 'Moodle config.php was not found. No files changed.' }
+  $remoteKeys = (Read-ProgramSitePrivateFile '/edu-plus.ru/lms-runtime/data/program-site-keys.json') | ConvertFrom-Json
+  $localKeys = [IO.File]::ReadAllText((Join-Path $appRoot 'storage/program-site-keys.json')) | ConvertFrom-Json
+  if (-not $remoteKeys.edu -or $remoteKeys.edu -cne $localKeys.edu) { throw 'SSO issuer key mismatch. No files changed.' }
+  if ($MoodleCheckOnly) { Write-Host 'Moodle installation and private issuer key verified. No files changed.' }
+  else {
+    $tracked = @(& (Get-GitPath) -C $repositoryRoot ls-files -- web-ais/services/moodle/ais-sso.php)
+    if (-not $tracked.Count -or (& (Get-GitPath) -C $repositoryRoot diff HEAD --name-only -- web-ais/services/moodle/ais-sso.php)) { throw 'Commit Moodle integration before deployment.' }
+    $hmac = New-Object Security.Cryptography.HMACSHA256
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes([string]$remoteKeys.edu)
+    $derived = ([BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes('ais-moodle-sso-v1')))).Replace('-', '').ToLowerInvariant()
+    $hmac.Dispose()
+    $keyFile = Join-Path $appRoot 'tmp/ais-sso-publish.key'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $keyFile)) | Out-Null
+    try {
+      [IO.File]::WriteAllText($keyFile, $derived, $utf8)
+      Publish-FileTarget 'tmp/ais-sso-publish.key' '/portal.edu-plus.ru/ais-sso.key' 'private Moodle SSO key'
+      Publish-FileTarget 'services/moodle/ais-sso.php' '/portal.edu-plus.ru/public_html/ais-sso.php' 'Moodle SSO entry'
+    } finally { Remove-Item -LiteralPath $keyFile -Force -ErrorAction SilentlyContinue }
+  }
+} elseif ($VituEmailExportRoot) {
   Publish-VituEmailExport
 } elseif ($DocumentRelay) {
   $remoteKey = Read-ProgramSitePrivateFile '/zifra-plus.ru/ais-program-site.key'
@@ -741,7 +768,7 @@ $results | Format-Table -AutoSize
 # Publish immutable signed installation files first, and switch latest.json last.
 # Only the publishing workstation owns this private signing key. It never enters FTP.
 $updateSigningKey = if ($SigningKeyPath) { [IO.Path]::GetFullPath($SigningKeyPath) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrPublisher/local-update-signing-private.pem' }
-if (-not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
+if (-not $MoodleSso -and -not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile -and
     (Test-Path -LiteralPath $updateSigningKey)) {
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
   $nodePath = if ($nodeCommand) { $nodeCommand.Source } else {

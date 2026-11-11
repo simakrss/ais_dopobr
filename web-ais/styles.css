@@ -3259,6 +3259,15 @@ html.is-database-demo-mode .contract-photo-path-field {
 .dashboard-document-tasks.with-deferred-start.without-frdo { grid-template-columns: 200px 200px; }
 .dashboard-document-tasks.with-deferred-start.without-frdo.without-attestation { grid-template-columns: 200px; }
 .dashboard-document-tasks[hidden] { display: none !important; }
+.dashboard-document-tasks.with-enrollment-review { display: flex; flex-wrap: wrap; }
+.dashboard-document-tasks.with-enrollment-review .dashboard-frdo-widget { flex: 1 1 480px; }
+.dashboard-document-tasks.with-enrollment-review .dashboard-attestation-tile { flex: 0 1 200px; }
+.modal.enrollment-review-dialog { width: min(1100px, 96vw); max-width: 96vw; max-height: 92vh; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.enrollment-review-dialog > :not(.modal-head) { margin: 0 14px 12px; }
+.enrollment-review-table { min-width: 600px; width: 100%; }
+.enrollment-review-table td { vertical-align: top; padding: 10px; }
+.enrollment-review-table small { display: block; margin-top: 5px; }
+@media (max-width: 650px) { .dashboard-document-tasks.with-enrollment-review .dashboard-attestation-tile { flex: 1 1 100%; max-width: 100%; } }
 .dashboard-document-tasks .dashboard-frdo-widget {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(75px, 0.8fr) 28px;
   height: 100px;

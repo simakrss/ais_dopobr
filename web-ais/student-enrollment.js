@@ -22,8 +22,34 @@ const DOCS = Object.freeze({ passport: "Паспорт: основная стр�
   snils: "СНИЛС", diploma: "Диплом об образовании", supplement: "Приложение к диплому",
   study: "Справка с места учёбы", nameChange: "Документ о перемене ФИО" });
 function russianCitizen(record) { return /^(?:рф|россия|российская федерация|гражданин рф|643)$/iu.test(text(record.citizenship)); }
+const professional = record => !["ДОП", "ПРО"].includes(text(record.educationType));
+const portalLogin = record => text(record.studentPortalLogin || record.login);
+const portalPassword = record => text(record.studentPortalPassword || record.password);
+function documentFolder(record) {
+  if (record.studentPortalDocumentsFolder) return record.studentPortalDocumentsFolder;
+  let source = text(record.photoPath).replace(/\\/g, "/").replace(/^[a-z]:\/+/i, "");
+  const parent = /^\[-1\](?:\/+|$)/u.test(source);
+  source = source.replace(/^\[-1\]\/+/u, "");
+  const marker = "аис допобразование/", index = source.toLocaleLowerCase("ru-RU").indexOf(marker);
+  if (index >= 0) source = source.slice(index + marker.length);
+  const parts = source.split("/").map(text).filter(Boolean);
+  if (/\.[a-z0-9]{2,5}$/i.test(parts.at(-1) || "")) parts.pop();
+  return parts.length > 1 && !parts.some(part => [".", ".."].includes(part))
+    ? `${parent ? "[-1]/" : ""}${parts.join("/")}` : `Слушатели/${record.id}/Документы`;
+}
+function profileFields(record) {
+  return professional(record) ? FIELDS : FIELDS.filter(([key]) => !["snils", "educationLevel", "enrollmentEducationMode", "educationDocumentSurname", "enrollmentNameChanged", "workPlace", "position"].includes(key));
+}
+function sdoAvailable(record) {
+  const key = Object.hasOwn(record, "event_portalCredentialsSent_state") ? "portalCredentialsSent" : "portalAccessSent";
+  const state = text(record[`event_${key}_state`]).toLowerCase();
+  const deleted = text(record.eventDeleted).split(/[,;\s]+/);
+  return !deleted.includes(key) && !["unchecked", "none", "false", "0"].includes(state)
+    && (["checked", "dated"].includes(state) || Boolean(record[`event_${key}_date`])) && Boolean(text(record.login));
+}
 function documentRequirements(record) {
   const keys = ["passport", "registration"];
+  if (!professional(record)) return keys.map(key => ({ key, label: DOCS[key], required: true }));
   if (russianCitizen(record)) keys.push("snils");
   keys.push(...(record.enrollmentEducationMode === "Справка с места учёбы" ? ["study"] : ["diploma", "supplement"]));
   const surname = identity(record.name).split(/\s+/)[0];
@@ -31,10 +57,10 @@ function documentRequirements(record) {
   return Object.entries(DOCS).map(([key, label]) => ({ key, label, required: keys.includes(key) }));
 }
 function missingRequirements(record) {
-  const missing = FIELDS.filter(([key, , type]) => type !== "checkbox" && (key !== "snils" || russianCitizen(record)))
+  const missing = profileFields(record).filter(([key, , type]) => type !== "checkbox" && (key !== "snils" || russianCitizen(record)))
     .filter(([key]) => !text(record[key])).map(([, label]) => label);
   if (text(record.phone) && record.phone.replace(/\D/g, "").length < 10) missing.push("Корректный телефон");
-  if (russianCitizen(record) && text(record.snils) && record.snils.replace(/\D/g, "").length !== 11) missing.push("СНИЛС: 11 цифр");
+  if (professional(record) && russianCitizen(record) && text(record.snils) && record.snils.replace(/\D/g, "").length !== 11) missing.push("СНИЛС: 11 цифр");
   if (russianCitizen(record) && text(record.mailingAddress) && !/\b\d{6}\b/.test(record.mailingAddress)) missing.push("Почтовый индекс: 6 цифр");
   for (const key of ["birthDate", "passportDate"]) if (text(record[key])) {
     const value = record[key], date = new Date(value);
@@ -64,20 +90,20 @@ function credentials(email, reserved) {
 function matchProgram(row, programs) {
   const matches = programs.filter(program => [program.productId, program.siteSync?.product?.id, program.sitePublication?.product?.id,
     ...(program.siteVariants || []).map(variant => variant.productId)].some(id => text(id) && text(id) === text(row.productId)));
-  return matches.length === 1 && ["КПК", "ППП"].includes(matches[0].type) ? matches[0] : null;
+  return matches.length === 1 && ["КПК", "ППП", "ДОП"].includes(matches[0].type) ? matches[0] : null;
 }
 // Private random salt prevents the public session version from being a six-digit-password oracle.
 const fingerprint = record => crypto.createHmac("sha256", record.studentPortalCredentialSalt || "disabled")
-  .update(`${record.id}\0${record.login}\0${record.password}`).digest("hex");
-function publicUser(record) { return { id: `student:${record.id}`, studentId: record.id, login: record.login, name: record.name,
+  .update(`${record.id}\0${portalLogin(record)}\0${portalPassword(record)}`).digest("hex");
+function publicUser(record) { return { id: `student:${record.id}`, studentId: record.id, login: portalLogin(record), name: record.name,
   role: "student", status: "active", email: record.email, authSource: "student", studentCredentialVersion: fingerprint(record) }; }
 const escapeHtml = value => text(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function welcomeMessage(record) {
   return `<p>Добрый день, ${escapeHtml(record.name)}!</p><p>Получена оплата по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>
 <p>Для оформления на обучение войдите в <a href="https://edu-plus.ru/lms/">личный кабинет</a>.</p>
-<p>Логин: <strong>${escapeHtml(record.login)}</strong><br>Пароль: <strong>${escapeHtml(record.password)}</strong></p>
-<ol><li>На вкладке «Основное» заполните личные, паспортные данные, сведения об образовании, месте работы и должности, адрес регистрации и почтовый адрес с индексом. Если не работаете, укажите «Не работаю». Сохраните данные.</li>
-<li>На вкладке «Документы» прикрепите сканы паспорта с регистрацией, СНИЛС (для граждан РФ), диплома с приложением либо справки с места учёбы. Если ФИО в документе об образовании отличается от паспорта, приложите документ о перемене ФИО. <a href="https://zifra-plus.ru/edu_info/">Перечень документов</a>.</li>
+<p>Логин: <strong>${escapeHtml(portalLogin(record))}</strong><br>Пароль: <strong>${escapeHtml(portalPassword(record))}</strong></p>
+<ol><li>На вкладке «Основное» заполните личные, паспортные данные, адрес регистрации и почтовый адрес с индексом.${professional(record) ? ' Укажите сведения об образовании, месте работы и должности. Если не работаете, укажите «Не работаю».' : ''} Сохраните данные.</li>
+<li>На вкладке «Документы» ${professional(record) ? "прикрепите сканы паспорта с регистрацией, СНИЛС (для граждан РФ), диплома с приложением либо справки с места учёбы. Если ФИО в документе об образовании отличается от паспорта, приложите документ о перемене ФИО." : "прикрепите скан паспорта с регистрацией. Для ДОП диплом и СНИЛС не требуются. Укажите почтовый адрес фактического проживания с индексом."} <a href="https://zifra-plus.ru/edu_info/">Перечень документов</a>.</li>
 <li>После заполнения всех обязательных полей и загрузки документов станет активна кнопка <strong>«Отправить на проверку»</strong>. Нажмите её для передачи комплекта в учебный центр.</li></ol>
 <p>Загруженные файлы автоматически сохраняются в Вашей папке на Яндекс Диске и отображаются в кабинете. На вкладке «Финансы» можно посмотреть свои оплаты и остаток долга. Не передавайте пароль другим людям.</p><p>Учебный центр «Цифровизация Плюс»<br>mail@edu-plus.ru</p>`;
 }
@@ -102,6 +128,40 @@ function finances(record) {
   const paid = round(payments.reduce((sum, payment) => sum + payment.amount, 0));
   return { total, paid, debt: Math.max(0, round(total - paid)), overpaid: Math.max(0, round(paid - total)), payments };
 }
+// Group only matching identities with no contradictory passport or date of birth.
+// SDO credentials are never changed by the migration: portal credentials are separate.
+function planExistingAccounts(data, reserved) {
+  const students = data.collections.students || [], groups = new Map(), updates = [];
+  for (const row of students) {
+    const email = identity(row.email), name = identity(row.name).replace(/\s+/gu, " ");
+    const key = email && name ? `${email}\0${name}` : `id:${row.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  for (const group of groups.values()) {
+    const ambiguous = ["birthDate", "passportNumber"].some(key => new Set(group.map(row => identity(row[key]).replace(/\s/g, "")).filter(Boolean)).size > 1);
+    for (const rows of ambiguous ? group.map(row => [row]) : [group]) {
+      const existing = rows.filter(row => row.studentPortalEnabled && !row.studentPortalBlocked && row.studentPortalCredentialSalt
+        && (!row.studentPortalAccountId || row.studentPortalAccountId === row.id));
+      // Multiple pre-existing accounts are preserved; never silently merge their permissions.
+      let owner = existing.length === 1 ? existing[0] : null;
+      for (const row of rows) {
+        if (row.studentPortalEnabled || row.studentPortalBlocked) continue;
+        const access = owner ? { login: portalLogin(owner), password: portalPassword(owner) }
+          : credentials(text(row.email) || `student.${text(row.uid) || text(row.id)}`, reserved);
+        reserved.add(identity(access.login));
+        const updated = { ...row, studentPortalEnabled: true, studentPortalAccountId: owner?.id || row.id,
+          studentPortalLogin: access.login, studentPortalPassword: access.password,
+          studentPortalCredentialSalt: crypto.randomBytes(32).toString("hex"),
+          studentPortalCreatedAt: new Date().toISOString(),
+          studentPortalDocumentsFolder: documentFolder(row) };
+        updates.push(updated);
+        if (!owner && existing.length <= 1) owner = updated;
+      }
+    }
+  }
+  return updates;
+}
 function createService(deps) {
   async function mutate(id, user, change) {
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -111,7 +171,7 @@ function createService(deps) {
       if (user?.role === "student") {
         const owner = current.data.collections.students.find(row => row.id === user.studentId);
         if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
-          || fingerprint(owner) !== user.studentCredentialVersion || !record.studentPortalEnabled
+          || fingerprint(owner) !== user.studentCredentialVersion || !record.studentPortalEnabled || record.studentPortalBlocked
           || (record.studentPortalAccountId || record.id) !== owner.id) fail("Доступ к заявке закрыт.", 403);
       }
       const updated = await change(structuredClone(record));
@@ -128,19 +188,19 @@ function createService(deps) {
     const current = await deps.readState();
     const students = current.data.collections.students || [];
     const owner = students.find(row => row.id === user.studentId && row.studentPortalEnabled === true && !row.studentPortalBlocked);
-    if (!owner?.studentPortalCredentialSalt || identity(owner.login) !== identity(user.login) || fingerprint(owner) !== user.studentCredentialVersion) fail("Сессия устарела. Войдите повторно.", 401);
-    const records = students.filter(row => row.studentPortalEnabled === true && (row.studentPortalAccountId || row.id) === owner.id);
+    if (!owner?.studentPortalCredentialSalt || identity(portalLogin(owner)) !== identity(user.login) || fingerprint(owner) !== user.studentCredentialVersion) fail("Сессия устарела. Войдите повторно.", 401);
+    const records = students.filter(row => row.studentPortalEnabled === true && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id);
     const record = id ? records.find(row => row.id === id) : records[0];
     if (!record) fail("Заявка не найдена.", 404);
     return { owner, record, records };
   }
   function view({ owner, record, records }) {
-    return { user: { name: owner.name, login: owner.login, email: owner.email },
+    return { user: { name: owner.name, login: portalLogin(owner), email: owner.email }, sdoAvailable: sdoAvailable(record),
       applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
       record: { id: record.id, email: record.email, program: record.program, status: record.status,
         ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
         enrollmentSubmittedAt: record.enrollmentSubmittedAt || "" },
-      fields: FIELDS.map(([key, label, type, options]) => ({ key, label, type, options,
+      fields: profileFields(record).map(([key, label, type, options]) => ({ key, label, type, options,
         required: type !== "checkbox" && (key !== "snils" || russianCitizen(record)) })),
       requirements: documentRequirements(record), missing: missingRequirements(record), finances: finances(record),
       documents: (record.enrollmentDocuments || []).map(({ id, kind, name, size, uploadedAt }) => ({ id, kind, name, size, uploadedAt })) };
@@ -149,9 +209,9 @@ function createService(deps) {
     await deps.loginLimit(identity(login), clientKey);
     const current = await deps.readState();
     const records = (current.data.collections.students || []).filter(row => row.studentPortalEnabled === true && row.studentPortalCredentialSalt && !row.studentPortalBlocked
-      && (!row.studentPortalAccountId || row.studentPortalAccountId === row.id) && identity(row.login) === identity(login));
+      && (!row.studentPortalAccountId || row.studentPortalAccountId === row.id) && identity(portalLogin(row)) === identity(login));
     if (records.length !== 1) return null;
-    const expected = Buffer.from(text(records[0].password)), actual = Buffer.from(String(password || ""));
+    const expected = Buffer.from(portalPassword(records[0])), actual = Buffer.from(String(password || ""));
     if (!expected.length || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
     await deps.loginSuccess(identity(login), clientKey);
     return publicUser(records[0]);
@@ -179,7 +239,7 @@ function createService(deps) {
             && (!item.studentPortalAccountId || item.studentPortalAccountId === item.id)
             && identity(item.email) === identity(row.email) && identity(item.name) === identity(row.name));
           const reserved = await deps.reservedLogins(data);
-          const access = owner ? { login: owner.login, password: owner.password } : credentials(row.email, reserved);
+          const access = owner ? { login: portalLogin(owner), password: portalPassword(owner) } : credentials(row.email, reserved);
           const id = prior?.id || `student-${crypto.randomUUID()}`;
           const uid = String(Math.max(0, ...students.map(item => Number(item.uid) || 0)) + 1);
           const registryPrice = Number(program.price) || Number(row.paymentAmount);
@@ -195,9 +255,11 @@ function createService(deps) {
             discountUnit: "percent", fundingSource: "Собственные средства",
             payment1Date: new Date().toISOString().slice(0, 10), payment1Amount: Number(row.paymentAmount),
             payment1Note: `Оплата на zifra-plus.ru, заказ №${row.orderId}`, coupon: text(row.coupon), directExpenses: [],
-            ...prior, ...access, photoPath: prior?.photoPath || `Слушатели/${id}/Документы`, studentPortalEnabled: true,
+            ...prior, login: prior?.login || access.login, password: prior?.password || access.password,
+            studentPortalLogin: access.login, studentPortalPassword: access.password,
+            photoPath: prior?.photoPath || `Слушатели/${id}/Документы`, studentPortalEnabled: true,
             studentPortalAccountId: owner?.id || id, studentPortalCredentialSalt: crypto.randomBytes(32).toString("hex"),
-            enrollmentDocuments: [], enrollmentMailStatus: "pending", citizenship: prior?.citizenship || "Российская Федерация", passportType: prior?.passportType || "Паспорт РФ" };
+            enrollmentDocuments: prior?.enrollmentDocuments || [], enrollmentMailStatus: "pending", citizenship: prior?.citizenship || "Российская Федерация", passportType: prior?.passportType || "Паспорт РФ" };
           const saved = await deps.save(current.revision, [record], deps.systemUser);
           if (saved.conflict) { record = null; continue; }
           if (saved.offline || saved.syncPending || saved.locked) fail("Не удалось сохранить заявку в общей базе.", 503);
@@ -207,7 +269,7 @@ function createService(deps) {
         }
         if (!resolved) fail("Общая база занята. Импорт будет повторён.", 503);
         if (!record) continue;
-        await deps.ensureFolder(record.photoPath);
+        await deps.ensureFolder(documentFolder(record));
         if (["pending", "failed"].includes(record.enrollmentMailStatus)) {
           await mutate(record.id, deps.systemUser, item => ({ ...item, enrollmentMailStatus: "sending", enrollmentMailAttemptAt: new Date().toISOString() }));
           try {
@@ -226,6 +288,30 @@ function createService(deps) {
     });
   }
   async function portal(user, id) { return view(await context(user, id)); }
+  async function provisionExisting({ apply = false, onProgress = () => {} } = {}) {
+    if (apply) await deps.assertWritable?.();
+    return deps.lock("student-enrollment-provision", async () => {
+      let created = 0, conflicts = 0;
+      while (true) {
+        const current = await deps.readState();
+        const planned = planExistingAccounts(current.data, await deps.reservedLogins(current.data));
+        if (!apply || !planned.length) return { total: current.data.collections.students.length, created, remaining: planned.length,
+          accounts: current.data.collections.students.filter(row => row.studentPortalEnabled && (row.studentPortalAccountId || row.id) === row.id).length };
+        const batch = planned.slice(0, 50);
+        const result = await deps.save(current.revision, batch, deps.systemUser);
+        if (result.conflict) { if (++conflicts > 10) fail("Данные часто изменяются. Повторите создание оставшихся кабинетов.", 409); continue; }
+        if (result.locked || result.offline || result.syncPending) fail("Общая база занята или недоступна. Уже созданные кабинеты сохранены, повторите позже.", 503);
+        conflicts = 0; created += batch.length;
+        for (const record of batch) await deps.audit("Создан кабинет имеющегося слушателя (без отправки письма)", record, deps.systemUser);
+        onProgress({ created, remaining: planned.length - batch.length });
+      }
+    });
+  }
+  async function sdo(user, id) {
+    const { record } = await context(user, id);
+    if (!sdoAvailable(record)) fail("Доступ в СДО откроется после отправки данных для доступа учебным центром.", 403);
+    return deps.sdoTicket(record);
+  }
   async function update(user, id, values) {
     await context(user, id);
     const clean = sanitizeProfile(values);
@@ -237,7 +323,8 @@ function createService(deps) {
     const { record } = await context(user, id);
     const file = validateUpload(body), fileId = crypto.randomUUID();
     const name = `${DOCS[body.kind]}-${fileId}.${file.extension}`;
-    await deps.upload(record.photoPath, name, file.bytes, file.contentType);
+    if (!documentRequirements(record).some(doc => doc.key === body.kind)) fail("Этот документ не требуется для выбранной программы.");
+    await deps.upload(documentFolder(record), name, file.bytes, file.contentType);
     const uploaded = { id: fileId, kind: body.kind, name, size: file.bytes.length, uploadedAt: new Date().toISOString() };
     const updated = await mutate(id, user, item => ({ ...item, enrollmentSubmittedAt: "", enrollmentReviewStatus: "Заполняется", enrollmentDocuments: [...(item.enrollmentDocuments || []).filter(entry => entry.kind !== body.kind), uploaded] }));
     await deps.audit("Слушатель загрузил документ для зачисления", updated, user);
@@ -247,11 +334,11 @@ function createService(deps) {
     const { record } = await context(user, id);
     const entry = (record.enrollmentDocuments || []).find(item => item.id === fileId);
     if (!entry || /[\\/]/.test(entry.name)) fail("Документ не найден.", 404);
-    return { ...await deps.download(record.photoPath, entry.name), name: entry.name };
+    return { ...await deps.download(documentFolder(record), entry.name), name: entry.name };
   }
   async function submit(user, id) {
     const { record } = await context(user, id);
-    for (const entry of record.enrollmentDocuments || []) if (!await deps.fileExists(record.photoPath, entry.name)) fail("Один из файлов недоступен на Яндекс Диске. Загрузите его повторно.", 409);
+    for (const entry of record.enrollmentDocuments || []) if (!await deps.fileExists(documentFolder(record), entry.name)) fail("Один из файлов недоступен на Яндекс Диске. Загрузите его повторно.", 409);
     const updated = await mutate(id, user, item => {
       const missing = missingRequirements(item);
       if (missing.length) fail(`Заполните и приложите: ${missing.join("; ")}`);
@@ -260,7 +347,7 @@ function createService(deps) {
     await deps.audit("Документы для зачисления отправлены на проверку", updated, user);
     return portal(user, id);
   }
-  return { authenticate, context, portal, update, upload, file, submit, provisionOrder };
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
-  fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService };
+  fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

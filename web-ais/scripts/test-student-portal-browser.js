@@ -8,7 +8,7 @@ const record = { id: "fixture", name: "Тестовый Слушатель", ema
 let saved = false;
 const payload = () => ({ user: { name: record.name, email: record.email }, record, applications: [{ id: record.id, program: record.program, status: record.status }],
   fields: [{ key: "name", label: "ФИО", type: "text", required: true }, { key: "phone", label: "Телефон", type: "tel", required: true }],
-  missing: saved ? [] : ["Телефон"], documents: [], requirements: model.documentRequirements({ citizenship: "РФ" }), finances: model.finances(record) });
+  missing: saved ? [] : ["Телефон"], documents: [], requirements: model.documentRequirements({ citizenship: "РФ" }), finances: model.finances(record), sdoAvailable: model.sdoAvailable(record) });
 const server = http.createServer(async (req, res) => {
   if (req.url.startsWith("/api/student-portal")) {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -28,6 +28,7 @@ const server = http.createServer(async (req, res) => {
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator("[data-submit]").waitFor(); assert.ok(await page.locator("[data-submit]").isDisabled());
+    assert.equal(await page.locator("[data-sdo]").count(), 0);
     await page.locator('[name="phone"]').fill("+79990000000");
     await page.locator('[data-tab="documents"]').click(); await page.locator('[data-tab="main"]').click();
     assert.equal(await page.locator('[name="phone"]').inputValue(), "+79990000000");
@@ -41,6 +42,10 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[data-tab="documents"]').click();
     await page.locator("[data-submit]").click(); await page.getByText("Комплект отправлен на проверку в учебный центр.", { exact: true }).waitFor();
     assert.ok(await page.locator("[data-submit]").isDisabled());
+    record.login = "fixture-sdo"; record.event_portalCredentialsSent_state = "checked";
+    await page.reload(); await page.locator("[data-sdo]").waitFor();
+    assert.equal(await page.locator("[data-sdo]").getAttribute("target"), "_blank");
+    assert.match(await page.locator("[data-sdo]").getAttribute("href"), /api\/student-portal\/sdo-open\?id=fixture$/);
     assert.deepEqual(errors, []);
     fs.mkdirSync(path.join(root, ".runtime", "student-portal-test"), { recursive: true });
     await page.screenshot({ path: path.join(root, ".runtime", "student-portal-test", "mobile.png"), fullPage: true });

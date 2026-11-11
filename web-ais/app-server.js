@@ -25163,6 +25163,7 @@ function getStudentEnrollmentService() {
   const location = (folder, name = "") => resolveStudentWebDavBrowserResource(folder, name).targetPath;
   studentEnrollmentService = studentEnrollment.createService({
     systemUser,
+    assertWritable: () => { if (isDatabaseDemoModeEnabled()) throw new Error("Создание кабинетов недоступно в деморежиме."); },
     async readState() {
       const current = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
       if (current.offline || current.syncPending || !current.document?.data?.collections) throw Object.assign(new Error("Общая база недоступна. Повторите позже."), { statusCode: 503 });
@@ -25178,8 +25179,25 @@ function getStudentEnrollmentService() {
     queryOrder: async orderId => (await runStudentApplicationsQuery({ orderId, dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: true })).rows,
     async reservedLogins(data) {
       const reserved = await readPartnerRegistrationReservedLogins(data.collections.contracts || []);
-      for (const row of data.collections.students || []) if (row.login) reserved.add(String(row.login).normalize("NFKC").trim().toLocaleLowerCase("ru-RU"));
+      for (const row of data.collections.students || []) for (const login of [row.login, row.studentPortalLogin]) {
+        if (login) reserved.add(String(login).normalize("NFKC").trim().toLocaleLowerCase("ru-RU"));
+      }
       return reserved;
+    },
+    async sdoTicket(record) {
+      const current = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
+      if (current.offline || current.syncPending) throw new Error("Общая база недоступна.");
+      const latest = current.document.data.collections.students.find(row => row.id === record.id);
+      if (!latest || !latest.studentPortalEnabled || latest.studentPortalBlocked || !studentEnrollment.sdoAvailable(latest)
+        || latest.login !== record.login) throw Object.assign(new Error("Доступ изменился. Обновите кабинет слушателя."), { statusCode: 403 });
+      const target = new URL("ais-sso.php", getPartnerSdoUrl(current.document.data));
+      if (target.origin !== "https://portal.edu-plus.ru") throw new Error("Бесшовный вход настроен для portal.edu-plus.ru. Проверьте адрес СДО в настройках.");
+      const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+      const key = crypto.createHmac("sha256", keys.edu).update("ais-moodle-sso-v1").digest("hex");
+      const payload = Buffer.from(JSON.stringify({ iss: "ais-dopobr", aud: target.origin, username: String(record.login).trim().toLowerCase(),
+        email: String(record.email || "").trim().toLowerCase(), studentId: record.id,
+        exp: Math.floor(Date.now() / 1000) + 60, nonce: crypto.randomBytes(24).toString("hex") })).toString("base64url");
+      return { action: target.href, token: `${payload}.${crypto.createHmac("sha256", key).update(payload).digest("hex")}` };
     },
     ensureFolder: folder => ensureYandexDiskFolder(location(folder)),
     sendMail: options => sendEmailThroughConfiguredMailbox(options),
@@ -25233,6 +25251,13 @@ async function handleStudentPortal(req, res, user, url) {
   if (user?.role !== "student") throw Object.assign(new Error("Требуется кабинет слушателя."), { statusCode: 403 });
   const service = getStudentEnrollmentService(), id = String(url.searchParams.get("id") || "");
   if (req.method === "GET" && url.pathname === "/api/student-portal") return sendJson(res, 200, await service.portal(user, id));
+  if (req.method === "GET" && url.pathname === "/api/student-portal/sdo-open") {
+    const ticket = await service.sdo(user, id), nonce = crypto.randomBytes(16).toString("base64");
+    const html = `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="referrer" content="strict-origin"><title>Вход в СДО</title><p>Выполняется вход в СДО…</p><form method="post" action="${escapePartnerRegistrationEmailHtml(ticket.action)}"><input type="hidden" name="token" value="${escapePartnerRegistrationEmailHtml(ticket.token)}"><noscript><button>Открыть СДО</button></noscript></form><script nonce="${nonce}">document.forms[0].submit();</script></html>`;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store", "Referrer-Policy": "strict-origin",
+      "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; form-action https://portal.edu-plus.ru; frame-ancestors 'none'` });
+    res.end(html); return;
+  }
   if (req.method === "GET" && url.pathname === "/api/student-portal/file") {
     const file = await service.file(user, id, url.searchParams.get("file"));
     return sendFile(res, 200, file.body, file.name, file.contentType, {
@@ -41694,6 +41719,8 @@ if (isMainThread && require.main === module) {
 }
 
 module.exports = {
+  getStudentEnrollmentService,
+  readSharedApplicationStateDocument,
   getGeneratedDocumentPreviewTiming,
   getGeneratedDocumentPreviewTimingHeaders,
   getDocumentRelayClient,

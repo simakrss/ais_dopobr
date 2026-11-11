@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.619",
+    version: "1.7.620",
     releasedAt: "2026-11-11"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.620",
+      releasedAt: "2026-11-11",
+      changes: ["Плитка и список документов на проверке. Кабинеты всех имеющихся слушателей без рассылки писем; отдельный перечень документов ДОП. Одноразовый бесшовный вход в СДО после отметки об отправке доступа."]
+    },
     {
       version: "1.7.619",
       releasedAt: "2026-11-11",
@@ -15215,6 +15220,10 @@ MAX - https://bizvmax.ru/zifra_plus
       restoreCancelledAisHistoryNavigation(currentSnapshot);
       return;
     }
+    const enrollmentReview = document.querySelector("[data-enrollment-review]");
+    if (enrollmentReview && !enrollmentReview.hidden) {
+      enrollmentReview.closeEnrollmentReview?.(); restoreCancelledAisHistoryNavigation(currentSnapshot); return;
+    }
     const attestationTasks = document.querySelector("[data-attestation-tasks]");
     if (attestationTasks && !attestationTasks.hidden) {
       const preview = document.querySelector("[data-generated-document-preview]");
@@ -20319,6 +20328,58 @@ MAX - https://bizvmax.ru/zifra_plus
     </button>`;
   }
 
+  function getEnrollmentReviewStudents() {
+    return (state.data.collections.students || []).filter(row => row.enrollmentReviewStatus === "На проверке" && row.enrollmentSubmittedAt)
+      .sort((a, b) => String(a.enrollmentSubmittedAt).localeCompare(String(b.enrollmentSubmittedAt)) || String(a.name).localeCompare(String(b.name), "ru"));
+  }
+
+  function renderEnrollmentReviewDashboardTile() {
+    const count = getEnrollmentReviewStudents().length;
+    if (!count || !canAccessView("students")) return "";
+    return `<button type="button" class="panel dashboard-attestation-tile" data-action="open-enrollment-review"><span class="eyebrow">Документы на проверке</span><strong>${count}</strong><small>Слушатели отправили документы<br>Открыть список и документы ↗</small></button>`;
+  }
+
+  function openEnrollmentReviewDialog() {
+    if (!canAccessView("students") || document.querySelector("[data-enrollment-review]")) return;
+    if (state.modal || isSettingsDraftSessionActive()) { alert("Сначала сохраните и закройте открытую карточку или настройки."); return; }
+    const backdrop = document.createElement("div"), session = { rows: [], busy: false, running: false };
+    backdrop.className = "modal-backdrop attestation-tasks-backdrop";
+    backdrop.dataset.enrollmentReview = "";
+    backdrop.innerHTML = `<section class="modal enrollment-review-dialog" role="dialog" aria-modal="true" aria-labelledby="enrollmentReviewTitle"><header class="modal-head"><div><p class="eyebrow">Зачисление</p><h2 id="enrollmentReviewTitle">Документы на проверке</h2></div><button class="icon-button" type="button" data-review-close aria-label="Закрыть">×</button></header><div class="attestation-tasks-toolbar"><span data-review-count></span><button class="ghost-button" type="button" data-review-refresh>Обновить список</button></div><div class="attestation-task-table-scroll"><table class="data-table enrollment-review-table"><thead><tr><th>Слушатель / программа</th><th>Отправлено на проверку</th><th>Документы</th></tr></thead><tbody></tbody></table></div><p data-review-notice role="status" aria-live="polite"></p></section>`;
+    const notice = text => { backdrop.querySelector("[data-review-notice]").textContent = text; };
+    const paint = () => {
+      session.rows = getEnrollmentReviewStudents().map(record => ({ record }));
+      backdrop.querySelector("[data-review-count]").textContent = `Слушателей: ${session.rows.length}`;
+      backdrop.querySelector("tbody").innerHTML = session.rows.map(({ record }) => `<tr><td><button type="button" class="attestation-task-student-link" data-review-student="${escapeAttr(record.id)}">${escapeHtml(record.name || "Без ФИО")}</button><small>${escapeHtml(record.program || "Программа не указана")}</small></td><td>${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}</td><td><button type="button" class="ghost-button" data-review-documents="${escapeAttr(record.id)}">Просмотреть документы (${(record.enrollmentDocuments || []).length})</button></td></tr>`).join("") || '<tr><td colspan="3">Нет документов, ожидающих проверки.</td></tr>';
+      backdrop.querySelectorAll("[data-review-student]").forEach(button => button.onclick = () => openAttestationTaskStudentCard(button.dataset.reviewStudent, backdrop, session, error => { paint(); notice(error || "Список обновлён."); }));
+      backdrop.querySelectorAll("[data-review-documents]").forEach(button => button.onclick = async () => {
+        if (session.busy) return;
+        const record = session.rows.find(row => row.record.id === button.dataset.reviewDocuments)?.record;
+        if (!record) return;
+        session.busy = true; button.disabled = true; notice("Загрузка документов…");
+        backdrop.hidden = true;
+        try { await openStudentWebDavDocumentsManager(record.studentPortalDocumentsFolder || getStudentYandexDocumentsFolder(record), record.name, { selectedFileName: record.enrollmentDocuments?.[0]?.name || "", onClose: () => { backdrop.hidden = false; button.focus({ preventScroll: true }); } }); notice(""); }
+        catch (error) { backdrop.hidden = false; notice(error.message); }
+        finally { session.busy = false; button.disabled = false; }
+      });
+    };
+    backdrop.closeEnrollmentReview = () => {
+      const browser = document.querySelector("[data-student-webdav-browser]");
+      if (browser) { browser.closeStudentWebDavBrowser?.(); return; }
+      if (session.busy) return;
+      backdrop.remove(); render(); document.querySelector("[data-action='open-enrollment-review']")?.focus({ preventScroll: true });
+    };
+    backdrop.querySelector("[data-review-close]").onclick = backdrop.closeEnrollmentReview;
+    backdrop.querySelector("[data-review-refresh]").onclick = async event => {
+      if (session.busy) return;
+      session.busy = true; event.currentTarget.disabled = true; notice("Обновление общей базы…");
+      try { await refreshAttestationTaskSnapshot(); paint(); notice("Список обновлён."); }
+      catch (error) { notice(error.message); }
+      finally { session.busy = false; backdrop.querySelector("[data-review-refresh]").disabled = false; }
+    };
+    document.body.appendChild(backdrop); paint(); backdrop.querySelector("[data-review-close]").focus({ preventScroll: true });
+  }
+
   function isStudentAwaitingEnrollment(student) {
     return String(student?.status || "").trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU") === "на зачисление";
   }
@@ -20400,6 +20461,7 @@ MAX - https://bizvmax.ru/zifra_plus
       .map((item) => ({ ...item, daysRemaining: calculateDaysUntilDate(item.endDate) }));
     const attestationDashboardTile = renderAttestationDashboardTile();
     const deferredStartDashboardTile = renderDeferredStartDashboardTile();
+    const enrollmentReviewDashboardTile = renderEnrollmentReviewDashboardTile();
     const pendingIssuedDocuments = getIssuedDocumentRows()
       .filter((row) => row.frdoKey === "pending");
     const pendingIssuedDocumentDays = pendingIssuedDocuments
@@ -20433,7 +20495,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile ? "" : "hidden"}>
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}${enrollmentReviewDashboardTile ? " with-enrollment-review" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile || enrollmentReviewDashboardTile ? "" : "hidden"}>
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -20462,6 +20524,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
       ${attestationDashboardTile}
       ${deferredStartDashboardTile}
+      ${enrollmentReviewDashboardTile}
       </div>
       <section class="panel">
         <div class="panel-head">
@@ -37932,6 +37995,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
                 ${record.studentPortalEnabled ? `<p class="student-enrollment-review">Кабинет слушателя · ${escapeHtml(record.enrollmentReviewStatus || "Ожидается заполнение")} ${record.enrollmentSubmittedAt ? `· ${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}` : ""}</p>${["failed", "unknown", "sending"].includes(record.enrollmentMailStatus) ? '<p>Инструкция слушателю: требуется проверить отправку в журнале почты.</p>' : ""}` : ""}
+                ${record.studentPortalEnabled ? `<details class="student-portal-access-details"><summary>Доступ в кабинет слушателя</summary><p><a href="https://edu-plus.ru/lms/" target="_blank" rel="noopener">edu-plus.ru/lms</a></p><label>Логин<input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label><label>Пароль<input readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label></details>` : ""}
                 ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">
@@ -46513,6 +46577,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function closeTopmostWindowByEscape() {
+    const enrollmentReview = document.querySelector("[data-enrollment-review]");
+    if (enrollmentReview && !enrollmentReview.hidden) { enrollmentReview.closeEnrollmentReview?.(); return true; }
     const attestationTasks = document.querySelector("[data-attestation-tasks]");
     if (attestationTasks && !attestationTasks.hidden) {
       const preview = document.querySelector("[data-generated-document-preview]");
@@ -46778,6 +46844,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function bindEvents() {
     bindPkReporting();
+    document.querySelector("[data-action='open-enrollment-review']")?.addEventListener("click", openEnrollmentReviewDialog);
     document.querySelector("[data-action='open-attestation-tasks']")?.addEventListener("click", openAttestationTasksDialog);
     document.querySelector("[data-action='open-deferred-start-students']")?.addEventListener("click", openDeferredStartStudents);
     bindDocumentWorkflowEvents();
@@ -56374,6 +56441,7 @@ MAX - https://bizvmax.ru/zifra_plus
       compactViewport.removeEventListener("change", syncBrowserLayout);
       previewResizeObserver?.disconnect();
       backdrop.remove();
+      options.onClose?.();
     };
     backdrop.closeStudentWebDavBrowser = close;
     backdrop.addEventListener("pointerdown", (event) => {
