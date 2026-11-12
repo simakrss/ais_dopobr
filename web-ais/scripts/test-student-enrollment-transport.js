@@ -70,6 +70,39 @@ test("review endpoint denies nonstaff, demo mode and reads; forwards staff and p
   assert.equal(response.status, 200); assert.equal(response.body.review.enrollmentReviewStatus, "Приняты");
   assert.deepEqual(calls, [{ user: actor, id: "student", data: body }]);
 });
+
+test("feedback transport bounds input, rejects demo/read requests and delegates staff without replacing identity", async () => {
+  const { context } = handlers(), user = { role: "student", studentId: "s" }, actor = { id: "staff", role: "manager" }, calls = [];
+  context.readJsonBody = async (_req, limit) => { assert.equal(limit, 64000); return { subject: "Вопрос", message: "Текст обращения", requestId: "fixture" }; };
+  context.getStudentEnrollmentService = () => ({
+    feedback: async (auth, id, body) => { calls.push({ auth, id, body }); return { ok: true }; },
+    staffSession: async (staff, anchor, id) => ({ user: { ...user, actingStaff: staff }, id: id || anchor, record: { id: anchor } })
+  });
+  const url = new URL("https://example.test/api/student-portal/feedback?id=s");
+  await assert.rejects(context.handleStudentPortal({ method: "GET" }, {}, user, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handleStudentPortal({ method: "POST" }, {}, user, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => false;
+  assert.equal((await context.handleStudentPortal({ method: "POST" }, {}, user, url)).status, 200);
+  await context.handleStaffStudentPortal({ method: "POST" }, {}, actor, new URL("https://example.test/api/students/portal-preview/feedback?studentId=s&id=linked"));
+  assert.equal(calls.length, 2); assert.equal(calls[0].auth, user); assert.equal(calls[1].auth.actingStaff, actor); assert.equal(calls[1].id, "linked");
+});
+
+test("feedback journal persists hashed account keys and request states across server instances", async () => {
+  const calls = [], context = { crypto, Date, Number, Math, SHARED_STATE_MYSQL_KEY: "fixture",
+    studentEnrollmentPool: async () => ({ query: async (sql, args) => {
+      calls.push({ sql, args });
+      return sql.startsWith("SELECT") ? [[{ request_id: "r", message_hash: "hash", status: "sent", created_at: 100 }]] : [{}];
+    } }) };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("function studentFeedbackAccountKey("), source.indexOf("function getStudentEnrollmentService(")), context);
+  const result = await context.readStudentFeedbackState("private-student-id", "r");
+  assert.equal(result.request.status, "sent"); assert.equal(result.lastAttemptAt, 100);
+  await context.saveStudentFeedbackState("private-student-id", { requestId: "r", messageHash: "hash", status: "pending", createdAt: 200 });
+  assert.ok(!JSON.stringify(calls).includes("private-student-id"));
+  assert.match(calls.find(call => call.sql.startsWith("INSERT")).args[0], /^[a-f0-9]{64}$/);
+  assert.notEqual(context.studentFeedbackAccountKey("one"), context.studentFeedbackAccountKey("two"));
+});
 test("early route guards precede shared state, admin operations and protected seed data", () => {
   const route = source.slice(source.indexOf("async function route("));
   const studentGate = route.indexOf('protectedRequest && (authUser?.role === "student"');

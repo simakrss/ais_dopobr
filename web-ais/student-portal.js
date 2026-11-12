@@ -8,8 +8,10 @@
     { id: "dashboard", label: "Рабочий стол", icon: "dashboard" },
     { id: "main", label: "Основное", icon: "profile" },
     { id: "documents", label: "Документы", icon: "folder" },
-    { id: "finances", label: "Финансы", icon: "payments" }
+    { id: "finances", label: "Финансы", icon: "payments" },
+    { id: "feedback", label: "Обратная связь", icon: "mail" }
   ];
+  const feedbackDrafts = new Map();
   const mobileMenu = window.matchMedia("(max-width: 820px)");
   let state, tab = "dashboard", busy = false, dirty = false, sidebarOpen = false;
   document.body.classList.add("partner-portal-body", "student-portal-body");
@@ -19,6 +21,7 @@
       profile: '<path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/>',
       folder: '<path d="M3 7.5h7l2 2h9v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5Zm0 0V6a2 2 0 0 1 2-2h5l2 2h5"/>',
       payments: '<path d="M3 7h18M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2 9h4m4 0h2M7 16h2"/>',
+      mail: '<path d="M3 6h18v12H3V6Zm0 1 9 7 9-7"/>',
       external: '<path d="M14 4h6v6m0-6-9 9M19 13v6H5V5h6"/>',
       logout: '<path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5m5-4 4-4-4-4m4 4H9"/>',
       menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -48,6 +51,31 @@
     return `<section data-panel="dashboard" ${tab !== "dashboard" ? "hidden" : ""} aria-label="Рабочий стол слушателя"><div class="student-dashboard-welcome"><h2>Здравствуйте, ${esc(state.user.name)}!</h2><p>Здесь можно заполнить личные данные, передать документы в учебный центр и проверить оплату обучения.</p></div>
       <div class="student-dashboard-cards"><button type="button" class="student-summary-card" data-go="documents">${icon("folder")}<span>Обязательные документы</span><strong>${uploaded} из ${required.length}</strong><small>Загружено · перейти к документам</small></button><button type="button" class="student-summary-card" data-go="finances">${icon("payments")}<span>Оплачено</span><strong>${money(state.finances.paid)}</strong><small>Посмотреть поступления</small></button><button type="button" class="student-summary-card" data-go="finances">${icon("payments")}<span>${state.finances.overpaid > 0 ? "Переплата" : "Осталось оплатить"}</span><strong>${money(state.finances.overpaid > 0 ? state.finances.overpaid : state.finances.debt)}</strong><small>${state.finances.debt > 0 ? "По выбранной программе" : "Задолженности нет"}</small></button></div>
       <div class="student-dashboard-actions"><button type="button" class="primary-button" data-go="main">Заполнить личные данные</button><button type="button" data-go="documents">Перейти к документам</button></div></section>`;
+  }
+  function feedbackDraft() {
+    if (!feedbackDrafts.has(state.record.id)) feedbackDrafts.set(state.record.id, { subject: "", message: "", requestId: "", status: "", error: "" });
+    return feedbackDrafts.get(state.record.id);
+  }
+  function feedbackRequestId() {
+    // getRandomValues also works when the local cabinet is opened over a LAN HTTP address.
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  function feedbackPanel() {
+    const draft = feedbackDraft(), email = state.record.email || state.user.email;
+    return `<section data-panel="feedback" ${tab !== "feedback" ? "hidden" : ""} aria-label="Обратная связь"><h2>Обратная связь</h2>
+      <div class="partner-feedback-layout"><article class="partner-panel partner-feedback-info">${icon("mail")}<h3>Напишите нам</h3><p>Задайте вопрос об обучении, документах, оплате или доступе в СДО. ${email ? "Ответ поступит на email из вашей карточки." : "Укажите в сообщении контакты для ответа."}</p><dl><dt>Получатель</dt><dd>${esc(state.feedbackRecipient || "Учебный центр «Цифровизация Плюс»")}</dd><dt>Ваш email</dt><dd>${esc(email || "не указан")}</dd><dt>Программа</dt><dd>${esc(state.record.program)}</dd></dl></article>
+      <form class="partner-panel partner-feedback-form" data-feedback-form><label><span>Тема</span><input name="subject" type="text" minlength="3" maxlength="180" required value="${esc(draft.subject)}" placeholder="Кратко опишите вопрос"></label><label><span>Сообщение</span><textarea name="message" rows="9" minlength="10" maxlength="10000" required placeholder="Введите сообщение">${esc(draft.message)}</textarea></label>
+      <p class="partner-form-message ${draft.error ? "is-error" : "is-success"}" data-feedback-result role="${draft.error ? "alert" : "status"}" ${draft.status || draft.error ? "" : "hidden"}>${esc(draft.error || draft.status)}</p>
+      <button class="primary-button" type="submit">${icon("mail")}<span data-feedback-send-label>Отправить сообщение</span></button></form></div></section>`;
+  }
+  function feedbackResult() {
+    const draft = feedbackDraft(), element = root.querySelector("[data-feedback-result]");
+    element.textContent = draft.error || draft.status; element.hidden = !element.textContent;
+    element.classList.toggle("is-error", Boolean(draft.error)); element.classList.toggle("is-success", !draft.error);
+    element.setAttribute("role", draft.error ? "alert" : "status");
   }
   function accountMenu(open, restoreFocus = false) {
     const menu = root.querySelector("#student-account-menu"), trigger = root.querySelector("[data-account-toggle]");
@@ -81,7 +109,8 @@
     });
     const title = root.querySelector("[data-section-title]");
     title.textContent = sections.find(item => item.id === tab).label;
-    root.querySelector("[data-enrollment-footer]").hidden = tab === "finances";
+    root.querySelector("[data-enrollment-footer]").hidden = ["finances", "feedback"].includes(tab);
+    root.querySelector(".student-portal-review").hidden = tab === "feedback";
     setSidebar(false, false); accountMenu(false); window.scrollTo(0, 0); title.focus({ preventScroll: true });
   }
   const url = (action = "", id = state?.record.id) => previewStudentId
@@ -133,9 +162,30 @@
       <section data-panel="documents" ${tab !== "documents" ? "hidden" : ""} aria-label="Документы для зачисления"><h2>Документы для зачисления</h2><p>PDF, JPEG или PNG, до 20 МБ на файл. Файлы сохраняются в Вашей папке на Яндекс Диске. При повторной загрузке используется новый файл этого вида. <a href="https://zifra-plus.ru/edu_info/" target="_blank" rel="noopener noreferrer">Перечень документов ↗</a></p>
       <ul class="student-portal-documents">${state.requirements.map(doc => { const file = state.documents.find(item => item.kind === doc.key); return `<li><div><strong>${esc(doc.label)}</strong><small>${doc.required ? "Обязательно" : "При необходимости"}</small>${file ? `<span>✓ Загружен · ${esc(new Date(file.uploadedAt).toLocaleString("ru-RU"))}</span>` : "<span>Файл не загружен</span>"}</div><div class="student-portal-file-actions">${file ? `<button type="button" data-view="${esc(file.id)}">Просмотр</button><button type="button" data-download="${esc(file.id)}">Скачать</button>` : ""}<label class="student-portal-upload">${file ? "Заменить файл" : "Прикрепить файл"}<input aria-label="${esc(doc.label)}" type="file" accept="application/pdf,image/jpeg,image/png" data-upload="${doc.key}"></label></div></li>`; }).join("")}</ul></section>
       <section data-panel="finances" ${tab !== "finances" ? "hidden" : ""}><h2>Оплата обучения</h2><dl class="student-portal-finances"><div><dt>Стоимость обучения по договору</dt><dd>${money(state.finances.total)}</dd></div><div><dt>Оплачено</dt><dd>${money(state.finances.paid)}</dd></div>${state.finances.debt > 0 ? `<div><dt>Остаток долга</dt><dd>${money(state.finances.debt)}</dd></div>` : '<div><dt>Задолженность</dt><dd>Нет</dd></div>'}${state.finances.overpaid > 0 ? `<div><dt>Переплата</dt><dd>${money(state.finances.overpaid)}</dd></div>` : ""}</dl><h3>Ваши оплаты</h3>${state.finances.payments.length ? `<table class="data-table"><thead><tr><th>Дата</th><th>Сумма</th></tr></thead><tbody>${state.finances.payments.map(payment => `<tr><td>${esc(payment.date ? new Date(payment.date).toLocaleDateString("ru-RU") : "Дата не указана")}</td><td>${money(payment.amount)}</td></tr>`).join("")}</tbody></table>` : '<p>Оплаты пока не отражены.</p>'}<p>Данные по выбранной заявке. Если платёж пока не отображается, обратитесь в учебный центр.</p></section>
-      <footer data-enrollment-footer ${tab === "finances" ? "hidden" : ""}><p data-submit-hint role="status"></p><button class="primary-button" type="button" data-submit>Отправить на проверку</button></footer></section></main><footer class="partner-footer">ООО «Цифровизация Плюс» · Кабинет слушателя</footer></div></div>`;
+      ${feedbackPanel()}
+      <footer data-enrollment-footer ${["finances", "feedback"].includes(tab) ? "hidden" : ""}><p data-submit-hint role="status"></p><button class="primary-button" type="button" data-submit>Отправить на проверку</button></footer></section></main><footer class="partner-footer">ООО «Цифровизация Плюс» · Кабинет слушателя</footer></div></div>`;
     root.querySelector("[data-profile]").addEventListener("input", () => { dirty = true; availability(); });
     root.querySelector("[data-profile]").addEventListener("submit", event => { event.preventDefault(); run("Сохранение данных…", async () => { state = await request("/profile", profile()); render(); message("Данные сохранены."); }); });
+    const feedbackForm = root.querySelector("[data-feedback-form]");
+    feedbackForm.addEventListener("input", event => {
+      if (!["subject", "message"].includes(event.target.name)) return;
+      const draft = feedbackDraft();
+      draft[event.target.name] = event.target.value; draft.requestId = ""; draft.status = ""; draft.error = ""; feedbackResult();
+    });
+    feedbackForm.addEventListener("submit", event => {
+      event.preventDefault(); if (busy || !feedbackForm.reportValidity()) return;
+      const draft = feedbackDraft();
+      draft.requestId ||= feedbackRequestId(); draft.status = ""; draft.error = ""; feedbackResult();
+      run("Отправка сообщения в учебный центр…", async () => {
+        const label = root.querySelector("[data-feedback-send-label]"); label.textContent = "Отправка…";
+        try {
+          const result = await request("/feedback", { subject: draft.subject, message: draft.message, requestId: draft.requestId });
+          draft.subject = ""; draft.message = ""; draft.requestId = ""; draft.status = result.message || "Сообщение отправлено в учебный центр.";
+          feedbackForm.elements.subject.value = ""; feedbackForm.elements.message.value = "";
+        } catch (error) { draft.error = error.message || "Не удалось отправить сообщение. Повторите позже."; }
+        finally { feedbackResult(); label.textContent = "Отправить сообщение"; }
+      });
+    });
     root.querySelectorAll("[data-tab], [data-go]").forEach(button => button.addEventListener("click", () => switchSection(button.dataset.tab || button.dataset.go)));
     root.querySelector("[data-sidebar-open]").onclick = () => setSidebar(true);
     root.querySelectorAll("[data-sidebar-close]").forEach(button => { button.onclick = () => setSidebar(false); });
@@ -154,6 +204,7 @@
       if (previewStudentId) { dirty = false; busy = false; window.close(); if (!window.closed) window.location.assign(api.appUrl("")); return; }
       await api.request("api/auth/logout", { method: "POST" }); api.redirectToLogin();
     })));
+    root.querySelector(".student-portal-review").hidden = tab === "feedback";
     setSidebar(false, false); availability();
   }
   function profile() {
@@ -218,7 +269,9 @@
     }
   });
   mobileMenu.addEventListener("change", () => setSidebar(false));
-  window.addEventListener("beforeunload", event => { if (dirty || busy) { event.preventDefault(); event.returnValue = ""; } });
+  window.addEventListener("beforeunload", event => {
+    if (dirty || busy || [...feedbackDrafts.values()].some(draft => draft.subject.trim() || draft.message.trim())) { event.preventDefault(); event.returnValue = ""; }
+  });
   root.innerHTML = '<main class="partner-boot"><div class="partner-brand-mark">Ц+</div><strong role="status">Загрузка кабинета слушателя…</strong><span class="auth-spinner"></span></main>';
   api.request(url()).then(result => { state = result; render(); }).catch(error => {
     root.innerHTML = `<main class="partner-boot"><div class="partner-brand-mark">Ц+</div><p role="alert">${esc(error.message)}</p><button class="partner-primary-button" type="button">Повторить</button></main>`;

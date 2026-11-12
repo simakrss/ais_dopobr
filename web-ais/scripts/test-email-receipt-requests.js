@@ -87,6 +87,12 @@ const messageWithoutReceipt = createEmailMessage({
   requestDeliveryAndReadReceipts: false
 });
 assert.doesNotMatch(messageWithoutReceipt, /^Disposition-Notification-To:/mu);
+assert.doesNotMatch(messageWithoutReceipt, /^Reply-To:/mu);
+const replyMessage = createEmailMessage({ from: sender, to: sender, replyTo: recipient, subject: "Вопрос слушателя", message: "Текст обращения" });
+assert.match(replyMessage, /^Reply-To: <student@example\.ru>$/mu);
+for (const invalid of ["a@example.ru\r\nBcc: b@example.ru", "a@example.ru,b@example.ru", "not-an-email"]) {
+  assert.throws(() => createEmailMessage({ from: sender, to: sender, replyTo: invalid, subject: "Вопрос", message: "Текст" }), /адрес для ответа/);
+}
 
 const attachmentMessage = createEmailMessage({
   from: sender,

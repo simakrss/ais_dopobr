@@ -32239,6 +32239,8 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-shell [data-enrollment-footer] button { flex: 0 0 auto; }
 .student-shell [data-section-title]:focus { outline: none; }
 .student-shell .partner-footer { margin-top: auto; }
+.student-shell .partner-feedback-form > button { display: inline-flex; align-items: center; gap: 8px; white-space: normal; text-align: left; }
+.student-shell .partner-feedback-form input, .student-shell .partner-feedback-form textarea { max-width: 100%; }
 @media (max-width: 1050px) {
   .student-dashboard-cards { grid-template-columns: 1fr; }
   .student-portal button.student-summary-card { grid-template-columns: 24px minmax(0, 1fr); }

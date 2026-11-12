@@ -6,37 +6,54 @@ const root = path.resolve(__dirname, "..");
 const record = { id: "fixture", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Организация образовательного процесса вуза на основе современных информационных технологий (72 ч)", status: "На зачисление",
   contractAmount: 10000, payment1Amount: 5000, payment1Date: "2026-11-11" };
 let saved = false, logout = 0;
+const feedbackCalls = []; let feedbackReceived, releaseFeedback;
 const payload = () => ({ user: { name: record.name, email: record.email }, record, applications: [{ id: record.id, program: record.program, status: record.status }],
   fields: [{ key: "name", label: "ФИО", type: "text", required: true }, { key: "phone", label: "Телефон", type: "tel", required: true }],
-  missing: saved ? [] : ["Телефон"], documents: [], requirements: model.documentRequirements({ citizenship: "РФ" }), finances: model.finances(record), sdoAvailable: model.sdoAvailable(record) });
+  missing: saved ? [] : ["Телефон"], documents: [], requirements: model.documentRequirements({ citizenship: "РФ" }), finances: model.finances(record), sdoAvailable: model.sdoAvailable(record), feedbackRecipient: "center@example.test" });
 const server = http.createServer(async (req, res) => {
   if (req.url === "/api/auth/logout") { logout++; res.setHeader("Content-Type", "application/json"); res.end('{}'); return; }
   if (req.url.startsWith("/api/student-portal")) {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    if (req.url.startsWith("/api/student-portal/feedback")) {
+      feedbackCalls.push(JSON.parse(Buffer.concat(chunks)));
+      await new Promise(resolve => { releaseFeedback = resolve; feedbackReceived?.(); });
+      res.setHeader("Content-Type", "application/json");
+      if (feedbackCalls.length === 1) { res.statusCode = 503; res.end(JSON.stringify({ error: "Почта временно недоступна. Текст сохранён." })); }
+      else res.end(JSON.stringify({ ok: true, message: "Сообщение отправлено в учебный центр." }));
+      return;
+    }
     if (req.url.startsWith("/api/student-portal/profile")) { Object.assign(record, JSON.parse(Buffer.concat(chunks))); saved = true; }
     if (req.url.startsWith("/api/student-portal/submit")) { record.enrollmentSubmittedAt = new Date().toISOString(); record.enrollmentReviewStatus = "На проверке"; }
     res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(payload())); return;
   }
   if (req.url === "/student-portal.js" || req.url === "/styles.css") { res.setHeader("Content-Type", req.url.endsWith("css") ? "text/css" : "application/javascript"); res.end(fs.readFileSync(path.join(root, req.url.slice(1)))); return; }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"><div id="app" class="app-shell"></div><script>window.AIS_AUTH_API={appUrl:p=>"/"+p, request:async(p,o)=>{const r=await fetch("/"+p,o);return r.json();},redirectToLogin:()=>{window.loginRedirect=true;}};</script><script src="/student-portal.js"></script>');
+  res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"><div id="app" class="app-shell"></div><script>window.AIS_AUTH_API={appUrl:p=>"/"+p, request:async(p,o)=>{const r=await fetch("/"+p,o);const data=await r.json();if(!r.ok)throw Error(data.error);return data;},redirectToLogin:()=>{window.loginRedirect=true;}};</script><script src="/student-portal.js"></script>');
 });
 (async () => {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "msedge", headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1180, height: 900 } }); const errors = [];
+    await page.addInitScript(() => { crypto.randomUUID = undefined; });
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator("[data-submit]").waitFor(); assert.ok(await page.locator("[data-submit]").isDisabled());
     assert.equal(await page.locator("[data-sdo]").count(), 0);
     const screenshots = path.join(root, ".runtime", "student-portal-test"); fs.mkdirSync(screenshots, { recursive: true });
-    assert.equal(await page.locator('#student-sidebar [data-tab]').count(), 4);
+    assert.equal(await page.locator('#student-sidebar [data-tab]').count(), 5);
     assert.equal(await page.locator('[data-section-title]').textContent(), 'Рабочий стол');
     assert.ok(await page.locator('[data-panel="dashboard"]').isVisible());
     assert.ok(await page.locator('#student-sidebar').evaluate(element => element.getBoundingClientRect().right < 300 && !element.inert));
     assert.ok(await page.locator('.student-program-name').evaluate(element => element.scrollWidth <= element.clientWidth));
     await page.screenshot({ path: path.join(screenshots, "desktop-dashboard.png"), fullPage: true });
+    await page.locator('[data-tab="feedback"]').click();
+    assert.ok(await page.locator('[data-feedback-form]').isVisible());
+    assert.ok(await page.locator('[data-enrollment-footer]').isHidden());
+    await page.locator('[data-feedback-form] button[type="submit"]').click(); assert.equal(feedbackCalls.length, 0);
+    await page.locator('[data-feedback-form] [name="subject"]').fill('Вопрос о доступе к обучению');
+    await page.locator('[data-feedback-form] [name="message"]').fill('Подскажите, пожалуйста, как открыть материалы курса.\n\n');
+    await page.screenshot({ path: path.join(screenshots, "desktop-feedback.png"), fullPage: true });
     await page.locator('[data-account-toggle]').click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Профиль' }).click();
     assert.equal(await page.locator('[data-section-title]').textContent(), 'Основное');
@@ -47,6 +64,9 @@ const server = http.createServer(async (req, res) => {
     await page.keyboard.press('Escape'); assert.ok(await page.locator('#student-account-menu').isHidden());
     await page.locator('[data-tab="main"]').click();
     assert.equal(await page.locator('[name="phone"]').inputValue(), "+79990000000");
+    await page.locator('[data-tab="feedback"]').click();
+    assert.equal(await page.locator('[name="message"]').inputValue(), 'Подскажите, пожалуйста, как открыть материалы курса.\n\n');
+    await page.locator('[data-tab="main"]').click();
     await page.getByRole("button", { name: "Сохранить данные" }).click();
     await page.getByText("Данные сохранены.", { exact: true }).waitFor(); assert.ok(await page.locator("[data-submit]").isEnabled());
     await page.locator('[data-tab="finances"]').click();
@@ -78,6 +98,7 @@ const server = http.createServer(async (req, res) => {
     assert.ok(await page.locator('[data-submit]').isDisabled());
     assert.match(await page.locator('[data-submit-hint]').textContent(),/приняты/);
     record.login = "fixture-sdo"; record.event_portalCredentialsSent_state = "checked";
+    page.once('dialog', dialog => dialog.accept());
     await page.reload(); await page.locator("[data-sdo]").waitFor();
     assert.equal(await page.locator("[data-sdo]").getAttribute("target"), "_blank");
     assert.match(await page.locator("[data-sdo]").getAttribute("href"), /api\/student-portal\/sdo-open\?id=fixture$/);
@@ -94,10 +115,33 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="documents"]').click();
     await page.locator('[data-account-toggle]').click(); await page.getByRole('menuitem', {name:'Профиль'}).click();
     assert.equal(await page.locator('[name="phone"]').inputValue(), '+79991234567', 'Mobile menu must preserve drafts');
+    await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="feedback"]').click();
+    await page.locator('[name="subject"]').fill('Вопрос об обучении');
+    await page.locator('[name="message"]').fill('Когда начнётся обучение по моей программе?');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 392));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(screenshots, 'mobile-feedback.png'), fullPage: true, animations: 'disabled' });
+    let received = new Promise(resolve => { feedbackReceived = resolve; });
+    await page.locator('[data-feedback-form] button[type="submit"]').click(); await received;
+    assert.ok(await page.locator('[data-feedback-form] button[type="submit"]').isDisabled());
+    assert.equal(feedbackCalls.length, 1); releaseFeedback();
+    await page.getByText('Почта временно недоступна. Текст сохранён.', { exact:true }).waitFor();
+    assert.equal(await page.locator('[name="message"]').inputValue(), 'Когда начнётся обучение по моей программе?');
+    await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="main"]').click();
+    assert.equal(await page.locator('[name="phone"]').inputValue(), '+79991234567');
+    await page.getByRole('button', { name:'Сохранить данные', exact:true }).click(); await page.getByText('Данные сохранены.', { exact:true }).waitFor();
+    await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="feedback"]').click();
+    assert.equal(await page.locator('[name="message"]').inputValue(), 'Когда начнётся обучение по моей программе?');
+    received = new Promise(resolve => { feedbackReceived = resolve; });
+    await page.locator('[data-feedback-form] button[type="submit"]').click(); await received; releaseFeedback();
+    await page.getByText('Сообщение отправлено в учебный центр.', { exact:true }).waitFor();
+    assert.equal(await page.locator('[name="message"]').inputValue(), ''); assert.equal(await page.locator('[name="subject"]').inputValue(), '');
+    assert.equal(feedbackCalls[0].requestId, feedbackCalls[1].requestId, 'A retry keeps its idempotency key');
+    assert.match(feedbackCalls[0].requestId, /^[a-f0-9-]{36}$/);
     await page.locator('[data-account-toggle]').click(); await page.getByRole('menuitem', { name:'Выйти', exact:true }).click();
     await page.waitForFunction(() => window.loginRedirect === true);
     assert.equal(logout, 1); assert.equal(record.phone, '+79991234567', 'Logout saves the active draft');
     assert.deepEqual(errors, []);
-    console.log("PASS: partner-style student shell, dashboard, account menu, mobile drawer/keyboard, preserved drafts, profile, review decisions, finances and SDO");
+    console.log("PASS: student shell, mobile navigation, preserved drafts, feedback validation/busy/error/retry/success, profile, review, finances and SDO");
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });

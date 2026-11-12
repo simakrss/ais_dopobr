@@ -25157,6 +25157,28 @@ async function studentEnrollmentLoginLimit(login, clientKey, reset = false) {
     if (Number(rows[0]?.attempts) > (index ? 100 : 15)) throw Object.assign(new Error("Слишком много попыток входа. Повторите через 15 минут."), { statusCode: 429 });
   }
 }
+function studentFeedbackAccountKey(accountId) {
+  return crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:student-feedback:${accountId}`).digest("hex");
+}
+async function readStudentFeedbackState(accountId, requestId) {
+  const pool = await studentEnrollmentPool();
+  await pool.query(`CREATE TABLE IF NOT EXISTS ais_student_feedback_requests (
+    account_key CHAR(64) NOT NULL, request_id CHAR(36) NOT NULL, message_hash CHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL, created_at BIGINT NOT NULL,
+    PRIMARY KEY (account_key, request_id), KEY recent (account_key, created_at), KEY expires (created_at))`);
+  await pool.query("DELETE FROM ais_student_feedback_requests WHERE created_at < ? LIMIT 100", [Date.now() - 30 * 86400000]);
+  const [rows] = await pool.query(`SELECT request_id, message_hash, status, created_at FROM ais_student_feedback_requests
+    WHERE account_key = ? AND (request_id = ? OR created_at > ?)`, [studentFeedbackAccountKey(accountId), requestId, Date.now() - 30000]);
+  const previous = rows.find(row => row.request_id === requestId);
+  return { request: previous ? { messageHash: previous.message_hash, status: previous.status } : null,
+    lastAttemptAt: rows.reduce((latest, row) => Math.max(latest, Number(row.created_at)), 0) };
+}
+async function saveStudentFeedbackState(accountId, entry) {
+  const pool = await studentEnrollmentPool();
+  await pool.query(`INSERT INTO ais_student_feedback_requests (account_key, request_id, message_hash, status, created_at) VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE message_hash = VALUES(message_hash), status = VALUES(status), created_at = VALUES(created_at)`,
+    [studentFeedbackAccountKey(accountId), entry.requestId, entry.messageHash, entry.status, entry.createdAt]);
+}
 function getStudentEnrollmentService() {
   if (studentEnrollmentService) return studentEnrollmentService;
   const systemUser = { id: "paid-enrollment", login: "paid-enrollment", name: "Импорт оплаченных заявок", role: "system" };
@@ -25171,8 +25193,11 @@ function getStudentEnrollmentService() {
     },
     save: (revision, students, user) => saveSharedApplicationState({ baseRevision: revision, strictRevision: true,
       patch: { collections: { students: { upserts: students } }, recordKeys: students.map(row => `students:${row.id}`) } }, user?.actingStaff || user),
-    audit: (action, record, user) => appendAuditEntry({ action: user?.actingStaff ? `Сотрудник в кабинете слушателя: ${action}` : action, area: "Слушатели", entityType: "students", entityId: record.id,
-      entityLabel: record.name, source: "student-portal" }, user?.actingStaff || user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
+    audit: (action, record, user, details = "") => appendAuditEntry({ action: user?.actingStaff ? `Сотрудник в кабинете слушателя: ${action}` : action, area: "Слушатели", entityType: "students", entityId: record.id,
+      entityLabel: record.name, source: "student-portal", details }, user?.actingStaff || user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
+    feedbackRecipient: PARTNER_FEEDBACK_RECIPIENT,
+    readFeedbackState: readStudentFeedbackState,
+    saveFeedbackState: saveStudentFeedbackState,
     loginLimit: studentEnrollmentLoginLimit,
     loginSuccess: (login, clientKey) => studentEnrollmentLoginLimit(login, clientKey, true),
     lock: studentEnrollmentLock,
@@ -25268,6 +25293,10 @@ async function handleStudentPortal(req, res, user, url) {
   if (req.method === "POST" && url.pathname === "/api/student-portal/profile") return sendJson(res, 200, await service.update(user, id, await readJsonBody(req, 64000)));
   if (req.method === "POST" && url.pathname === "/api/student-portal/upload") return sendJson(res, 200, await service.upload(user, id, await readJsonBody(req, 29 * 1024 * 1024)));
   if (req.method === "POST" && url.pathname === "/api/student-portal/submit") return sendJson(res, 200, await service.submit(user, id));
+  if (req.method === "POST" && url.pathname === "/api/student-portal/feedback") {
+    if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Отправка сообщений недоступна в деморежиме."), { statusCode: 403 });
+    return sendJson(res, 200, await service.feedback(user, id, await readJsonBody(req, 64000)));
+  }
   throw Object.assign(new Error("Раздел недоступен в кабинете слушателя."), { statusCode: 403 });
 }
 async function handleStudentEnrollmentReview(req, res, actor) {
@@ -25281,7 +25310,7 @@ async function handleStaffStudentPortal(req, res, actor, url) {
   if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
   const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
   if (!(req.method === "GET" && ["", "/file", "/sdo-open"].includes(action))
-    && !(req.method === "POST" && ["/profile", "/upload", "/submit"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+    && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
   const session = await getStudentEnrollmentService().staffSession(actor, url.searchParams.get("studentId"), url.searchParams.get("id"));
   const target = new URL(url);
   target.pathname = `/api/student-portal${action}`;
@@ -25919,6 +25948,7 @@ function containsHtmlMarkup(value) {
 function createEmailMessage({
   from,
   to,
+  replyTo = "",
   subject,
   message,
   attachment,
@@ -25944,6 +25974,10 @@ function createEmailMessage({
     "MIME-Version: 1.0",
     "X-Mailer: AIS-Dopobrazovanie"
   ];
+  if (replyTo) {
+    if (!/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(replyTo)) throw new Error("Некорректный адрес для ответа на письмо.");
+    headers.push(`Reply-To: <${replyTo}>`);
+  }
   if (requestDeliveryAndReadReceipts) {
     headers.push(`Disposition-Notification-To: <${from}>`);
   }
@@ -25988,6 +26022,7 @@ function createEmailMessage({
 
 async function sendEmailThroughConfiguredMailbox({
   to,
+  replyTo = "",
   subject,
   message,
   attachment,
@@ -25995,6 +26030,7 @@ async function sendEmailThroughConfiguredMailbox({
   requestDeliveryAndReadReceipts,
   idempotencyKey = ""
 }) {
+  if (replyTo && !/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(replyTo)) throw new Error("Некорректный адрес для ответа на письмо.");
   if (requestDeliveryAndReadReceipts !== undefined && typeof requestDeliveryAndReadReceipts !== "boolean") {
     throw new Error("Некорректная настройка уведомлений о доставке и прочтении.");
   }
@@ -26023,6 +26059,7 @@ async function sendEmailThroughConfiguredMailbox({
       await writeData(`${createEmailMessage({
         from: settings.login,
         to,
+        replyTo,
         subject,
         message,
         attachment,
@@ -41756,6 +41793,7 @@ if (isMainThread && require.main === module) {
 
 module.exports = {
   getStudentEnrollmentService,
+  readStudentFeedbackState,
   readSharedApplicationStateDocument,
   saveSharedApplicationState,
   readPartnerRegistrationReservedLogins,

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.623",
+    version: "1.7.624",
     releasedAt: "2026-11-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.624",
+      releasedAt: "2026-11-12",
+      changes: ["В кабинете слушателя добавлена обратная связь с учебным центром: тема и текст обращения, сохранение черновика при переключении разделов, подтверждение отправки, защита от повторных писем и запись в истории слушателя."]
+    },
     {
       version: "1.7.623",
       releasedAt: "2026-11-12",

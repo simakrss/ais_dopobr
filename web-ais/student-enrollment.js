@@ -208,7 +208,7 @@ function createService(deps) {
     return { user: { ...publicUser(owner), actingStaff: actor }, id, record };
   }
   function view({ owner, record, records }) {
-    return { user: { name: owner.name, login: portalLogin(owner), email: owner.email }, sdoAvailable: sdoAvailable(record),
+    return { user: { name: owner.name, login: portalLogin(owner), email: owner.email }, sdoAvailable: sdoAvailable(record), feedbackRecipient: deps.feedbackRecipient || "",
       applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
       record: { id: record.id, email: record.email, program: record.program, status: record.status,
         ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
@@ -390,7 +390,51 @@ function createService(deps) {
     return Object.fromEntries(["id", "enrollmentReviewStatus", "enrollmentReviewComment", "enrollmentReviewedAt", "enrollmentReviewedBy",
       "enrollmentReviewedById", "enrollmentReviewedSubmissionAt", "enrollmentSubmittedAt", "enrollmentSubmissionId"].map(key => [key, updated[key]]));
   }
-  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review };
+  async function feedback(user, id, body = {}) {
+    if (user?.role !== "student" || !user.studentId) fail("Требуется вход слушателя.", 403);
+    const subject = text(body.subject).replace(/[\r\n\u0000-\u001f]+/gu, " ").trim();
+    const message = text(body.message).replace(/\r\n?/gu, "\n");
+    const requestId = text(body.requestId).toLowerCase();
+    if (subject.length < 3 || subject.length > 180) fail("Тема должна содержать от 3 до 180 символов.");
+    if (message.length < 10 || message.length > 10000) fail("Сообщение должно содержать от 10 до 10000 символов.");
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(requestId)) fail("Обновите форму сообщения и повторите отправку.");
+    return deps.lock(`student-feedback:${user.studentId}`, async () => {
+      const { owner, record } = await context(user, id);
+      if (!deps.feedbackRecipient) fail("Адрес учебного центра не настроен. Обратитесь к администратору.", 503);
+      const messageHash = crypto.createHash("sha256").update(JSON.stringify([record.id, subject, message])).digest("hex");
+      const history = await deps.readFeedbackState(owner.id, requestId);
+      const previous = history.request;
+      const success = { ok: true, message: "Сообщение отправлено в учебный центр." };
+      if (previous) {
+        if (previous.messageHash !== messageHash) fail("Это сообщение уже было изменено. Отправьте его как новое обращение.", 409);
+        if (previous.status === "sent") return success;
+        if (["pending", "unknown"].includes(previous.status)) fail("Письмо уже передано на отправку, но результат пока не подтверждён. Не отправляйте его повторно; уточните получение в учебном центре.", 409);
+      }
+      if (Date.now() - Number(history.lastAttemptAt || 0) < 30000) fail("Следующее сообщение можно отправить через 30 секунд.", 429);
+      const entry = { requestId, messageHash, status: "pending", createdAt: Date.now() };
+      await deps.saveFeedbackState(owner.id, entry);
+      const escape = value => text(value).replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+      const email = text(record.email || owner.email);
+      const replyTo = /^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(email) ? email : "";
+      const lines = ["Сообщение из кабинета слушателя Цифровизации Плюс", "", `Слушатель: ${record.name || owner.name}`,
+        `Программа: ${record.program || "не указана"}`, `Заявка: ${record.id}`, `Email: ${email || "не указан"}`,
+        `Телефон: ${record.phone || "не указан"}`, ...(user.actingStaff ? [`Отправил сотрудник: ${user.actingStaff.name || user.actingStaff.login}`] : []), "", message];
+      try {
+        await deps.sendMail({ to: deps.feedbackRecipient, replyTo, subject: `Слушатель: ${subject}`,
+          message: `<div style="white-space: pre-wrap; font-family: sans-serif">${escape(lines.join("\n"))}</div>`,
+          idempotencyKey: `student-feedback:${owner.id}:${requestId}`, requestDeliveryAndReadReceipts: false });
+      } catch (error) {
+        await deps.saveFeedbackState(owner.id, { ...entry, status: error.deliveryUnknown ? "unknown" : "failed" });
+        if (error.deliveryUnknown) fail("Почтовый сервер не подтвердил приём письма. Не отправляйте его повторно; уточните получение в учебном центре.", 409);
+        fail("Не удалось отправить сообщение. Текст сохранён в форме; повторите отправку позже.", 503);
+      }
+      try { await deps.saveFeedbackState(owner.id, { ...entry, status: "sent" }); }
+      catch { fail("Почтовый сервер принял письмо, но сохранить подтверждение не удалось. Не отправляйте сообщение повторно.", 503); }
+      await deps.audit("Отправлена обратная связь из кабинета слушателя", record, user, `Получатель: ${deps.feedbackRecipient}; тема: ${subject}`);
+      return success;
+    });
+  }
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
   fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

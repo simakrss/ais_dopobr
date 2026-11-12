@@ -7,21 +7,86 @@ function fixture(options = {}) {
     { id: "p2", productId: "20", name: "Тестовый вебинар", type: "ПРО", price: 100 }
   ] } } };
   const rows = [{ id: "101-1", orderId: "101", productId: "10", paid: true, paymentAmount: 5000, coupon: "RASS50", email: "test@example.test", name: "Тестов Тест Тестович" }];
-  const mails = [], files = new Map(), audit = [], saves = [];
+  const mails = [], files = new Map(), audit = [], saves = [], feedbackLedger = new Map(), locks = new Map();
   const deps = { readState: async () => structuredClone(snapshot), systemUser: { role: "system" },
     save: async (revision, records) => { if (revision !== snapshot.revision) return { conflict: true };
       saves.push(records); snapshot.revision++; records.forEach(record => { const index = snapshot.data.collections.students.findIndex(row => row.id === record.id);
         if (index < 0) snapshot.data.collections.students.push(record); else snapshot.data.collections.students[index] = record; }); return {}; },
     audit: async action => audit.push(action), queryOrder: async () => rows,
     reservedLogins: async data => new Set([...data.collections.students, ...data.collections.contracts].flatMap(row => [row.login, row.studentPortalLogin]).filter(Boolean)),
-    lock: async (_name, operation) => operation(), loginLimit: async () => {}, loginSuccess: async () => {},
+    lock: async (name, operation) => { const next = (locks.get(name) || Promise.resolve()).catch(() => {}).then(operation); locks.set(name, next); return next; }, loginLimit: async () => {}, loginSuccess: async () => {},
+    feedbackRecipient: "center@example.test",
+    readFeedbackState: async (id, requestId) => ({ request: feedbackLedger.get(`${id}:${requestId}`),
+      lastAttemptAt: Math.max(0, ...[...feedbackLedger].filter(([key]) => key.startsWith(`${id}:`)).map(([, entry]) => entry.createdAt)) }),
+    saveFeedbackState: async (id, entry) => feedbackLedger.set(`${id}:${entry.requestId}`, { ...entry }),
     ensureFolder: async () => {}, sendMail: async message => mails.push(message),
     upload: async (folder, name, body) => files.set(`${folder}/${name}`, body),
     download: async (folder, name) => ({ body: files.get(`${folder}/${name}`) }),
     fileExists: async (folder, name) => files.has(`${folder}/${name}`), ...options };
-  return { service: enrollment.createService(deps), snapshot, rows, mails, files, audit, saves, deps };
+  return { service: enrollment.createService(deps), snapshot, rows, mails, files, audit, saves, deps, feedbackLedger };
 }
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
+const feedbackBody = () => ({ subject: "Вопрос об обучении", message: "Подскажите, пожалуйста, дату начала обучения.", requestId: require("node:crypto").randomUUID() });
+test("feedback is scoped, addressed to the center, escaped, audited and deduplicated across service instances", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); f.mails.length = 0;
+  const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), before = structuredClone(record);
+  const body = { ...feedbackBody(), message: "Пожалуйста, проверьте\n<script>unsafe</script>", to: "attacker@example.test", replyTo: "forged@example.test", name: "Forged" };
+  await assert.rejects(f.service.feedback({ role: "partner" }, record.id, body), { statusCode: 403 });
+  await assert.rejects(f.service.feedback(user, "foreign", body), { statusCode: 404 });
+  const secondInstance = enrollment.createService(f.deps);
+  const results = await Promise.all([f.service.feedback(user, record.id, body), secondInstance.feedback(user, record.id, { ...body, requestId: body.requestId.toUpperCase() })]);
+  assert.ok(results.every(result => result.ok)); assert.equal(f.mails.length, 1);
+  const mail = f.mails[0]; assert.equal(mail.to, "center@example.test"); assert.equal(mail.replyTo, record.email);
+  assert.match(mail.message, /Тестов Тест Тестович/); assert.match(mail.message, /Тестовый курс/);
+  assert.match(mail.message, /&lt;script&gt;unsafe&lt;\/script&gt;/); assert.doesNotMatch(mail.message, /<script>/);
+  assert.ok(!mail.message.includes(record.password)); assert.match(mail.idempotencyKey, /student-feedback:/);
+  assert.equal(mail.requestDeliveryAndReadReceipts, false);
+  assert.deepEqual(f.snapshot.data.collections.students[0], before);
+  assert.ok(f.audit.includes("Отправлена обратная связь из кабинета слушателя"));
+  assert.equal((await f.service.portal(user)).feedbackRecipient, "center@example.test");
+  await assert.rejects(f.service.feedback(user, record.id, { ...body, message: "Изменённое сообщение" }), { statusCode: 409 });
+  await assert.rejects(f.service.feedback(user, record.id, feedbackBody()), { statusCode: 429 });
+  record.studentPortalBlocked = true;
+  await assert.rejects(f.service.feedback(user, record.id, body), { statusCode: 401 });
+  assert.equal(f.mails.length, 1);
+});
+test("feedback validates fields and preserves staff attribution without trusting client identity", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); f.mails.length = 0;
+  const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), body = feedbackBody();
+  for (const invalid of [{ subject: " " }, { subject: "a".repeat(181) }, { message: "short" }, { message: "x".repeat(10001) }, { requestId: "invalid" }]) {
+    await assert.rejects(f.service.feedback(user, record.id, { ...body, ...invalid }), { statusCode: 400 });
+  }
+  assert.equal(f.feedbackLedger.size, 0); assert.equal(f.mails.length, 0);
+  const staff = { role: "manager", id: "staff", name: "Тестовый сотрудник" };
+  const session = await f.service.staffSession(staff, record.id);
+  await f.service.feedback(session.user, session.id, { ...body, subject: "Вопрос\r\nBcc: other" });
+  assert.match(f.mails[0].message, /Отправил сотрудник: Тестовый сотрудник/);
+  assert.ok(!/[\r\n]/u.test(f.mails[0].subject));
+});
+test("known SMTP errors may retry after throttling; unknown delivery and lost acknowledgement never resend", async () => {
+  const f = fixture(); await f.service.provisionOrder("101");
+  const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  let calls = 0;
+  const retryable = enrollment.createService({ ...f.deps, sendMail: async () => { if (++calls === 1) throw Error("connect failed"); } });
+  const body = feedbackBody();
+  await assert.rejects(retryable.feedback(user, record.id, body), { statusCode: 503 });
+  await assert.rejects(retryable.feedback(user, record.id, body), { statusCode: 429 });
+  for (const entry of f.feedbackLedger.values()) entry.createdAt -= 31000;
+  assert.ok((await retryable.feedback(user, record.id, body)).ok); assert.equal(calls, 2);
+  f.feedbackLedger.clear(); calls = 0;
+  const uncertain = enrollment.createService({ ...f.deps, sendMail: async () => { calls++; throw Object.assign(Error("timeout"), { deliveryUnknown: true }); } });
+  const unknownBody = feedbackBody();
+  await assert.rejects(uncertain.feedback(user, record.id, unknownBody), { statusCode: 409 });
+  for (const entry of f.feedbackLedger.values()) entry.createdAt -= 31000;
+  await assert.rejects(uncertain.feedback(user, record.id, unknownBody), /не подтверждён/); assert.equal(calls, 1);
+  f.feedbackLedger.clear(); calls = 0;
+  const lostAck = enrollment.createService({ ...f.deps, sendMail: async () => { calls++; }, saveFeedbackState: async (id, entry) => {
+    if (entry.status === "sent") throw Error("database lost"); return f.deps.saveFeedbackState(id, entry);
+  } });
+  const lostBody = feedbackBody();
+  await assert.rejects(lostAck.feedback(user, record.id, lostBody), /сервер принял письмо/);
+  await assert.rejects(lostAck.feedback(user, record.id, lostBody), /не подтверждён/); assert.equal(calls, 1);
+});
 test("review decisions require staff, a current submission and a return comment; preserve unrelated data", async () => {
   const f = fixture(); await f.service.provisionOrder("101");
   const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), staff = { role: "manager", id: "reviewer", name: "Проверяющий" };
