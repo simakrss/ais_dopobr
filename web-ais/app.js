@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.624",
+    version: "1.7.625",
     releasedAt: "2026-11-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.625",
+      releasedAt: "2026-11-12",
+      changes: ["В кабинете слушателя сохраняется переписка с учебным центром и доступны ответы. Добавлены фото, справочные списки, оплата задолженности через ЮKassa с проверкой платежа и раздел документов об образовании по всем программам. Сканы и макеты хранятся в корневой папке слушателя. Доступ к кабинету в карточке собран в один значок рядом с документами."]
+    },
     {
       version: "1.7.624",
       releasedAt: "2026-11-12",
@@ -10467,6 +10472,7 @@ MAX - https://bizvmax.ru/zifra_plus
         date: normalizeEmployeePaymentDateInput(student[`payment${number}Date`])
       };
     });
+    paymentRows.push(...(student.portalPaymentReceipts || []).filter(item => item.slot === 0).map((item, index) => ({ number: 9 + index, amount: Number(item.amount), date: item.date })));
     const hasDetailedReceipts = paymentRows.some((payment) => payment.amount !== 0);
     const detailedReceiptsTotal = paymentRows.reduce((sum, payment) => sum + payment.amount, 0);
     const receiptsTotal = Math.round(Math.max(
@@ -20737,6 +20743,7 @@ MAX - https://bizvmax.ru/zifra_plus
           sourceId: student.id || ""
         };
       }).filter(Boolean);
+      paymentRows.push(...(student.portalPaymentReceipts || []).filter(item => item.slot === 0).map(item => ({ id: `revenue:${student.id}:yookassa:${item.orderId}`, date: item.date, category: "Поступление", uid: student.uid || "", subject: student.name || "", context: student.program || "", description: `ЮKassa · заказ ${item.orderId}`, amount: Number(item.amount), sourceConfig: "students", sourceId: student.id })));
       const expectedAmount = Number(student.paidAmount || 0);
       const detailedAmount = paymentRows.reduce((sum, row) => sum + row.amount, 0);
       const difference = Math.round((expectedAmount - detailedAmount) * 100) / 100;
@@ -38029,8 +38036,37 @@ MAX - https://bizvmax.ru/zifra_plus
   function renderStudentPortalOpenButton(record) {
     if (!record.id || !record.studentPortalEnabled || record.studentPortalBlocked || isDatabaseDemoMode()
       || !["admin", "manager"].includes(getCurrentAuthUser().role)) return "";
+    return `<button type="button" class="icon-button student-card-header-action" data-student-portal-menu title="Кабинет слушателя: ${escapeAttr(record.enrollmentReviewStatus || "Заполняется")}" aria-label="Кабинет слушателя и данные доступа"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>`;
+  }
+  function openStudentPortalMenu() {
+    const record = state.data.collections.students.find(item => item.id === state.modal?.id);
+    if (!record) return;
+    const dialog = document.createElement("dialog"); dialog.className = "student-access-dialog";
     const href = window.AIS_AUTH_API.appUrl(`?student-cabinet=${encodeURIComponent(record.id)}`);
-    return `<a class="ghost-button compact-button student-portal-open-link" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" title="Открыть кабинет слушателя в новом окне">Открыть личный кабинет <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 3h7v7M21 3 11 13M10 3H4a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-6"/></svg></a>`;
+    dialog.innerHTML = `<header><h3>Кабинет слушателя</h3><button type="button" data-close aria-label="Закрыть">×</button></header><p>${escapeHtml(record.enrollmentReviewStatus || "Заполняется")}</p><a class="primary-button" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">Открыть личный кабинет ↗</a><label>Логин<input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label><label>Пароль<input type="password" readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label><button type="button" data-show-password>Показать пароль</button>`;
+    dialog.querySelector("[data-close]").onclick = () => dialog.close();
+    dialog.querySelector("[data-show-password]").onclick = event => { const input = dialog.querySelector('input[type="password"],input[data-visible-password]'); const show = input.type === "password"; input.type = show ? "text" : "password"; input.dataset.visiblePassword = ""; event.target.textContent = show ? "Скрыть пароль" : "Показать пароль"; };
+    dialog.addEventListener("close", () => dialog.remove(), { once: true }); document.body.append(dialog); dialog.showModal();
+  }
+  async function saveStudentAwardFile(recordId, file, kind = "scan", format = "") {
+    if (file.size > 20 * 1024 * 1024) throw Error("Максимальный размер — 20 МБ.");
+    const base64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });
+    const result = await window.AIS_AUTH_API.request("api/students/education-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: recordId, kind, format, base64 }) });
+    const record = state.data.collections.students.find(item => item.id === recordId);
+    if (record) record.educationDocumentFiles = result.files;
+    if (state.modal?.id === recordId && state.modal.draft) state.modal.draft.educationDocumentFiles = result.files;
+    return result;
+  }
+  async function uploadStudentAwardScan(event) {
+    const input = event.target, file = input.files[0]; if (!file) return;
+    input.disabled = true;
+    const label = document.querySelector("[data-award-upload-status]"); label.textContent = "Загрузка скана в папку слушателя…";
+    try {
+      const id = await saveRecordFormBeforeContinuation(document.getElementById("recordForm"), { flush: true });
+      if (!id) throw Error("Сначала сохраните карточку слушателя.");
+      await saveStudentAwardFile(id, file); label.textContent = "Скан сохранён в корневой папке и доступен в кабинете слушателя.";
+    } catch (error) { label.textContent = error.message || "Не удалось загрузить скан."; }
+    finally { input.disabled = false; input.value = ""; }
   }
 
   function renderStudentModal(record) {
@@ -38051,9 +38087,6 @@ MAX - https://bizvmax.ru/zifra_plus
               <div class="student-modal-title">
                 <h2>${escapeHtml(title)}</h2>
                 ${programTitle ? `<p>${escapeHtml(programTitle)}</p>` : ""}
-                ${record.studentPortalEnabled ? `<p class="student-enrollment-review">Кабинет слушателя · ${escapeHtml(record.enrollmentReviewStatus || "Ожидается заполнение")} ${record.enrollmentSubmittedAt ? `· ${escapeHtml(new Date(record.enrollmentSubmittedAt).toLocaleString("ru-RU"))}` : ""}</p>${["failed", "unknown", "sending"].includes(record.enrollmentMailStatus) ? '<p>Инструкция слушателю: требуется проверить отправку в журнале почты.</p>' : ""}` : ""}
-                ${renderStudentPortalOpenButton(record)}
-                ${record.studentPortalEnabled ? `<details class="student-portal-access-details"><summary>Доступ в кабинет слушателя</summary><p><a href="https://edu-plus.ru/lms/" target="_blank" rel="noopener">edu-plus.ru/lms</a></p><label>Логин<input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label><label>Пароль<input readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label></details>` : ""}
                 ${renderCardRecordLockStatus(record)}
               </div>
               <div class="modal-head-actions">
@@ -38316,6 +38349,7 @@ MAX - https://bizvmax.ru/zifra_plus
           </button>`;
         }).join("")}
       </div>
+      <div class="student-award-upload"><label>Скан документа об образовании<input type="file" data-student-award-upload accept="application/pdf,image/jpeg,image/png" ${record.id ? "" : "disabled"}></label><small>PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете.</small><p data-award-upload-status role="status"></p>${(record.educationDocumentFiles || []).map(file => `<a href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" target="_blank" rel="noopener">${escapeHtml(file.kind === "layout" ? "Макет документа" : "Скан документа")} · ${escapeHtml(file.name)}</a>`).join("")}</div>
     `;
   }
 
@@ -39666,6 +39700,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       <div class="student-card-quick-actions" aria-label="Контекстные действия ${personLabel}">
         ${renderStudentDocumentsFolderLink(record, "student-card-header-action", entityType)}
+        ${isContract ? "" : renderStudentPortalOpenButton(record)}
         <button class="icon-button student-copy-details-button student-card-header-action" data-action="copy-student-details" type="button" title="${escapeAttr(copyTooltip)}" aria-label="${escapeAttr(copyTooltip)}">
           ${renderOrdersSdoIcon("copy")}
         </button>
@@ -42215,6 +42250,7 @@ MAX - https://bizvmax.ru/zifra_plus
             `;
           }).join("")}
         </div>` : `<p class="payment-empty">Оплаты пока не добавлены.</p>`}
+        ${(record.portalPaymentReceipts || []).filter(item => item.slot === 0).map(item => `<p class="student-online-payment">ЮKassa · ${escapeHtml(item.date)} · ${money(item.amount)} · заказ ${escapeHtml(item.orderId)}</p>`).join("")}
       </section>
     `;
   }
@@ -48369,6 +48405,8 @@ MAX - https://bizvmax.ru/zifra_plus
       );
     });
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
+    document.querySelectorAll("[data-student-portal-menu]").forEach(button => button.addEventListener("click", openStudentPortalMenu));
+    document.querySelector("[data-student-award-upload]")?.addEventListener("change", uploadStudentAwardScan);
     document.querySelector("[data-action='open-student-postal-envelope-document']")?.addEventListener("click", openStudentPostalEnvelopeDocument);
     document.querySelectorAll("[data-action='open-student-attestation-document']").forEach((button) => {
       button.addEventListener("click", (event) => openStudentCardBoundDocument(
@@ -72722,6 +72760,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function sumStudentPayments(record) {
     return Array.from({ length: 8 }, (_, index) => Number(record[`payment${index + 1}Amount`] || 0))
+      .concat((record.portalPaymentReceipts || []).filter(item => item.slot === 0).map(item => Number(item.amount || 0)))
       .reduce((sum, value) => sum + value, 0);
   }
 
@@ -72793,6 +72832,7 @@ MAX - https://bizvmax.ru/zifra_plus
           amount: Number(student[`payment${n}Amount`] || 0)
         };
       }).filter((item) => item.amount > 0);
+      detailedPayments.push(...(student.portalPaymentReceipts || []).filter(item => item.slot === 0).map(item => ({ date: item.date, amount: Number(item.amount) })));
       if (detailedPayments.length) {
         detailedPayments.forEach((payment) => addFinanceAmount(monthMap, payment.date || student.applicationDate || student.startDate, "revenue", payment.amount));
         return;
@@ -75903,6 +75943,12 @@ MAX - https://bizvmax.ru/zifra_plus
         showDocumentGenerationNotice("Сервер не подтвердил сохранение дополнительных копий. Проверьте папки сохранения и обновите локальный сервис.", "warning");
       } else if (additionalSaveResult?.failed?.length) {
         alert(`Основной документ сформирован, но не все дополнительные копии сохранены:\n${additionalSaveResult.failed.map((item) => `Копия ${item.index + 1}: ${item.error}`).join("\n")}`);
+      }
+      if (documentAuditContext.entityType === "students" && (/^education-document-(?:diploma|certificate)/u.test(documentTemplate.id || "")
+        || (documentTemplate.id && getEducationDocumentTemplateForRecord(record)?.id === documentTemplate.id))) {
+        setDocumentGenerationStatus(generationTaskId, "Сохранение макета в кабинет слушателя…");
+        try { await saveStudentAwardFile(documentAuditContext.entityId, generatedBlob, "layout", outputFormat); }
+        catch (error) { alert(`Документ сформирован, но макет не размещён в кабинете: ${error.message}`); }
       }
       setDocumentGenerationStatus(generationTaskId, `Завершение формирования: ${documentTemplate.title}`);
       const storageResult = await finishStudentDocumentGeneration(

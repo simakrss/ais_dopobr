@@ -16,6 +16,12 @@ const {
 } = require("../app-server.js");
 
 const sender = "mail@edu-plus.ru";
+{
+  const message = createEmailMessage({ from: sender, to: "fixture@example.test", subject: "Ответ", message: "Текст", messageId: "stable@ais.edu-plus.ru", inReplyTo: "parent@center.test" });
+  assert.match(message, /Message-ID: <stable@ais\.edu-plus\.ru>/);
+  assert.match(message, /In-Reply-To: <parent@center\.test>/); assert.match(message, /References: <parent@center\.test>/);
+  assert.throws(() => createEmailMessage({ from: sender, to: "fixture@example.test", subject: "Ответ", message: "Текст", inReplyTo: "id@test\r\nBcc: attacker@test" }), /идентификатор/);
+}
 const recipient = "student@example.ru";
 const ehloWithDsn = {
   code: 250,

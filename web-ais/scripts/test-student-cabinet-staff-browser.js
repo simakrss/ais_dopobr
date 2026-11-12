@@ -22,6 +22,7 @@ const server = http.createServer(async (req, res) => {
   if (name.startsWith("/api/student-portal")) { personalApi++; res.statusCode = 403; return res.end('{}'); }
   if (name.startsWith("/api/students/portal-preview")) {
     requests.push({ name, anchor: url.searchParams.get("studentId"), id: url.searchParams.get("id") });
+    if ((name.endsWith("/feedback") && req.method === "GET") || name.endsWith("/feedback-sync")) return res.end(JSON.stringify({ messages: [] }));
     if (name.endsWith("/feedback")) { feedbackSent++; return res.end(JSON.stringify({ ok: true, message: "Сообщение отправлено в учебный центр." })); }
     if (name.endsWith("/file")) {
       fileReads++; res.setHeader("Content-Type", "image/png");
@@ -43,8 +44,10 @@ const server = http.createServer(async (req, res) => {
     window.AIS_AUTH_USER=${JSON.stringify(user)}; window.AIS_AUTH_API={appUrl:p=>new URL(p,location.origin+'/').href};
     function isDatabaseDemoMode(){return false;} function getCurrentAuthUser(){return window.AIS_AUTH_USER;}
     function escapeAttr(v){return String(v).replaceAll('&','&amp;').replaceAll('"','&quot;');}
+    const escapeHtml=escapeAttr; const state={modal:{id:'two'},data:{collections:{students:${JSON.stringify(records)}}}};
     ${buttonCode}
     document.querySelector('#cardActions').innerHTML=renderStudentPortalOpenButton({id:'two',studentPortalEnabled:true});
+    document.querySelector('[data-student-portal-menu]').onclick=openStudentPortalMenu;
     </script>`);
   res.end(head + '<div id="app" class="app-shell"></div><script src="/auth-bootstrap.js"></script>');
 });
@@ -55,6 +58,10 @@ const server = http.createServer(async (req, res) => {
     const context = await browser.newContext(), parent = await context.newPage(), errors = [];
     context.on("page", page => page.on("pageerror", error => errors.push(error.message)));
     await parent.goto(`http://127.0.0.1:${server.address().port}/card`);
+    assert.equal(await parent.locator('#cardActions button').count(), 1);
+    await parent.locator('[data-student-portal-menu]').click();
+    assert.ok(await parent.locator('dialog[open] input[type="password"]').isVisible());
+    await parent.locator('[data-show-password]').click(); assert.equal(await parent.locator('input[data-visible-password]').getAttribute('type'), 'text');
     const popupPromise = context.waitForEvent("page"); await parent.getByText("Открыть личный кабинет", { exact: false }).click(); const popup = await popupPromise;
     await popup.locator('[data-application]').waitFor();
     assert.equal(await popup.locator('[data-application]').inputValue(), "two", "Open the card's application, not the first account record");
@@ -72,7 +79,7 @@ const server = http.createServer(async (req, res) => {
     await popup.waitForFunction(() => document.querySelector('[name="subject"]').value === '');
     await popup.locator('[data-application]').selectOption('two');
     await popup.waitForFunction(() => document.querySelector('[name="subject"]').value === 'Вопрос по второй программе');
-    await popup.locator('[data-feedback-form] button[type="submit"]').click();
+    await popup.locator('[data-feedback-form] button[type="submit"]:not([name])').click();
     await popup.getByText('Сообщение отправлено в учебный центр.', { exact: true }).waitFor();
     assert.equal(feedbackSent, 1); assert.equal(requests.find(item => item.name.endsWith('/feedback')).id, 'two');
     await popup.locator('[data-application]').selectOption('one'); await popup.locator('[name="phone"]').waitFor({ state: 'attached' });

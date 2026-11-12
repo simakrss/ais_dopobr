@@ -75,11 +75,12 @@ test("feedback transport bounds input, rejects demo/read requests and delegates 
   const { context } = handlers(), user = { role: "student", studentId: "s" }, actor = { id: "staff", role: "manager" }, calls = [];
   context.readJsonBody = async (_req, limit) => { assert.equal(limit, 64000); return { subject: "Вопрос", message: "Текст обращения", requestId: "fixture" }; };
   context.getStudentEnrollmentService = () => ({
+    correspondence: async () => ({ messages: [] }),
     feedback: async (auth, id, body) => { calls.push({ auth, id, body }); return { ok: true }; },
     staffSession: async (staff, anchor, id) => ({ user: { ...user, actingStaff: staff }, id: id || anchor, record: { id: anchor } })
   });
   const url = new URL("https://example.test/api/student-portal/feedback?id=s");
-  await assert.rejects(context.handleStudentPortal({ method: "GET" }, {}, user, url), { statusCode: 403 });
+  assert.equal((await context.handleStudentPortal({ method: "GET" }, {}, user, url)).status, 200);
   context.isDatabaseDemoModeEnabled = () => true;
   await assert.rejects(context.handleStudentPortal({ method: "POST" }, {}, user, url), { statusCode: 403 });
   context.isDatabaseDemoModeEnabled = () => false;

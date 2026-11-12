@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.9
+ * Version: 1.7.10
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -41,7 +41,9 @@ function ais_pg_process_paid_enrollment($order_id) {
         $secret = is_readable($key_file) ? trim(file_get_contents($key_file)) : '';
         if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) throw new RuntimeException('Ключ обмена АИС не настроен.');
         $resource = '/api/student-enrollment/paid-order';
-        $body = wp_json_encode(array('orderId' => (string) $order_id));
+        $payload = array('orderId' => (string) $order_id);
+        if ($order->get_meta('_ais_student_payment_intent')) $payload['studentDebtPayment'] = true;
+        $body = wp_json_encode($payload);
         $stamp = (string) time(); $nonce = bin2hex(random_bytes(16));
         $response = wp_remote_post('https://edu-plus.ru/lms' . $resource, array(
             'timeout' => 55, 'redirection' => 0, 'sslverify' => true,
@@ -50,7 +52,7 @@ function ais_pg_process_paid_enrollment($order_id) {
         if (is_wp_error($response)) throw new RuntimeException('Сайт АИС временно недоступен.');
         $status = (int) wp_remote_retrieve_response_code($response);
         $result = json_decode(wp_remote_retrieve_body($response), true);
-        if ($status !== 200 || empty($result['ok'])) throw new RuntimeException('Обработка АИС не завершена (HTTP ' . $status . ').');
+        if ($status !== 200 || empty($result['ok']) || (!empty($payload['studentDebtPayment']) && empty($result['paid']))) throw new RuntimeException('Обработка АИС не завершена (HTTP ' . $status . ').');
         $order->update_meta_data('_ais_enrollment_done', gmdate('c'));
         $order->delete_meta_data('_ais_enrollment_error');
         if ((int) ($result['imported'] ?? 0) > 0) $order->add_order_note('АИС: оплаченная заявка обработана, кабинет слушателя подготовлен.');
@@ -70,6 +72,84 @@ add_action('woocommerce_payment_complete', 'ais_pg_queue_paid_enrollment', 20, 1
 add_action('woocommerce_order_status_processing', 'ais_pg_queue_paid_enrollment', 20, 1);
 add_action('woocommerce_order_status_completed', 'ais_pg_queue_paid_enrollment', 20, 1);
 add_action('ais_pg_paid_enrollment', 'ais_pg_process_paid_enrollment', 10, 1);
+function ais_pg_yookassa_gateways() {
+    if (!function_exists('WC') || !WC()->payment_gateways()) return array();
+    return array_filter(WC()->payment_gateways()->payment_gateways(), function ($gateway) {
+        return $gateway->enabled === 'yes' && preg_match('/yoo.?kassa|yandex.*(?:kassa|money)/i', $gateway->id . ' ' . get_class($gateway));
+    });
+}
+function ais_pg_student_payment($data, $status_only = false) {
+    if (ais_pg_role() !== 'shop' || !function_exists('wc_get_order')) return ais_pg_error('Магазин недоступен.', 503);
+    if ($status_only) {
+        $order = wc_get_order((int) ($data['orderId'] ?? 0));
+        if (!$order || !$order->get_meta('_ais_student_payment_intent')) return ais_pg_error('Платёж кабинета не найден.', 404);
+        $confirmed = false;
+        if ($order->get_transaction_id()) {
+            if (!class_exists('YooKassaClientFactory')) throw new RuntimeException('Обновите официальный модуль ЮKassa для подтверждения платежей.');
+            try { $remote = YooKassaClientFactory::getYooKassaClient()->getPaymentInfo($order->get_transaction_id()); }
+            catch (Throwable $error) { throw new RuntimeException('Не удалось подтвердить платёж в ЮKassa. Проверка будет повторена.'); }
+            if ($remote->getAmount()->getCurrency() !== 'RUB' || round((float) $remote->getAmount()->getValue() * 100) !== round((float) $order->get_total() * 100)) throw new RuntimeException('Сумма платежа ЮKassa не совпала с заказом.');
+            $confirmed = $remote->getStatus() === 'succeeded' && $remote->getPaid();
+        }
+        return array('orderId' => (string) $order->get_id(), 'studentId' => $order->get_meta('_ais_student_payment_student'),
+            'intentKey' => $order->get_meta('_ais_student_payment_intent'), 'amount' => $order->get_total(), 'currency' => $order->get_currency(),
+            'paid' => $confirmed, 'status' => $order->get_status(), 'transactionId' => $order->get_transaction_id(),
+            'yookassa' => (bool) preg_match('/yoo.?kassa|yandex.*(?:kassa|money)/i', $order->get_payment_method()),
+            'paidAt' => $order->get_date_paid() ? $order->get_date_paid()->date('c') : '');
+    }
+    $gateways = ais_pg_yookassa_gateways();
+    if (!$gateways) return ais_pg_error('ЮKassa не подключена в магазине. Обратитесь в учебный центр.', 503);
+    if (!class_exists('YooKassaClientFactory')) return ais_pg_error('Обновите официальный модуль ЮKassa для подтверждения платежей.', 503);
+    if (!empty($data['checkOnly'])) return array('ok' => true, 'available' => true, 'confirmation' => 'yookassa-api');
+    $intent = (string) ($data['intentKey'] ?? ''); $student = (string) ($data['studentId'] ?? '');
+    $amount = (string) ($data['amount'] ?? ''); $email = sanitize_email($data['email'] ?? '');
+    if (!preg_match('/^[a-f0-9-]{36}$/D', $intent) || !$student || strlen($student) > 200 || !is_email($email)
+        || !preg_match('/^\d{1,8}\.\d{2}$/D', $amount) || (float) $amount <= 0) return ais_pg_error('Некорректные параметры оплаты.');
+    global $wpdb;
+    $lock = substr('ais-payment-' . hash('sha256', $intent), 0, 64);
+    if ((string) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 2)', $lock)) !== '1') return ais_pg_error('Платёж уже подготавливается. Повторите позже.', 409);
+    try {
+        $orders = wc_get_orders(array('limit' => 2, 'meta_key' => '_ais_student_payment_intent', 'meta_value' => $intent, 'return' => 'objects'));
+        if (count($orders) > 1) throw new RuntimeException('Найдены неоднозначные платежи. Обратитесь в учебный центр.');
+        $order = $orders ? reset($orders) : null;
+        if ($order) {
+            if ($order->get_meta('_ais_student_payment_student') !== $student || round((float) $order->get_total() * 100) !== round((float) $amount * 100)) throw new RuntimeException('Параметры платежа изменились.');
+            if ($order->is_paid()) throw new RuntimeException('Платёж уже выполнен. Нажмите «Проверить оплату» в кабинете.');
+            if (!$order->needs_payment()) throw new RuntimeException('Ссылка оплаты больше не действует. Обновите кабинет.');
+        } else {
+            $order = wc_create_order(array('status' => 'pending', 'customer_id' => 0, 'created_via' => 'ais-student-cabinet'));
+            if (is_wp_error($order)) throw new RuntimeException('Не удалось подготовить оплату.');
+            $order->update_meta_data('_ais_student_payment_intent', $intent);
+            $order->update_meta_data('_ais_student_payment_student', $student);
+            $order->set_currency('RUB'); $order->set_billing_email($email);
+            $order->set_billing_first_name(sanitize_text_field($data['name'] ?? ''));
+            $order->set_billing_phone(sanitize_text_field($data['phone'] ?? ''));
+            $order->set_payment_method(reset($gateways));
+            $item = new WC_Order_Item_Product();
+            $item->set_name(mb_substr('Оплата задолженности за обучение: ' . sanitize_text_field($data['program'] ?? ''), 0, 128));
+            $item->set_quantity(1); $item->set_subtotal($amount); $item->set_total($amount);
+            $order->add_item($item); $order->set_total($amount); $order->save();
+        }
+        return array('ok' => true, 'orderId' => (string) $order->get_id(), 'url' => $order->get_checkout_payment_url());
+    } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
+}
+function ais_pg_cancel_student_payment($data) {
+    if (ais_pg_role() !== 'shop') return ais_pg_error('Магазин недоступен.', 503);
+    $order = wc_get_order((int) ($data['orderId'] ?? 0));
+    if (!$order || !$order->get_meta('_ais_student_payment_intent') || $order->get_meta('_ais_student_payment_intent') !== ($data['intentKey'] ?? '')) return ais_pg_error('Платёж не найден.', 404);
+    if ($order->is_paid() || $order->get_transaction_id()) return array('cancelled' => false);
+    if ($order->needs_payment()) $order->update_status('cancelled', 'АИС: сумма задолженности изменилась, прежняя ссылка закрыта.');
+    return array('cancelled' => $order->get_status() === 'cancelled');
+}
+add_filter('woocommerce_available_payment_gateways', function ($gateways) {
+    $order_id = function_exists('get_query_var') ? (int) get_query_var('order-pay') : 0;
+    $order = $order_id && function_exists('wc_get_order') ? wc_get_order($order_id) : null;
+    if (!$order || !$order->get_meta('_ais_student_payment_intent')) return $gateways;
+    return array_intersect_key($gateways, ais_pg_yookassa_gateways());
+});
+add_filter('woocommerce_get_return_url', function ($url, $order) {
+    return $order && $order->get_meta('_ais_student_payment_intent') ? 'https://edu-plus.ru/lms/?student-payment=return&student-application=' . rawurlencode($order->get_meta('_ais_student_payment_student')) : $url;
+}, 10, 2);
 function ais_pg_permission($request) {
     if (!ais_pg_role()) return ais_pg_error('Модуль не настроен для этого сайта.', 503);
     if (current_user_can('manage_options')) return true;
@@ -1412,6 +1492,8 @@ function ais_pg_dispatch($request) {
         if ($request->get_method() === 'POST') {
             if (strlen($request->get_body()) > (in_array($action, array('certificate-assets', 'sync-certificate-assets'), true) ? 11500000 : 2000000)) return ais_pg_error('Слишком большой запрос.', 413);
             $data = $request->get_json_params() ?: array();
+            if ($action === 'student-payment' || $action === 'student-payment-status') return ais_pg_student_payment($data, $action === 'student-payment-status');
+            if ($action === 'student-payment-cancel') return ais_pg_cancel_student_payment($data);
             if ($action === 'resolve-site') return ais_pg_resolve_site($data);
             if ($action === 'landing-code') return ais_pg_landing_code($data);
             if ($action === 'set-variant-visibility') return ais_pg_set_variant_visibility($data);
@@ -1420,7 +1502,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.9', 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.10', 'studentDebtPayments' => true, 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {
@@ -1447,6 +1529,7 @@ function ais_pg_dispatch($request) {
     }
 }
 add_action('rest_api_init', function () {
+    foreach (array('student-payment', 'student-payment-status', 'student-payment-cancel') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
     foreach (array('health', 'templates', 'catalog', 'template/(?P<id>\d+)', 'image-source/(?P<id>\d+)', 'sync-product/(?P<id>\d+)') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'GET', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
     foreach (array('prepare-product', 'configure-product', 'prepare-landing', 'certificate-assets', 'sync-certificate-assets', 'validate-publication', 'publish', 'enable-redirect', 'resolve-site', 'landing-code', 'check-sync', 'sync-existing', 'check-variant', 'variant-assets', 'attach-variant', 'set-variant-visibility') as $route) register_rest_route('ais-program-sites/v1', '/' . $route, array('methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => 'ais_pg_dispatch'));
 });

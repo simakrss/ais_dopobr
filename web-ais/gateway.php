@@ -4225,6 +4225,7 @@ try {
     unset($authenticatedHeaders['x-ais-demo-mode-id-secret']);
     if (($currentUser['role'] ?? '') === 'student' || str_starts_with($requestPath, '/api/student-portal')
         || $requestPath === '/api/students/enrollment-review'
+        || $requestPath === '/api/students/education-documents'
         || $requestPath === '/api/students/portal-preview' || str_starts_with($requestPath, '/api/students/portal-preview/')) {
         session_write_close();
         gateway_send_node_response(gateway_run_node(gateway_api_url(), $method, $authenticatedHeaders, $body));

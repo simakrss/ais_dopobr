@@ -1,5 +1,6 @@
 "use strict";
 const crypto = require("node:crypto");
+const feedbackHistory = require("./student-feedback-history.js");
 const text = value => String(value ?? "").trim();
 const identity = value => text(value).normalize("NFKC").toLocaleLowerCase("ru-RU");
 const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
@@ -37,8 +38,20 @@ function documentFolder(record) {
   return parts.length > 1 && !parts.some(part => [".", ".."].includes(part))
     ? `${parent ? "[-1]/" : ""}${parts.join("/")}` : `Слушатели/${record.id}/Документы`;
 }
-function profileFields(record) {
-  return professional(record) ? FIELDS : FIELDS.filter(([key]) => !["snils", "educationLevel", "enrollmentEducationMode", "educationDocumentSurname", "enrollmentNameChanged", "workPlace", "position"].includes(key));
+const PROFILE_LISTS = {
+  citizenship: ["citizenships", ["Российская Федерация"]],
+  passportType: ["documentTypes", ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"]],
+  educationLevel: ["educationLevels", ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"]],
+  workPlace: ["workPlaces", ["Не работаю"]], position: ["positions", ["Не работаю"]], passportIssuer: ["passportIssuers", []]
+};
+function profileFields(record, dictionaries = {}) {
+  const fields = professional(record) ? FIELDS : FIELDS.filter(([key]) => !["snils", "educationLevel", "enrollmentEducationMode", "educationDocumentSurname", "enrollmentNameChanged", "workPlace", "position"].includes(key));
+  return fields.map(item => {
+    const [key, label] = item, list = PROFILE_LISTS[key];
+    if (!list) return item;
+    const options = [...new Set([...(dictionaries[list[0]] || []), ...list[1], text(record[key])].filter(value => typeof value === "string" && value.trim()).map(text))];
+    return [key, label, ["workPlace", "position", "passportIssuer"].includes(key) ? "combo" : "select", options];
+  });
 }
 function sdoAvailable(record) {
   const key = Object.hasOwn(record, "event_portalCredentialsSent_state") ? "portalCredentialsSent" : "portalAccessSent";
@@ -123,7 +136,7 @@ function finances(record) {
   const round = value => Math.round(value * 100) / 100;
   const payments = Array.from({ length: 8 }, (_, index) => ({
     date: text(record[`payment${index + 1}Date`]), amount: number(record[`payment${index + 1}Amount`])
-  })).filter(payment => payment.amount !== 0);
+  })).concat((record.portalPaymentReceipts || []).filter(payment => payment.slot === 0).map(payment => ({ date: payment.date, amount: number(payment.amount) }))).filter(payment => payment.amount !== 0);
   const total = round(number(record.contractAmount));
   const paid = round(payments.reduce((sum, payment) => sum + payment.amount, 0));
   return { total, paid, debt: Math.max(0, round(total - paid)), overpaid: Math.max(0, round(paid - total)), payments };
@@ -192,7 +205,7 @@ function createService(deps) {
     const records = students.filter(row => row.studentPortalEnabled === true && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id);
     const record = id ? records.find(row => row.id === id) : records[0];
     if (!record) fail("Заявка не найдена.", 404);
-    return { owner, record, records };
+    return { owner, record, records, dictionaries: current.data.dictionaries || {} };
   }
   async function staffSession(actor, studentId, applicationId = "") {
     if (!["admin", "manager"].includes(actor?.role)) fail("Кабинет слушателя может открыть только сотрудник учебного центра.", 403);
@@ -207,16 +220,17 @@ function createService(deps) {
     // Request-scoped identity only. Never replace the staff member's login or cookie.
     return { user: { ...publicUser(owner), actingStaff: actor }, id, record };
   }
-  function view({ owner, record, records }) {
+  function view({ owner, record, records, dictionaries }) {
     return { user: { name: owner.name, login: portalLogin(owner), email: owner.email }, sdoAvailable: sdoAvailable(record), feedbackRecipient: deps.feedbackRecipient || "",
       applications: records.map(row => ({ id: row.id, program: row.program, status: row.status })),
+      photoAvailable: Boolean(record.photoData || /\.(?:png|jpe?g|webp|gif)$/iu.test(text(record.photoPath))),
       record: { id: record.id, email: record.email, program: record.program, status: record.status,
         ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
         enrollmentSubmittedAt: record.enrollmentSubmittedAt || "",
         enrollmentReviewStatus: record.enrollmentReviewStatus || "Заполняется",
         enrollmentReviewComment: record.enrollmentReviewComment || "",
         enrollmentReviewedAt: record.enrollmentReviewedAt || "" },
-      fields: profileFields(record).map(([key, label, type, options]) => ({ key, label, type, options,
+      fields: profileFields(record, dictionaries).map(([key, label, type, options]) => ({ key, label, type, options,
         required: type !== "checkbox" && (key !== "snils" || russianCitizen(record)) })),
       requirements: documentRequirements(record), missing: missingRequirements(record), finances: finances(record),
       documents: (record.enrollmentDocuments || []).map(({ id, kind, name, size, uploadedAt }) => ({ id, kind, name, size, uploadedAt })) };
@@ -329,8 +343,11 @@ function createService(deps) {
     return deps.sdoTicket(record);
   }
   async function update(user, id, values) {
-    await context(user, id);
+    const { record, dictionaries } = await context(user, id);
     const clean = sanitizeProfile(values);
+    for (const [key, , type, options] of profileFields(record, dictionaries)) {
+      if (type === "select" && clean[key] && !options.includes(clean[key])) fail("Выберите значение из списка.");
+    }
     const updated = await mutate(id, user, item => ({ ...item, ...clean, enrollmentSubmittedAt: "", enrollmentSubmissionId: "",
       enrollmentReviewStatus: item.enrollmentReviewStatus === "На доработке" ? "На доработке" : "Заполняется" }));
     await deps.audit("Слушатель заполнил данные для зачисления", updated, user);
@@ -400,28 +417,37 @@ function createService(deps) {
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(requestId)) fail("Обновите форму сообщения и повторите отправку.");
     return deps.lock(`student-feedback:${user.studentId}`, async () => {
       const { owner, record } = await context(user, id);
+      const center = body.fromCenter === true;
+      if (center && !["admin", "manager"].includes(user.actingStaff?.role)) fail("Ответ учебного центра может отправить только сотрудник.", 403);
+      const existing = body.threadId ? await deps.feedbackHistory.all(owner.id, record.id) : [];
+      const parent = body.threadId ? existing.filter(item => item.threadId === body.threadId && item.status === "sent").at(-1) : null;
+      if (body.threadId && !parent) fail("Переписка не найдена.", 404);
       if (!deps.feedbackRecipient) fail("Адрес учебного центра не настроен. Обратитесь к администратору.", 503);
-      const messageHash = crypto.createHash("sha256").update(JSON.stringify([record.id, subject, message])).digest("hex");
+      const messageHash = crypto.createHash("sha256").update(JSON.stringify([record.id, subject, message, ...(center || body.threadId ? [center, body.threadId || ""] : [])])).digest("hex");
       const history = await deps.readFeedbackState(owner.id, requestId);
       const previous = history.request;
-      const success = { ok: true, message: "Сообщение отправлено в учебный центр." };
+      const success = { ok: true, message: center ? "Ответ отправлен слушателю и сохранён в переписке." : "Сообщение отправлено в учебный центр." };
       if (previous) {
         if (previous.messageHash !== messageHash) fail("Это сообщение уже было изменено. Отправьте его как новое обращение.", 409);
         if (previous.status === "sent") return success;
         if (["pending", "unknown"].includes(previous.status)) fail("Письмо уже передано на отправку, но результат пока не подтверждён. Не отправляйте его повторно; уточните получение в учебном центре.", 409);
       }
       if (Date.now() - Number(history.lastAttemptAt || 0) < 30000) fail("Следующее сообщение можно отправить через 30 секунд.", 429);
-      const entry = { requestId, messageHash, status: "pending", createdAt: Date.now() };
+      const email = text(record.email || owner.email);
+      if (center && !/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(email)) fail("У слушателя не указан корректный email.");
+      const entry = { requestId, messageHash, status: "pending", createdAt: Date.now(), applicationId: record.id,
+        subject, message, direction: center ? "center" : "student", threadId: parent?.threadId || requestId,
+        messageId: feedbackHistory.messageId(owner.id, requestId) };
       await deps.saveFeedbackState(owner.id, entry);
       const escape = value => text(value).replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
-      const email = text(record.email || owner.email);
       const replyTo = /^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(email) ? email : "";
       const lines = ["Сообщение из кабинета слушателя Цифровизации Плюс", "", `Слушатель: ${record.name || owner.name}`,
         `Программа: ${record.program || "не указана"}`, `Заявка: ${record.id}`, `Email: ${email || "не указан"}`,
         `Телефон: ${record.phone || "не указан"}`, ...(user.actingStaff ? [`Отправил сотрудник: ${user.actingStaff.name || user.actingStaff.login}`] : []), "", message];
       try {
-        await deps.sendMail({ to: deps.feedbackRecipient, replyTo, subject: `Слушатель: ${subject}`,
-          message: `<div style="white-space: pre-wrap; font-family: sans-serif">${escape(lines.join("\n"))}</div>`,
+        await deps.sendMail({ to: center ? email : deps.feedbackRecipient, replyTo: center ? deps.feedbackRecipient : replyTo, subject: `${center ? "Учебный центр" : "Слушатель"}: ${subject}`,
+          messageId: entry.messageId, inReplyTo: parent?.messageId || "",
+          message: `<div style="white-space: pre-wrap; font-family: sans-serif">${escape(center ? message : lines.join("\n"))}</div>`,
           idempotencyKey: `student-feedback:${owner.id}:${requestId}`, requestDeliveryAndReadReceipts: false });
       } catch (error) {
         await deps.saveFeedbackState(owner.id, { ...entry, status: error.deliveryUnknown ? "unknown" : "failed" });
@@ -430,11 +456,17 @@ function createService(deps) {
       }
       try { await deps.saveFeedbackState(owner.id, { ...entry, status: "sent" }); }
       catch { fail("Почтовый сервер принял письмо, но сохранить подтверждение не удалось. Не отправляйте сообщение повторно.", 503); }
-      await deps.audit("Отправлена обратная связь из кабинета слушателя", record, user, `Получатель: ${deps.feedbackRecipient}; тема: ${subject}`);
+      await deps.audit(center ? "Отправлен ответ учебного центра слушателю" : "Отправлена обратная связь из кабинета слушателя", record, user, `Получатель: ${center ? email : deps.feedbackRecipient}; тема: ${subject}`);
       return success;
     });
   }
-  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback };
+  async function correspondence(user, id, sync = false) {
+    const { owner, record } = await context(user, id);
+    return sync ? deps.lock(`student-correspondence:${owner.id}`, () => deps.feedbackHistory.sync(owner.id, record))
+      : deps.feedbackHistory.history(owner.id, record.id);
+  }
+  return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback, correspondence,
+    ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
   fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

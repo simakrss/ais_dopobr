@@ -32255,3 +32255,25 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
   .student-shell .partner-topbar > div > span { font-size: 10px; letter-spacing: .03em; }
 }
 @media(max-width:700px) { .rusender-plan { grid-template-columns: 1fr; } .rusender-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+/* Student cabinet: correspondence, payments and issued education documents. */
+.student-profile-photo { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 16px 0 24px; }
+.student-profile-photo img, .student-photo-placeholder { width: 112px; height: 140px; object-fit: cover; border-radius: 12px; background: #edf3f1; }
+.student-photo-placeholder { display: grid; place-items: center; padding: 12px; text-align: center; }
+.student-profile-photo small { max-width: 300px; }
+.student-debt-note { padding: 14px 16px; border: 1px solid #e1c780; border-radius: 8px; background: #fff9e9; color: #66491a; }
+.student-history-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-top: 28px; }
+.student-correspondence-thread, .student-award-program { margin-top: 18px; padding: 16px; border: 1px solid #d5e1dd; border-radius: 12px; overflow-wrap: anywhere; }
+.student-correspondence-message { margin: 14px 0; padding: 14px; border-radius: 10px; background: #f4f7f6; }
+.student-correspondence-message.from-center { background: #eaf5f2; border-left: 3px solid #147d71; }
+.student-correspondence-message header { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: .9rem; }
+.student-correspondence-message p { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+.student-award-file { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 12px 0; }
+.student-award-file > span { flex: 1 1 240px; min-width: 0; }
+.student-award-file small { display: block; overflow-wrap: anywhere; }
+.student-award-upload { display: grid; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid #d5e1dd; border-radius: 8px; overflow-wrap: anywhere; }
+.student-award-upload input { max-width: 100%; }
+.student-access-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #d5e1dd; border-radius: 14px; padding: 20px; }
+.student-access-dialog::backdrop { background: #152f2b77; }
+.student-access-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.student-access-dialog label { display: grid; gap: 5px; margin: 16px 0; }
+.student-access-dialog input { width: 100%; }

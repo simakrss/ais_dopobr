@@ -25160,13 +25160,26 @@ async function studentEnrollmentLoginLimit(login, clientKey, reset = false) {
 function studentFeedbackAccountKey(accountId) {
   return crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:student-feedback:${accountId}`).digest("hex");
 }
+let studentCorrespondenceStore;
+function getStudentCorrespondenceStore() {
+  return studentCorrespondenceStore ||= require("./student-feedback-history.js").createStore({
+    pool: studentEnrollmentPool, namespace: SHARED_STATE_MYSQL_KEY,
+    mailboxes: getStudentDocumentMailboxes, connect: connectStudentApplicationsImap,
+    search: parseImapSearchUids, literals: extractImapFetchLiterals, headers: splitMimeEntity,
+    parse: parseStudentMailboxMessage, quote: quoteImapValue,
+    async legacy(accountId) {
+      await readStudentFeedbackState(accountId, "");
+      const [rows] = await (await studentEnrollmentPool()).query("SELECT request_id,status,created_at FROM ais_student_feedback_requests WHERE account_key=? AND status IN ('sent','pending','unknown') ORDER BY created_at", [studentFeedbackAccountKey(accountId)]);
+      return rows;
+    }
+  });
+}
 async function readStudentFeedbackState(accountId, requestId) {
   const pool = await studentEnrollmentPool();
   await pool.query(`CREATE TABLE IF NOT EXISTS ais_student_feedback_requests (
     account_key CHAR(64) NOT NULL, request_id CHAR(36) NOT NULL, message_hash CHAR(64) NOT NULL,
     status VARCHAR(16) NOT NULL, created_at BIGINT NOT NULL,
     PRIMARY KEY (account_key, request_id), KEY recent (account_key, created_at), KEY expires (created_at))`);
-  await pool.query("DELETE FROM ais_student_feedback_requests WHERE created_at < ? LIMIT 100", [Date.now() - 30 * 86400000]);
   const [rows] = await pool.query(`SELECT request_id, message_hash, status, created_at FROM ais_student_feedback_requests
     WHERE account_key = ? AND (request_id = ? OR created_at > ?)`, [studentFeedbackAccountKey(accountId), requestId, Date.now() - 30000]);
   const previous = rows.find(row => row.request_id === requestId);
@@ -25175,6 +25188,7 @@ async function readStudentFeedbackState(accountId, requestId) {
 }
 async function saveStudentFeedbackState(accountId, entry) {
   const pool = await studentEnrollmentPool();
+  if (entry.messageId) await getStudentCorrespondenceStore().save(accountId, entry);
   await pool.query(`INSERT INTO ais_student_feedback_requests (account_key, request_id, message_hash, status, created_at) VALUES (?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE message_hash = VALUES(message_hash), status = VALUES(status), created_at = VALUES(created_at)`,
     [studentFeedbackAccountKey(accountId), entry.requestId, entry.messageHash, entry.status, entry.createdAt]);
@@ -25196,6 +25210,18 @@ function getStudentEnrollmentService() {
     audit: (action, record, user, details = "") => appendAuditEntry({ action: user?.actingStaff ? `Сотрудник в кабинете слушателя: ${action}` : action, area: "Слушатели", entityType: "students", entityId: record.id,
       entityLabel: record.name, source: "student-portal", details }, user?.actingStaff || user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),
     feedbackRecipient: PARTNER_FEEDBACK_RECIPIENT,
+    feedbackHistory: getStudentCorrespondenceStore(),
+    photoPath: (folder, name) => formatSystemDocumentsCardPath(`${folder}/${name}`),
+    toPdf: bytes => convertDocxBytesToPdf(bytes),
+    async listRoot(folder) {
+      const target = location(folder).replace(/\/+$/u, "");
+      return (await readWebDavDirectory(target)).filter(entry => !entry.isCollection && path.posix.dirname(normalizeWebDavPath(entry.href)) === target)
+        .map(entry => ({ name: path.posix.basename(normalizeWebDavPath(entry.href)), size: Number(entry.contentLength || 0), modifiedAt: entry.modifiedAt }));
+    },
+    async paymentShop(endpoint, payload) {
+      const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+      return programSiteGenerator.createClient(keys)("shop", endpoint, payload);
+    },
     readFeedbackState: readStudentFeedbackState,
     saveFeedbackState: saveStudentFeedbackState,
     loginLimit: studentEnrollmentLoginLimit,
@@ -25270,12 +25296,33 @@ async function handlePaidStudentEnrollment(req, res) {
     await runAuthenticatedSmtpSession(async () => true);
     return sendJson(res, 200, { ok: true, sharedDatabase: true, paidOrdersQuery: true, yandexDisk: true, smtp: true });
   }
-  sendJson(res, 200, await getStudentEnrollmentService().provisionOrder(payload.orderId));
+  sendJson(res, 200, payload.studentDebtPayment === true ? await getStudentEnrollmentService().settlePayment(payload.orderId)
+    : await getStudentEnrollmentService().provisionOrder(payload.orderId));
 }
 async function handleStudentPortal(req, res, user, url) {
   if (user?.role !== "student") throw Object.assign(new Error("Требуется кабинет слушателя."), { statusCode: 403 });
   const service = getStudentEnrollmentService(), id = String(url.searchParams.get("id") || "");
   if (req.method === "GET" && url.pathname === "/api/student-portal") return sendJson(res, 200, await service.portal(user, id));
+  if (req.method === "GET" && url.pathname === "/api/student-portal/feedback") return sendJson(res, 200, await service.correspondence(user, id));
+  if (req.method === "GET" && url.pathname === "/api/student-portal/awards") return sendJson(res, 200, await service.awards(user, id));
+  if (req.method === "GET" && url.pathname === "/api/student-portal/award-file") {
+    const file = await service.awardFile(user, id, url.searchParams.get("file"));
+    return sendFile(res, 200, file.body, file.name, file.contentType, { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+  }
+  if (req.method === "GET" && url.pathname === "/api/student-portal/photo") {
+    const { record } = await service.context(user, id);
+    if (record.photoData) { const photo = parseDataUrl(record.photoData); return sendFile(res, 200, photo.bytes, "Фото", photo.mime, { "Cache-Control": "private, no-store" }); }
+    if (!/\.(?:png|jpe?g|webp|gif)$/iu.test(String(record.photoPath || ""))) throw Object.assign(new Error("Фото не загружено."), { statusCode: 404 });
+    const target = new URL("http://localhost/api/student-photo"); target.searchParams.set("path", record.photoPath);
+    return handleStudentSourcePhoto(req, res, target);
+  }
+  if (req.method === "POST" && ["/api/student-portal/photo", "/api/student-portal/payment", "/api/student-portal/payment-status", "/api/student-portal/feedback-sync"].includes(url.pathname)) {
+    if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Операция недоступна в деморежиме."), { statusCode: 403 });
+    if (url.pathname.endsWith("/photo")) return sendJson(res, 200, await service.photo(user, id, await readJsonBody(req, 24 * 1024 * 1024)));
+    if (url.pathname.endsWith("/payment")) return sendJson(res, 200, await service.payment(user, id));
+    if (url.pathname.endsWith("/payment-status")) return sendJson(res, 200, await service.paymentStatus(user, id));
+    return sendJson(res, 200, await service.correspondence(user, id, true));
+  }
   if (req.method === "GET" && url.pathname === "/api/student-portal/sdo-open") {
     const ticket = await service.sdo(user, id), nonce = crypto.randomBytes(16).toString("base64");
     const html = `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="referrer" content="strict-origin"><title>Вход в СДО</title><p>Выполняется вход в СДО…</p><form method="post" action="${escapePartnerRegistrationEmailHtml(ticket.action)}"><input type="hidden" name="token" value="${escapePartnerRegistrationEmailHtml(ticket.token)}"><noscript><button>Открыть СДО</button></noscript></form><script nonce="${nonce}">document.forms[0].submit();</script></html>`;
@@ -25309,8 +25356,8 @@ async function handleStudentEnrollmentReview(req, res, actor) {
 async function handleStaffStudentPortal(req, res, actor, url) {
   if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
   const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
-  if (!(req.method === "GET" && ["", "/file", "/sdo-open"].includes(action))
-    && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+  if (!(req.method === "GET" && ["", "/file", "/sdo-open", "/feedback", "/awards", "/award-file", "/photo"].includes(action))
+    && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback", "/feedback-sync", "/photo", "/payment", "/payment-status"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
   const session = await getStudentEnrollmentService().staffSession(actor, url.searchParams.get("studentId"), url.searchParams.get("id"));
   const target = new URL(url);
   target.pathname = `/api/student-portal${action}`;
@@ -25954,13 +26001,14 @@ function createEmailMessage({
   attachment,
   attachments,
   requestDeliveryAndReadReceipts = false,
-  idempotencyKey = ""
+  idempotencyKey = "", messageId: explicitMessageId = "", inReplyTo = ""
 }) {
   const domain = String(from).split("@")[1] || "localhost";
   const stableMessageKey = String(idempotencyKey || "");
-  const messageId = stableMessageKey
+  for (const value of [explicitMessageId, inReplyTo]) if (value && !/^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/u.test(value)) throw new Error("Некорректный идентификатор переписки.");
+  const messageId = explicitMessageId || (stableMessageKey
     ? `${crypto.createHash("sha256").update(stableMessageKey).digest("hex")}@${domain}`
-    : `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`;
+    : `${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}`);
   const bodyContentType = containsHtmlMarkup(message) ? "text/html" : "text/plain";
   const encodedBody = wrapEmailBase64(
     Buffer.from(String(message || "").replace(/\r\n|\r|\n/g, "\r\n"), "utf8").toString("base64")
@@ -25978,6 +26026,7 @@ function createEmailMessage({
     if (!/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(replyTo)) throw new Error("Некорректный адрес для ответа на письмо.");
     headers.push(`Reply-To: <${replyTo}>`);
   }
+  if (inReplyTo) headers.push(`In-Reply-To: <${inReplyTo}>`, `References: <${inReplyTo}>`);
   if (requestDeliveryAndReadReceipts) {
     headers.push(`Disposition-Notification-To: <${from}>`);
   }
@@ -26028,7 +26077,7 @@ async function sendEmailThroughConfiguredMailbox({
   attachment,
   attachments,
   requestDeliveryAndReadReceipts,
-  idempotencyKey = ""
+  idempotencyKey = "", messageId = "", inReplyTo = ""
 }) {
   if (replyTo && !/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(replyTo)) throw new Error("Некорректный адрес для ответа на письмо.");
   if (requestDeliveryAndReadReceipts !== undefined && typeof requestDeliveryAndReadReceipts !== "boolean") {
@@ -26058,6 +26107,7 @@ async function sendEmailThroughConfiguredMailbox({
     try {
       await writeData(`${createEmailMessage({
         from: settings.login,
+        messageId, inReplyTo,
         to,
         replyTo,
         subject,
@@ -41206,6 +41256,20 @@ async function route(req, res) {
     catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось сохранить решение. Обновите список и повторите."); }
     return;
   }
+  if (requestUrl.pathname === "/api/students/education-documents") {
+    try {
+      const service = getStudentEnrollmentService();
+      if (req.method === "POST") {
+        const body = await readJsonBody(req, 29 * 1024 * 1024);
+        sendJson(res, 200, await service.awardUpload(authUser, String(body.id || ""), body));
+      } else if (req.method === "GET" && requestUrl.searchParams.get("file")) {
+        const file = await service.awardFile(authUser, requestUrl.searchParams.get("id"), requestUrl.searchParams.get("file"), true);
+        sendFile(res, 200, file.body, file.name, file.contentType, { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+      } else if (req.method === "GET") sendJson(res, 200, await service.staffAwards(authUser, requestUrl.searchParams.get("id")));
+      else sendError(res, 405, "Метод недоступен.");
+    } catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось сохранить или получить документ. Повторите позже."); }
+    return;
+  }
   if (requestUrl.pathname === "/api/students/portal-preview" || requestUrl.pathname.startsWith("/api/students/portal-preview/")) {
     try { await handleStaffStudentPortal(req, res, authUser, requestUrl); }
     catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось открыть кабинет слушателя. Повторите позже."); }
@@ -41984,6 +42048,8 @@ module.exports = {
   getStudentMailboxFileNameCandidate,
   parseStudentMailboxImportSelections,
   publicStudentDocumentMailboxes,
+  getStudentDocumentMailboxSettings,
+  connectStudentApplicationsImap,
   queryStudentMailboxMessages,
   buildLocalDocumentSaveDialogLauncher,
   applyCustomDocumentPropertyFormulas,

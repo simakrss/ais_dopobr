@@ -27,6 +27,92 @@ function fixture(options = {}) {
 }
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
 const feedbackBody = () => ({ subject: "Вопрос об обучении", message: "Подскажите, пожалуйста, дату начала обучения.", requestId: require("node:crypto").randomUUID() });
+test("dictionary controls preserve current legacy values, reject forged selections and allow combo input", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  f.snapshot.data.dictionaries = { citizenships: ["Российская Федерация", "Казахстан"], educationLevels: ["СПО", "Высшее"], workPlaces: ["Школа"] };
+  record.passportType = "Архивный вид";
+  const view = await f.service.portal(user, record.id);
+  assert.equal(view.fields.find(item => item.key === "passportType").type, "select");
+  assert.ok(view.fields.find(item => item.key === "passportType").options.includes("Архивный вид"));
+  assert.equal(view.fields.find(item => item.key === "workPlace").type, "combo");
+  await f.service.update(user, record.id, { citizenship: "Казахстан", educationLevel: "Высшее", workPlace: "Новая организация" });
+  await assert.rejects(f.service.update(user, record.id, { educationLevel: "Несуществующий уровень" }), { statusCode: 400 });
+});
+test("photo is scoped, stored in the student folder and does not move existing document attachments", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), folder = enrollment.documentFolder(record);
+  await assert.rejects(f.service.photo(user, "foreign", pdf), { statusCode: 404 });
+  await assert.rejects(f.service.photo(user, record.id, pdf), /фотографию/);
+  const photo = { base64: Buffer.from([137,80,78,71,13,10,26,10,1]).toString("base64") };
+  const result = await f.service.photo(user, record.id, photo);
+  assert.equal(result.photoAvailable, true);
+  const latest = f.snapshot.data.collections.students[0]; assert.equal(enrollment.documentFolder(latest), folder);
+  assert.ok(latest.photoPath.startsWith(folder + "/Фото-")); assert.ok(!JSON.stringify(result).includes(latest.photoPath));
+});
+test("award scans and layouts are staff-only, kept in one person root and scoped across owned programs", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), actor = { role: "manager" };
+  record.photoPath = "Слушатели/ТестовТТ/Документы/ТестовТТ.jpg";
+  const second = { ...record, id: "second", program: "Вторая программа", studentPortalAccountId: record.id, photoPath: "Слушатели/second/Документы" };
+  f.snapshot.data.collections.students.push(second, { ...second, id: "foreign", studentPortalAccountId: "foreign" });
+  await assert.rejects(f.service.awardUpload(user, record.id, pdf), { statusCode: 403 });
+  const one = await f.service.awardUpload(actor, record.id, pdf), two = await f.service.awardUpload(actor, second.id, pdf);
+  assert.equal(one.files[0].folder, "Слушатели/ТестовТТ"); assert.equal(two.files[0].folder, one.files[0].folder); assert.notEqual(one.files[0].name, two.files[0].name);
+  const awards = await f.service.awards(user, record.id); assert.equal(awards.programs.length, 2);
+  assert.ok(!JSON.stringify(awards).includes('"folder"'));
+  assert.ok((await f.service.awardFile(user, second.id, two.files[0].id)).body.length);
+  await assert.rejects(f.service.awardFile(user, record.id, two.files[0].id), { statusCode: 404 });
+  await assert.rejects(f.service.awardFile(user, "foreign", one.files[0].id), { statusCode: 404 });
+  await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" });
+  await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" });
+  assert.equal(f.snapshot.data.collections.students[0].educationDocumentFiles.length, 2, "replace layout metadata, preserve scan");
+});
+test("debt payment uses authoritative debt, reuses orders and credits only confirmed payments once", async () => {
+  const orders = new Map(); let sequence = 700;
+  const f = fixture({ paymentShop: async (endpoint, data) => {
+    if (endpoint.endsWith("-status")) return structuredClone([...orders.values()].find(item => item.orderId === data.orderId));
+    if (!orders.has(data.intentKey)) orders.set(data.intentKey, { ...data, orderId: String(++sequence), paid: false, currency: "RUB", status: "pending", yookassa: true });
+    const item = orders.get(data.intentKey); return { orderId: item.orderId, url: `https://zifra-plus.ru/checkout/order-pay/${item.orderId}/?key=fixture` };
+  } });
+  await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  await assert.rejects(f.service.payment(user, "foreign"), { statusCode: 404 });
+  const [one, two] = await Promise.all([f.service.payment(user, record.id), f.service.payment(user, record.id)]);
+  assert.equal(one.amount, 5000); assert.equal(one.orderId, two.orderId); assert.equal(orders.size, 1);
+  const pending = await f.service.settlePayment(one.orderId); assert.equal(pending.paid, false);
+  assert.equal(f.snapshot.data.collections.students[0].payment2Amount, undefined);
+  const payment = [...orders.values()][0]; Object.assign(payment, { paid: true, transactionId: "yoo-transaction", paidAt: "2026-11-12T12:00:00+03:00" });
+  await Promise.all([f.service.settlePayment(one.orderId), f.service.settlePayment(one.orderId)]);
+  const updated = f.snapshot.data.collections.students[0]; assert.equal(updated.payment2Amount, 5000); assert.equal(updated.portalPaymentReceipts.length, 1); assert.equal(updated.paidAmount, 10000); assert.equal(updated.balance, 0);
+  assert.equal((await f.service.payment(user, record.id)).paid, true); assert.equal(orders.size, 1);
+  assert.equal((await f.service.paymentStatus(user, record.id)).finances.debt, 0);
+});
+test("payment settlement rejects wrong amounts and unconfirmed providers; overflow retains all eight originals", async () => {
+  let payment;
+  const f = fixture({ paymentShop: async () => payment }); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0];
+  record.portalPaymentIntents = [{ key: "fixture", amount: 100, orderId: "701", status: "pending" }];
+  for (let index = 1; index <= 8; index++) { record[`payment${index}Amount`] = index; record[`payment${index}Date`] = "2026-11-01"; }
+  payment = { orderId: "701", studentId: record.id, intentKey: "fixture", amount: 99, currency: "RUB", paid: true, yookassa: true, transactionId: "yoo", paidAt: "2026-11-12" };
+  await assert.rejects(f.service.settlePayment("701"), /не совпали/); payment.amount = 100; payment.yookassa = false;
+  await assert.rejects(f.service.settlePayment("701"), /не подтвердила/); payment.yookassa = true;
+  await f.service.settlePayment("701"); const updated = f.snapshot.data.collections.students[0];
+  for (let index = 1; index <= 8; index++) assert.equal(updated[`payment${index}Amount`], index);
+  assert.equal(updated.portalPaymentReceipts[0].slot, 0); assert.equal(enrollment.finances(updated).paid, 136);
+});
+test("feedback replies are tied to the owned thread and require a staff actor for center messages", async () => {
+  const items = [];
+  const f = fixture({ feedbackHistory: { all: async (_account, application) => items.filter(item => item.applicationId === application),
+    history: async (_account, application) => ({ messages: items.filter(item => item.applicationId === application) }) } });
+  const save = f.deps.saveFeedbackState; f.deps.saveFeedbackState = async (id, entry) => { await save(id, entry); const index = items.findIndex(item => item.requestId === entry.requestId); if (index >= 0) items[index] = entry; else items.push(entry); };
+  await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  const body = feedbackBody(); await f.service.feedback(user, record.id, body);
+  assert.equal(items[0].message, body.message); assert.equal(items[0].status, "sent");
+  await assert.rejects(f.service.feedback(user, record.id, { ...feedbackBody(), fromCenter: true }), { statusCode: 403 });
+  await assert.rejects(f.service.feedback(user, record.id, { ...feedbackBody(), threadId: "foreign" }), { statusCode: 404 });
+  for (const item of f.feedbackLedger.values()) item.createdAt -= 31000;
+  const staff = { ...user, actingStaff: { role: "manager", name: "Сотрудник" } };
+  await f.service.feedback(staff, record.id, { ...feedbackBody(), threadId: body.requestId, fromCenter: true });
+  const reply = f.mails.at(-1); assert.equal(reply.to, record.email); assert.equal(reply.replyTo, "center@example.test"); assert.equal(reply.inReplyTo, items[0].messageId);
+  assert.equal((await f.service.correspondence(user, record.id)).messages.length, 2);
+  await assert.rejects(f.service.correspondence(user, "foreign"), { statusCode: 404 });
+});
 test("feedback is scoped, addressed to the center, escaped, audited and deduplicated across service instances", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); f.mails.length = 0;
   const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), before = structuredClone(record);
@@ -172,7 +258,7 @@ test("submission requires all fields and actual stored files; edits require resu
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
   await assert.rejects(f.service.submit(user, record.id), /Заполните/);
   const profile = Object.fromEntries(enrollment.FIELDS.filter(row => row[2] !== "checkbox").map(([key, , type, options]) => [key, type === "date" ? "2000-01-01" : options?.[0] || "Заполнено"]));
-  Object.assign(profile, { name: record.name, citizenship: "РФ", phone: "+79990000000", snils: "12345678901", mailingAddress: "123456, Тестовая улица", educationDocumentSurname: "Тестов" });
+  Object.assign(profile, { name: record.name, citizenship: "Российская Федерация", passportType: "Паспорт гражданина РФ", educationLevel: "СПО", phone: "+79990000000", snils: "12345678901", mailingAddress: "123456, Тестовая улица", educationDocumentSurname: "Тестов" });
   await f.service.update(user, record.id, profile);
   for (const kind of ["passport", "registration", "snils", "diploma", "supplement"]) await f.service.upload(user, record.id, { ...pdf, kind });
   assert.deepEqual((await f.service.portal(user, record.id)).missing, []);

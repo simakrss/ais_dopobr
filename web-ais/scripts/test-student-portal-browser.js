@@ -14,6 +14,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/api/auth/logout") { logout++; res.setHeader("Content-Type", "application/json"); res.end('{}'); return; }
   if (req.url.startsWith("/api/student-portal")) {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    if (req.url.startsWith("/api/student-portal/feedback") && (req.method === "GET" || req.url.includes("feedback-sync"))) { res.setHeader("Content-Type", "application/json"); return res.end(JSON.stringify({ messages: [] })); }
     if (req.url.startsWith("/api/student-portal/feedback")) {
       feedbackCalls.push(JSON.parse(Buffer.concat(chunks)));
       await new Promise(resolve => { releaseFeedback = resolve; feedbackReceived?.(); });
@@ -41,7 +42,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("[data-submit]").waitFor(); assert.ok(await page.locator("[data-submit]").isDisabled());
     assert.equal(await page.locator("[data-sdo]").count(), 0);
     const screenshots = path.join(root, ".runtime", "student-portal-test"); fs.mkdirSync(screenshots, { recursive: true });
-    assert.equal(await page.locator('#student-sidebar [data-tab]').count(), 5);
+    assert.equal(await page.locator('#student-sidebar [data-tab]').count(), 6);
     assert.equal(await page.locator('[data-section-title]').textContent(), 'Рабочий стол');
     assert.ok(await page.locator('[data-panel="dashboard"]').isVisible());
     assert.ok(await page.locator('#student-sidebar').evaluate(element => element.getBoundingClientRect().right < 300 && !element.inert));

@@ -37,6 +37,7 @@ $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "student-enrollment.js",
+  "student-feedback-history.js", "student-cabinet.js",
   "pwa-assets.js",
   "app-server.js",
   "document-relay.js",
@@ -86,6 +87,7 @@ function Test-DeployablePath([string]$PathValue) {
   if ($privateTemplatePaths -contains $path) { return $false }
   $exactFiles = @(
     "student-enrollment.js",
+    "student-feedback-history.js", "student-cabinet.js",
     "student-portal.js",
     "pwa-client.js",
     "pwa-assets.js",
@@ -732,8 +734,8 @@ $results = if ($MoodleSso) {
   Publish-FileTarget 'services/wordpress/ais-document-relay.php' '/zifra-plus.ru/public_html/wp-content/mu-plugins/ais-document-relay.php' 'private document queue module'
 } elseif ($ProgramSites) {
   Install-ProgramSiteModules
-} else { foreach ($relativeFile in ($pathsToDeploy | Sort-Object { if ($_ -eq 'student-enrollment.js') { 0 } else { 1 } }, { $_ })) {
-  if ($relativeFile -eq "student-enrollment.js") {
+} else { foreach ($relativeFile in ($pathsToDeploy | Sort-Object { if ($_ -in @('student-cabinet.js','student-feedback-history.js')) { -1 } elseif ($_ -eq 'student-enrollment.js') { 0 } else { 1 } }, { $_ })) {
+  if ($relativeFile -in @("student-enrollment.js", "student-feedback-history.js", "student-cabinet.js")) {
     Publish-FileTarget $relativeFile "$runtimeAppRoot/$relativeFile" "runtime only"
     continue
   }

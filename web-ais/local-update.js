@@ -13,6 +13,7 @@ const FILES = Object.freeze([
   "pk-reporting.js", "pk-report-templates.js",
   "rusender.js",
   "student-enrollment.js", "student-portal.js",
+  "student-feedback-history.js", "student-cabinet.js",
   "field-html-links.js", "document-workflow.js", "demo-mode-privacy.js", "local-server.js",
   "local-document-save-dialog.js", "document-relay.js", "vitu-email-source.js", "local-update.js", "local-update-client.js", "partner-app.js",
   "pdf-preview.js", "pdfjs-core.js", "pdfjs-worker.js", "pdfjs-license.html",
@@ -108,6 +109,7 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
     && (!name.startsWith("pk-report") || compareVersions(release.version, "1.7.586") >= 0)
     && (name !== "rusender.js" || compareVersions(release.version, "1.7.592") >= 0)
     && (!["student-enrollment.js", "student-portal.js"].includes(name) || compareVersions(release.version, "1.7.619") >= 0)
+    && (!["student-feedback-history.js", "student-cabinet.js"].includes(name) || compareVersions(release.version, "1.7.625") >= 0)
     && (!(name === "pdf-preview.js" || name.startsWith("pdfjs-")) || compareVersions(release.version, "1.7.543") >= 0)
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
