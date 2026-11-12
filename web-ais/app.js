@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.622",
-    releasedAt: "2026-11-11"
+    version: "1.7.623",
+    releasedAt: "2026-11-12"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.623",
+      releasedAt: "2026-11-12",
+      changes: ["Кабинет слушателя оформлен в стиле кабинета партнёра: боковое меню, рабочий стол, основные данные, документы и финансы. Меню профиля и адаптивная навигация сохраняют введённые данные при переключении разделов."]
+    },
     {
       version: "1.7.622",
       releasedAt: "2026-11-11",

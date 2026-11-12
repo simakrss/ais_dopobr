@@ -45,7 +45,7 @@ const server = http.createServer(async (req, res) => {
     ${buttonCode}
     document.querySelector('#cardActions').innerHTML=renderStudentPortalOpenButton({id:'two',studentPortalEnabled:true});
     </script>`);
-  res.end(head + '<div id="app"></div><script src="/auth-bootstrap.js"></script>');
+  res.end(head + '<div id="app" class="app-shell"></div><script src="/auth-bootstrap.js"></script>');
 });
 (async () => {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -59,6 +59,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await popup.locator('[data-application]').inputValue(), "two", "Open the card's application, not the first account record");
     assert.equal(await popup.evaluate(() => window.AIS_AUTH_USER.role), "manager");
     assert.ok(await popup.locator('.student-portal-staff-notice').isVisible());
+    await popup.locator('[data-tab="main"]').click();
     await popup.locator('[name="phone"]').fill('+79998887766'); await popup.getByText('Сохранить данные', { exact: true }).click();
     await popup.getByText('Данные сохранены.', { exact: true }).waitFor(); assert.equal(records[1].phone, '+79998887766');
     await popup.locator('[data-tab="documents"]').click(); await popup.locator('[data-view]').click();
@@ -67,7 +68,8 @@ const server = http.createServer(async (req, res) => {
     await popup.locator('[data-tab="finances"]').click(); assert.ok(await popup.getByText('Остаток долга', { exact: true }).isVisible());
     await popup.setViewportSize({ width: 390, height: 844 }); assert.ok(await popup.evaluate(() => document.documentElement.scrollWidth <= 392));
     assert.match(await popup.locator('[data-sdo]').getAttribute('href'), /portal-preview\/sdo-open\?studentId=two&id=one/);
-    const closed = popup.waitForEvent('close'); await popup.getByText('Закрыть кабинет', { exact: true }).click(); await closed;
+    await popup.locator('[data-account-toggle]').click();
+    const closed = popup.waitForEvent('close'); await popup.getByRole('menuitem', { name: 'Закрыть кабинет', exact: true }).click(); await closed;
     assert.equal(await parent.locator('#cardDraft').inputValue(), 'Несохранённое изменение');
     assert.equal(await parent.evaluate(() => window.AIS_AUTH_USER.role), 'manager');
     assert.equal(logout, 0); assert.equal(login, 0); assert.equal(personalApi, 0); assert.ok(requests.every(item => item.anchor === 'two'));
