@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.636",
+    version: "1.7.637",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.637",
+      releasedAt: "2026-11-13",
+      changes: ["Исправлена передача подтверждённого адреса магазина при бесшовном входе: браузер сохраняет Origin при переходе в кабинет слушателя, не раскрывая адрес страницы магазина."]
+    },
     {
       version: "1.7.636",
       releasedAt: "2026-11-13",

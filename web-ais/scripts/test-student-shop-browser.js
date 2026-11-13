@@ -45,7 +45,10 @@ header('Content-Type:application/json');echo json_encode(ais_auth_current_user()
       await route.fulfill({status:response.status,headers:outgoing,body:Buffer.from(await response.arrayBuffer())});
     });
     let serial=0;
-    await context.route('https://zifra-plus.ru/account-fixture', route => route.fulfill({contentType:'text/html; charset=utf-8',body:`<form method="post" action="https://edu-plus.ru/lms/shop-sso.php"><input type="hidden" name="token" value="fixture${++serial}.${'a'.repeat(64)}"><button>Открыть кабинет</button></form>`}));
+    const shopSource=fs.readFileSync(path.join(app,'services/wordpress/ais-student-accounts.php'),'utf8');
+    const shopPolicy=shopSource.match(/header\('Referrer-Policy: ([a-z-]+)'\)/)[1];
+    assert.equal(shopPolicy,'strict-origin','Cross-site POST must retain the shop Origin without disclosing its path');
+    await context.route('https://zifra-plus.ru/account-fixture', route => route.fulfill({headers:{'Referrer-Policy':shopPolicy},contentType:'text/html; charset=utf-8',body:`<meta name="referrer" content="${shopPolicy}"><form method="post" action="https://edu-plus.ru/lms/shop-sso.php"><input type="hidden" name="token" value="fixture${++serial}.${'a'.repeat(64)}"><button>Открыть кабинет</button></form>`}));
     await page.goto('https://edu-plus.ru/lms/?seed=1');
     await page.goto('https://zifra-plus.ru/account-fixture'); await page.getByRole('button',{name:'Открыть кабинет',exact:true}).click();
     await page.getByRole('button',{name:'Войти как слушатель',exact:true}).waitFor();

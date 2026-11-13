@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: АИС — единый кабинет покупателя и слушателя
- * Version: 1.1.0
+ * Version: 1.1.1
  * Customer-only bridge. No historical orders or emails are processed on installation.
  */
 defined('ABSPATH') || exit;
@@ -272,11 +272,11 @@ function ais_sa_open_cabinet(): void {
         check_admin_referer('ais_student_cabinet'); $user = wp_get_current_user();
         $ticket = ais_sa_rpc(ais_sa_cabinet_payload($user));
         if (empty($ticket['ok']) || ($ticket['action'] ?? '') !== 'https://edu-plus.ru/lms/shop-sso.php' || !preg_match('/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/D', (string) ($ticket['token'] ?? ''))) throw new RuntimeException('Не удалось подтвердить переход.');
-        nocache_headers(); header('Referrer-Policy: same-origin'); header('X-Frame-Options: DENY');
+        nocache_headers(); header('Referrer-Policy: strict-origin'); header('X-Frame-Options: DENY');
         $nonce = bin2hex(random_bytes(16));
         header("Content-Security-Policy: default-src 'none'; script-src 'nonce-$nonce'; form-action https://edu-plus.ru; base-uri 'none'; frame-ancestors 'none'");
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="referrer" content="same-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход в учебный центр</title><form method="post" action="https://edu-plus.ru/lms/shop-sso.php"><input type="hidden" name="token" value="' . esc_attr($ticket['token']) . '"><button type="submit">Открыть кабинет слушателя</button></form><script nonce="' . $nonce . '">document.querySelector("form").submit();</script></html>';
+        echo '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="referrer" content="strict-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход в учебный центр</title><form method="post" action="https://edu-plus.ru/lms/shop-sso.php"><input type="hidden" name="token" value="' . esc_attr($ticket['token']) . '"><button type="submit">Открыть кабинет слушателя</button></form><script nonce="' . $nonce . '">document.querySelector("form").submit();</script></html>';
     } catch (Throwable $error) { wp_die(esc_html($error->getMessage()), 'Кабинет слушателя', ['response' => 403, 'back_link' => true]); }
     exit;
 }
