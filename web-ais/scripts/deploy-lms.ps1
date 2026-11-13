@@ -37,7 +37,7 @@ $expectedRemoteRoot = "/edu-plus.ru/public_html/lms"
 $runtimeAppRoot = "/edu-plus.ru/lms-runtime/app"
 $runtimeMirrorFiles = @(
   "student-enrollment.js",
-  "student-feedback-history.js", "student-cabinet.js",
+  "student-feedback-history.js", "student-cabinet.js", "student-shop-sso.js",
   "pwa-assets.js",
   "app-server.js",
   "document-relay.js",
@@ -87,7 +87,7 @@ function Test-DeployablePath([string]$PathValue) {
   if ($privateTemplatePaths -contains $path) { return $false }
   $exactFiles = @(
     "student-enrollment.js",
-    "student-feedback-history.js", "student-cabinet.js",
+    "student-feedback-history.js", "student-cabinet.js", "student-shop-sso.js",
     "student-portal.js",
     "pwa-client.js",
     "pwa-assets.js",
@@ -126,7 +126,7 @@ function Test-DeployablePath([string]$PathValue) {
     "windows-update-service.js",
     "local-update-client.js",
     "local-server.js",
-    "gateway.php",
+    "gateway.php", "shop-sso.php",
     "index.html",
     "partner-app.js",
     "send-mail.php",
@@ -629,6 +629,7 @@ function Install-ProgramSiteModules {
     Publish-FileTarget ".runtime/program-sites/$role.key" "/$($target.Site)/ais-program-site.key" "private site key"
     Publish-FileTarget "services/wordpress/ais-program-generator.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-program-generator.php" "WordPress module $($target.Site)"
     if ($role -eq 'shop') {
+      Publish-FileTarget "services/wordpress/ais-student-accounts.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-student-accounts.php" "Unified student/shop accounts"
       Publish-FileTarget "services/wordpress/ais-education-info-template.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-templates/education-info.php" "Student enrollment instructions"
     }
   }

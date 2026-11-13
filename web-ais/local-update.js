@@ -13,7 +13,7 @@ const FILES = Object.freeze([
   "pk-reporting.js", "pk-report-templates.js",
   "rusender.js",
   "student-enrollment.js", "student-portal.js",
-  "student-feedback-history.js", "student-cabinet.js",
+  "student-feedback-history.js", "student-cabinet.js", "student-shop-sso.js",
   "field-html-links.js", "document-workflow.js", "demo-mode-privacy.js", "local-server.js",
   "local-document-save-dialog.js", "document-relay.js", "vitu-email-source.js", "local-update.js", "local-update-client.js", "partner-app.js",
   "pdf-preview.js", "pdfjs-core.js", "pdfjs-worker.js", "pdfjs-license.html",

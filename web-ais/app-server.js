@@ -25122,6 +25122,14 @@ async function readStudentDatabaseSyncMetadata(bytes, onProgress = () => {}) {
 }
 
 let studentEnrollmentService;
+let studentShopSsoService;
+function getStudentShopSsoService() {
+  return studentShopSsoService ||= require("./student-shop-sso.js").createService({
+    key: async () => (await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"))).shop,
+    context: user => getStudentEnrollmentService().context(user),
+    consumeNonce: require("./student-shop-sso.js").createNonceStore(studentEnrollmentPool, SHARED_STATE_MYSQL_KEY)
+  });
+}
 async function studentEnrollmentPool() {
   const pool = await getSharedRecordLocksMySqlPool();
   if (!pool) throw Object.assign(new Error("Общая база недоступна."), { statusCode: 503 });
@@ -25232,10 +25240,17 @@ function getStudentEnrollmentService() {
     loginSuccess: (login, clientKey) => studentEnrollmentLoginLimit(login, clientKey, true),
     lock: studentEnrollmentLock,
     queryOrder: async orderId => (await runStudentApplicationsQuery({ orderId, dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: true })).rows,
-    async reservedLogins(data) {
+    shopSso: { issue: (user, shopUserId) => getStudentShopSsoService().issue(user, shopUserId) },
+    async reservedLogins(data, orderRow) {
       const reserved = await readPartnerRegistrationReservedLogins(data.collections.contracts || []);
       for (const row of data.collections.students || []) for (const login of [row.login, row.studentPortalLogin]) {
         if (login) reserved.add(String(login).normalize("NFKC").trim().toLocaleLowerCase("ru-RU"));
+      }
+      if (orderRow?.email) {
+        const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+        const result = await programSiteGenerator.createClient(keys)("shop", "/student-account-logins", { email: orderRow.email });
+        if (!Array.isArray(result.reserved)) throw new Error("Не удалось проверить занятые логины магазина.");
+        for (const login of result.reserved) reserved.add(String(login).normalize("NFKC").trim().toLocaleLowerCase("ru-RU"));
       }
       return reserved;
     },
@@ -25289,6 +25304,10 @@ async function handlePaidStudentEnrollment(req, res) {
   if (!crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) throw Object.assign(new Error("Не подтверждён источник оплаты."), { statusCode: 403 });
   if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Импорт недоступен в деморежиме."), { statusCode: 503 });
   const payload = JSON.parse(source);
+  if (payload.shopAccountOperation) {
+    return sendJson(res, 200, await getStudentEnrollmentService().shopAccountOperation(payload),
+      { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+  }
   if (payload.orderEmailRecipient !== undefined) {
     return sendJson(res, 200, await getStudentEnrollmentService().orderEmailAccess(payload.orderId, payload.orderEmailRecipient),
       { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
@@ -41129,6 +41148,12 @@ async function route(req, res) {
   }
   if (requestUrl.pathname.startsWith("/api/auth/")) {
     try {
+      if (req.method === "POST" && requestUrl.pathname === "/api/auth/shop-sso-ticket") {
+        if (process.env.AIS_OCR_CLI !== "1" || !requestHasConfiguredGatewaySecret(req)) return sendError(res, 403, "Недоступно.");
+        const body = await readJsonBody(req, 6144);
+        if (isDatabaseDemoModeEnabled()) return sendError(res, 403, "Вход недоступен в деморежиме.");
+        return sendJson(res, 200, await getStudentShopSsoService()[body.consume === true ? "consume" : "inspect"](body.token), { "Cache-Control": "private, no-store" });
+      }
       if (req.method === "POST" && requestUrl.pathname === "/api/auth/student-credentials") {
         if (process.env.AIS_OCR_CLI !== "1" || !requestHasConfiguredGatewaySecret(req)) return sendError(res, 403, "Недоступно.");
         const body = await readJsonBody(req, 4096);

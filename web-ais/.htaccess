@@ -25,7 +25,7 @@ Options -Indexes
   RewriteRule ^(?:manifest\.webmanifest|pwa-client\.js|pwa-icon-(?:192|512|maskable)\.png|apple-touch-icon\.png)$ - [L]
   RewriteRule ^(?:pdf-preview\.js|pdfjs-core\.js|pdfjs-worker\.js|pdfjs-license\.html)$ - [L]
   RewriteRule ^$ - [L]
-  RewriteRule ^(?:app\.js|auth-bootstrap\.js|favicon\.ico|field-html-links\.js|gateway\.php|index\.html|partner-app\.js|student-portal\.js|send-mail\.php|styles\.css)$ - [L]
+  RewriteRule ^(?:app\.js|auth-bootstrap\.js|favicon\.ico|field-html-links\.js|gateway\.php|shop-sso\.php|index\.html|partner-app\.js|student-portal\.js|send-mail\.php|styles\.css)$ - [L]
   RewriteRule ^ - [R=404,L]
 </IfModule>
 
@@ -38,4 +38,7 @@ Options -Indexes
   Header always set X-Frame-Options "DENY"
   Header always set Referrer-Policy "no-referrer"
   Header always set Cache-Control "no-store"
+  <Files "shop-sso.php">
+    Header always set Referrer-Policy "same-origin"
+  </Files>
 </IfModule>

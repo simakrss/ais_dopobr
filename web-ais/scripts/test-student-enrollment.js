@@ -687,3 +687,27 @@ test("edited access email validates length, empty HTML and subject header contro
  record.studentPortalPassword="changed";
  await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{...base,subject:"Edited",message:"<p>Edited</p>"}),{statusCode:409});
 });
+
+
+test("shop bridge matches eligible products and verifies the bound active owner without returning credentials", async () => {
+  const issued = [], f = fixture({ shopSso: { issue: async (user, uid) => { issued.push({ user, uid }); return { action: "https://edu-plus.ru/lms/shop-sso.php", token: "opaque" }; } } });
+  assert.deepEqual(await f.service.shopAccountOperation({ shopAccountOperation: "eligible-products", productIds: ["10", "20", "999"] }), { ok: true, productIds: ["10"] });
+  const access = await f.service.orderEmailAccess("101", "test@example.test"), account = access.accounts[0];
+  assert.ok(account.accountId); assert.match(account.credentialVersion, /^[a-f0-9]{64}$/);
+  const payload = { shopAccountOperation: "authenticate", shopUserId: "12", accountId: account.accountId, email: "test@example.test", login: account.login, password: account.password, orderId: "101" };
+  assert.deepEqual(await f.service.shopAccountOperation(payload), { ok: true });
+  assert.deepEqual(await f.service.shopAccountOperation({ ...payload, password: "wrong" }), { ok: false });
+  await assert.rejects(f.service.shopAccountOperation({ ...payload, email: "other@example.test" }), { statusCode: 403 });
+  await assert.rejects(f.service.shopAccountOperation({ ...payload, accountId: "other" }), { statusCode: 403 });
+  assert.equal((await f.service.shopAccountOperation({ ...payload, shopAccountOperation: "sso" })).token, "opaque");
+  assert.equal(issued[0].user.role, "student"); assert.equal(issued[0].uid, "12"); assert.ok(!JSON.stringify(issued).includes(account.password));
+  f.rows[0].paid = false; await assert.rejects(f.service.shopAccountOperation({ ...payload, shopAccountOperation: "sso" }), { statusCode: 403 });
+  f.snapshot.data.collections.students[0].studentPortalBlocked = true;
+  await assert.rejects(f.service.shopAccountOperation(payload), { statusCode: 403 }); assert.equal(f.mails.length, 0);
+});
+
+test("new student login reserves both AIS and shop names before provisioning", async () => {
+  let checked = false; const f = fixture({ reservedLogins: async (data, row) => { checked = row.email === "test@example.test"; return new Set(["test", "test.2"]); } });
+  const access = await f.service.orderEmailAccess("101", "test@example.test"); assert.ok(checked); assert.equal(access.accounts[0].login, "test.3");
+  assert.match(access.accounts[0].password, /^\d{6}$/); assert.equal(f.mails.length, 0);
+});

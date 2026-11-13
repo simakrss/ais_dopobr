@@ -23,6 +23,23 @@ test("payment HMAC binds method, body and resource; expired and unsigned request
   await context.handlePaidStudentEnrollment(req(body, headers), {}); assert.deepEqual(calls, ["101"]);
 });
 
+test("shop authentication and SSO operations require the signed shop transport and cannot be cached", async () => {
+  const { context, key } = handlers(), calls = [];
+  context.getStudentEnrollmentService = () => ({ shopAccountOperation: async payload => { calls.push(payload); return { ok: true }; } });
+  context.sendJson = (_res, status, body, headers) => ({ status, body, headers });
+  const body = JSON.stringify({ shopAccountOperation: "sso", accountId: "student-1", shopUserId: "12", email: "test@example.test", orderId: "101" });
+  const stamp = String(Math.floor(Date.now()/1000)), nonce = "b".repeat(32);
+  const headers = { "x-ais-timestamp": stamp, "x-ais-nonce": nonce, "x-ais-signature": generator.signature(key, "POST", "/api/student-enrollment/paid-order", stamp, nonce, body) };
+  const req = (value, h = headers) => Object.assign(Readable.from([Buffer.from(value)]), { headers: h });
+  await assert.rejects(context.handlePaidStudentEnrollment(req(body, {}), {}), { statusCode: 403 });
+  await assert.rejects(context.handlePaidStudentEnrollment(req(body.replace("student-1", "student-2")), {}), { statusCode: 403 });
+  assert.equal(calls.length, 0);
+  const result = await context.handlePaidStudentEnrollment(req(body), {});
+  assert.equal(result.headers["Cache-Control"], "private, no-store"); assert.equal(calls[0].accountId, "student-1");
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handlePaidStudentEnrollment(req(body), {}), { statusCode: 503 });
+});
+
 test("staff preview checks roles and demo mode, maps only portal operations and audits the original actor", async () => {
   const { context } = handlers(), actor = { id: "staff", login: "staff", role: "manager" }, audit = [], seen = [];
   context.getStudentEnrollmentService = () => ({

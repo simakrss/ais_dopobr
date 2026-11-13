@@ -290,7 +290,7 @@ function createService(deps) {
           const owner = students.find(item => item.studentPortalEnabled && !item.studentPortalBlocked
             && (!item.studentPortalAccountId || item.studentPortalAccountId === item.id)
             && identity(item.email) === identity(row.email) && identity(item.name) === identity(row.name));
-          const reserved = await deps.reservedLogins(data);
+          const reserved = await deps.reservedLogins(data, row);
           const access = owner ? { login: portalLogin(owner), password: portalPassword(owner) } : credentials(row.email, reserved);
           const id = prior?.id || `student-${crypto.randomUUID()}`;
           const uid = String(Math.max(0, ...students.map(item => Number(item.uid) || 0)) + 1);
@@ -414,10 +414,33 @@ function createService(deps) {
       if (!record?.studentPortalEnabled || record.studentPortalBlocked || !owner?.studentPortalEnabled || owner.studentPortalBlocked
         || identity(record.email) !== identity(recipient) || identity(owner.email) !== identity(recipient)
         || !portalLogin(owner) || !portalPassword(owner) || !owner.studentPortalCredentialSalt) continue;
-      if (!accounts.has(owner.id)) accounts.set(owner.id, { login: portalLogin(owner), password: portalPassword(owner), programs: [] });
+      if (!accounts.has(owner.id)) accounts.set(owner.id, { accountId: owner.id, credentialVersion: fingerprint(owner), login: portalLogin(owner), password: portalPassword(owner), programs: [] });
       const account = accounts.get(owner.id); if (!account.programs.includes(record.program)) account.programs.push(record.program);
     }
     return { ok: true, accounts: [...accounts.values()] };
+  }
+  async function shopAccountOperation(payload) {
+    const operation = payload.shopAccountOperation;
+    if (operation === "eligible-products") {
+      if (!Array.isArray(payload.productIds) || payload.productIds.length > 100) fail("Некорректные товары.");
+      const current = await deps.readState();
+      return { ok: true, productIds: payload.productIds.map(text).filter(id => /^[1-9]\d{0,15}$/u.test(id)
+        && matchProgram({ productId: id }, current.data.collections.programs || [])) };
+    }
+    if (!["authenticate", "sso"].includes(operation) || !/^[1-9]\d{0,15}$/u.test(text(payload.shopUserId))
+      || !text(payload.accountId) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(payload.email))) fail("Некорректный запрос магазина.");
+    const current = await deps.readState(), owner = (current.data.collections.students || []).find(row => row.id === payload.accountId);
+    if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
+      || (owner.studentPortalAccountId && owner.studentPortalAccountId !== owner.id)
+      || identity(owner.email) !== identity(payload.email) || !["КПК", "ППП", "ДОП"].includes(owner.educationType)) fail("Кабинет слушателя недоступен.", 403);
+    if (operation === "authenticate") {
+      if (identity(payload.login) !== identity(portalLogin(owner))) return { ok: false };
+      const user = await authenticate(payload.login, payload.password, `shop:${text(payload.clientKey).slice(0, 80)}`);
+      return { ok: Boolean(user && user.studentId === owner.id) };
+    }
+    const access = await orderEmailAccess(payload.orderId, payload.email);
+    if (!access.accounts.some(account => account.accountId === owner.id)) fail("Заказ не относится к этому кабинету.", 403);
+    return { ok: true, ...await deps.shopSso.issue(publicUser(owner), text(payload.shopUserId)) };
   }
   async function portal(user, id) { return view(await context(user, id)); }
   async function provisionExisting({ apply = false, onProgress = () => {} } = {}) {
@@ -575,7 +598,7 @@ function createService(deps) {
       : deps.feedbackHistory.history(owner.id, record.id);
   }
   return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback, correspondence,
-    orderEmailAccess, previewCabinetAccessEmail, sendCabinetAccessEmail,
+    orderEmailAccess, shopAccountOperation, previewCabinetAccessEmail, sendCabinetAccessEmail,
     ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
