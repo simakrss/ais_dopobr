@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261113-layout-remarks-expense-control";
+  const AUTH_BUILD = "20261113-sso-origin-standard-controls";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

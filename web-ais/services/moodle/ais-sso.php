@@ -39,6 +39,10 @@ function ais_sso_resume_token(array $claim, string $key, int $now): string {
 
 function ais_sso_page(string $title, string $content): void {
     header('Content-Type: text/html; charset=utf-8');
+    // no-referrer turns Origin into "null" on browser form POSTs, including
+    // confirmation and logout handoff. Keep same-origin forms verifiable while
+    // withholding the referrer from external sites; tokens stay in POST bodies.
+    header('Referrer-Policy: same-origin');
     echo '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'
         . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</title><style>body{margin:0;background:#f2f6f4;color:#213b37;font:16px/1.6 system-ui,sans-serif}main{max-width:560px;margin:8vh auto;padding:28px;background:white;border:1px solid #d6e1dc;border-radius:14px}h1{font-size:24px}form{display:flex;gap:12px;flex-wrap:wrap}button{border:1px solid #ccd9d5;border-radius:8px;padding:12px 18px;font:inherit;cursor:pointer;background:white}button[value="yes"],button[type="submit"]{background:#087c74;color:white}@media(max-width:620px){main{margin:20px;padding:20px}}</style></head><body><main><h1>'
         . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h1>' . $content . '</main></body></html>';
@@ -46,7 +50,6 @@ function ais_sso_page(string $title, string $content): void {
 
 if (defined('AIS_SSO_LIBRARY_ONLY')) return;
 header('Cache-Control: private, no-store');
-header('Referrer-Policy: no-referrer');
 header('X-Content-Type-Options: nosniff');
 header("Content-Security-Policy: frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
 try {

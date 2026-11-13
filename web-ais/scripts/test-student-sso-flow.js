@@ -2,7 +2,7 @@
 // Run the real SSO endpoint against a minimal Moodle/session fixture. In
 // particular, logout closes the PHP session, so login must use a new request.
 const assert = require("node:assert/strict"), fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto"), net = require("node:net");
-const { spawn } = require("node:child_process"), { request } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { spawn } = require("node:child_process"), { request, chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ais-sso-flow-")), site = path.join(dir, "site"), key = "a".repeat(64);
 fs.mkdirSync(site); fs.writeFileSync(path.join(dir, "ais-sso.key"), key); fs.copyFileSync(path.join(__dirname, "../services/moodle/ais-sso.php"), path.join(site, "ais-sso.php"));
 fs.writeFileSync(path.join(site, "authlib.php"), `<?php
@@ -61,6 +61,41 @@ function hidden(html, name) { return html.match(new RegExp(`name="${name}" value
     await api.get('/who.php?seed=1'); const pending=await(await post({token:token()})).text(); fs.writeFileSync(path.join(site,'blocked'),'1');
     assert.equal((await post({decision:'yes',request:hidden(pending,'request'),sesskey:hidden(pending,'sesskey')},'https://portal.edu-plus.ru')).status(),403);
     assert.equal((await (await api.get('/who.php')).json()).id,7,'blocked target cannot log out current user');
+    fs.unlinkSync(path.join(site,'blocked'));
+    // Exercise real form navigation: API clients do not apply Referrer-Policy
+    // to Origin, so manually supplying that header hides browser-only failures.
+    const browser = await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'msedge',headless:true});
+    try {
+      const context=await browser.newContext(), page=await context.newPage(), origins=[], navigation=[];
+      await context.route('**/*', route=>route.abort());
+      await context.route('https://portal.edu-plus.ru/**', async route=>{
+        const req=route.request(), url=new URL(req.url());
+        if(url.pathname==='/my/courses.php') return route.fulfill({contentType:'text/html; charset=utf-8',body:'<h1>Мои курсы</h1>'});
+        if(req.method()==='POST') origins.push(req.headers().origin);
+        const headers={...await req.allHeaders()};delete headers.host;delete headers['content-length'];
+        const response=await fetch(`http://127.0.0.1:${port}${url.pathname}${url.search}`,{method:req.method(),headers,body:req.postDataBuffer()||undefined,redirect:'manual'});
+        navigation.push({path:url.pathname,method:req.method(),origin:headers.origin,status:response.status,location:response.headers.get('location')});
+        // Redirect follow-ups can bypass Playwright routes. Keep the fixture
+        // isolated while checking the endpoint's actual redirect destination.
+        if(response.status===302){
+          assert.equal(response.headers.get('location'),'/my/courses.php');
+          const redirectHeaders=Object.fromEntries(response.headers);delete redirectHeaders.location;delete redirectHeaders['content-length'];
+          redirectHeaders['content-type']='text/html; charset=utf-8';
+          return route.fulfill({status:200,headers:redirectHeaders,body:'<script>location.replace("/my/courses.php")</script>'});
+        }
+        await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer())});
+      });
+      await context.route('https://edu-plus.ru/sso-fixture',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:`<form method="post" action="https://portal.edu-plus.ru/ais-sso.php"><input type="hidden" name="token" value="${token()}"><button>Открыть СДО</button></form>`}));
+      await page.goto('https://portal.edu-plus.ru/who.php?seed=1');
+      await page.goto('https://edu-plus.ru/sso-fixture');await page.getByRole('button',{name:'Открыть СДО'}).click();
+      await page.getByRole('button',{name:'Выйти и войти как слушатель'}).waitFor();
+      await page.getByRole('button',{name:'Выйти и войти как слушатель'}).click();
+      assert.equal(origins[1],'https://portal.edu-plus.ru','browser confirmation must preserve its real Origin');
+      try { await page.waitForURL('https://portal.edu-plus.ru/my/courses.php',{timeout:5000}); }
+      catch(error) {throw Error('Browser SSO navigation failed: '+JSON.stringify(navigation));}
+      assert.deepEqual(origins,['https://edu-plus.ru','https://portal.edu-plus.ru','https://portal.edu-plus.ru']);
+      await page.goto('https://portal.edu-plus.ru/who.php');assert.equal(JSON.parse(await page.locator('body').innerText()).id,9);
+    } finally {await browser.close();}
     console.log('PASS: real SSO confirmation/cancel, CSRF/origin/replay protection, logout/new-session handoff, target revalidation and My courses redirect');
   } finally { await api.dispose(); php.kill(); await new Promise(resolve=>php.once('exit',resolve));
     const resolved=path.resolve(dir); if(!resolved.startsWith(path.resolve(os.tmpdir())+path.sep)||!path.basename(resolved).startsWith('ais-sso-flow-'))throw Error('Unsafe cleanup path'); fs.rmSync(resolved,{recursive:true,force:true}); }

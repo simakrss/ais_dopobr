@@ -32301,8 +32301,8 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-award-upload-button { grid-column: 1 / -1; width: 100%; justify-content: center; white-space: normal; }
 .student-award-upload-status, .student-award-file-link { grid-column: 1 / -1; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 .student-award-upload-status:empty { display: none; }
-.student-access-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #d5e1dd; border-radius: 14px; padding: 20px; }
+.student-access-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; border: 1px solid var(--line); padding: 0; color: var(--text); }
 .student-access-dialog::backdrop { background: #152f2b77; }
-.student-access-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.student-access-dialog label { display: grid; gap: 5px; margin: 16px 0; }
-.student-access-dialog input { width: 100%; }
+.student-access-dialog .student-access-body { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; }
+.student-access-dialog .student-access-status { margin: 0; font-size: 13px; }
+.student-access-dialog [data-open-student-cabinet] { text-decoration: none; }

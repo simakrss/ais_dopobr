@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.628",
+    version: "1.7.629",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.629",
+      releasedAt: "2026-11-13",
+      changes: ["Исправлено подтверждение смены пользователя СДО: вход как слушатель открывает раздел Мои курсы. Окно доступа в кабинет слушателя использует стандартные поля, кнопки и оформление АИС."]
+    },
     {
       version: "1.7.628",
       releasedAt: "2026-11-13",
@@ -38136,11 +38141,17 @@ MAX - https://bizvmax.ru/zifra_plus
   function openStudentPortalMenu() {
     const record = state.data.collections.students.find(item => item.id === state.modal?.id);
     if (!record) return;
-    const dialog = document.createElement("dialog"); dialog.className = "student-access-dialog";
+    const dialog = document.createElement("dialog"); dialog.className = "modal student-access-dialog";
+    dialog.setAttribute("aria-labelledby", "student-access-title");
     const href = window.AIS_AUTH_API.appUrl(`?student-cabinet=${encodeURIComponent(record.id)}`);
-    dialog.innerHTML = `<header><h3>Кабинет слушателя</h3><button type="button" data-close aria-label="Закрыть">×</button></header><p>${escapeHtml(record.enrollmentReviewStatus || "Заполняется")}</p><a class="primary-button" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">Открыть личный кабинет ↗</a><label>Логин<input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label><label>Пароль<input type="password" readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label><button type="button" data-show-password>Показать пароль</button>`;
+    dialog.innerHTML = `<header class="modal-head"><h2 id="student-access-title">Кабинет слушателя</h2><button class="icon-button" type="button" data-close aria-label="Закрыть">×</button></header>
+      <div class="form-grid student-form-grid student-access-body"><p class="muted student-access-status">${escapeHtml(record.enrollmentReviewStatus || "Заполняется")}</p>
+      <a class="primary-button" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">Открыть личный кабинет ↗</a>
+      <label><span>Логин</span><input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label>
+      <label><span>Пароль</span><input type="password" readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label></div>
+      <footer class="modal-actions"><button class="ghost-button" type="button" data-show-password aria-pressed="false">Показать пароль</button></footer>`;
     dialog.querySelector("[data-close]").onclick = () => dialog.close();
-    dialog.querySelector("[data-show-password]").onclick = event => { const input = dialog.querySelector('input[type="password"],input[data-visible-password]'); const show = input.type === "password"; input.type = show ? "text" : "password"; input.dataset.visiblePassword = ""; event.target.textContent = show ? "Скрыть пароль" : "Показать пароль"; };
+    dialog.querySelector("[data-show-password]").onclick = event => { const input = dialog.querySelector('input[type="password"],input[data-visible-password]'); const show = input.type === "password"; input.type = show ? "text" : "password"; input.dataset.visiblePassword = ""; event.currentTarget.textContent = show ? "Скрыть пароль" : "Показать пароль"; event.currentTarget.setAttribute("aria-pressed", String(show)); };
     dialog.addEventListener("close", () => dialog.remove(), { once: true }); document.body.append(dialog); dialog.showModal();
   }
   async function saveStudentAwardFile(recordId, file, kind = "scan", format = "") {
