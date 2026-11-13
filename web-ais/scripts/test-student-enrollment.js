@@ -725,3 +725,15 @@ test("a shared cabinet whose first application was a webinar can enter after a q
   f.snapshot.data.collections.students[1].studentPortalBlocked = true;
   await assert.rejects(f.service.shopAccountOperation(body), { statusCode: 403 });
 });
+
+
+test("verified existing shop binding opens the current eligible cabinet without importing old orders or sending email", async () => {
+  const f = fixture({ shopSso: { issue: async () => ({ token: "existing-ticket" }) } });
+  const access = (await f.service.orderEmailAccess("101", "test@example.test")).accounts[0];
+  f.deps.queryOrder = async () => { throw new Error("Historical orders must not be queried or imported"); };
+  const original = JSON.stringify(f.snapshot), payload = { shopAccountOperation: "sso", accountId: access.accountId, email: "test@example.test", shopUserId: "12", existingBinding: true };
+  assert.equal((await f.service.shopAccountOperation(payload)).token, "existing-ticket"); assert.equal(JSON.stringify(f.snapshot), original); assert.equal(f.mails.length, 0);
+  await assert.rejects(f.service.shopAccountOperation({ ...payload, existingBinding: false }), /Historical orders|Некорректные/);
+  f.snapshot.data.collections.students[0].studentPortalBlocked = true;
+  await assert.rejects(f.service.shopAccountOperation(payload), { statusCode: 403 });
+});

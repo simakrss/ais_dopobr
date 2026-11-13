@@ -6,7 +6,7 @@ register_shutdown_function(static function () use ($root) { unlink($root . '/ais
 $users = []; $meta = []; $hooks = []; $requests = []; $mails = []; $orders = []; $password_changes = []; $answers = []; $cart_ids = []; $offline = false; $send_ok = true;
 class WP_Error { public function __construct(public string $code, public string $message = '', public array $data = []) {} public function get_error_codes() { return [$this->code]; } }
 class WP_User {
-    public array $roles = ['customer']; public string $user_pass;
+    public array $roles = ['customer']; public string $user_pass; public string $display_name = '';
     public function __construct(public int $ID, public string $user_login, public string $user_email, string $password = 'old-password') { $this->user_pass = password_hash($password, PASSWORD_DEFAULT); }
     public function exists() { return $this->ID > 0; }
 }
@@ -25,7 +25,8 @@ function get_user_by($field, $value) { foreach ($GLOBALS['users'] as $user) if (
 function get_user_meta($id, $key, $single = true) { return $GLOBALS['meta'][$id][$key] ?? ''; }
 function update_user_meta($id, $key, $value) { $GLOBALS['meta'][$id][$key] = $value; return true; }
 function delete_user_meta($id, $key) { unset($GLOBALS['meta'][$id][$key]); }
-function get_users($args) { $result = []; foreach ($GLOBALS['users'] as $user) if ((string) get_user_meta($user->ID, $args['meta_key']) === (string) $args['meta_value']) $result[] = ($args['fields'] ?? '') === 'ID' ? $user->ID : $user; return array_slice($result, 0, $args['number']); }
+function get_users($args) { $result = []; foreach ($GLOBALS['users'] as $user) if (isset($args['search']) ? strcasecmp($user->user_email, $args['search']) === 0 : (string) get_user_meta($user->ID, $args['meta_key']) === (string) $args['meta_value']) $result[] = ($args['fields'] ?? '') === 'ID' ? $user->ID : $user; return array_slice($result, 0, $args['number']); }
+function wp_salt($scheme) { return 'fixture-private-salt'; }
 function sanitize_user($login, $strict) { return preg_replace('/[^a-zA-Z0-9_.+\-]/', '', $login); }
 function wc_create_new_customer($email, $login, $password) {
     if (get_user_by('email', $email) || get_user_by('login', $login)) return new WP_Error('exists');
@@ -127,3 +128,40 @@ $cart_ids = ['20']; wc_create_new_customer('webinar@example.test', 'webinar', 'o
 $offline = true; $failed_order = new FakeOrder(109, 'outage@example.test'); ais_pg_process_paid_enrollment(109);
 check(!$failed_order->get_meta('_ais_enrollment_done') && $failed_order->get_meta('_ais_enrollment_error'), 'Worker does not mark failed binding complete');
 echo "PASS: unified new/old customer access, role/recipient isolation, collisions, alias restrictions, one registration notice, no plaintext metadata, retries, noneducational checkout\n";
+
+$offline = false; $cart_ids = [];
+$existing_id = count($users) + 1; $users[$existing_id] = new WP_User($existing_id, 'existing-shop', 'existing@example.test', 'keep-this-password');
+update_user_meta($existing_id, 'billing_first_name', 'Анна Петровна'); update_user_meta($existing_id, 'billing_last_name', 'Иванова');
+update_user_meta($existing_id, '_ais_student_registration_pending', time());
+$candidate = ['accountId' => 'existing-student', 'email' => 'existing@example.test', 'login' => 'existing-common', 'credentialVersion' => str_repeat('c',64), 'names' => ['Иванова Анна Петровна'], 'orderIds' => []];
+$original_meta = $meta; $old_hash = $users[$existing_id]->user_pass; $mail_count = count($mails); $request_count = count($requests); $password_count = count($password_changes); $user_count = count($users);
+$preview = ais_sa_existing_batch(['accounts' => [$candidate]]);
+check($preview['results'][0]['status'] === 'ready' && $meta === $original_meta, 'Existing-account preview makes no changes');
+$with_proof = $candidate + ['proof' => $preview['results'][0]['proof']];
+$stale = ais_sa_existing_batch(['accounts' => [$candidate + ['proof' => str_repeat('0',64)]], 'apply' => true]);
+check($stale['results'][0]['reason'] === 'changed_since_preview' && $meta === $original_meta, 'Stale/forged preview cannot apply');
+$applied = ais_sa_existing_batch(['accounts' => [$with_proof], 'apply' => true]);
+check($applied['results'][0]['status'] === 'linked' && !$applied['mailSent'] && !$applied['passwordsChanged'], 'Verified existing account linked without messages');
+check($users[$existing_id]->user_pass === $old_hash && count($password_changes) === $password_count && count($users) === $user_count, 'Migration cannot create users or reset even a recently registered account password');
+check(count($mails) === $mail_count && count($requests) === $request_count, 'No mail or enrollment RPC during migration');
+check(ais_sa_existing_binding($users[$existing_id]), 'Existing cabinet can open without an order reference');
+$existing_sso = ais_sa_cabinet_payload($users[$existing_id]); check($existing_sso['existingBinding'] && $existing_sso['orderId'] === '' && $existing_sso['accountId'] === $candidate['accountId'], 'Existing SSO is bound to the logged-in account without requiring a historical order');
+denied(fn() => ais_sa_cabinet_payload($users[$admin_id]), 'Privileged users cannot use existing-customer SSO');
+check(ais_sa_existing_batch(['accounts' => [$candidate], 'apply' => true])['results'][0]['status'] === 'unchanged', 'Migration is idempotent');
+$users[$existing_id]->user_email = 'changed@example.test'; check(!ais_sa_existing_binding($users[$existing_id]), 'Changed shop email invalidates the old binding'); $users[$existing_id]->user_email = $candidate['email'];
+$historical_order = new FakeOrder(110, $candidate['email'], $existing_id); $answers['110'] = [array_merge($candidate, ['password' => '003456', 'programs' => ['Старая программа']])];
+ais_sa_process_order($historical_order); check(count($mails) === $mail_count, 'The existing registration instruction is suppressed on retries');
+check(ais_sa_authenticate(new WP_Error('invalid_username'), 'existing-common', '003456') === $users[$existing_id], 'Existing common login works after migration');
+check(ais_sa_existing_batch(['accounts' => [array_merge($candidate, ['email' => 'missing@example.test', 'accountId' => 'missing'])]])['results'][0]['reason'] === 'shop_account_missing', 'Missing shop account is not created');
+check(ais_sa_existing_batch(['accounts' => [array_merge($candidate, ['email' => 'admin@example.test', 'accountId' => 'admin-student'])]])['results'][0]['reason'] === 'privileged_shop_account', 'Privileged existing account rejected');
+$unknown_id = count($users)+1; $users[$unknown_id] = new WP_User($unknown_id, 'unconfirmed', 'unconfirmed@example.test');
+$unknown = array_merge($candidate, ['email' => 'unconfirmed@example.test', 'accountId' => 'unconfirmed-student', 'login' => 'unconfirmed-common']);
+check(ais_sa_existing_batch(['accounts' => [$unknown]])['results'][0]['reason'] === 'identity_unconfirmed', 'Email alone does not merge unrelated identities');
+$proof_order = new FakeOrder(111, $unknown['email'], $unknown_id); $unknown['orderIds'] = ['111'];
+$unknown_preview = ais_sa_existing_batch(['accounts' => [$unknown]])['results'][0]; check($unknown_preview['status'] === 'ready', 'Owned paid order confirms identity when profile names are missing');
+$users[$unknown_id]->user_pass = password_hash('changed-during-preview', PASSWORD_DEFAULT);
+check(ais_sa_existing_batch(['accounts' => [$unknown + ['proof' => $unknown_preview['proof']]], 'apply' => true])['results'][0]['reason'] === 'changed_since_preview', 'Changed native credentials require a fresh preview');
+$duplicate_id = count($users)+1; $users[$duplicate_id] = new WP_User($duplicate_id, 'duplicate', $unknown['email']);
+check(ais_sa_existing_batch(['accounts' => [$unknown]])['results'][0]['reason'] === 'duplicate_shop_email', 'Duplicate shop emails are not silently linked');
+check(count($mails) === $mail_count && count($password_changes) === $password_count, 'No test migration sent mail or changed passwords');
+echo "PASS: explicit existing-account migration, name/order identity, preview guard, duplicate/privileged isolation, no provisioning, no mail, preserved passwords, existing SSO binding\n";

@@ -440,8 +440,12 @@ function createService(deps) {
       const user = await authenticate(payload.login, payload.password, `shop:${text(payload.clientKey).slice(0, 80)}`);
       return { ok: Boolean(user && user.studentId === owner.id) };
     }
-    const access = await orderEmailAccess(payload.orderId, payload.email);
-    if (!access.accounts.some(account => account.accountId === owner.id)) fail("Заказ не относится к этому кабинету.", 403);
+    // This flag is supplied only by the signed shop bridge after an explicit,
+    // verified link of an existing customer. No historical order is imported.
+    if (payload.existingBinding !== true) {
+      const access = await orderEmailAccess(payload.orderId, payload.email);
+      if (!access.accounts.some(account => account.accountId === owner.id)) fail("Заказ не относится к этому кабинету.", 403);
+    }
     return { ok: true, ...await deps.shopSso.issue(publicUser(owner), text(payload.shopUserId)) };
   }
   async function portal(user, id) { return view(await context(user, id)); }

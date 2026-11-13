@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.12
+ * Version: 1.7.13
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -1573,7 +1573,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.12', 'unifiedStudentAccounts' => function_exists('ais_sa_prepare'), 'studentShopSso' => function_exists('ais_sa_open_cabinet'), 'orderEmailStudentAccess' => true, 'cabinetEnrollmentInstructions' => true, 'studentDebtPayments' => true, 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.13', 'unifiedStudentAccounts' => function_exists('ais_sa_prepare'), 'existingStudentAccounts' => function_exists('ais_sa_existing_batch'), 'studentShopSso' => function_exists('ais_sa_open_cabinet'), 'orderEmailStudentAccess' => true, 'cabinetEnrollmentInstructions' => true, 'studentDebtPayments' => true, 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

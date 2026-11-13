@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: АИС — единый кабинет покупателя и слушателя
- * Version: 1.0.0
+ * Version: 1.1.0
  * Customer-only bridge. No historical orders or emails are processed on installation.
  */
 defined('ABSPATH') || exit;
@@ -83,7 +83,7 @@ function ais_sa_process_order($order): void {
         if (empty($account['shopAccess'])) throw new RuntimeException('Общий доступ в магазин и учебный центр пока не подготовлен.');
         ais_sa_locked('mail:' . $account['shopUserId'], function () use ($account) {
             $state = get_user_meta($account['shopUserId'], '_ais_student_access_notice', true);
-            if (is_array($state) && ($state['version'] ?? '') === $account['credentialVersion'] && in_array($state['status'] ?? '', ['sent', 'sending'], true)) return;
+            if (is_array($state) && ($state['version'] ?? '') === $account['credentialVersion'] && in_array($state['status'] ?? '', ['sent', 'sending', 'suppressed'], true)) return;
             $user = get_user_by('id', $account['shopUserId']);
             if (!ais_sa_customer($user)) throw new RuntimeException('Получатель письма недоступен.');
             update_user_meta($user->ID, '_ais_student_access_notice', ['version' => $account['credentialVersion'], 'status' => 'sending', 'at' => time()]);
@@ -157,22 +157,120 @@ function ais_sa_authenticate($result, $login, $password) {
 }
 add_filter('authenticate', 'ais_sa_authenticate', 25, 3);
 
+// Explicit administrator migration only. It neither provisions a student nor
+// creates a WP user, changes a password, saves orders, queues jobs or sends mail.
+function ais_sa_name_tokens(string $value): array {
+    $value = str_replace('ё', 'е', mb_strtolower($value, 'UTF-8'));
+    return array_values(array_filter(preg_split('/[^\p{L}\p{N}]+/u', $value), static fn($word) => mb_strlen($word, 'UTF-8') > 1));
+}
+function ais_sa_existing_identity($user, array $candidate): bool {
+    $names = [trim(get_user_meta($user->ID, 'last_name', true) . ' ' . get_user_meta($user->ID, 'first_name', true)),
+        trim(get_user_meta($user->ID, 'billing_last_name', true) . ' ' . get_user_meta($user->ID, 'billing_first_name', true)), (string) $user->display_name];
+    foreach ($names as $name) {
+        $parts = ais_sa_name_tokens($name);
+        if (count(array_unique($parts)) < 2) continue;
+        foreach ($candidate['names'] as $full) if (!array_diff($parts, ais_sa_name_tokens($full))) return true;
+    }
+    foreach ($candidate['orderIds'] as $id) {
+        $order = wc_get_order((int) $id);
+        if ($order && $order->is_paid() && (float) $order->get_total() > 0 && (int) $order->get_customer_id() === (int) $user->ID
+            && strcasecmp(trim($order->get_billing_email()), $candidate['email']) === 0) return true;
+    }
+    return false;
+}
+function ais_sa_existing_plan(array $candidate): array {
+    $result = ['accountId' => $candidate['accountId'], 'status' => 'skipped'];
+    $users = array_values(array_filter(get_users(['search' => $candidate['email'], 'search_columns' => ['user_email'], 'number' => 3]),
+        static fn($user) => strcasecmp(trim($user->user_email), $candidate['email']) === 0));
+    if (!$users) return $result + ['reason' => 'shop_account_missing'];
+    if (count($users) !== 1) return $result + ['reason' => 'duplicate_shop_email'];
+    $user = $users[0]; $result['shopUserId'] = (int) $user->ID;
+    if (!ais_sa_customer($user)) return $result + ['reason' => 'privileged_shop_account'];
+    $bound = (string) get_user_meta($user->ID, '_ais_student_account', true);
+    if ($bound && $bound !== $candidate['accountId']) return $result + ['reason' => 'different_student_binding'];
+    $native = get_user_by('login', $candidate['login']);
+    if ($native && (int) $native->ID !== (int) $user->ID) return $result + ['reason' => 'login_in_use'];
+    foreach (['_ais_student_account' => $candidate['accountId'], '_ais_student_login' => $candidate['login']] as $key => $value) {
+        $linked = get_users(['meta_key' => $key, 'meta_value' => $value, 'number' => 2, 'fields' => 'ID']);
+        if ($linked && (count($linked) !== 1 || (int) $linked[0] !== (int) $user->ID)) return $result + ['reason' => 'different_shop_binding'];
+    }
+    if (!$bound && !ais_sa_existing_identity($user, $candidate)) return $result + ['reason' => 'identity_unconfirmed'];
+    $metadata = [];
+    foreach (['_ais_student_account', '_ais_student_login', '_ais_student_version', '_ais_student_existing_link', '_ais_student_access_notice'] as $key) $metadata[$key] = get_user_meta($user->ID, $key, true);
+    $existing = $metadata['_ais_student_existing_link'];
+    $notice = $metadata['_ais_student_access_notice'];
+    $result['status'] = is_array($existing) && ($existing['accountId'] ?? '') === $candidate['accountId'] && ($existing['email'] ?? '') === $candidate['email']
+        && $metadata['_ais_student_login'] === $candidate['login'] && $metadata['_ais_student_version'] === $candidate['credentialVersion']
+        && is_array($notice) && ($notice['version'] ?? '') === $candidate['credentialVersion'] && in_array($notice['status'] ?? '', ['sent', 'sending', 'suppressed'], true)
+        && get_user_meta($user->ID, '_ais_student_registration_handled', true) ? 'unchanged' : 'ready';
+    $result['proof'] = hash_hmac('sha256', wp_json_encode([$candidate, $user->ID, $user->user_email, $user->user_login, $user->user_pass, $user->roles, $metadata]), wp_salt('auth'));
+    return $result;
+}
+function ais_sa_existing_batch(array $payload): array {
+    $items = $payload['accounts'] ?? null; $apply = ($payload['apply'] ?? false) === true;
+    if (!is_array($items) || count($items) > 25) throw new RuntimeException('Передайте не более 25 кабинетов.');
+    $results = []; $seen_emails = []; $seen_accounts = [];
+    foreach ($items as $item) {
+        if (!is_array($item) || !is_string($item['accountId'] ?? null) || !$item['accountId'] || strlen($item['accountId']) > 128
+            || !is_string($item['email'] ?? null) || !is_email($item['email']) || !is_string($item['login'] ?? null) || !$item['login'] || strlen($item['login']) > 256
+            || preg_match('/[\x00-\x20]/', $item['login']) || !preg_match('/^[a-f0-9]{64}$/D', (string) ($item['credentialVersion'] ?? ''))
+            || !is_array($item['names'] ?? null) || count($item['names']) > 30 || !is_array($item['orderIds'] ?? null) || count($item['orderIds']) > 100) throw new RuntimeException('Некорректные данные существующего кабинета.');
+        foreach ($item['names'] as $name) if (!is_string($name) || strlen($name) > 1000) throw new RuntimeException('Некорректное ФИО.');
+        foreach ($item['orderIds'] as $id) if (!is_string($id) || !preg_match('/^[1-9]\d{0,15}$/D', $id)) throw new RuntimeException('Некорректный номер заказа.');
+        $candidate = array_intersect_key($item, array_flip(['accountId', 'email', 'login', 'credentialVersion', 'names', 'orderIds']));
+        $candidate['email'] = strtolower(trim($candidate['email']));
+        if (isset($seen_emails[$candidate['email']]) || isset($seen_accounts[$candidate['accountId']])) throw new RuntimeException('Повтор кабинета или email в пакете.');
+        $seen_emails[$candidate['email']] = true; $seen_accounts[$candidate['accountId']] = true;
+        $results[] = ais_sa_locked($candidate['email'], function () use ($candidate, $item, $apply) {
+            $plan = ais_sa_existing_plan($candidate);
+            if (!$apply || $plan['status'] !== 'ready') return $plan;
+            return ais_sa_locked('mail:' . $plan['shopUserId'], function () use ($candidate, $item) {
+                $plan = ais_sa_existing_plan($candidate);
+                if ($plan['status'] !== 'ready') return $plan;
+                if (!is_string($item['proof'] ?? null) || !hash_equals($plan['proof'], $item['proof'])) return ['accountId' => $candidate['accountId'], 'status' => 'skipped', 'reason' => 'changed_since_preview'];
+                $uid = $plan['shopUserId'];
+                update_user_meta($uid, '_ais_student_account', $candidate['accountId']);
+                update_user_meta($uid, '_ais_student_login', $candidate['login']);
+                update_user_meta($uid, '_ais_student_version', $candidate['credentialVersion']);
+                update_user_meta($uid, '_ais_student_existing_link', ['accountId' => $candidate['accountId'], 'email' => $candidate['email'], 'linkedAt' => gmdate('c')]);
+                $notice = get_user_meta($uid, '_ais_student_access_notice', true);
+                if (!is_array($notice) || ($notice['version'] ?? '') !== $candidate['credentialVersion'] || !in_array($notice['status'] ?? '', ['sent', 'sending'], true))
+                    update_user_meta($uid, '_ais_student_access_notice', ['version' => $candidate['credentialVersion'], 'status' => 'suppressed', 'at' => time()]);
+                update_user_meta($uid, '_ais_student_registration_handled', true);
+                delete_user_meta($uid, '_ais_student_registration_pending');
+                if (ais_sa_existing_plan($candidate)['status'] !== 'unchanged') throw new RuntimeException('Не удалось сохранить все параметры связи. Повторите проверку.');
+                return ['accountId' => $candidate['accountId'], 'shopUserId' => $uid, 'status' => 'linked'];
+            });
+        });
+    }
+    return ['ok' => true, 'results' => $results, 'mailSent' => false, 'passwordsChanged' => false];
+}
+function ais_sa_existing_binding($user): bool {
+    $link = get_user_meta($user->ID, '_ais_student_existing_link', true);
+    return is_array($link) && ($link['accountId'] ?? '') === get_user_meta($user->ID, '_ais_student_account', true)
+        && strcasecmp((string) ($link['email'] ?? ''), trim($user->user_email)) === 0;
+}
+
 function ais_sa_account_button(): void {
     $user = wp_get_current_user();
     if (ais_pg_role() !== 'shop' || !ais_sa_customer($user) || !get_user_meta($user->ID, '_ais_student_account', true)) return;
     echo '<p><a class="button" target="_blank" rel="noopener" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=ais_student_cabinet'), 'ais_student_cabinet')) . '">Открыть кабинет слушателя ↗</a></p>';
 }
 add_action('woocommerce_account_dashboard', 'ais_sa_account_button', 5);
+function ais_sa_cabinet_payload($user): array {
+    if (!ais_sa_customer($user)) throw new RuntimeException('Переход доступен только из кабинета покупателя.');
+    $account = (string) get_user_meta($user->ID, '_ais_student_account', true);
+    $order = wc_get_order((int) get_user_meta($user->ID, '_ais_student_order', true));
+    $existing = ais_sa_existing_binding($user);
+    if (!$account || (!$existing && (!$order || (int) $order->get_customer_id() !== (int) $user->ID || strcasecmp($order->get_billing_email(), $user->user_email) !== 0 || !$order->is_paid()))) throw new RuntimeException('Не найден кабинет образовательной программы.');
+    return ['shopAccountOperation' => 'sso', 'shopUserId' => (string) $user->ID, 'accountId' => $account,
+        'orderId' => $order ? (string) $order->get_id() : '', 'email' => $user->user_email, 'existingBinding' => $existing];
+}
 function ais_sa_open_cabinet(): void {
     try {
         if (ais_pg_role() !== 'shop' || !is_user_logged_in()) throw new RuntimeException('Войдите в интернет-магазин.');
         check_admin_referer('ais_student_cabinet'); $user = wp_get_current_user();
-        if (!ais_sa_customer($user)) throw new RuntimeException('Переход доступен только из кабинета покупателя.');
-        $account = (string) get_user_meta($user->ID, '_ais_student_account', true);
-        $order = wc_get_order((int) get_user_meta($user->ID, '_ais_student_order', true));
-        if (!$account || !$order || (int) $order->get_customer_id() !== (int) $user->ID || strcasecmp($order->get_billing_email(), $user->user_email) !== 0 || !$order->is_paid()) throw new RuntimeException('Не найден оплаченный заказ образовательной программы.');
-        $ticket = ais_sa_rpc(['shopAccountOperation' => 'sso', 'shopUserId' => (string) $user->ID, 'accountId' => $account,
-            'orderId' => (string) $order->get_id(), 'email' => $user->user_email]);
+        $ticket = ais_sa_rpc(ais_sa_cabinet_payload($user));
         if (empty($ticket['ok']) || ($ticket['action'] ?? '') !== 'https://edu-plus.ru/lms/shop-sso.php' || !preg_match('/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/D', (string) ($ticket['token'] ?? ''))) throw new RuntimeException('Не удалось подтвердить переход.');
         nocache_headers(); header('Referrer-Policy: same-origin'); header('X-Frame-Options: DENY');
         $nonce = bin2hex(random_bytes(16));
@@ -185,6 +283,12 @@ function ais_sa_open_cabinet(): void {
 add_action('admin_post_ais_student_cabinet', 'ais_sa_open_cabinet');
 add_action('admin_post_nopriv_ais_student_cabinet', function () { auth_redirect(); });
 add_action('rest_api_init', function () {
+    register_rest_route('ais-program-sites/v1', '/student-accounts-existing', ['methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => function ($request) {
+        if (ais_pg_role() !== 'shop') return ais_pg_error('Недоступно.', 403);
+        if (strlen($request->get_body()) > 100000) return ais_pg_error('Слишком большой пакет.', 413);
+        try { return ais_sa_existing_batch((array) $request->get_json_params()); }
+        catch (Throwable $error) { return ais_pg_error('Не удалось обработать пакет существующих кабинетов: ' . $error->getMessage(), 409); }
+    }]);
     register_rest_route('ais-program-sites/v1', '/student-account-logins', ['methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => function ($request) {
         if (ais_pg_role() !== 'shop') return ais_pg_error('Недоступно.', 403);
         $email = (string) ($request->get_json_params()['email'] ?? '');

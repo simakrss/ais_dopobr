@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.635",
+    version: "1.7.636",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.636",
+      releasedAt: "2026-11-13",
+      changes: ["Добавлено связывание существующих аккаунтов магазина и кабинетов слушателей КПК, ППП и ДОП без повторных писем и изменения паролей. Переход в кабинет работает и для ранее оформленных программ; неоднозначные совпадения не объединяются автоматически."]
+    },
     {
       version: "1.7.635",
       releasedAt: "2026-11-13",
