@@ -73,11 +73,11 @@ function have_posts() { static $remaining = 1; return $remaining-- > 0; }
 function the_post() {}
 function get_the_content() { return ''; }
 function zifra_icon($name) { return '<svg aria-hidden="true"></svg>'; }
-function zifra_education_info_sections($content) { return ['qualification' => 'Для зачисления необходимо прислать: паспорт и диплом', 'certificate' => 'Для зачисления необходимо прислать: паспорт', 'module' => 'Модуль: документы не требуются', 'international' => 'Порядок признания дипломов', 'signature' => 'Учебный центр', 'social' => '', 'contact' => 'Отправьте на email']; }
+function zifra_education_info_sections($content) { return ['qualification' => 'Для зачисления необходимо прислать: паспорт и диплом', 'certificate' => 'Для зачисления <strong>необходимо прислать</strong>: паспорт', 'module' => 'Модуль: документы не требуются', 'international' => 'Порядок признания дипломов', 'signature' => 'Учебный центр', 'social' => '', 'contact' => 'Отправьте на email']; }
 function zifra_education_info_html($content) { return $content; }
 function zifra_education_info_links($content) { return []; }
 ob_start(); require dirname(__DIR__) . '/services/wordpress/ais-education-info-template.php'; $page = ob_get_clean();
 foreach (['загрузите сканы', '«Основное»', '«Документы»', '«Отправить на проверку»', 'https://edu-plus.ru/lms/', 'паспорт и диплом', 'Порядок признания дипломов'] as $text) check_email(str_contains($page, $text), 'Instruction page missing required content');
-check_email(!str_contains($page, 'необходимо прислать:') && !str_contains($page, 'Отправьте на email'), 'Legacy email submission instructions are replaced');
+check_email(!str_contains(strip_tags($page), 'необходимо прислать:') && !str_contains($page, 'Отправьте на email'), 'Legacy email submission instructions are replaced');
 check_email(substr_count($page, 'href="https://edu-plus.ru/lms/"') === 2, 'Cabinet buttons are present');
 echo "PASS: order email recipient isolation, paid-only credentials, HMAC, HTML/plain rendering, bounded failure, no email side effects, instruction page\n";

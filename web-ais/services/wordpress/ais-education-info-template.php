@@ -5,7 +5,7 @@ get_header();
 <main id="main" class="container education-info-page">
 <?php while (have_posts()): the_post(); $sections = zifra_education_info_sections(get_the_content());
 if ($sections) {
-    foreach (['qualification', 'certificate'] as $key) $sections[$key] = str_replace('необходимо прислать:', 'заполните реквизиты в личном кабинете и прикрепите необходимые сканы:', $sections[$key]);
+    foreach (['qualification', 'certificate'] as $key) $sections[$key] = preg_replace('/необходимо\s+прислать(?=(?:\s*<\/?[a-z][^>]*>)*\s*:)/iu', 'заполните реквизиты в личном кабинете и прикрепите необходимые сканы', $sections[$key]);
 } ?>
     <header class="education-intro">
         <div class="education-intro-copy">
@@ -54,7 +54,7 @@ if ($sections) {
                 <h2>Загрузите документы<br>в личном кабинете</h2>
                 <div class="education-copy"><ol><li>В разделе <strong>«Основное»</strong> заполните личные и паспортные данные, адрес регистрации, почтовый адрес с индексом и остальные обязательные реквизиты. Сохраните изменения.</li><li>В разделе <strong>«Документы»</strong> прикрепите сканы по перечню для Вашей программы.</li><li>Нажмите <strong>«Отправить на проверку»</strong>. Кнопка станет доступна, когда обязательные поля будут заполнены, а необходимые документы загружены.</li></ol><p>Результат проверки и замечания учебного центра появятся в кабинете. Если потребуется доработка, исправьте данные и отправьте документы повторно.</p></div>
                 <a class="education-send-link" href="https://edu-plus.ru/lms/">Открыть личный кабинет <span aria-hidden="true">↗</span></a>
-                <p>Если нужна помощь со входом, напишите на <a href="mailto:mail@edu-plus.ru">mail@edu-plus.ru</a>.</p>
+                <p class="education-copy">Если нужна помощь со входом, напишите на <a href="mailto:mail@edu-plus.ru">mail@edu-plus.ru</a>.</p>
             </section>
             <section class="education-person-card">
                 <h2>На связи с вами</h2>
