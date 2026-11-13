@@ -711,3 +711,17 @@ test("new student login reserves both AIS and shop names before provisioning", a
   const access = await f.service.orderEmailAccess("101", "test@example.test"); assert.ok(checked); assert.equal(access.accounts[0].login, "test.3");
   assert.match(access.accounts[0].password, /^\d{6}$/); assert.equal(f.mails.length, 0);
 });
+
+
+test("a shared cabinet whose first application was a webinar can enter after a qualifying course purchase", async () => {
+  const f = fixture({ shopSso: { issue: async () => ({ token: "ticket" }) } });
+  const access = (await f.service.orderEmailAccess("101", "test@example.test")).accounts[0];
+  const owner = f.snapshot.data.collections.students[0];
+  f.snapshot.data.collections.students.push({ ...owner, id: "linked-kpk", studentPortalAccountId: owner.id });
+  Object.assign(owner, { educationType: "ПРО", sourceApplicationKey: "", sourceOrderId: "", sourceProductId: "" });
+  const body = { shopAccountOperation: "authenticate", accountId: owner.id, shopUserId: "12", email: owner.email, login: access.login, password: access.password, orderId: "101" };
+  assert.deepEqual(await f.service.shopAccountOperation(body), { ok: true });
+  assert.equal((await f.service.shopAccountOperation({ ...body, shopAccountOperation: "sso" })).token, "ticket");
+  f.snapshot.data.collections.students[1].studentPortalBlocked = true;
+  await assert.rejects(f.service.shopAccountOperation(body), { statusCode: 403 });
+});

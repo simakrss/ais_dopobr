@@ -429,10 +429,12 @@ function createService(deps) {
     }
     if (!["authenticate", "sso"].includes(operation) || !/^[1-9]\d{0,15}$/u.test(text(payload.shopUserId))
       || !text(payload.accountId) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(payload.email))) fail("Некорректный запрос магазина.");
-    const current = await deps.readState(), owner = (current.data.collections.students || []).find(row => row.id === payload.accountId);
+    const current = await deps.readState(), students = current.data.collections.students || [], owner = students.find(row => row.id === payload.accountId);
     if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
       || (owner.studentPortalAccountId && owner.studentPortalAccountId !== owner.id)
-      || identity(owner.email) !== identity(payload.email) || !["КПК", "ППП", "ДОП"].includes(owner.educationType)) fail("Кабинет слушателя недоступен.", 403);
+      || identity(owner.email) !== identity(payload.email)
+      || !students.some(row => row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id
+        && ["КПК", "ППП", "ДОП"].includes(row.educationType))) fail("Кабинет слушателя недоступен.", 403);
     if (operation === "authenticate") {
       if (identity(payload.login) !== identity(portalLogin(owner))) return { ok: false };
       const user = await authenticate(payload.login, payload.password, `shop:${text(payload.clientKey).slice(0, 80)}`);
