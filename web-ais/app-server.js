@@ -25372,6 +25372,13 @@ async function handleStudentEnrollmentReview(req, res, actor) {
 async function handleStaffStudentPortal(req, res, actor, url) {
   if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
   const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
+  if (action === "/access-email") {
+    if (req.method !== "POST") throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+    const body = await readJsonBody(req, 4096), service = getStudentEnrollmentService(), id = String(url.searchParams.get("studentId") || "");
+    if (!["preview", "send"].includes(body.operation)) throw Object.assign(new Error("Неизвестная операция письма."), { statusCode: 400 });
+    const result = body.operation === "send" ? await service.sendCabinetAccessEmail(actor, id, body) : await service.previewCabinetAccessEmail(actor, id);
+    return sendJson(res, 200, result, { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+  }
   if (!(req.method === "GET" && ["", "/file", "/sdo-open", "/feedback", "/awards", "/award-file", "/photo"].includes(action))
     && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback", "/feedback-sync", "/photo", "/payment", "/payment-status", "/approve-layout", "/layout-remarks"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
   const session = await getStudentEnrollmentService().staffSession(actor, url.searchParams.get("studentId"), url.searchParams.get("id"));

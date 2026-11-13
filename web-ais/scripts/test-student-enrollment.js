@@ -604,3 +604,63 @@ test("one paid order with multiple programs returns one account and preserves ow
   owner.studentPortalBlocked = true;
   assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
 });
+
+
+test("staff access email preview uses current account-owner credentials without mailing or changing a record", async () => {
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const owner=f.snapshot.data.collections.students[0];
+ owner.studentPortalPassword="new-owner-password";
+ const linked={...owner,id:"linked",studentPortalAccountId:owner.id,studentPortalPassword:"stale-copy",program:"Вторая программа",name:"Слушатель <script>"};f.snapshot.data.collections.students.push(linked);
+ const before=structuredClone(f.snapshot),actor={id:"manager",role:"manager"};
+ const result=await f.service.previewCabinetAccessEmail(actor,"linked");
+ assert.match(result.message,/new-owner-password/);assert.ok(!result.message.includes("stale-copy"));assert.match(result.message,/Слушатель &lt;script&gt;/);
+ assert.match(result.message,/Основное/);assert.match(result.message,/Документы/);assert.match(result.message,/Отправить на проверку/);
+ assert.ok(!result.message.includes("Получена оплата"));assert.match(result.revision,/^[a-f0-9]{64}$/);
+ assert.deepEqual(f.snapshot,before);assert.equal(f.mails.length,0);
+ for(const role of ["student","partner","system",undefined])await assert.rejects(f.service.previewCabinetAccessEmail({role},owner.id),{statusCode:403});
+ owner.studentPortalBlocked=true;await assert.rejects(f.service.previewCabinetAccessEmail(actor,"linked"),{statusCode:409});
+});
+
+test("access email sends the preview once, records the actor and stores no credentials in its journal", async () => {
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={id:"manager",role:"manager"},audits=[];
+ f.deps.audit=async(...args)=>audits.push(args);
+ const before=structuredClone(record),preview=await f.service.previewCabinetAccessEmail(actor,record.id),requestId=require("node:crypto").randomUUID();
+ const body={revision:preview.revision,requestId,to:"attacker@example.test",message:"forged"};
+ const results=await Promise.all([f.service.sendCabinetAccessEmail(actor,record.id,body),f.service.sendCabinetAccessEmail(actor,record.id,body)]);
+ assert.ok(results.every(r=>r.ok));assert.equal(f.mails.length,1);assert.equal(f.mails[0].to,record.email);assert.equal(f.mails[0].message,preview.message);
+ assert.equal(audits.length,1);assert.equal(audits[0][2],actor);assert.match(audits[0][0],/Повторно отправлено/);
+ const entries=[...f.feedbackLedger.values()];assert.equal(entries.length,1);assert.equal(entries[0].status,"sent");
+ assert.ok(!JSON.stringify(entries).includes(record.studentPortalPassword));assert.ok(!JSON.stringify(audits).includes("Пароль:"));
+ assert.deepEqual(record,before);
+ await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{...body,requestId:require("node:crypto").randomUUID()}),{statusCode:429});
+});
+
+test("changed recipient or credentials invalidate access-email preview, invalid email cannot be previewed", async () => {
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={role:"admin"};
+ for(const field of ["email","studentPortalPassword"]){
+   const preview=await f.service.previewCabinetAccessEmail(actor,record.id),before=record[field];record[field]=field==="email"?"updated@example.test":"changed-password";
+   await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{revision:preview.revision,requestId:require("node:crypto").randomUUID()}),{statusCode:409});record[field]=before;
+ }
+ record.email="";await assert.rejects(f.service.previewCabinetAccessEmail(actor,record.id),{statusCode:400});assert.equal(f.mails.length,0);
+});
+
+test("uncertain access-email delivery and lost acknowledgment never send twice across service instances", async () => {
+ for(const uncertain of [true,false]){
+  const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={role:"manager"},preview=await f.service.previewCabinetAccessEmail(actor,record.id);
+  const body={revision:preview.revision,requestId:require("node:crypto").randomUUID()};let sends=0;
+  f.deps.sendMail=async()=>{sends++;if(uncertain)throw Object.assign(Error("smtp"),{deliveryUnknown:true});};
+  if(!uncertain){const save=f.deps.saveFeedbackState;f.deps.saveFeedbackState=async(id,entry)=>{if(entry.status==="sent")throw Error("db");await save(id,entry);};}
+  await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,body));
+  await assert.rejects(enrollment.createService(f.deps).sendCabinetAccessEmail(actor,record.id,body),{statusCode:409});assert.equal(sends,1);
+ }
+});
+
+
+test("known access-email failure permits a deliberate retry after the cooldown", async()=>{
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={role:"manager"};
+ const preview=await f.service.previewCabinetAccessEmail(actor,record.id),body={revision:preview.revision,requestId:require("node:crypto").randomUUID()};let attempts=0;
+ f.deps.sendMail=async()=>{if(++attempts===1)throw Error("rejected before delivery");};
+ await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,body),{statusCode:503});
+ const entry=[...f.feedbackLedger.values()][0];assert.equal(entry.status,"failed");entry.createdAt=Date.now()-31000;
+ assert.equal((await f.service.sendCabinetAccessEmail(actor,record.id,body)).ok,true);assert.equal(attempts,2);
+ assert.equal([...f.feedbackLedger.values()][0].status,"sent");
+});

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.631",
+    version: "1.7.632",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.632",
+      releasedAt: "2026-11-13",
+      changes: ["В карточке слушателя доступна повторная отправка письма с логином, паролем и инструкцией по заполнению личного кабинета. Перед отправкой показываются получатель и текст письма; актуальность доступа проверяется повторно, результат фиксируется в истории действий."]
+    },
     {
       version: "1.7.631",
       releasedAt: "2026-11-13",
@@ -38159,11 +38164,63 @@ MAX - https://bizvmax.ru/zifra_plus
       <a class="primary-button" data-open-student-cabinet href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">Открыть личный кабинет ↗</a>
       <label><span>Логин</span><input readonly value="${escapeAttr(record.studentPortalLogin || record.login || "")}"></label>
       <label><span>Пароль</span><input type="password" readonly value="${escapeAttr(record.studentPortalPassword || record.password || "")}"></label></div>
-      <footer class="modal-actions"><button class="ghost-button" type="button" data-show-password aria-pressed="false">Показать пароль</button></footer>`;
+      <footer class="modal-actions"><button class="primary-button" type="button" data-student-access-email>Отправить письмо с доступом…</button><button class="ghost-button" type="button" data-show-password aria-pressed="false">Показать пароль</button></footer>`;
     dialog.querySelector("[data-close]").onclick = () => dialog.close();
+    dialog.querySelector("[data-student-access-email]").onclick = () => { dialog.close(); openStudentCabinetEmailPreview(record.id); };
     dialog.querySelector("[data-show-password]").onclick = event => { const input = dialog.querySelector('input[type="password"],input[data-visible-password]'); const show = input.type === "password"; input.type = show ? "text" : "password"; input.dataset.visiblePassword = ""; event.currentTarget.textContent = show ? "Скрыть пароль" : "Показать пароль"; event.currentTarget.setAttribute("aria-pressed", String(show)); };
     dialog.addEventListener("close", () => dialog.remove(), { once: true }); document.body.append(dialog); dialog.showModal();
   }
+  function openStudentCabinetEmailPreview(studentId) {
+    if (!["admin", "manager"].includes(getCurrentAuthUser().role) || isDatabaseDemoMode()) return;
+    const dialog = document.createElement("dialog"); dialog.className = "modal student-access-dialog student-access-email-dialog";
+    dialog.setAttribute("aria-labelledby", "student-access-email-title");
+    dialog.innerHTML = `<header class="modal-head"><div><p class="eyebrow">Личный кабинет слушателя</p><h2 id="student-access-email-title">Письмо с данными доступа</h2></div><button type="button" class="icon-button" data-access-email-close aria-label="Закрыть">×</button></header>
+      <div class="form-grid student-form-grid student-access-body"><label><span>Получатель</span><input readonly data-access-email-to></label><label><span>Тема письма</span><input readonly data-access-email-subject></label>
+      <iframe data-access-email-frame title="Предварительный просмотр письма с доступом" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe></div>
+      <footer class="modal-actions"><div class="student-access-email-status" role="status" aria-live="polite"><span class="auth-spinner" data-access-email-busy hidden aria-hidden="true"></span><span data-access-email-status></span></div>
+      <small>Получатель и данные доступа берутся из сохранённой карточки. Письмо отправится после нажатия кнопки «Отправить письмо».</small>
+      <button type="button" class="ghost-button" data-access-email-refresh>Обновить предпросмотр</button><button type="button" class="primary-button" data-access-email-send disabled>Отправить письмо</button></footer>`;
+    const send = dialog.querySelector("[data-access-email-send]"), refresh = dialog.querySelector("[data-access-email-refresh]"), close = dialog.querySelector("[data-access-email-close]");
+    const status = dialog.querySelector("[data-access-email-status]"), spinner = dialog.querySelector("[data-access-email-busy]");
+    let preview = null, busy = false, sending = false, sent = false, attempted = false, requestId = crypto.randomUUID();
+    const setBusy = (value, message) => { busy = value; spinner.hidden = !value; dialog.setAttribute("aria-busy", String(value)); status.textContent = message;
+      send.disabled = value || !preview || sent; refresh.disabled = value || sent; close.disabled = sending; };
+    const request = body => window.AIS_AUTH_API.request(`api/students/portal-preview/access-email?studentId=${encodeURIComponent(studentId)}`, {
+      method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(body.operation === "send" ? 150000 : 30000)
+    });
+    const load = async () => {
+      if (busy || sent) return;
+      preview = null; setBusy(true, "Подготовка предпросмотра письма…");
+      try {
+        const result = await request({ operation: "preview" });
+        if (!dialog.isConnected) return;
+        preview = result;
+        dialog.querySelector("[data-access-email-to]").value = `${result.name || ""} — ${result.email}`;
+        dialog.querySelector("[data-access-email-subject]").value = result.subject;
+        dialog.querySelector("[data-access-email-frame]").srcdoc = buildGeneratedDocumentEmailPreviewHtml(result.message);
+        setBusy(false, "Проверьте получателя и текст письма.");
+      } catch (error) { if (dialog.isConnected) setBusy(false, error.message || "Не удалось подготовить письмо."); }
+    };
+    send.onclick = async () => {
+      if (busy || !preview || sent) return;
+      sending = true; attempted = true; setBusy(true, "Отправка письма…");
+      try {
+        const result = await request({ operation: "send", revision: preview.revision, requestId });
+        sent = true; setBusy(false, result.message || "Письмо отправлено.");
+      } catch (error) {
+        const unknown = !error.status || /неизвестен|не удалось.*подтверждение|перед повторной отправкой/iu.test(error.message || "");
+        setBusy(false, unknown ? "Результат отправки неизвестен. Проверьте историю действий и папку «Отправленные» перед повторной отправкой." : error.message || "Не удалось отправить письмо.");
+        if (unknown) { send.disabled = true; refresh.disabled = true; }
+        else if (error.status === 409) { preview = null; send.disabled = true; }
+      } finally { sending = false; close.disabled = false; }
+    };
+    refresh.onclick = () => { if (attempted && !preview) { requestId = crypto.randomUUID(); attempted = false; } load(); };
+    close.onclick = () => { if (!sending) dialog.close(); };
+    dialog.addEventListener("cancel", event => { if (sending) event.preventDefault(); });
+    dialog.addEventListener("close", () => { dialog.remove(); document.querySelector("[data-student-portal-menu]")?.focus({ preventScroll: true }); }, { once: true });
+    document.body.append(dialog); dialog.showModal(); load();
+  }
+
   async function saveStudentAwardFile(recordId, file, kind = "scan", format = "") {
     if (file.size > 20 * 1024 * 1024) throw Error("Максимальный размер — 20 МБ.");
     const base64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });

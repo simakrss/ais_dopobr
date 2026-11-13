@@ -32307,3 +32307,13 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-access-dialog .student-access-body { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; }
 .student-access-dialog .student-access-status { margin: 0; font-size: 13px; }
 .student-access-dialog [data-open-student-cabinet] { text-decoration: none; }
+
+.student-access-email-dialog { width: min(900px, calc(100vw - 24px)); }
+.student-access-email-dialog .student-access-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.student-access-email-dialog iframe { grid-column: 1 / -1; display: block; width: 100%; min-height: 220px; height: min(48dvh, 540px); box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.student-access-email-dialog .modal-actions { flex-wrap: wrap; }
+.student-access-email-dialog .modal-actions > small, .student-access-email-status { flex-basis: 100%; overflow-wrap: anywhere; }
+.student-access-email-status { display: flex; align-items: center; gap: 10px; }
+.student-access-email-status .auth-spinner { width: 18px; height: 18px; flex: 0 0 18px; }
+.student-access-email-status [hidden] { display: none; }
+@media (max-width: 600px) { .student-access-email-dialog .student-access-body { grid-template-columns: minmax(0, 1fr); } .student-access-email-dialog .modal-actions button { flex: 1 1 140px; } }

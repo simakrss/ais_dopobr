@@ -131,8 +131,8 @@ const fingerprint = record => crypto.createHmac("sha256", record.studentPortalCr
 function publicUser(record) { return { id: `student:${record.id}`, studentId: record.id, login: portalLogin(record), name: record.name,
   role: "student", status: "active", email: record.email, authSource: "student", studentCredentialVersion: fingerprint(record) }; }
 const escapeHtml = value => text(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-function welcomeMessage(record) {
-  return `<p>Добрый день, ${escapeHtml(record.name)}!</p><p>Получена оплата по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>
+function welcomeMessage(record, { repeat = false } = {}) {
+  return `<p>Добрый день, ${escapeHtml(record.name)}!</p>${repeat ? `<p>Направляем данные для доступа в личный кабинет по программе «${escapeHtml(record.program)}» и инструкцию по заполнению данных.</p>` : `<p>Получена оплата по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>`}
 <p>Для оформления на обучение войдите в <a href="https://edu-plus.ru/lms/">личный кабинет</a>.</p>
 <p>Логин: <strong>${escapeHtml(portalLogin(record))}</strong><br>Пароль: <strong>${escapeHtml(portalPassword(record))}</strong></p>
 <ol><li>На вкладке «Основное» заполните личные, паспортные данные, адрес регистрации и почтовый адрес с индексом.${professional(record) ? ' Укажите сведения об образовании, месте работы и должности. Если не работаете, укажите «Не работаю».' : ''} Сохраните данные.</li>
@@ -339,6 +339,53 @@ function createService(deps) {
       return { ok: true, imported: imported.length, skipped: skipped.length };
     });
   }
+  async function cabinetAccessEmail(actor, id) {
+    const session = await staffSession(actor, id);
+    const { owner, record } = await context(session.user, session.id);
+    const email = text(record.email);
+    if (!/^[^\s@<>;,]+@[^\s@<>;,]+\.[^\s@<>;,]+$/u.test(email)) fail("Укажите и сохраните корректный Email в карточке слушателя.");
+    if (!portalLogin(owner) || !portalPassword(owner)) fail("В кабинете слушателя не заполнены логин или пароль.", 409);
+    const subject = "Доступ в личный кабинет слушателя — Цифровизация Плюс";
+    const message = welcomeMessage({ ...record, studentPortalLogin: portalLogin(owner), studentPortalPassword: portalPassword(owner) }, { repeat: true });
+    const revision = crypto.createHash("sha256").update(JSON.stringify([record.id, owner.id, email, subject, message, fingerprint(owner)])).digest("hex");
+    return { record, owner, preview: { ok: true, email, subject, message, revision, name: record.name, program: record.program } };
+  }
+  async function previewCabinetAccessEmail(actor, id) {
+    return (await cabinetAccessEmail(actor, id)).preview;
+  }
+  async function sendCabinetAccessEmail(actor, id, body = {}) {
+    await deps.assertWritable?.();
+    const requestId = text(body.requestId).toLowerCase();
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(requestId)) fail("Обновите предпросмотр письма.");
+    const session = await staffSession(actor, id);
+    return deps.lock(`cabinet-access-email:${session.user.studentId}`, async () => {
+      const { record, owner, preview } = await cabinetAccessEmail(actor, id);
+      if (body.revision !== preview.revision) fail("Данные слушателя или доступа изменились. Обновите предпросмотр письма.", 409);
+      // Separate namespace; persist only a hash and delivery state, never credentials or message text.
+      const ledger = `cabinet-access:${owner.id}`, history = await deps.readFeedbackState(ledger, requestId), previous = history.request;
+      const success = { ok: true, email: preview.email, message: `Письмо отправлено на ${preview.email}.` };
+      if (previous) {
+        if (previous.messageHash !== preview.revision) fail("Данные письма изменились. Откройте новый предпросмотр.", 409);
+        if (previous.status === "sent") return success;
+        if (["pending", "unknown"].includes(previous.status)) fail("Результат отправки неизвестен. Проверьте журнал и папку «Отправленные» перед повторной отправкой.", 409);
+      }
+      if (Date.now() - Number(history.lastAttemptAt || 0) < 30000) fail("Повторную отправку можно выполнить через 30 секунд.", 429);
+      const entry = { requestId, messageHash: preview.revision, status: "pending", createdAt: Date.now() };
+      await deps.saveFeedbackState(ledger, entry);
+      try {
+        await deps.sendMail({ to: preview.email, subject: preview.subject, message: preview.message, idempotencyKey: `cabinet-access:${owner.id}:${requestId}` });
+      } catch (error) {
+        await deps.saveFeedbackState(ledger, { ...entry, status: error.deliveryUnknown ? "unknown" : "failed" });
+        await deps.audit(error.deliveryUnknown ? "Повторная отправка доступа в кабинет не подтверждена" : "Ошибка повторной отправки доступа в кабинет", record, actor, `Получатель: ${preview.email}`);
+        if (error.deliveryUnknown) fail("Результат отправки неизвестен. Проверьте журнал и папку «Отправленные» перед повторной отправкой.", 409);
+        fail("Не удалось отправить письмо. Повторите отправку позже.", 503);
+      }
+      await deps.audit("Повторно отправлено письмо с доступом к личному кабинету", record, actor, `Получатель: ${preview.email}; тема: ${preview.subject}`);
+      try { await deps.saveFeedbackState(ledger, { ...entry, status: "sent" }); }
+      catch { fail("Почтовый сервер принял письмо, но сохранить подтверждение не удалось. Проверьте журнал перед повторной отправкой.", 503); }
+      return success;
+    });
+  }
   async function orderEmailAccess(orderId, recipient) {
     if (!/^[1-9]\d{0,15}$/u.test(text(orderId)) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(recipient))) fail("Некорректные параметры письма заказа.");
     const rows = await deps.queryOrder(orderId), before = await deps.readState();
@@ -520,7 +567,7 @@ function createService(deps) {
       : deps.feedbackHistory.history(owner.id, record.id);
   }
   return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback, correspondence,
-    orderEmailAccess,
+    orderEmailAccess, previewCabinetAccessEmail, sendCabinetAccessEmail,
     ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
