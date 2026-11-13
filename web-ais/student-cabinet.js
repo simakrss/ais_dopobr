@@ -11,6 +11,13 @@ function eventActive(record, key) {
 }
 const layoutAvailable = record => eventActive(record, "educationDocMaketSent") || eventActive(record, "macro_hb0dir");
 const fileRevision = entry => crypto.createHash("sha256").update(JSON.stringify([entry.id, entry.size, entry.uploadedAt])).digest("hex");
+function legacyLayoutLocation(record) {
+  const types = { "КПК": ["Удостоверение", "Удостоверения ПК"], "ППП": ["Диплом", "Дипломы ПП"], "ДОП": ["Сертификат", "Сертификаты мероприятия"], "ПРО": ["Сертификат", "Сертификаты мероприятия"] };
+  const type = types[text(record.educationType)], name = text(record.name), number = text(record.registrationNo || record.diplomaRegistrationNo);
+  if (!type || name.split(/\s+/u).length < 2 || number.length < 3) return null;
+  const part = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "").replace(/\s+/gu, "_");
+  return { folder: `Документы/${type[1]}`, name: `${type[0]}_${part(name)}_${part(number)}.pdf` };
+}
 function rootFolder(record, documentFolder) {
   const folder = documentFolder(record).replace(/\/+$/u, "").replace(/\/Документы$/iu, "");
   if (!folder || !folder.includes("/")) fail("Не настроена личная папка слушателя.", 409);
@@ -75,9 +82,10 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
   }
   async function discover(records) {
     const result = records.map(item => ({ ...item, educationDocumentFiles: [...(item.educationDocumentFiles || [])] }));
-    if (!deps.listRoot) return result;
+    if (!deps.listRoot && !deps.legacyLayout) return result;
     const current = await deps.readState(), checked = new Set();
     for (const record of result) {
+      if (!deps.listRoot) break;
       const folder = await awardRoot(record, current); if (checked.has(folder)) continue; checked.add(folder);
       const account = record.studentPortalAccountId || record.id;
       // Legacy folders sometimes share abbreviated names. Never infer ownership if
@@ -98,6 +106,18 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
         // know which of several programs an old filename belongs to.
         (target || record).educationDocumentFiles.push(entry);
       }
+    }
+    // Older generations predate cabinet attachments. Resolve only the exact
+    // standard filename for a uniquely identified, already released document.
+    if (deps.legacyLayout) for (const record of result) {
+      if (!layoutAvailable(record) || record.educationDocumentFiles.some(file => file.kind === "layout" && !file.unassigned)) continue;
+      const location = legacyLayoutLocation(record); if (!location) continue;
+      const key = value => JSON.stringify(legacyLayoutLocation(value)).toLocaleLowerCase("ru-RU");
+      if (current.data.collections.students.filter(item => key(item) === key(record)).length !== 1) continue;
+      let file; try { file = await deps.legacyLayout(location.folder, location.name); } catch { continue; }
+      if (!file) continue;
+      record.educationDocumentFiles.push({ ...location, id: `disk-${crypto.createHash("sha256").update(`${location.folder}/${location.name}`).digest("hex")}`,
+        kind: "layout", size: file.size, uploadedAt: file.modifiedAt, unassigned: false });
     }
     return result;
   }

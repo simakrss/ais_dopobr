@@ -25218,6 +25218,10 @@ function getStudentEnrollmentService() {
       return (await readWebDavDirectory(target)).filter(entry => !entry.isCollection && path.posix.dirname(normalizeWebDavPath(entry.href)) === target)
         .map(entry => ({ name: path.posix.basename(normalizeWebDavPath(entry.href)), size: Number(entry.contentLength || 0), modifiedAt: entry.modifiedAt }));
     },
+    async legacyLayout(folder, name) {
+      const result = await requestYandexWebDav("HEAD", location(folder, name), { acceptedStatuses: [200, 404] });
+      return result.statusCode === 200 ? { size: Number(result.headers["content-length"] || 0), modifiedAt: result.headers["last-modified"] || "" } : null;
+    },
     async paymentShop(endpoint, payload) {
       const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
       return programSiteGenerator.createClient(keys)("shop", endpoint, payload);

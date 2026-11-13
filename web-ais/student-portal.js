@@ -27,6 +27,7 @@
       payments: '<path d="M3 7h18M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2 9h4m4 0h2M7 16h2"/>',
       mail: '<path d="M3 6h18v12H3V6Zm0 1 9 7 9-7"/>',
       external: '<path d="M14 4h6v6m0-6-9 9M19 13v6H5V5h6"/>',
+      download: '<path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/>',
       logout: '<path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5m5-4 4-4-4-4m4 4H9"/>',
       menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
       close: '<path d="m6 6 12 12M18 6 6 18"/>'
@@ -117,14 +118,14 @@
         ${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}
         ${program.layoutApproved ? `<p class="student-layout-approved" role="status">✓ Макет согласован${program.layoutApprovedAt ? ` · ${esc(new Date(program.layoutApprovedAt).toLocaleDateString("ru-RU"))}` : ""}</p>` : ""}
         ${program.layoutRemarks?.comment ? `<aside class="student-layout-remarks ${program.layoutRemarks.resolvedAt ? "is-resolved" : ""}"><strong>${program.layoutRemarks.resolvedAt ? "Замечания до согласования" : "Ваши замечания к макету"}</strong><small>${esc(new Date(program.layoutRemarks.createdAt).toLocaleString("ru-RU"))} · ${esc(program.layoutRemarks.name)}</small><p>${esc(program.layoutRemarks.comment)}</p></aside>` : ""}
-        ${program.files.length ? program.files.map(file => `<div class="student-award-file">
+        ${program.files.length ? program.files.map(file => `<div class="student-award-file" data-file-kind="${esc(file.kind)}">
           <span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span>
-          <button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button>
-          <a href="${esc(api.appUrl(url("/award-file", program.id)))}&amp;file=${encodeURIComponent(file.id)}" download="${esc(file.name)}" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${file.kind === "layout" ? "Скачать макет" : "Скачать"}</a>
-          ${file.kind === "layout" && !file.unassigned && program.canApproveLayout ? `<button type="button" class="primary-button" data-award-approve="${esc(file.id)}" data-file-revision="${esc(file.revision)}" data-application-id="${esc(program.id)}">Согласовать макет</button><button type="button" data-award-remarks="${esc(file.id)}" data-application-id="${esc(program.id)}">Есть замечания</button>` : ""}
+          <button class="ghost-button" type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button>
+          <button class="primary-button student-award-download-button" type="button" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${icon("download")}<span>${file.kind === "layout" ? "Скачать макет" : "Скачать документ"}</span></button>
+          ${file.kind === "layout" && !file.unassigned && program.canApproveLayout ? `<button type="button" class="primary-button" data-award-approve="${esc(file.id)}" data-file-revision="${esc(file.revision)}" data-application-id="${esc(program.id)}">Согласовать макет</button><button class="ghost-button" type="button" data-award-remarks="${esc(file.id)}" data-application-id="${esc(program.id)}">Есть замечания</button>` : ""}
         </div>`).join("") : "<p>Доступных документов по этой программе пока нет. Макет появится после отправки на согласование или отправки электронного документа учебным центром.</p>"}
       </article>`).join("");
-      host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.onclick = event => { event.preventDefault(); openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName); }; });
+      host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.disabled = busy; button.onclick = () => openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName, button.closest("[data-file-kind]").dataset.fileKind === "layout" ? "Скачать макет" : "Скачать документ"); });
       host.querySelectorAll("[data-award-approve]").forEach(button => { button.disabled = busy; button.onclick = () => run("Согласование макета…", async () => {
         await request("/approve-layout", { fileId: button.dataset.awardApprove, revision: button.dataset.fileRevision }, button.dataset.applicationId);
         await loadAwards(); message("Макет согласован. Отметка сохранена в Вашей карточке слушателя.");
@@ -409,17 +410,22 @@
   function fileBase64(file) {
     return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });
   }
-  async function openFile(id, preview, endpoint = "/file", applicationId = state.record.id, fileName = "") {
+  async function openFile(id, preview, endpoint = "/file", applicationId = state.record.id, fileName = "", downloadLabel = "Скачать файл") {
     await run("Получение документа…", async () => {
       const response = await fetch(api.appUrl(`${url(endpoint, applicationId)}&file=${encodeURIComponent(id)}`), { credentials: "same-origin" });
       if (!response.ok) throw Error("Файл недоступен. Повторите позже.");
       const blob = await response.blob(), objectUrl = URL.createObjectURL(blob);
-      const name = fileName || state.documents.find(file => file.id === id)?.name || "Документ";
+      let name = fileName || state.documents.find(file => file.id === id)?.name || "Документ";
+      const dispositionName = response.headers.get("Content-Disposition")?.match(/filename\*=UTF-8''([^;]+)/iu)?.[1];
+      if (dispositionName) { try { name = decodeURIComponent(dispositionName); } catch {} }
+      // Legacy DOCX layouts are served as PDF by the server.
+      if (blob.type === "application/pdf") name = name.replace(/\.docx$/iu, ".pdf");
+      name = name.replace(/[\\/\u0000-\u001f]/gu, "_");
       if (!preview) {
-        const link = document.createElement("a"); link.href = objectUrl; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(objectUrl), 60000); return;
+        const link = document.createElement("a"); link.href = objectUrl; link.download = name; link.hidden = true; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(objectUrl), 60000); return;
       }
-      const dialog = document.createElement("dialog"); dialog.className = "student-portal-preview";
-      dialog.innerHTML = `<header><strong>${esc(name)}</strong><button type="button" aria-label="Закрыть просмотр">×</button></header>${blob.type.startsWith("image/") ? '<img alt="Загруженный документ">' : '<iframe title="Просмотр документа"></iframe>'}<a download="${esc(name)}">Скачать файл</a>`;
+      const dialog = document.createElement("dialog"); dialog.className = "modal student-portal-preview";
+      dialog.innerHTML = `<header class="modal-head"><strong>${esc(name)}</strong><button class="icon-button" type="button" aria-label="Закрыть просмотр">×</button></header>${blob.type.startsWith("image/") ? '<img alt="Загруженный документ">' : '<iframe title="Просмотр документа"></iframe>'}<footer class="modal-actions"><a class="primary-button student-award-download-button" download="${esc(name)}">${icon("download")}<span>${esc(downloadLabel)}</span></a></footer>`;
       dialog.querySelector("img,iframe").src = objectUrl; dialog.querySelector("a").href = objectUrl;
       dialog.querySelector("button").onclick = () => dialog.close();
       dialog.addEventListener("close", () => { URL.revokeObjectURL(objectUrl); dialog.remove(); }, { once: true });

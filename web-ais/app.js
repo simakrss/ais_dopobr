@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.629",
+    version: "1.7.630",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.630",
+      releasedAt: "2026-11-13",
+      changes: ["В кабинете слушателя добавлены заметные кнопки скачивания макета в списке и при просмотре. Ранее сформированные PDF подхватываются из общей папки по точному совпадению ФИО и регистрационного номера, если документ отправлен слушателю. Исправлено имя PDF при скачивании макета из DOCX."]
+    },
     {
       version: "1.7.629",
       releasedAt: "2026-11-13",

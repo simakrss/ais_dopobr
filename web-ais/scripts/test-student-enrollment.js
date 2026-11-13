@@ -85,6 +85,32 @@ test("layout download and listing require the owning program's sent-for-approval
   current.eventDeleted = "macro_hb0dir";
   assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0);
 });
+test("legacy layouts are resolved by exact unique record details and still require release and ownership", async () => {
+  const lookedUp = [], f = fixture({ legacyLayout: async (folder, name) => { lookedUp.push({ folder, name }); return { size: 14, modifiedAt: "2026-11-01T00:00:00Z" }; } });
+  await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  Object.assign(record, { registrationNo: "23/26-ПК", photoPath: "Слушатели/ТестовТТ/Документы/Фото.jpg" });
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0); assert.equal(lookedUp.length, 0);
+  record.event_educationDocMaketSent_state = "checked";
+  const program = (await f.service.awards(user, record.id)).programs[0], file = program.files[0];
+  assert.equal(file.kind, "layout"); assert.equal(file.unassigned, false);
+  assert.deepEqual(lookedUp[0], { folder: "Документы/Удостоверения ПК", name: "Удостоверение_Тестов_Тест_Тестович_2326-ПК.pdf" });
+  f.files.set(`${lookedUp[0].folder}/${lookedUp[0].name}`, Buffer.from("fixture-layout"));
+  assert.equal((await f.service.awardFile(user, record.id, file.id)).body.toString(), "fixture-layout");
+  await assert.rejects(f.service.awardFile(user, "foreign", file.id), { statusCode: 404 });
+  f.snapshot.data.collections.students.push({ ...record, id: "second", studentPortalAccountId: record.id, registrationNo: "24/26-ПК" });
+  const programs = (await f.service.awards(user, record.id)).programs; assert.equal(programs.length, 2);
+  assert.notEqual(programs[0].files[0].id, programs[1].files[0].id);
+  await assert.rejects(f.service.awardFile(user, "second", file.id), { statusCode: 404 });
+  record.event_educationDocMaketSent_state = "unchecked";
+  await assert.rejects(f.service.awardFile(user, record.id, file.id), { statusCode: 404 });
+  record.event_educationDocMaketSent_state = "checked";
+  f.snapshot.data.collections.students.push({ ...record, id: "duplicate", studentPortalAccountId: "duplicate" });
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0, "ambiguous legacy filename cannot be assigned");
+  f.snapshot.data.collections.students.pop();
+  await f.service.awardUpload({ role: "manager" }, record.id, { ...pdf, kind: "layout" });
+  const current = (await f.service.awards(user, record.id)).programs[0];
+  assert.equal(current.files.length, 1); assert.ok(!current.files[0].id.startsWith("disk-"), "new attachment takes priority");
+});
 test("layout approval updates the shared event once, restores its visibility and stays within the selected owned program", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
   const second = { ...record, id: "linked", studentPortalAccountId: record.id, event_educationDocMaketSent_state: "checked",

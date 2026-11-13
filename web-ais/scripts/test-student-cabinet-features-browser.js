@@ -2,6 +2,7 @@
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const root = path.resolve(__dirname, ".."), png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+const layoutPdf = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
 const record = { id: "first", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Повышение квалификации", status: "Учится", citizenship: "Россия", workPlace: "Школа", enrollmentNameChanged: false, educationDocumentSurname: "Тестовая" };
 const messages = [{ id: "root", threadId: "thread", direction: "student", status: "sent", createdAt: 1, subject: "Вопрос о документах", message: "Где получить документ?" },
   { id: "answer", threadId: "thread", direction: "center", status: "sent", createdAt: 2, subject: "Ответ", message: "Документ будет готов завтра. <script>window.injection=true</script>" }];
@@ -25,7 +26,7 @@ const server = http.createServer(async (req, res) => {
     if (action === "/awards") return res.end(JSON.stringify({ programs: [
       { id: "first", program: "Повышение квалификации", number: "001", debt: paid ? 0 : 5000, files: [{ id: "scan", name: "Удостоверение.pdf", kind: "scan" }] },
       { id: "second", program: "Переподготовка", number: "002", debt: 0, layoutApproved: approved, layoutApprovedAt: approved ? "2026-11-13" : "", canApproveLayout: !approved, layoutRemarks: remarks,
-        files: [{ id: "layout", name: "Макет диплома.pdf", kind: "layout", revision: "a".repeat(64) }] }] }));
+        files: [{ id: "layout", name: "Макет диплома.docx", kind: "layout", revision: "a".repeat(64) }] }] }));
     if (action === "/layout-remarks") {
       remarksCalls.push({ application: url.searchParams.get("id"), body });
       if (remarksCalls.length === 1) { res.statusCode = 423; return res.end(JSON.stringify({ error: "Карточка занята. Повторите отправку." })); }
@@ -37,7 +38,7 @@ const server = http.createServer(async (req, res) => {
       if (approvalCalls.length === 1) { res.statusCode = 423; return res.end(JSON.stringify({ error: "Карточка редактируется сотрудником. Повторите позже." })); }
       approved = true; if (remarks) remarks.resolvedAt = "2026-11-13T10:00:00.000Z"; return res.end(JSON.stringify({ ok: true, approved: true, approvedAt: "2026-11-13" }));
     }
-    if (action === "/award-file") { awardReads.push({ application: url.searchParams.get("id"), file: url.searchParams.get("file") }); res.setHeader("Content-Type", "image/png"); return res.end(png); }
+    if (action === "/award-file") { awardReads.push({ application: url.searchParams.get("id"), file: url.searchParams.get("file") }); res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent("Макет диплома.pdf")); return res.end(layoutPdf); }
     return res.end(JSON.stringify(view()));
   }
   if (["/student-portal.js", "/styles.css"].includes(url.pathname)) { res.setHeader("Content-Type", url.pathname.endsWith("css") ? "text/css" : "application/javascript"); return res.end(fs.readFileSync(path.join(root, url.pathname.slice(1)))); }
@@ -77,7 +78,12 @@ const server = http.createServer(async (req, res) => {
     await paymentPage.waitForURL('https://zifra-plus.ru/checkout/order-pay/701/**'); await paymentPage.close();
     await page.locator('[data-payment-refresh]').click(); await page.getByText("Сведения об оплатах обновлены.", { exact: true }).waitFor(); assert.equal(await page.locator('[data-pay]').count(), 0);
     await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
-    await page.locator('[data-award-view="layout"]').click(); await page.locator('dialog[open] img').waitFor();
+    const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Скачать макет', exact: true }).click();
+    const file = await downloaded; assert.equal(file.suggestedFilename(), 'Макет диплома.pdf');
+    const bytes = []; for await (const chunk of await file.createReadStream()) bytes.push(chunk); assert.deepEqual(Buffer.concat(bytes), layoutPdf);
+    await page.locator('[data-award-view="layout"]').click(); await page.locator('dialog[open] iframe').waitFor();
+    const previewDownload = page.waitForEvent('download'); await page.getByRole('link', { name: 'Скачать макет', exact: true }).click();
+    assert.equal((await previewDownload).suggestedFilename(), 'Макет диплома.pdf');
     assert.deepEqual(awardReads[0], { application: "second", file: "layout" }); await page.getByRole('button', { name: 'Закрыть просмотр' }).click();
     await page.getByRole('button', { name: 'Есть замечания', exact: true }).click();
     const remarksText = 'Исправьте фамилию.\n<script>window.remarksInjection=true</script>';
