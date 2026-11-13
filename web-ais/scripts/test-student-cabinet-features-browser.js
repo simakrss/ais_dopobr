@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, ".."), png = Buffer.from("iVBORw0KGgoAAAANS
 const record = { id: "first", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Повышение квалификации", status: "Учится", citizenship: "Россия", workPlace: "Школа", enrollmentNameChanged: false, educationDocumentSurname: "Тестовая" };
 const messages = [{ id: "root", threadId: "thread", direction: "student", status: "sent", createdAt: 1, subject: "Вопрос о документах", message: "Где получить документ?" },
   { id: "answer", threadId: "thread", direction: "center", status: "sent", createdAt: 2, subject: "Ответ", message: "Документ будет готов завтра. <script>window.injection=true</script>" }];
-let paid = false, photo = false, sent, photoUploads = 0, awardReads = [], approved = false, approvalCalls = [];
+let paid = false, photo = false, sent, photoUploads = 0, awardReads = [], approved = false, approvalCalls = [], remarks = null, remarksCalls = [];
 const view = () => ({ user: { name: record.name, email: record.email }, record, photoAvailable: photo, applications: [{ id: "first", program: record.program, status: "Учится" }], fields: [
   { key: "name", label: "ФИО", type: "text", required: true }, { key: "citizenship", label: "Гражданство", type: "combo", required: true, options: ["Беларусь", "Казахстан", "Россия", "Узбекистан"] },
   { key: "workPlace", label: "Место работы", type: "combo", required: true, options: ["Школа", "Не работаю"] }, { key: "enrollmentNameChanged", label: "ФИО в документе об образовании отличается от паспорта", type: "checkbox" }, { key: "educationDocumentSurname", label: "Фамилия в документе об образовании", type: "text", dependsOn: "enrollmentNameChanged" }],
@@ -24,12 +24,18 @@ const server = http.createServer(async (req, res) => {
     if (action === "/payment-status") paid = true;
     if (action === "/awards") return res.end(JSON.stringify({ programs: [
       { id: "first", program: "Повышение квалификации", number: "001", debt: paid ? 0 : 5000, files: [{ id: "scan", name: "Удостоверение.pdf", kind: "scan" }] },
-      { id: "second", program: "Переподготовка", number: "002", debt: 0, layoutApproved: approved, layoutApprovedAt: approved ? "2026-11-13" : "", canApproveLayout: !approved,
+      { id: "second", program: "Переподготовка", number: "002", debt: 0, layoutApproved: approved, layoutApprovedAt: approved ? "2026-11-13" : "", canApproveLayout: !approved, layoutRemarks: remarks,
         files: [{ id: "layout", name: "Макет диплома.pdf", kind: "layout", revision: "a".repeat(64) }] }] }));
+    if (action === "/layout-remarks") {
+      remarksCalls.push({ application: url.searchParams.get("id"), body });
+      if (remarksCalls.length === 1) { res.statusCode = 423; return res.end(JSON.stringify({ error: "Карточка занята. Повторите отправку." })); }
+      remarks = { ...body, name: "Макет диплома.pdf", createdAt: "2026-11-13T09:00:00.000Z", resolvedAt: "" };
+      return res.end(JSON.stringify({ ok: true }));
+    }
     if (action === "/approve-layout") {
       approvalCalls.push({ application: url.searchParams.get("id"), body });
       if (approvalCalls.length === 1) { res.statusCode = 423; return res.end(JSON.stringify({ error: "Карточка редактируется сотрудником. Повторите позже." })); }
-      approved = true; return res.end(JSON.stringify({ ok: true, approved: true, approvedAt: "2026-11-13" }));
+      approved = true; if (remarks) remarks.resolvedAt = "2026-11-13T10:00:00.000Z"; return res.end(JSON.stringify({ ok: true, approved: true, approvedAt: "2026-11-13" }));
     }
     if (action === "/award-file") { awardReads.push({ application: url.searchParams.get("id"), file: url.searchParams.get("file") }); res.setHeader("Content-Type", "image/png"); return res.end(png); }
     return res.end(JSON.stringify(view()));
@@ -73,6 +79,23 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
     await page.locator('[data-award-view="layout"]').click(); await page.locator('dialog[open] img').waitFor();
     assert.deepEqual(awardReads[0], { application: "second", file: "layout" }); await page.getByRole('button', { name: 'Закрыть просмотр' }).click();
+    await page.getByRole('button', { name: 'Есть замечания', exact: true }).click();
+    const remarksText = 'Исправьте фамилию.\n<script>window.remarksInjection=true</script>';
+    await page.locator('dialog textarea[name="comment"]').fill(remarksText);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const remarksShot = path.join(root, '.runtime/student-portal-test'); fs.mkdirSync(remarksShot, { recursive: true });
+    await page.screenshot({ path: path.join(remarksShot, 'layout-remarks-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await page.getByRole('button', { name: 'Есть замечания', exact: true }).click();
+    assert.equal(await page.locator('dialog textarea').inputValue(), remarksText);
+    await page.getByRole('button', { name: 'Передать замечания', exact: true }).click();
+    await page.getByText('Карточка занята. Повторите отправку.', { exact: true }).waitFor();
+    assert.equal(await page.locator('dialog textarea').inputValue(), remarksText);
+    await page.getByRole('button', { name: 'Передать замечания', exact: true }).click();
+    await page.locator('[data-awards-list] .student-layout-remarks').waitFor();
+    assert.equal(await page.locator('dialog[open]').count(), 0); assert.equal(await page.evaluate(() => window.remarksInjection), undefined);
+    assert.equal(remarksCalls[1].application, 'second'); assert.equal(remarksCalls[1].body.comment, remarksText); assert.equal(approved, false);
     await page.getByRole('button', { name: 'Согласовать макет', exact: true }).click();
     await page.getByText('Карточка редактируется сотрудником. Повторите позже.', { exact: true }).waitFor();
     assert.equal(approved, false); assert.ok(await page.getByRole('button', { name: 'Согласовать макет', exact: true }).isEnabled());

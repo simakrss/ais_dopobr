@@ -139,6 +139,38 @@ test("approval rechecks the invitation after a shared-state conflict", async () 
   await assert.rejects(f.service.approveLayout(user, record.id, { fileId: file.id, revision: file.revision }), { statusCode: 403 });
   assert.equal(f.snapshot.data.collections.students[0].event_educationDocMaketApproved_state, undefined);
 });
+test("layout remarks are scoped, deduplicated, audited and remain visible after subsequent approval", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  record.event_educationDocMaketSent_state = "checked";
+  await f.service.awardUpload({ role: "manager" }, record.id, { ...pdf, kind: "layout" });
+  const file = (await f.service.awards(user, record.id)).programs[0].files[0];
+  const body = { fileId: file.id, revision: file.revision, comment: "Исправьте фамилию.\n<script>unsafe()</script>" };
+  await assert.rejects(f.service.layoutRemarks(user, "foreign", body), { statusCode: 404 });
+  await assert.rejects(f.service.layoutRemarks(user, record.id, { ...body, comment: " " }), { statusCode: 400 });
+  await assert.rejects(f.service.layoutRemarks(user, record.id, { ...body, comment: "x".repeat(4001) }), { statusCode: 400 });
+  await assert.rejects(f.service.layoutRemarks(user, record.id, { ...body, revision: "b".repeat(64) }), { statusCode: 409 });
+  await Promise.all([f.service.layoutRemarks(user, record.id, body), f.service.layoutRemarks(user, record.id, body)]);
+  let current = f.snapshot.data.collections.students[0];
+  assert.equal(current.studentLayoutRemarks.comment, body.comment); assert.equal(current.event_educationDocMaketApproved_state, "unchecked");
+  assert.equal(f.audit.filter(action => action.startsWith("Получены замечания")).length, 1);
+  let program = (await f.service.awards(user, record.id)).programs[0];
+  assert.equal(program.layoutRemarks.comment, body.comment); assert.equal(program.canApproveLayout, true); assert.equal(program.layoutApproved, false);
+  await f.service.approveLayout(user, record.id, body);
+  program = (await f.service.awards(user, record.id)).programs[0];
+  assert.equal(program.layoutApproved, true); assert.ok(program.layoutRemarks.resolvedAt); assert.equal(program.layoutRemarks.comment, body.comment);
+  await assert.rejects(f.service.layoutRemarks(user, record.id, body), { statusCode: 409 });
+});
+test("a locked card or withdrawn layout does not save remarks", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  record.event_educationDocMaketSent_state = "checked";
+  await f.service.awardUpload({ role: "manager" }, record.id, { ...pdf, kind: "layout" });
+  const file = (await f.service.awards(user, record.id)).programs[0].files[0], body = { fileId: file.id, revision: file.revision, comment: "Исправьте дату." };
+  f.deps.save = async () => ({ locked: true });
+  await assert.rejects(f.service.layoutRemarks(user, record.id, body), { statusCode: 423 });
+  const current = f.snapshot.data.collections.students[0]; current.event_educationDocMaketSent_state = "unchecked";
+  await assert.rejects(f.service.layoutRemarks(user, record.id, body), { statusCode: 403 });
+  assert.equal(current.studentLayoutRemarks, undefined);
+});
 test("photo is scoped, stored in the student folder and does not move existing document attachments", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), folder = enrollment.documentFolder(record);
   await assert.rejects(f.service.photo(user, "foreign", pdf), { statusCode: 404 });

@@ -105,6 +105,21 @@ test("layout approval is a bounded POST, blocks demo/foreign roles and preserves
   await context.handleStaffStudentPortal({ method: "POST" }, {}, actor, new URL("https://example.test/api/students/portal-preview/approve-layout?studentId=s&id=linked"));
   assert.equal(calls[0].data, body); assert.equal(calls[1].id, "linked"); assert.equal(calls[1].auth.actingStaff, actor);
 });
+test("remarks POST bounds input, denies demo and delegates staff preview to the selected program", async () => {
+  const { context } = handlers(), user = { role: "student", studentId: "s" }, actor = { id: "staff", role: "manager" }, calls = [];
+  const body = { fileId: "layout", revision: "a".repeat(64), comment: "Исправить фамилию" };
+  context.readJsonBody = async (_req, limit) => { assert.equal(limit, 24000); return body; };
+  context.getStudentEnrollmentService = () => ({ layoutRemarks: async (auth, id, data) => { calls.push({ auth, id, data }); return { ok: true }; },
+    staffSession: async staff => ({ user: { ...user, actingStaff: staff }, id: "linked" }) });
+  const url = new URL("https://example.test/api/student-portal/layout-remarks?id=s");
+  await assert.rejects(context.handleStudentPortal({ method: "GET" }, {}, user, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handleStudentPortal({ method: "POST" }, {}, user, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => false;
+  assert.equal((await context.handleStudentPortal({ method: "POST" }, {}, user, url)).status, 200);
+  await context.handleStaffStudentPortal({ method: "POST" }, {}, actor, new URL("https://example.test/api/students/portal-preview/layout-remarks?studentId=s&id=linked"));
+  assert.equal(calls[0].data, body); assert.equal(calls[1].id, "linked"); assert.equal(calls[1].auth.actingStaff, actor);
+});
 test("feedback journal persists hashed account keys and request states across server instances", async () => {
   const calls = [], context = { crypto, Date, Number, Math, SHARED_STATE_MYSQL_KEY: "fixture",
     studentEnrollmentPool: async () => ({ query: async (sql, args) => {

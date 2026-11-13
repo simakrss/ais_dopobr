@@ -42,6 +42,7 @@ const context = vm.createContext({
   countBy: () => ({}), getOrderedDashboardStudentStatuses: () => [],
   renderAttestationDashboardTile: () => "", renderDeferredStartDashboardTile: () => "",
   renderEnrollmentReviewDashboardTile: () => "",
+  renderGeneralExpenseAccountingDashboardTile: () => "",
   getIssuedDocumentRows: () => [], getIssuedDocumentDeadlineDays: () => 30,
   todayIso: () => "2026-10-06", miniTable: () => "", calculateDaysUntilDate: () => 0,
   escapeHtml: String, escapeAttr: String, money: (value) => `${value} ₽`, percent: (value) => `${value}%`,

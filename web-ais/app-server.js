@@ -25309,6 +25309,10 @@ async function handleStudentPortal(req, res, user, url) {
     if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Операция недоступна в деморежиме."), { statusCode: 403 });
     return sendJson(res, 200, await service.approveLayout(user, id, await readJsonBody(req, 4096)));
   }
+  if (req.method === "POST" && url.pathname === "/api/student-portal/layout-remarks") {
+    if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Операция недоступна в деморежиме."), { statusCode: 403 });
+    return sendJson(res, 200, await service.layoutRemarks(user, id, await readJsonBody(req, 24000)));
+  }
   if (req.method === "GET" && url.pathname === "/api/student-portal/award-file") {
     const file = await service.awardFile(user, id, url.searchParams.get("file"));
     return sendFile(res, 200, file.body, file.name, file.contentType, { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
@@ -25361,7 +25365,7 @@ async function handleStaffStudentPortal(req, res, actor, url) {
   if (!["admin", "manager"].includes(actor?.role) || isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Просмотр кабинета доступен сотрудникам учебного центра."), { statusCode: 403 });
   const prefix = "/api/students/portal-preview", action = url.pathname.slice(prefix.length);
   if (!(req.method === "GET" && ["", "/file", "/sdo-open", "/feedback", "/awards", "/award-file", "/photo"].includes(action))
-    && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback", "/feedback-sync", "/photo", "/payment", "/payment-status", "/approve-layout"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
+    && !(req.method === "POST" && ["/profile", "/upload", "/submit", "/feedback", "/feedback-sync", "/photo", "/payment", "/payment-status", "/approve-layout", "/layout-remarks"].includes(action))) throw Object.assign(new Error("Операция недоступна."), { statusCode: 405 });
   const session = await getStudentEnrollmentService().staffSession(actor, url.searchParams.get("studentId"), url.searchParams.get("id"));
   const target = new URL(url);
   target.pathname = `/api/student-portal${action}`;

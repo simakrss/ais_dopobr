@@ -13,6 +13,7 @@
     { id: "feedback", label: "Обратная связь", icon: "mail" }
   ];
   const feedbackDrafts = new Map();
+  const layoutRemarksDrafts = new Map();
   const correspondence = new Map();
   const historyRequests = new Set();
   const mobileMenu = window.matchMedia("(max-width: 820px)");
@@ -115,11 +116,12 @@
         ${program.number ? `<p>Номер бланка: ${esc(program.number)}</p>` : ""}
         ${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}
         ${program.layoutApproved ? `<p class="student-layout-approved" role="status">✓ Макет согласован${program.layoutApprovedAt ? ` · ${esc(new Date(program.layoutApprovedAt).toLocaleDateString("ru-RU"))}` : ""}</p>` : ""}
+        ${program.layoutRemarks?.comment ? `<aside class="student-layout-remarks ${program.layoutRemarks.resolvedAt ? "is-resolved" : ""}"><strong>${program.layoutRemarks.resolvedAt ? "Замечания до согласования" : "Ваши замечания к макету"}</strong><small>${esc(new Date(program.layoutRemarks.createdAt).toLocaleString("ru-RU"))} · ${esc(program.layoutRemarks.name)}</small><p>${esc(program.layoutRemarks.comment)}</p></aside>` : ""}
         ${program.files.length ? program.files.map(file => `<div class="student-award-file">
           <span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span>
           <button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button>
           <a href="${esc(api.appUrl(url("/award-file", program.id)))}&amp;file=${encodeURIComponent(file.id)}" download="${esc(file.name)}" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${file.kind === "layout" ? "Скачать макет" : "Скачать"}</a>
-          ${file.kind === "layout" && !file.unassigned && program.canApproveLayout ? `<button type="button" class="primary-button" data-award-approve="${esc(file.id)}" data-file-revision="${esc(file.revision)}" data-application-id="${esc(program.id)}">Согласовать макет</button>` : ""}
+          ${file.kind === "layout" && !file.unassigned && program.canApproveLayout ? `<button type="button" class="primary-button" data-award-approve="${esc(file.id)}" data-file-revision="${esc(file.revision)}" data-application-id="${esc(program.id)}">Согласовать макет</button><button type="button" data-award-remarks="${esc(file.id)}" data-application-id="${esc(program.id)}">Есть замечания</button>` : ""}
         </div>`).join("") : "<p>Доступных документов по этой программе пока нет. Макет появится после отправки на согласование или отправки электронного документа учебным центром.</p>"}
       </article>`).join("");
       host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.onclick = event => { event.preventDefault(); openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName); }; });
@@ -127,7 +129,36 @@
         await request("/approve-layout", { fileId: button.dataset.awardApprove, revision: button.dataset.fileRevision }, button.dataset.applicationId);
         await loadAwards(); message("Макет согласован. Отметка сохранена в Вашей карточке слушателя.");
       }); });
+      host.querySelectorAll("[data-award-remarks]").forEach(button => { button.disabled = busy; button.onclick = () => {
+        const program = result.programs.find(item => item.id === button.dataset.applicationId), file = program?.files.find(item => item.id === button.dataset.awardRemarks);
+        if (!busy && file) openLayoutRemarks(program, file, button);
+      }; });
     } catch (error) { if (sequence === awardsRequest && id === state.record.id && host.isConnected) host.textContent = error.message || "Не удалось загрузить документы."; }
+  }
+  function openLayoutRemarks(program, file, trigger) {
+    const key = `${program.id}:${file.id}:${file.revision}`;
+    if (!layoutRemarksDrafts.has(key)) layoutRemarksDrafts.set(key, program.layoutRemarks?.fileId === file.id ? program.layoutRemarks.comment : "");
+    const dialog = document.createElement("dialog"); dialog.className = "student-layout-remarks-dialog";
+    dialog.setAttribute("aria-labelledby", "student-layout-remarks-title");
+    dialog.innerHTML = `<header><h2 id="student-layout-remarks-title">Замечания к макету</h2><button type="button" data-close aria-label="Закрыть замечания">×</button></header><p>${esc(program.program)}</p><form><label>Что нужно исправить?<textarea name="comment" rows="7" required maxlength="4000">${esc(layoutRemarksDrafts.get(key))}</textarea></label><small>До 4000 символов. Комментарий увидит сотрудник учебного центра.</small><p data-error role="alert" hidden></p><footer><button type="button" data-close>Отмена</button><button class="primary-button" type="submit">Передать замечания</button></footer></form>`;
+    const form = dialog.querySelector("form"), input = form.elements.comment, error = dialog.querySelector("[data-error]");
+    input.oninput = () => { layoutRemarksDrafts.set(key, input.value); error.hidden = true; };
+    dialog.querySelectorAll("[data-close]").forEach(button => { button.onclick = () => { if (!busy) dialog.close(); }; });
+    dialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
+    dialog.addEventListener("close", () => { dialog.remove(); if (trigger.isConnected) trigger.focus(); });
+    form.onsubmit = async event => {
+      event.preventDefault(); if (busy || !form.reportValidity()) return;
+      const comment = input.value.trim();
+      if (!comment) { error.textContent = "Напишите, что нужно исправить в макете."; error.hidden = false; input.focus(); return; }
+      setBusy(true, "Сохранение замечаний…"); error.hidden = true;
+      dialog.querySelectorAll("button, textarea").forEach(item => { item.disabled = true; });
+      try {
+        await request("/layout-remarks", { fileId: file.id, revision: file.revision, comment }, program.id);
+        layoutRemarksDrafts.delete(key); dialog.close(); await loadAwards(); message("Замечания сохранены и доступны учебному центру в Вашей карточке.");
+      } catch (failure) { error.textContent = failure.message || "Не удалось сохранить замечания. Текст сохранён, повторите отправку."; error.hidden = false; }
+      finally { setBusy(false); dialog.querySelectorAll("button, textarea").forEach(item => { item.disabled = false; }); }
+    };
+    document.body.appendChild(dialog); dialog.showModal(); input.focus();
   }
   function financeActions() {
     return `${state.finances.debt > 0 ? `<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p><button type="button" class="primary-button" data-pay>Оплатить ${money(state.finances.debt)} через ЮKassa</button><p data-payment-link hidden></p>` : ""}<button type="button" data-payment-refresh>Проверить оплату</button>`;

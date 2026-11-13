@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.627",
+    version: "1.7.628",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.628",
+      releasedAt: "2026-11-13",
+      changes: ["Слушатель может передать замечания к макету; комментарий виден в его кабинете и на вкладке Итоги карточки. Загрузка скана документа об образовании оформлена одной компактной кнопкой на ширину двух колонок. В общих затратах добавлен фильтр Личная карта / Бизнес-карта. На рабочем столе показаны расходы с номером бизнес-карты, не закрытые в бухгалтерии, с контролем срока 75 дней от даты расхода и переходом к карточкам."]
+    },
     {
       version: "1.7.627",
       releasedAt: "2026-11-13",
@@ -7769,6 +7774,7 @@ MAX - https://bizvmax.ru/zifra_plus
     directExpenseNoteFilter: "",
     generalExpenseSectionFilter: getDefaultGeneralExpenseSectionFilter(initialView),
     generalExpenseWorkTypeFilter: [],
+    generalExpenseNumberFilter: [],
     studentProgramTypeFilter: [],
     studentListFilters: {
       programs: [],
@@ -14972,6 +14978,7 @@ MAX - https://bizvmax.ru/zifra_plus
       directExpenseNoteFilter: String(state.directExpenseNoteFilter || ""),
       generalExpenseSectionFilter: [...(state.generalExpenseSectionFilter || [])],
       generalExpenseWorkTypeFilter: [...(state.generalExpenseWorkTypeFilter || [])],
+      generalExpenseNumberFilter: [...(state.generalExpenseNumberFilter || [])],
       studentProgramTypeFilter: [...(state.studentProgramTypeFilter || [])],
       studentListFilters: {
         ...(state.studentListFilters || {}),
@@ -15038,6 +15045,7 @@ MAX - https://bizvmax.ru/zifra_plus
       directExpenseNoteFilter: "",
       generalExpenseSectionFilter: [],
       generalExpenseWorkTypeFilter: [],
+      generalExpenseNumberFilter: [],
       studentProgramTypeFilter: [],
       studentListFilters: { programs: [] },
       programRegistryTypeFilter: [],
@@ -15159,6 +15167,7 @@ MAX - https://bizvmax.ru/zifra_plus
     state.directExpenseNoteFilter = String(snapshot.directExpenseNoteFilter || "");
     state.generalExpenseSectionFilter = [...(snapshot.generalExpenseSectionFilter || [])];
     state.generalExpenseWorkTypeFilter = [...(snapshot.generalExpenseWorkTypeFilter || [])];
+    state.generalExpenseNumberFilter = (snapshot.generalExpenseNumberFilter || []).filter(value => ["personal", "business"].includes(value));
     state.studentProgramTypeFilter = [...(snapshot.studentProgramTypeFilter || [])];
     state.studentListFilters = {
       ...(state.studentListFilters || {}),
@@ -20504,6 +20513,58 @@ MAX - https://bizvmax.ru/zifra_plus
     if (tasks && tasks.dataset.dashboardCalendarDate !== todayIso()) render();
   }
 
+  function getGeneralExpenseAccountingRows(currentDate = todayIso()) {
+    const today = parseTableSortDate(currentDate), day = 86400000;
+    return getRowsForConfig(configs.generalExpenses)
+      .filter(record => getGeneralExpenseNumberGroup(record) === "business" && !isChecked(record.accountingClosed))
+      .map(record => {
+        const date = parseTableSortDate(record.date);
+        const remainingDays = date !== null && today !== null ? 75 - Math.floor((today - date) / day) : null;
+        return { record, remainingDays, overdue: remainingDays !== null && remainingDays < 0,
+          dueDate: date !== null ? new Date(date + 75 * day).toISOString().slice(0, 10) : "" };
+      }).sort((a, b) => (a.remainingDays ?? Number.MAX_SAFE_INTEGER) - (b.remainingDays ?? Number.MAX_SAFE_INTEGER)
+        || String(a.record.counterparty || "").localeCompare(String(b.record.counterparty || ""), "ru"));
+  }
+
+  function renderGeneralExpenseAccountingDashboardTile() {
+    if (!canAccessView("generalExpenses")) return "";
+    const rows = getGeneralExpenseAccountingRows(); if (!rows.length) return "";
+    const overdue = rows.filter(row => row.overdue).length;
+    return `<button type="button" class="panel dashboard-attestation-tile general-expense-accounting-tile ${overdue ? "is-overdue" : ""}" data-action="open-general-expense-accounting" title="Общие затраты с номером бизнес-карты, не закрытые в бухгалтерии">
+      <span class="eyebrow">Общие затраты · Бухгалтерия</span><strong>${rows.length}</strong><small>Не закрыто · Просрочено: ${overdue}<br>Срок закрытия — 75 дней от даты расхода</small></button>`;
+  }
+
+  function openGeneralExpenseAccountingDialog() {
+    if (!canAccessView("generalExpenses") || document.querySelector("[data-expense-accounting-dialog]")) return;
+    if (state.modal || isSettingsDraftSessionActive()) { alert("Сначала сохраните и закройте открытую карточку или настройки."); return; }
+    const dialog = document.createElement("dialog"); dialog.className = "general-expense-accounting-dialog"; dialog.dataset.expenseAccountingDialog = "";
+    dialog.setAttribute("aria-labelledby", "general-expense-accounting-title");
+    const rows = getGeneralExpenseAccountingRows(), dateText = value => {
+      const timestamp = parseTableSortDate(value);
+      return timestamp === null ? "—" : new Date(timestamp).toLocaleDateString("ru-RU", { timeZone: "UTC" });
+    };
+    dialog.innerHTML = `<header><div><h2 id="general-expense-accounting-title">Общие затраты — не закрыты в бухгалтерии</h2><p>Не закрыто: ${rows.length}. Просрочено: ${rows.filter(row => row.overdue).length}. Срок — 75 дней от поля «Дата» расхода.</p></div><button class="icon-button" type="button" data-close aria-label="Закрыть">×</button></header>
+      <div class="general-expense-accounting-table-scroll"><table class="data-table"><thead><tr><th>Контрагент</th><th>Дата расхода</th><th>Номер в расходах</th><th>Сумма</th><th>Закрыть до</th><th>Срок</th></tr></thead><tbody>${rows.map(({ record, dueDate, remainingDays, overdue }) => `<tr class="${overdue ? "is-overdue" : ""}"><td><button class="table-edit-link" type="button" data-expense-accounting-card="${escapeAttr(record.id)}">${escapeHtml(record.counterparty || "Без контрагента")}</button></td><td>${dateText(record.date)}</td><td>${escapeHtml(record.bkExpenseNo)}</td><td>${money(record.amount)}</td><td>${dateText(dueDate)}</td><td>${remainingDays === null ? "Дата не указана" : overdue ? `Просрочено: ${-remainingDays} дн.` : remainingDays === 0 ? "Закрыть сегодня" : `Осталось: ${remainingDays} дн.`}</td></tr>`).join("") || '<tr><td colspan="6">Все расходы закрыты в бухгалтерии.</td></tr>'}</tbody></table></div><p data-error role="alert" hidden></p>`;
+    dialog.querySelector("[data-close]").onclick = () => dialog.close();
+    dialog.addEventListener("close", () => { dialog.remove(); document.querySelector("[data-action='open-general-expense-accounting']")?.focus(); });
+    let opening = false;
+    dialog.addEventListener("cancel", event => { if (opening) event.preventDefault(); });
+    dialog.querySelectorAll("[data-expense-accounting-card]").forEach(button => button.onclick = async () => {
+      if (opening) return; opening = true; dialog.querySelectorAll("button").forEach(item => { item.disabled = true; });
+      try {
+        await withCardLoadingIndicator("generalExpenses", button.dataset.expenseAccountingCard, async () => {
+          const lockMode = await acquireRecordLockForCard("generalExpenses", button.dataset.expenseAccountingCard);
+          if (!lockMode) return;
+          state.lastEditedRow = { config: "generalExpenses", id: button.dataset.expenseAccountingCard };
+          state.modal = { config: "generalExpenses", id: button.dataset.expenseAccountingCard, ...getRecordLockModalState(lockMode) };
+          dialog.close(); render();
+        });
+      } catch (error) { const notice = dialog.querySelector("[data-error]"); notice.textContent = error.message; notice.hidden = false; }
+      finally { opening = false; dialog.querySelectorAll("button").forEach(item => { item.disabled = false; }); }
+    });
+    document.body.appendChild(dialog); dialog.showModal();
+  }
+
   function renderDashboard() {
     const students = state.data.collections.students;
     const direct = sumBy(getAllDirectExpenses(), "amount");
@@ -20528,6 +20589,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const attestationDashboardTile = renderAttestationDashboardTile();
     const deferredStartDashboardTile = renderDeferredStartDashboardTile();
     const enrollmentReviewDashboardTile = renderEnrollmentReviewDashboardTile();
+    const accountingDashboardTile = renderGeneralExpenseAccountingDashboardTile();
     const pendingIssuedDocuments = getIssuedDocumentRows()
       .filter((row) => row.frdoKey === "pending");
     const pendingIssuedDocumentDays = pendingIssuedDocuments
@@ -20561,7 +20623,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}${enrollmentReviewDashboardTile ? " with-enrollment-review" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile || enrollmentReviewDashboardTile ? "" : "hidden"}>
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}${enrollmentReviewDashboardTile || accountingDashboardTile ? " with-enrollment-review" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile || enrollmentReviewDashboardTile || accountingDashboardTile ? "" : "hidden"}>
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -20591,6 +20653,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ${attestationDashboardTile}
       ${deferredStartDashboardTile}
       ${enrollmentReviewDashboardTile}
+      ${accountingDashboardTile}
       </div>
       <section class="panel">
         <div class="panel-head">
@@ -21346,6 +21409,7 @@ MAX - https://bizvmax.ru/zifra_plus
     if (view === "generalExpenses") {
       if ((state.generalExpenseSectionFilter || []).length) count += 1;
       if ((state.generalExpenseWorkTypeFilter || []).length) count += 1;
+      if ((state.generalExpenseNumberFilter || []).length) count += 1;
     }
     return count;
   }
@@ -22253,6 +22317,7 @@ MAX - https://bizvmax.ru/zifra_plus
               ${state.view === "generalExpenses" ? `
                 ${renderGeneralExpenseSectionFilter()}
                 ${renderGeneralExpenseWorkTypeFilter()}
+                ${renderGeneralExpenseNumberFilter()}
               ` : ""}
               ${state.view === "students" ? renderStudentProgramTypeFilter() : ""}
               ${state.view === "programs" ? renderProgramRegistryTypeFilter() : ""}
@@ -25259,6 +25324,25 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
+  function getGeneralExpenseNumberGroup(record) {
+    const number = String(record.bkExpenseNo ?? "").trim();
+    return !number ? "" : isGeneralExpensePersonalCard(number) ? "personal" : "business";
+  }
+
+  function matchesGeneralExpenseNumberFilter(record, selected = []) {
+    return !selected.length || selected.includes(getGeneralExpenseNumberGroup(record));
+  }
+
+  function renderGeneralExpenseNumberFilter() {
+    const options = [["personal", "Личная карта"], ["business", "Бизнес-карта (все номера)"]];
+    const selected = state.generalExpenseNumberFilter || [];
+    const labels = options.filter(([key]) => selected.includes(key)).map(([, label]) => label);
+    return `<details class="student-program-type-filter general-expense-filter ${selected.length ? "is-active" : ""}" data-program-type-filter data-general-expense-number-filter>
+      <summary title="Фильтр по номеру в расходах"><span>Номер</span><strong>${escapeHtml(formatGeneralExpenseMultiFilterLabel(labels, "Все"))}</strong><svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5"></path></svg></summary>
+      <div class="student-program-type-filter-panel general-expense-filter-panel">${options.map(([key, label]) => `<label><input type="checkbox" value="${key}" data-general-expense-number-filter-option ${selected.includes(key) ? "checked" : ""}><span>${label}</span></label>`).join("")}
+      <button class="student-program-type-filter-clear" data-action="clear-general-expense-number-filter" type="button" ${selected.length ? "" : "disabled"}>Сбросить</button></div></details>`;
+  }
+
   function updateDatabaseImportIndicator(patch) {
     window.clearTimeout(databaseImportHideTimer);
     state.databaseImport = { ...state.databaseImport, ...patch };
@@ -25496,7 +25580,8 @@ MAX - https://bizvmax.ru/zifra_plus
         && matchImportedView
         && matchDirectExpenseNote
         && matchGeneralExpenseSection
-        && matchGeneralExpenseWorkType;
+        && matchGeneralExpenseWorkType
+        && (!isGeneralExpenseTable || matchesGeneralExpenseNumberFilter(row, state.generalExpenseNumberFilter));
     });
     filtered = filterRowsByTableValueFilters(
       filtered,
@@ -38069,14 +38154,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
   async function uploadStudentAwardScan(event) {
     const input = event.target, file = input.files[0]; if (!file) return;
+    const button = input.closest(".education-document-actions")?.querySelector("[data-action='upload-student-award-scan']");
     input.disabled = true;
+    if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
     const label = document.querySelector("[data-award-upload-status]"); label.textContent = "Загрузка скана в папку слушателя…";
     try {
       const id = await saveRecordFormBeforeContinuation(document.getElementById("recordForm"), { flush: true });
       if (!id) throw Error("Сначала сохраните карточку слушателя.");
       await saveStudentAwardFile(id, file); label.textContent = "Скан сохранён в корневой папке и доступен в кабинете слушателя.";
     } catch (error) { label.textContent = error.message || "Не удалось загрузить скан."; }
-    finally { input.disabled = false; input.value = ""; }
+    finally { input.disabled = false; input.value = ""; if (button) { button.disabled = false; button.removeAttribute("aria-busy"); } }
   }
 
   function renderStudentModal(record) {
@@ -38336,6 +38423,15 @@ MAX - https://bizvmax.ru/zifra_plus
     return { ...record, attestationDocumentKind: documentKind, workflowSourceValues: values };
   }
 
+  function renderStudentLayoutRemarks(record) {
+    const remarks = record.studentLayoutRemarks;
+    if (!remarks?.comment) return "";
+    return `<aside class="student-layout-remarks ${remarks.resolvedAt ? "is-resolved" : ""}" data-student-layout-remarks>
+      <strong>${remarks.resolvedAt ? "Замечания слушателя — макет согласован" : "Есть замечания слушателя к макету"}</strong>
+      <small>${escapeHtml(new Date(remarks.createdAt).toLocaleString("ru-RU"))} · ${escapeHtml(remarks.name || "Макет документа")}</small>
+      <p>${escapeHtml(remarks.comment)}</p></aside>`;
+  }
+
   function renderEducationDocumentActions(record) {
     const educationDocumentTitle = getEducationDocumentButtonTitle(record);
     const postalEnvelopeTitle = buildStudentDocumentGenerationTooltip(
@@ -38358,8 +38454,14 @@ MAX - https://bizvmax.ru/zifra_plus
             ${renderOrdersSdoIcon("documentText")}<span>${definition.title}</span>
           </button>`;
         }).join("")}
+        <button class="ghost-button student-document-generate-button education-document-open-button student-award-upload-button" data-action="upload-student-award-scan" type="button" title="Загрузить скан документа об образовании. PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете." ${record.id ? "" : "disabled"}>
+          ${renderOrdersSdoIcon("arrowUp")}<span>Загрузить скан документа</span>
+        </button>
+        <input type="file" data-student-award-upload accept="application/pdf,image/jpeg,image/png" hidden ${record.id ? "" : "disabled"}>
+        <p class="student-award-upload-status" data-award-upload-status role="status"></p>
+        ${(record.educationDocumentFiles || []).map(file => `<a class="student-award-file-link" href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" target="_blank" rel="noopener">${escapeHtml(file.kind === "layout" ? "Макет документа" : "Скан документа")} · ${escapeHtml(file.name)}</a>`).join("")}
       </div>
-      <div class="student-award-upload"><label>Скан документа об образовании<input type="file" data-student-award-upload accept="application/pdf,image/jpeg,image/png" ${record.id ? "" : "disabled"}></label><small>PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете.</small><p data-award-upload-status role="status"></p>${(record.educationDocumentFiles || []).map(file => `<a href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" target="_blank" rel="noopener">${escapeHtml(file.kind === "layout" ? "Макет документа" : "Скан документа")} · ${escapeHtml(file.name)}</a>`).join("")}</div>
+      ${renderStudentLayoutRemarks(record)}
     `;
   }
 
@@ -46949,6 +47051,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function bindEvents() {
     bindPkReporting();
     document.querySelector("[data-action='open-enrollment-review']")?.addEventListener("click", openEnrollmentReviewDialog);
+    document.querySelector("[data-action='open-general-expense-accounting']")?.addEventListener("click", openGeneralExpenseAccountingDialog);
     document.querySelector("[data-action='open-attestation-tasks']")?.addEventListener("click", openAttestationTasksDialog);
     document.querySelector("[data-action='open-deferred-start-students']")?.addEventListener("click", openDeferredStartStudents);
     bindDocumentWorkflowEvents();
@@ -47170,6 +47273,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
+        state.generalExpenseNumberFilter = [];
         state.studentImportedViewIds = [];
         state.sort = state.view === "students"
           ? getStudentStatusTableSort(state.statusFilter)
@@ -47202,6 +47306,7 @@ MAX - https://bizvmax.ru/zifra_plus
         state.contractSectionFilter = state.view === "contracts" ? [CONTRACT_SECTIONS[0]] : [];
         state.generalExpenseSectionFilter = getDefaultGeneralExpenseSectionFilter(state.view);
         state.generalExpenseWorkTypeFilter = [];
+        state.generalExpenseNumberFilter = [];
         state.studentImportedViewIds = [];
         if (state.view === "issuedDocuments") prepareIssuedDocumentsRegistryOnOpen();
         else {
@@ -47808,6 +47913,14 @@ MAX - https://bizvmax.ru/zifra_plus
       state.generalExpenseWorkTypeFilter = [];
       state.tablePages.generalExpenses = 1;
       render();
+    });
+    document.querySelectorAll("[data-general-expense-number-filter-option]").forEach(input => input.addEventListener("change", () => {
+      state.generalExpenseNumberFilter = Array.from(document.querySelectorAll("[data-general-expense-number-filter-option]:checked")).map(item => item.value);
+      state.tablePages.generalExpenses = 1; render();
+      const filter = document.querySelector("[data-general-expense-number-filter]"); if (filter) filter.open = true;
+    }));
+    document.querySelector("[data-action='clear-general-expense-number-filter']")?.addEventListener("click", () => {
+      state.generalExpenseNumberFilter = []; state.tablePages.generalExpenses = 1; render();
     });
     document.querySelector("[data-action='clear-student-imported-view']")?.addEventListener("click", () => {
       state.studentImportedViewIds = [];
@@ -48417,6 +48530,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
     document.querySelectorAll("[data-student-portal-menu]").forEach(button => button.addEventListener("click", openStudentPortalMenu));
     document.querySelector("[data-student-award-upload]")?.addEventListener("change", uploadStudentAwardScan);
+    document.querySelector("[data-action='upload-student-award-scan']")?.addEventListener("click", () => document.querySelector("[data-student-award-upload]")?.click());
     document.querySelector("[data-action='open-student-postal-envelope-document']")?.addEventListener("click", openStudentPostalEnvelopeDocument);
     document.querySelectorAll("[data-action='open-student-attestation-document']").forEach((button) => {
       button.addEventListener("click", (event) => openStudentCardBoundDocument(
@@ -62128,7 +62242,7 @@ MAX - https://bizvmax.ru/zifra_plus
   function getGeneralExpenseDuplicateFilterSignature() {
     return JSON.stringify([
       state.search, state.statusFilter, state.generalExpenseSectionFilter,
-      state.generalExpenseWorkTypeFilter, state.tableValueFilters?.generalExpenses
+      state.generalExpenseWorkTypeFilter, state.generalExpenseNumberFilter, state.tableValueFilters?.generalExpenses
     ]);
   }
 

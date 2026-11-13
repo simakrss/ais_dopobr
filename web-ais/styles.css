@@ -32277,8 +32277,30 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-award-file { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 12px 0; }
 .student-award-file > span { flex: 1 1 240px; min-width: 0; }
 .student-award-file small { display: block; overflow-wrap: anywhere; }
-.student-award-upload { display: grid; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid #d5e1dd; border-radius: 8px; overflow-wrap: anywhere; }
-.student-award-upload input { max-width: 100%; }
+.student-layout-remarks { margin: 14px 0; padding: 14px 16px; border: 1px solid #e1c780; border-radius: 10px; background: #fff9e9; overflow-wrap: anywhere; }
+.student-layout-remarks small { display: block; margin-top: 6px; color: var(--muted); }
+.student-layout-remarks p { white-space: pre-wrap; margin: 10px 0 0; }
+.student-layout-remarks.is-resolved { background: #f4f7f6; border-color: var(--line); }
+.student-layout-remarks-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+.student-layout-remarks-dialog::backdrop { background: #152f2b77; }
+.student-layout-remarks-dialog header, .student-layout-remarks-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.student-layout-remarks-dialog h2 { margin: 0; font-size: 20px; }
+.student-layout-remarks-dialog textarea { width: 100%; box-sizing: border-box; margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.student-layout-remarks-dialog button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; }
+.student-layout-remarks-dialog footer { justify-content: flex-end; margin-top: 18px; }
+.student-layout-remarks-dialog [data-error] { color: #a52222; }
+.general-expense-accounting-tile.is-overdue { border-color: #dc967e; background: #fff6ef; }
+.general-expense-accounting-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 12px; }
+.general-expense-accounting-dialog::backdrop { background: #152f2b77; }
+.general-expense-accounting-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.general-expense-accounting-dialog h2 { margin: 0; font-size: 20px; }
+.general-expense-accounting-table-scroll { overflow: auto; max-height: 65vh; }
+.general-expense-accounting-table-scroll table { min-width: 720px; }
+.general-expense-accounting-table-scroll tr.is-overdue { background: #fff0e7; }
+.education-document-actions [data-student-award-upload] { display: none; }
+.student-award-upload-button { grid-column: 1 / -1; width: 100%; justify-content: center; white-space: normal; }
+.student-award-upload-status, .student-award-file-link { grid-column: 1 / -1; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.student-award-upload-status:empty { display: none; }
 .student-access-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border: 1px solid #d5e1dd; border-radius: 14px; padding: 20px; }
 .student-access-dialog::backdrop { background: #152f2b77; }
 .student-access-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }

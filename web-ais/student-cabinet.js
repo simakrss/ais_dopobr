@@ -61,6 +61,9 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
       layoutApproved: eventActive(record, "educationDocMaketApproved"),
       layoutApprovedAt: eventActive(record, "educationDocMaketApproved") ? text(record.event_educationDocMaketApproved_date) : "",
       canApproveLayout: eventActive(record, "educationDocMaketSent") && !eventActive(record, "educationDocMaketApproved"),
+      layoutRemarks: record.studentLayoutRemarks ? { comment: text(record.studentLayoutRemarks.comment), createdAt: record.studentLayoutRemarks.createdAt,
+        name: record.studentLayoutRemarks.name, fileId: record.studentLayoutRemarks.fileId, revision: record.studentLayoutRemarks.revision,
+        resolvedAt: record.studentLayoutRemarks.resolvedAt || "" } : null,
       files: (record.educationDocumentFiles || []).filter(entry => staff || entry.kind !== "layout" || (!entry.unassigned && layoutAvailable(record)))
         .map(entry => ({ id: entry.id, kind: entry.kind, name: entry.name, size: entry.size, uploadedAt: entry.uploadedAt,
           unassigned: Boolean(entry.unassigned), revision: fileRevision(entry) })) })) };
@@ -111,8 +114,20 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     if (/\.docx$/iu.test(entry.name)) return { body: await deps.toPdf(file.body), contentType: "application/pdf", name: entry.name.replace(/\.docx$/iu, ".pdf") };
     return { ...file, name: entry.name };
   }
-  async function approveLayout(user, id, body) {
+  function validateLayoutRequest(body) {
     if (typeof body?.fileId !== "string" || body.fileId.length > 128 || !/^[a-f0-9]{64}$/u.test(text(body.revision))) fail("Обновите список документов и повторите согласование.");
+  }
+  async function reviewLayoutEntry(record, records, body) {
+    if (!eventActive(record, "educationDocMaketSent")) fail("Учебный центр ещё не отправил макет на согласование.", 403);
+    const current = body.fileId.startsWith("disk-")
+      ? (await discover(records.map(item => item.id === record.id ? record : item))).find(item => item.id === record.id) : record;
+    const entry = current?.educationDocumentFiles?.find(item => item.id === body.fileId && item.kind === "layout" && !item.unassigned);
+    if (!entry || fileRevision(entry) !== body.revision) fail("Макет изменился. Обновите список и проверьте новый макет.", 409);
+    if (deps.fileExists && !await deps.fileExists(entry.folder, entry.name)) fail("Файл макета недоступен. Обновите список документов или обратитесь в учебный центр.", 409);
+    return entry;
+  }
+  async function approveLayout(user, id, body) {
+    validateLayoutRequest(body);
     // Serialize repeated clicks across server instances, then revalidate ownership,
     // event and file version inside the same revision-checked record mutation.
     return deps.lock(`student-layout-approval:${id}`, async () => {
@@ -120,12 +135,7 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
       let changed = false;
       const updated = await mutate(id, user, async record => {
         changed = false;
-        if (!eventActive(record, "educationDocMaketSent")) fail("Учебный центр ещё не отправил макет на согласование.", 403);
-        const current = body.fileId.startsWith("disk-")
-          ? (await discover(records.map(item => item.id === id ? record : item))).find(item => item.id === id) : record;
-        const entry = current?.educationDocumentFiles?.find(item => item.id === body.fileId && item.kind === "layout" && !item.unassigned);
-        if (!entry || fileRevision(entry) !== body.revision) fail("Макет изменился. Обновите список, проверьте новый макет и согласуйте его.", 409);
-        if (deps.fileExists && !await deps.fileExists(entry.folder, entry.name)) fail("Файл макета недоступен. Обновите список документов или обратитесь в учебный центр.", 409);
+        const entry = await reviewLayoutEntry(record, records, body);
         if (eventActive(record, "educationDocMaketApproved")) return record;
         changed = true;
         const approvedAt = new Date().toISOString();
@@ -133,10 +143,32 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
           event_educationDocMaketApproved_date: new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(approvedAt)),
           eventDeleted: text(record.eventDeleted).split(/[,;\s]+/u).filter(key => key && key !== "educationDocMaketApproved").join(","),
           eventOrder: [...new Set([...text(record.eventOrder).split(/[,;\s]+/u).filter(Boolean), "educationDocMaketApproved"])].join(","),
-          studentLayoutApproval: { fileId: entry.id, revision: body.revision, name: entry.name, approvedAt } };
+          studentLayoutApproval: { fileId: entry.id, revision: body.revision, name: entry.name, approvedAt },
+          ...(record.studentLayoutRemarks ? { studentLayoutRemarks: { ...record.studentLayoutRemarks, resolvedAt: approvedAt } } : {}) };
       });
       if (changed) await deps.audit("Согласован макет документа об образовании", updated, user, updated.studentLayoutApproval.name);
       return { ok: true, approved: true, approvedAt: updated.event_educationDocMaketApproved_date || "" };
+    });
+  }
+  async function layoutRemarks(user, id, body) {
+    validateLayoutRequest(body);
+    if (typeof body.comment !== "string" || !body.comment.trim() || body.comment.length > 4000) fail("Напишите, что нужно исправить в макете (до 4000 символов).");
+    const comment = body.comment.trim();
+    return deps.lock(`student-layout-approval:${id}`, async () => {
+      const { records } = await context(user, id);
+      let changed = false;
+      const updated = await mutate(id, user, async record => {
+        changed = false;
+        const entry = await reviewLayoutEntry(record, records, body);
+        if (eventActive(record, "educationDocMaketApproved")) fail("Макет уже согласован. Обновите список документов.", 409);
+        const previous = record.studentLayoutRemarks;
+        if (previous?.fileId === entry.id && previous.revision === body.revision && previous.comment === comment && !previous.resolvedAt) return record;
+        changed = true;
+        return { ...record, event_educationDocMaketApproved_state: "unchecked", event_educationDocMaketApproved_date: "",
+          studentLayoutRemarks: { fileId: entry.id, revision: body.revision, name: entry.name, comment, createdAt: new Date().toISOString(), resolvedAt: "" } };
+      });
+      if (changed) await deps.audit("Получены замечания слушателя к макету документа об образовании", updated, user, `${updated.studentLayoutRemarks.name}\n${comment}`);
+      return { ok: true };
     });
   }
   async function settlePayment(orderId) {
@@ -207,6 +239,6 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     for (const intent of (record.portalPaymentIntents || []).filter(item => item.orderId && item.status === "pending")) await settlePayment(intent.orderId);
     return portal(user, id);
   }
-  return { photo, awardUpload, awards, staffAwards, awardFile, approveLayout, payment, paymentStatus, settlePayment };
+  return { photo, awardUpload, awards, staffAwards, awardFile, approveLayout, layoutRemarks, payment, paymentStatus, settlePayment };
 }
 module.exports = { createService, rootFolder };
