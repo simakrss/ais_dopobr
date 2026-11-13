@@ -65,7 +65,7 @@ test("education surname follows the name-change checkbox and the shared card fie
   f.snapshot.data.collections.students[0].enrollmentNameChanged = false;
   assert.equal((await f.service.portal(user, record.id)).record.enrollmentNameChanged, true, "staff-entered different surname also selects the checkbox");
 });
-test("layout download and listing require the owning program's active approval or electronic-document event", async () => {
+test("layout download and listing require the owning program's sent-for-approval or electronic-document event", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), actor = { role: "manager" };
   const result = await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" }), file = result.files[0];
   assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0);
@@ -74,14 +74,70 @@ test("layout download and listing require the owning program's active approval o
   assert.ok((await f.service.awardFile(actor, record.id, file.id, true)).body.length);
   const current = f.snapshot.data.collections.students[0];
   current.event_educationDocMaketApproved_state = "checked";
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0, "approval alone does not publish a layout");
+  current.event_educationDocMaketSent_state = "checked";
   assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 1);
   assert.ok((await f.service.awardFile(user, record.id, file.id)).body.length);
-  current.event_educationDocMaketApproved_state = "unchecked"; current.event_educationDocMaketApproved_date = "2026-11-13";
+  current.event_educationDocMaketSent_state = "unchecked"; current.event_educationDocMaketSent_date = "2026-11-13";
   await assert.rejects(f.service.awardFile(user, record.id, file.id), { statusCode: 403 });
   current.event_macro_hb0dir_state = "dated";
   assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 1);
   current.eventDeleted = "macro_hb0dir";
   assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0);
+});
+test("layout approval updates the shared event once, restores its visibility and stays within the selected owned program", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  const second = { ...record, id: "linked", studentPortalAccountId: record.id, event_educationDocMaketSent_state: "checked",
+    eventDeleted: "educationDocMaketApproved,reviewRequested", eventOrder: "portalCredentialsSent" };
+  f.snapshot.data.collections.students.push(second, { ...record, id: "foreign", studentPortalAccountId: "foreign" });
+  await f.service.awardUpload({ role: "manager" }, second.id, { ...pdf, kind: "layout" });
+  const program = (await f.service.awards(user, record.id)).programs.find(item => item.id === second.id), file = program.files[0];
+  assert.equal(program.canApproveLayout, true); assert.equal(program.layoutApproved, false);
+  const body = { fileId: file.id, revision: file.revision };
+  await assert.rejects(f.service.approveLayout(user, "foreign", body), { statusCode: 404 });
+  await assert.rejects(f.service.approveLayout(user, record.id, body), { statusCode: 403 });
+  const results = await Promise.all([f.service.approveLayout(user, second.id, body), f.service.approveLayout(user, second.id, body)]);
+  assert.ok(results.every(item => item.ok && item.approved));
+  const updated = f.snapshot.data.collections.students.find(item => item.id === second.id);
+  assert.equal(updated.event_educationDocMaketApproved_state, "dated");
+  assert.match(updated.event_educationDocMaketApproved_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(updated.eventDeleted, "reviewRequested"); assert.equal(updated.eventOrder, "portalCredentialsSent,educationDocMaketApproved");
+  assert.equal(updated.studentLayoutApproval.fileId, file.id); assert.equal(updated.name, record.name);
+  assert.equal(f.snapshot.data.collections.students[0].event_educationDocMaketApproved_state, undefined);
+  assert.equal(f.audit.filter(action => action === "Согласован макет документа об образовании").length, 1);
+  const after = (await f.service.awards(user, record.id)).programs.find(item => item.id === second.id);
+  assert.equal(after.layoutApproved, true); assert.equal(after.canApproveLayout, false);
+});
+test("approval rejects a missing/replaced file, scan, withdrawn invitation and a locked card", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), actor = { role: "manager" };
+  record.event_educationDocMaketSent_state = "checked";
+  await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" });
+  const old = (await f.service.awards(user, record.id)).programs[0].files[0];
+  await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" });
+  await assert.rejects(f.service.approveLayout(user, record.id, { fileId: old.id, revision: old.revision }), { statusCode: 409 });
+  const file = (await f.service.awards(user, record.id)).programs[0].files[0], body = { fileId: file.id, revision: file.revision };
+  await assert.rejects(f.service.approveLayout(user, record.id, { ...body, revision: "a".repeat(64) }), { statusCode: 409 });
+  await f.service.awardUpload(actor, record.id, pdf);
+  const scan = (await f.service.awards(user, record.id)).programs[0].files.find(item => item.kind === "scan");
+  await assert.rejects(f.service.approveLayout(user, record.id, { fileId: scan.id, revision: scan.revision }), { statusCode: 409 });
+  f.deps.save = async () => ({ locked: true });
+  await assert.rejects(f.service.approveLayout(user, record.id, body), { statusCode: 423 });
+  const current = f.snapshot.data.collections.students[0];
+  current.eventDeleted = "educationDocMaketSent";
+  await assert.rejects(f.service.approveLayout(user, record.id, body), { statusCode: 403 });
+  current.eventDeleted = ""; f.files.clear();
+  await assert.rejects(f.service.approveLayout(user, record.id, body), { statusCode: 409 });
+  assert.equal(current.event_educationDocMaketApproved_state, undefined);
+  assert.equal(f.audit.filter(action => action === "Согласован макет документа об образовании").length, 0);
+});
+test("approval rechecks the invitation after a shared-state conflict", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  record.event_educationDocMaketSent_state = "checked";
+  await f.service.awardUpload({ role: "manager" }, record.id, { ...pdf, kind: "layout" });
+  const file = (await f.service.awards(user, record.id)).programs[0].files[0];
+  f.deps.save = async () => { f.snapshot.data.collections.students[0].event_educationDocMaketSent_state = "unchecked"; return { conflict: true }; };
+  await assert.rejects(f.service.approveLayout(user, record.id, { fileId: file.id, revision: file.revision }), { statusCode: 403 });
+  assert.equal(f.snapshot.data.collections.students[0].event_educationDocMaketApproved_state, undefined);
 });
 test("photo is scoped, stored in the student folder and does not move existing document attachments", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), folder = enrollment.documentFolder(record);

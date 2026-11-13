@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.626",
+    version: "1.7.627",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.627",
+      releasedAt: "2026-11-13",
+      changes: ["Макет документа доступен слушателю после отметки об отправке на согласование. Кнопка Согласовать макет сохраняет отметку и дату в карточке, фиксирует действие в истории и проверяет актуальность файла."]
+    },
     {
       version: "1.7.626",
       releasedAt: "2026-11-13",

@@ -89,6 +89,22 @@ test("feedback transport bounds input, rejects demo/read requests and delegates 
   assert.equal(calls.length, 2); assert.equal(calls[0].auth, user); assert.equal(calls[1].auth.actingStaff, actor); assert.equal(calls[1].id, "linked");
 });
 
+test("layout approval is a bounded POST, blocks demo/foreign roles and preserves staff-preview attribution", async () => {
+  const { context } = handlers(), user = { role: "student", studentId: "s" }, actor = { id: "staff", role: "manager" }, calls = [];
+  const body = { fileId: "layout", revision: "a".repeat(64) };
+  context.readJsonBody = async (_req, limit) => { assert.equal(limit, 4096); return body; };
+  context.getStudentEnrollmentService = () => ({ approveLayout: async (auth, id, data) => { calls.push({ auth, id, data }); return { ok: true }; },
+    staffSession: async staff => ({ user: { ...user, actingStaff: staff }, id: "linked" }) });
+  const url = new URL("https://example.test/api/student-portal/approve-layout?id=s");
+  await assert.rejects(context.handleStudentPortal({ method: "GET" }, {}, user, url), { statusCode: 403 });
+  await assert.rejects(context.handleStudentPortal({ method: "POST" }, {}, { role: "partner" }, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => true;
+  await assert.rejects(context.handleStudentPortal({ method: "POST" }, {}, user, url), { statusCode: 403 });
+  context.isDatabaseDemoModeEnabled = () => false;
+  assert.equal((await context.handleStudentPortal({ method: "POST" }, {}, user, url)).status, 200);
+  await context.handleStaffStudentPortal({ method: "POST" }, {}, actor, new URL("https://example.test/api/students/portal-preview/approve-layout?studentId=s&id=linked"));
+  assert.equal(calls[0].data, body); assert.equal(calls[1].id, "linked"); assert.equal(calls[1].auth.actingStaff, actor);
+});
 test("feedback journal persists hashed account keys and request states across server instances", async () => {
   const calls = [], context = { crypto, Date, Number, Math, SHARED_STATE_MYSQL_KEY: "fixture",
     studentEnrollmentPool: async () => ({ query: async (sql, args) => {

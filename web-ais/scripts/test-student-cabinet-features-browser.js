@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, ".."), png = Buffer.from("iVBORw0KGgoAAAANS
 const record = { id: "first", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Повышение квалификации", status: "Учится", citizenship: "Россия", workPlace: "Школа", enrollmentNameChanged: false, educationDocumentSurname: "Тестовая" };
 const messages = [{ id: "root", threadId: "thread", direction: "student", status: "sent", createdAt: 1, subject: "Вопрос о документах", message: "Где получить документ?" },
   { id: "answer", threadId: "thread", direction: "center", status: "sent", createdAt: 2, subject: "Ответ", message: "Документ будет готов завтра. <script>window.injection=true</script>" }];
-let paid = false, photo = false, sent, photoUploads = 0, awardReads = [];
+let paid = false, photo = false, sent, photoUploads = 0, awardReads = [], approved = false, approvalCalls = [];
 const view = () => ({ user: { name: record.name, email: record.email }, record, photoAvailable: photo, applications: [{ id: "first", program: record.program, status: "Учится" }], fields: [
   { key: "name", label: "ФИО", type: "text", required: true }, { key: "citizenship", label: "Гражданство", type: "combo", required: true, options: ["Беларусь", "Казахстан", "Россия", "Узбекистан"] },
   { key: "workPlace", label: "Место работы", type: "combo", required: true, options: ["Школа", "Не работаю"] }, { key: "enrollmentNameChanged", label: "ФИО в документе об образовании отличается от паспорта", type: "checkbox" }, { key: "educationDocumentSurname", label: "Фамилия в документе об образовании", type: "text", dependsOn: "enrollmentNameChanged" }],
@@ -24,7 +24,13 @@ const server = http.createServer(async (req, res) => {
     if (action === "/payment-status") paid = true;
     if (action === "/awards") return res.end(JSON.stringify({ programs: [
       { id: "first", program: "Повышение квалификации", number: "001", debt: paid ? 0 : 5000, files: [{ id: "scan", name: "Удостоверение.pdf", kind: "scan" }] },
-      { id: "second", program: "Переподготовка", number: "002", debt: 0, files: [{ id: "layout", name: "Макет диплома.pdf", kind: "layout" }] }] }));
+      { id: "second", program: "Переподготовка", number: "002", debt: 0, layoutApproved: approved, layoutApprovedAt: approved ? "2026-11-13" : "", canApproveLayout: !approved,
+        files: [{ id: "layout", name: "Макет диплома.pdf", kind: "layout", revision: "a".repeat(64) }] }] }));
+    if (action === "/approve-layout") {
+      approvalCalls.push({ application: url.searchParams.get("id"), body });
+      if (approvalCalls.length === 1) { res.statusCode = 423; return res.end(JSON.stringify({ error: "Карточка редактируется сотрудником. Повторите позже." })); }
+      approved = true; return res.end(JSON.stringify({ ok: true, approved: true, approvedAt: "2026-11-13" }));
+    }
     if (action === "/award-file") { awardReads.push({ application: url.searchParams.get("id"), file: url.searchParams.get("file") }); res.setHeader("Content-Type", "image/png"); return res.end(png); }
     return res.end(JSON.stringify(view()));
   }
@@ -67,6 +73,13 @@ const server = http.createServer(async (req, res) => {
     await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
     await page.locator('[data-award-view="layout"]').click(); await page.locator('dialog[open] img').waitFor();
     assert.deepEqual(awardReads[0], { application: "second", file: "layout" }); await page.getByRole('button', { name: 'Закрыть просмотр' }).click();
+    await page.getByRole('button', { name: 'Согласовать макет', exact: true }).click();
+    await page.getByText('Карточка редактируется сотрудником. Повторите позже.', { exact: true }).waitFor();
+    assert.equal(approved, false); assert.ok(await page.getByRole('button', { name: 'Согласовать макет', exact: true }).isEnabled());
+    await page.getByRole('button', { name: 'Согласовать макет', exact: true }).click();
+    await page.locator('.student-layout-approved').waitFor(); assert.equal(await page.locator('[data-award-approve]').count(), 0);
+    assert.deepEqual(approvalCalls[1], { application: "second", body: { fileId: "layout", revision: "a".repeat(64) } });
+    await page.locator('[data-awards-refresh]').click(); await page.locator('.student-layout-approved').waitFor();
     await page.setViewportSize({ width: 390, height: 844 }); await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="feedback"]').click();
     await page.waitForTimeout(300); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     const dir = path.join(root, '.runtime/student-portal-test'); fs.mkdirSync(dir, { recursive: true });

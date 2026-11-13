@@ -3,14 +3,14 @@ const crypto = require("node:crypto");
 const text = value => String(value ?? "").trim();
 const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
 const cents = value => Math.round(Number(value) * 100);
-function layoutAvailable(record) {
+function eventActive(record, key) {
   const deleted = text(record.eventDeleted).split(/[,;\s]+/u);
-  return ["educationDocMaketApproved", "macro_hb0dir"].some(key => {
-    const state = text(record[`event_${key}_state`]).toLowerCase();
-    return !deleted.includes(key) && !["unchecked", "none", "false", "0"].includes(state)
-      && (["checked", "dated"].includes(state) || Boolean(record[`event_${key}_date`]));
-  });
+  const state = text(record[`event_${key}_state`]).toLowerCase();
+  return !deleted.includes(key) && !["unchecked", "none", "false", "0"].includes(state)
+    && (["checked", "dated"].includes(state) || Boolean(record[`event_${key}_date`]));
 }
+const layoutAvailable = record => eventActive(record, "educationDocMaketSent") || eventActive(record, "macro_hb0dir");
+const fileRevision = entry => crypto.createHash("sha256").update(JSON.stringify([entry.id, entry.size, entry.uploadedAt])).digest("hex");
 function rootFolder(record, documentFolder) {
   const folder = documentFolder(record).replace(/\/+$/u, "").replace(/\/Документы$/iu, "");
   if (!folder || !folder.includes("/")) fail("Не настроена личная папка слушателя.", 409);
@@ -58,8 +58,12 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
   function publicAwards(records, staff = false) {
     return { programs: records.map(record => ({ id: record.id, program: record.program, educationType: record.educationType,
       number: text(record.diplomaBlankNo), debt: finances(record).debt,
+      layoutApproved: eventActive(record, "educationDocMaketApproved"),
+      layoutApprovedAt: eventActive(record, "educationDocMaketApproved") ? text(record.event_educationDocMaketApproved_date) : "",
+      canApproveLayout: eventActive(record, "educationDocMaketSent") && !eventActive(record, "educationDocMaketApproved"),
       files: (record.educationDocumentFiles || []).filter(entry => staff || entry.kind !== "layout" || (!entry.unassigned && layoutAvailable(record)))
-        .map(({ id, kind, name, size, uploadedAt, unassigned }) => ({ id, kind, name, size, uploadedAt, unassigned: Boolean(unassigned) })) })) };
+        .map(entry => ({ id: entry.id, kind: entry.kind, name: entry.name, size: entry.size, uploadedAt: entry.uploadedAt,
+          unassigned: Boolean(entry.unassigned), revision: fileRevision(entry) })) })) };
   }
   async function awardRoot(record, current = null) {
     current ||= await deps.readState();
@@ -101,11 +105,39 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     if (String(fileId || "").startsWith("disk-")) records = await discover(records);
     const record = records.find(item => item.id === id), entry = record?.educationDocumentFiles?.find(item => item.id === fileId);
     if (!entry || /[\\/]/u.test(entry.name)) fail("Документ не найден.", 404);
-    if (!staff && entry.kind === "layout" && (entry.unassigned || !layoutAvailable(record))) fail("Макет пока недоступен. Доступ появится после согласования макета или отправки электронного документа учебным центром.", 403);
+    if (!staff && entry.kind === "layout" && (entry.unassigned || !layoutAvailable(record))) fail("Макет пока недоступен. Доступ появится после отправки макета на согласование или отправки электронного документа учебным центром.", 403);
     // The location comes exclusively from the saved, staff-owned attachment metadata.
     const file = await deps.download(entry.folder, entry.name);
     if (/\.docx$/iu.test(entry.name)) return { body: await deps.toPdf(file.body), contentType: "application/pdf", name: entry.name.replace(/\.docx$/iu, ".pdf") };
     return { ...file, name: entry.name };
+  }
+  async function approveLayout(user, id, body) {
+    if (typeof body?.fileId !== "string" || body.fileId.length > 128 || !/^[a-f0-9]{64}$/u.test(text(body.revision))) fail("Обновите список документов и повторите согласование.");
+    // Serialize repeated clicks across server instances, then revalidate ownership,
+    // event and file version inside the same revision-checked record mutation.
+    return deps.lock(`student-layout-approval:${id}`, async () => {
+      const { records } = await context(user, id);
+      let changed = false;
+      const updated = await mutate(id, user, async record => {
+        changed = false;
+        if (!eventActive(record, "educationDocMaketSent")) fail("Учебный центр ещё не отправил макет на согласование.", 403);
+        const current = body.fileId.startsWith("disk-")
+          ? (await discover(records.map(item => item.id === id ? record : item))).find(item => item.id === id) : record;
+        const entry = current?.educationDocumentFiles?.find(item => item.id === body.fileId && item.kind === "layout" && !item.unassigned);
+        if (!entry || fileRevision(entry) !== body.revision) fail("Макет изменился. Обновите список, проверьте новый макет и согласуйте его.", 409);
+        if (deps.fileExists && !await deps.fileExists(entry.folder, entry.name)) fail("Файл макета недоступен. Обновите список документов или обратитесь в учебный центр.", 409);
+        if (eventActive(record, "educationDocMaketApproved")) return record;
+        changed = true;
+        const approvedAt = new Date().toISOString();
+        return { ...record, event_educationDocMaketApproved_state: "dated",
+          event_educationDocMaketApproved_date: new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(approvedAt)),
+          eventDeleted: text(record.eventDeleted).split(/[,;\s]+/u).filter(key => key && key !== "educationDocMaketApproved").join(","),
+          eventOrder: [...new Set([...text(record.eventOrder).split(/[,;\s]+/u).filter(Boolean), "educationDocMaketApproved"])].join(","),
+          studentLayoutApproval: { fileId: entry.id, revision: body.revision, name: entry.name, approvedAt } };
+      });
+      if (changed) await deps.audit("Согласован макет документа об образовании", updated, user, updated.studentLayoutApproval.name);
+      return { ok: true, approved: true, approvedAt: updated.event_educationDocMaketApproved_date || "" };
+    });
   }
   async function settlePayment(orderId) {
     if (!/^[1-9]\d{0,15}$/u.test(text(orderId))) fail("Некорректный номер платежа.");
@@ -175,6 +207,6 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     for (const intent of (record.portalPaymentIntents || []).filter(item => item.orderId && item.status === "pending")) await settlePayment(intent.orderId);
     return portal(user, id);
   }
-  return { photo, awardUpload, awards, staffAwards, awardFile, payment, paymentStatus, settlePayment };
+  return { photo, awardUpload, awards, staffAwards, awardFile, approveLayout, payment, paymentStatus, settlePayment };
 }
 module.exports = { createService, rootFolder };

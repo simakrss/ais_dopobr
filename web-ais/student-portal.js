@@ -105,14 +105,29 @@
       if (!sync && state.record.id === id && tab === "feedback") void loadHistory(true);
     }
   }
+  let awardsRequest = 0;
   async function loadAwards() {
-    const host = root.querySelector("[data-awards-list]"), id = state.record.id;
+    const host = root.querySelector("[data-awards-list]"), id = state.record.id, sequence = ++awardsRequest;
     host.textContent = "Загрузка документов…";
     try {
-      const result = await request("/awards"); if (id !== state.record.id || !host.isConnected) return;
-      host.innerHTML = result.programs.map(program => `<article class="student-award-program"><h3>${esc(program.program)}</h3>${program.number ? `<p>Номер бланка: ${esc(program.number)}</p>` : ""}${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}${program.files.length ? program.files.map(file => `<div class="student-award-file"><span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span><button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button><a href="${esc(api.appUrl(url("/award-file", program.id)))}&amp;file=${encodeURIComponent(file.id)}" download="${esc(file.name)}" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${file.kind === "layout" ? "Скачать макет" : "Скачать"}</a></div>`).join("") : "<p>Доступных документов по этой программе пока нет. Макет появится после согласования или отправки электронного документа учебным центром.</p>"}</article>`).join("");
+      const result = await request("/awards"); if (id !== state.record.id || !host.isConnected || sequence !== awardsRequest) return;
+      host.innerHTML = result.programs.map(program => `<article class="student-award-program"><h3>${esc(program.program)}</h3>
+        ${program.number ? `<p>Номер бланка: ${esc(program.number)}</p>` : ""}
+        ${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}
+        ${program.layoutApproved ? `<p class="student-layout-approved" role="status">✓ Макет согласован${program.layoutApprovedAt ? ` · ${esc(new Date(program.layoutApprovedAt).toLocaleDateString("ru-RU"))}` : ""}</p>` : ""}
+        ${program.files.length ? program.files.map(file => `<div class="student-award-file">
+          <span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span>
+          <button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button>
+          <a href="${esc(api.appUrl(url("/award-file", program.id)))}&amp;file=${encodeURIComponent(file.id)}" download="${esc(file.name)}" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${file.kind === "layout" ? "Скачать макет" : "Скачать"}</a>
+          ${file.kind === "layout" && !file.unassigned && program.canApproveLayout ? `<button type="button" class="primary-button" data-award-approve="${esc(file.id)}" data-file-revision="${esc(file.revision)}" data-application-id="${esc(program.id)}">Согласовать макет</button>` : ""}
+        </div>`).join("") : "<p>Доступных документов по этой программе пока нет. Макет появится после отправки на согласование или отправки электронного документа учебным центром.</p>"}
+      </article>`).join("");
       host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.onclick = event => { event.preventDefault(); openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName); }; });
-    } catch (error) { host.textContent = error.message || "Не удалось загрузить документы."; }
+      host.querySelectorAll("[data-award-approve]").forEach(button => { button.disabled = busy; button.onclick = () => run("Согласование макета…", async () => {
+        await request("/approve-layout", { fileId: button.dataset.awardApprove, revision: button.dataset.fileRevision }, button.dataset.applicationId);
+        await loadAwards(); message("Макет согласован. Отметка сохранена в Вашей карточке слушателя.");
+      }); });
+    } catch (error) { if (sequence === awardsRequest && id === state.record.id && host.isConnected) host.textContent = error.message || "Не удалось загрузить документы."; }
   }
   function financeActions() {
     return `${state.finances.debt > 0 ? `<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p><button type="button" class="primary-button" data-pay>Оплатить ${money(state.finances.debt)} через ЮKassa</button><p data-payment-link hidden></p>` : ""}<button type="button" data-payment-refresh>Проверить оплату</button>`;
@@ -164,8 +179,8 @@
   const url = (action = "", id = state?.record.id) => previewStudentId
     ? `api/students/portal-preview${action}?studentId=${encodeURIComponent(previewStudentId)}&id=${encodeURIComponent(id || "")}`
     : `api/student-portal${action}?id=${encodeURIComponent(id || "")}`;
-  async function request(action, body) {
-    return api.request(url(action), body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  async function request(action, body, id = state?.record.id) {
+    return api.request(url(action, id), body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   }
   function message(value, error = false) {
     const element = root.querySelector("[data-message]");
