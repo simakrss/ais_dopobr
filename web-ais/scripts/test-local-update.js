@@ -22,6 +22,9 @@ function fixture(next="1.0.1"){
 }
 async function main(){
   const one=fixture();assert.equal(up.validateEnvelope(one.envelope,publicKey).version,"1.0.1");
+  const beforeShop=structuredClone(one.release);beforeShop.version="1.7.633";beforeShop.components=up.COMPONENTS.map(name=>({path:name,sha256:"a".repeat(64),size:1}));beforeShop.files=beforeShop.files.filter(file=>file.path!=="student-shop-sso.js");
+  assert.equal(up.validateEnvelope(sign(beforeShop),publicKey).version,"1.7.633");
+  beforeShop.version="1.7.634";assert.throws(()=>up.validateEnvelope(sign(beforeShop),publicKey),/Неполный/);
   const historical=structuredClone(one.release);historical.version="1.7.541";historical.files=historical.files.filter(file=>file.path!=="document-relay.js");
   assert.equal(up.validateEnvelope(sign(historical),publicKey).version,"1.7.541");
   historical.version="1.7.542";assert.throws(()=>up.validateEnvelope(sign(historical),publicKey),/Неполный/);

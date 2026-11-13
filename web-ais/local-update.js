@@ -110,6 +110,7 @@ function validateEnvelope(envelope, publicKey = PUBLIC_KEY) {
     && (name !== "rusender.js" || compareVersions(release.version, "1.7.592") >= 0)
     && (!["student-enrollment.js", "student-portal.js"].includes(name) || compareVersions(release.version, "1.7.619") >= 0)
     && (!["student-feedback-history.js", "student-cabinet.js"].includes(name) || compareVersions(release.version, "1.7.625") >= 0)
+    && (name !== "student-shop-sso.js" || compareVersions(release.version, "1.7.634") >= 0)
     && (!(name === "pdf-preview.js" || name.startsWith("pdfjs-")) || compareVersions(release.version, "1.7.543") >= 0)
     && (!name.startsWith("pwa-") || compareVersions(release.version, "1.7.548") >= 0));
   if (!Array.isArray(release.files) || release.files.length < requiredFiles.length || release.files.length > 200) throw Error("Неполный комплект файлов обновления.");
