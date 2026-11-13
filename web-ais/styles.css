@@ -32317,3 +32317,10 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-access-email-status .auth-spinner { width: 18px; height: 18px; flex: 0 0 18px; }
 .student-access-email-status [hidden] { display: none; }
 @media (max-width: 600px) { .student-access-email-dialog .student-access-body { grid-template-columns: minmax(0, 1fr); } .student-access-email-dialog .modal-actions button { flex: 1 1 140px; } }
+
+.student-access-email-dialog iframe.is-editing { border-color: var(--primary, #0f766e); box-shadow: 0 0 0 2px #0f766e22; }
+
+.student-access-email-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+.student-access-email-dialog > .modal-head, .student-access-email-dialog > .modal-actions { flex-shrink: 0; }
+.student-access-email-dialog > .student-access-body { min-height: 0; flex: 1 1 auto; overflow: auto; }
+@media (max-width: 600px) { .student-access-email-dialog iframe { height: clamp(160px, calc(100dvh - 500px), 380px); min-height: 160px; } }

@@ -361,26 +361,34 @@ function createService(deps) {
     return deps.lock(`cabinet-access-email:${session.user.studentId}`, async () => {
       const { record, owner, preview } = await cabinetAccessEmail(actor, id);
       if (body.revision !== preview.revision) fail("Данные слушателя или доступа изменились. Обновите предпросмотр письма.", 409);
+      const subject = body.subject === undefined ? preview.subject : body.subject;
+      const message = body.message === undefined ? preview.message : body.message;
+      if (typeof subject !== "string" || !subject.trim() || subject.length > 200 || /[\u0000-\u001f\u007f]/u.test(subject)) fail("Укажите тему письма: от 1 до 200 символов, без переноса строк.");
+      if (typeof message !== "string" || !message.replace(/<[^>]*>/gu, "").replace(/&(?:nbsp|#160|#x0*a0);/giu, " ").trim()
+        || Buffer.byteLength(message, "utf8") > 100000) fail("Заполните текст письма. Максимальный размер — 100 КБ.");
+      // Bind retries to the exact edited content; keep compatibility with earlier unedited requests.
+      const messageHash = subject === preview.subject && message === preview.message ? preview.revision
+        : crypto.createHash("sha256").update(JSON.stringify([preview.revision, subject, message])).digest("hex");
       // Separate namespace; persist only a hash and delivery state, never credentials or message text.
       const ledger = `cabinet-access:${owner.id}`, history = await deps.readFeedbackState(ledger, requestId), previous = history.request;
       const success = { ok: true, email: preview.email, message: `Письмо отправлено на ${preview.email}.` };
       if (previous) {
-        if (previous.messageHash !== preview.revision) fail("Данные письма изменились. Откройте новый предпросмотр.", 409);
+        if (previous.messageHash !== messageHash) fail("Данные письма изменились. Откройте новый предпросмотр.", 409);
         if (previous.status === "sent") return success;
         if (["pending", "unknown"].includes(previous.status)) fail("Результат отправки неизвестен. Проверьте журнал и папку «Отправленные» перед повторной отправкой.", 409);
       }
       if (Date.now() - Number(history.lastAttemptAt || 0) < 30000) fail("Повторную отправку можно выполнить через 30 секунд.", 429);
-      const entry = { requestId, messageHash: preview.revision, status: "pending", createdAt: Date.now() };
+      const entry = { requestId, messageHash, status: "pending", createdAt: Date.now() };
       await deps.saveFeedbackState(ledger, entry);
       try {
-        await deps.sendMail({ to: preview.email, subject: preview.subject, message: preview.message, idempotencyKey: `cabinet-access:${owner.id}:${requestId}` });
+        await deps.sendMail({ to: preview.email, subject, message, idempotencyKey: `cabinet-access:${owner.id}:${requestId}` });
       } catch (error) {
         await deps.saveFeedbackState(ledger, { ...entry, status: error.deliveryUnknown ? "unknown" : "failed" });
         await deps.audit(error.deliveryUnknown ? "Повторная отправка доступа в кабинет не подтверждена" : "Ошибка повторной отправки доступа в кабинет", record, actor, `Получатель: ${preview.email}`);
         if (error.deliveryUnknown) fail("Результат отправки неизвестен. Проверьте журнал и папку «Отправленные» перед повторной отправкой.", 409);
         fail("Не удалось отправить письмо. Повторите отправку позже.", 503);
       }
-      await deps.audit("Повторно отправлено письмо с доступом к личному кабинету", record, actor, `Получатель: ${preview.email}; тема: ${preview.subject}`);
+      await deps.audit("Повторно отправлено письмо с доступом к личному кабинету", record, actor, `Получатель: ${preview.email}; тема: ${subject}`);
       try { await deps.saveFeedbackState(ledger, { ...entry, status: "sent" }); }
       catch { fail("Почтовый сервер принял письмо, но сохранить подтверждение не удалось. Проверьте журнал перед повторной отправкой.", 503); }
       return success;

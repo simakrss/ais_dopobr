@@ -624,7 +624,7 @@ test("access email sends the preview once, records the actor and stores no crede
  const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={id:"manager",role:"manager"},audits=[];
  f.deps.audit=async(...args)=>audits.push(args);
  const before=structuredClone(record),preview=await f.service.previewCabinetAccessEmail(actor,record.id),requestId=require("node:crypto").randomUUID();
- const body={revision:preview.revision,requestId,to:"attacker@example.test",message:"forged"};
+ const body={revision:preview.revision,requestId,to:"attacker@example.test"};
  const results=await Promise.all([f.service.sendCabinetAccessEmail(actor,record.id,body),f.service.sendCabinetAccessEmail(actor,record.id,body)]);
  assert.ok(results.every(r=>r.ok));assert.equal(f.mails.length,1);assert.equal(f.mails[0].to,record.email);assert.equal(f.mails[0].message,preview.message);
  assert.equal(audits.length,1);assert.equal(audits[0][2],actor);assert.match(audits[0][0],/Повторно отправлено/);
@@ -663,4 +663,27 @@ test("known access-email failure permits a deliberate retry after the cooldown",
  const entry=[...f.feedbackLedger.values()][0];assert.equal(entry.status,"failed");entry.createdAt=Date.now()-31000;
  assert.equal((await f.service.sendCabinetAccessEmail(actor,record.id,body)).ok,true);assert.equal(attempts,2);
  assert.equal([...f.feedbackLedger.values()][0].status,"sent");
+});
+
+
+test("edited access email sends exact subject and HTML once without changing the template or account",async()=>{
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={role:"manager"},audits=[];f.deps.audit=async(...args)=>audits.push(args);
+ const before=structuredClone(f.snapshot),preview=await f.service.previewCabinetAccessEmail(actor,record.id);
+ const body={revision:preview.revision,requestId:require("node:crypto").randomUUID(),subject:"Индивидуальная инструкция",message:preview.message+'<p>Дополнение: приложите вторую страницу.</p>'};
+ await f.service.sendCabinetAccessEmail(actor,record.id,body);await f.service.sendCabinetAccessEmail(actor,record.id,body);
+ assert.equal(f.mails.length,1);assert.equal(f.mails[0].subject,body.subject);assert.equal(f.mails[0].message,body.message);assert.match(audits[0][3],/Индивидуальная инструкция/);
+ assert.deepEqual(f.snapshot,before);assert.deepEqual(await f.service.previewCabinetAccessEmail(actor,record.id),preview);
+ await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{...body,message:body.message+'Изменено'}),{statusCode:409});
+ assert.equal(f.mails.length,1);assert.ok(!JSON.stringify([...f.feedbackLedger.values()]).includes(body.message));
+});
+
+test("edited access email validates length, empty HTML and subject header controls before sending",async()=>{
+ const f=fixture();await f.service.provisionOrder("101",{sendWelcome:false});const record=f.snapshot.data.collections.students[0],actor={role:"admin"},preview=await f.service.previewCabinetAccessEmail(actor,record.id);
+ const base={revision:preview.revision,requestId:require("node:crypto").randomUUID()};
+ for(const change of [{subject:""},{subject:"x".repeat(201)},{subject:"Hello\r\nBcc:other@example.test"},{subject:{}},{message:""},{message:"<p><br>&nbsp;</p>"},{message:"я".repeat(50001)},{message:[]}]){
+  await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{...base,...change}),{statusCode:400});
+ }
+ assert.equal(f.mails.length,0);assert.equal(f.feedbackLedger.size,0);
+ record.studentPortalPassword="changed";
+ await assert.rejects(f.service.sendCabinetAccessEmail(actor,record.id,{...base,subject:"Edited",message:"<p>Edited</p>"}),{statusCode:409});
 });

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.632",
+    version: "1.7.633",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.633",
+      releasedAt: "2026-11-13",
+      changes: ["В предпросмотре письма с доступом в кабинет слушателя можно изменить тему и отредактировать текст с сохранением ссылок и оформления. Отправляется отредактированный вариант; обновление предпросмотра сохраняет правки, общий шаблон не изменяется."]
+    },
     {
       version: "1.7.632",
       releasedAt: "2026-11-13",
@@ -38175,16 +38180,39 @@ MAX - https://bizvmax.ru/zifra_plus
     const dialog = document.createElement("dialog"); dialog.className = "modal student-access-dialog student-access-email-dialog";
     dialog.setAttribute("aria-labelledby", "student-access-email-title");
     dialog.innerHTML = `<header class="modal-head"><div><p class="eyebrow">Личный кабинет слушателя</p><h2 id="student-access-email-title">Письмо с данными доступа</h2></div><button type="button" class="icon-button" data-access-email-close aria-label="Закрыть">×</button></header>
-      <div class="form-grid student-form-grid student-access-body"><label><span>Получатель</span><input readonly data-access-email-to></label><label><span>Тема письма</span><input readonly data-access-email-subject></label>
-      <iframe data-access-email-frame title="Предварительный просмотр письма с доступом" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe></div>
+      <div class="form-grid student-form-grid student-access-body"><label><span>Получатель</span><input readonly data-access-email-to></label><label><span>Тема письма</span><input data-access-email-subject maxlength="200" disabled></label>
+      <iframe data-access-email-frame title="Предварительный просмотр письма с доступом" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe></div>
       <footer class="modal-actions"><div class="student-access-email-status" role="status" aria-live="polite"><span class="auth-spinner" data-access-email-busy hidden aria-hidden="true"></span><span data-access-email-status></span></div>
-      <small>Получатель и данные доступа берутся из сохранённой карточки. Письмо отправится после нажатия кнопки «Отправить письмо».</small>
-      <button type="button" class="ghost-button" data-access-email-refresh>Обновить предпросмотр</button><button type="button" class="primary-button" data-access-email-send disabled>Отправить письмо</button></footer>`;
+      <small>Получатель и данные доступа берутся из сохранённой карточки. Тему и текст можно изменить только для этой отправки.</small>
+      <button type="button" class="ghost-button" data-access-email-edit aria-pressed="false" disabled>Редактировать текст</button><button type="button" class="ghost-button" data-access-email-refresh>Обновить предпросмотр</button><button type="button" class="primary-button" data-access-email-send disabled>Отправить письмо</button></footer>`;
     const send = dialog.querySelector("[data-access-email-send]"), refresh = dialog.querySelector("[data-access-email-refresh]"), close = dialog.querySelector("[data-access-email-close]");
     const status = dialog.querySelector("[data-access-email-status]"), spinner = dialog.querySelector("[data-access-email-busy]");
-    let preview = null, busy = false, sending = false, sent = false, attempted = false, requestId = crypto.randomUUID();
+    const subject = dialog.querySelector("[data-access-email-subject]"), frame = dialog.querySelector("[data-access-email-frame]"), edit = dialog.querySelector("[data-access-email-edit]");
+    let preview = null, busy = false, sending = false, sent = false, attempted = false, uncertain = false, editing = false, message = "", frameReady = false, requestId = crypto.randomUUID();
+    const configureEditor = () => {
+      if (!frameReady) return;
+      const body = frame.contentDocument?.body;
+      if (body) { body.contentEditable = String(Boolean(preview) && editing && !busy && !sent && !uncertain); body.spellcheck = true;
+        body.setAttribute("role", editing ? "textbox" : "document"); body.setAttribute("aria-label", "Текст письма"); if (editing) body.setAttribute("aria-multiline", "true"); else body.removeAttribute("aria-multiline"); }
+      frame.classList.toggle("is-editing", editing);
+      edit.textContent = editing ? "Предпросмотр" : "Редактировать текст"; edit.setAttribute("aria-pressed", String(editing));
+    };
+    const changed = () => { if (attempted && !uncertain && !sent) { requestId = crypto.randomUUID(); attempted = false; } };
+    subject.addEventListener("input", changed);
+    frame.addEventListener("load", () => {
+      frameReady = true; configureEditor();
+      const body = frame.contentDocument?.body; if (!body) return;
+      // Keep the DOM and caret in place during input, including trailing empty paragraphs.
+      body.addEventListener("input", () => { if (editing && !busy && !sent && !uncertain) { message = body.innerHTML; changed(); } });
+      body.addEventListener("click", event => { if (editing && event.target.closest("a")) event.preventDefault(); });
+      body.addEventListener("paste", event => { if (!editing) return; event.preventDefault(); frame.contentDocument.execCommand("insertText", false, event.clipboardData?.getData("text/plain") || ""); });
+      body.addEventListener("drop", event => { if (!editing) return; event.preventDefault(); frame.contentDocument.execCommand("insertText", false, event.dataTransfer?.getData("text/plain") || ""); });
+    });
+    const renderPreview = () => { frameReady = false; frame.srcdoc = buildGeneratedDocumentEmailPreviewHtml(message); };
+    edit.onclick = () => { if (busy || sent || uncertain || !preview || !frameReady) return; editing = !editing; configureEditor(); if (editing) frame.contentDocument.body.focus(); };
     const setBusy = (value, message) => { busy = value; spinner.hidden = !value; dialog.setAttribute("aria-busy", String(value)); status.textContent = message;
-      send.disabled = value || !preview || sent; refresh.disabled = value || sent; close.disabled = sending; };
+      send.disabled = value || !preview || sent || uncertain; refresh.disabled = value || sent || uncertain; close.disabled = sending;
+      subject.disabled = value || sent || uncertain || !preview; edit.disabled = value || sent || uncertain || !preview; configureEditor(); };
     const request = body => window.AIS_AUTH_API.request(`api/students/portal-preview/access-email?studentId=${encodeURIComponent(studentId)}`, {
       method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(body.operation === "send" ? 150000 : 30000)
     });
@@ -38196,25 +38224,26 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!dialog.isConnected) return;
         preview = result;
         dialog.querySelector("[data-access-email-to]").value = `${result.name || ""} — ${result.email}`;
-        dialog.querySelector("[data-access-email-subject]").value = result.subject;
-        dialog.querySelector("[data-access-email-frame]").srcdoc = buildGeneratedDocumentEmailPreviewHtml(result.message);
+        subject.value = result.subject; message = result.message; editing = false; renderPreview(); refresh.textContent = "Обновить предпросмотр";
         setBusy(false, "Проверьте получателя и текст письма.");
       } catch (error) { if (dialog.isConnected) setBusy(false, error.message || "Не удалось подготовить письмо."); }
     };
     send.onclick = async () => {
-      if (busy || !preview || sent) return;
+      if (busy || !preview || sent || uncertain) return;
+      if (!subject.value.trim()) { status.textContent = "Укажите тему письма."; subject.focus(); return; }
+      if (!new DOMParser().parseFromString(message, "text/html").body.textContent.trim()) { status.textContent = "Введите текст письма."; return; }
       sending = true; attempted = true; setBusy(true, "Отправка письма…");
       try {
-        const result = await request({ operation: "send", revision: preview.revision, requestId });
+        const result = await request({ operation: "send", revision: preview.revision, requestId, subject: subject.value, message });
         sent = true; setBusy(false, result.message || "Письмо отправлено.");
       } catch (error) {
         const unknown = !error.status || /неизвестен|не удалось.*подтверждение|перед повторной отправкой/iu.test(error.message || "");
         setBusy(false, unknown ? "Результат отправки неизвестен. Проверьте историю действий и папку «Отправленные» перед повторной отправкой." : error.message || "Не удалось отправить письмо.");
-        if (unknown) { send.disabled = true; refresh.disabled = true; }
-        else if (error.status === 409) { preview = null; send.disabled = true; }
+        if (unknown) { uncertain = true; send.disabled = true; refresh.disabled = true; subject.disabled = true; edit.disabled = true; configureEditor(); }
+        else if (error.status === 409) { preview = null; send.disabled = true; subject.disabled = true; edit.disabled = true; refresh.textContent = "Загрузить актуальное письмо"; status.textContent += " При загрузке актуального письма правки будут сброшены."; configureEditor(); }
       } finally { sending = false; close.disabled = false; }
     };
-    refresh.onclick = () => { if (attempted && !preview) { requestId = crypto.randomUUID(); attempted = false; } load(); };
+    refresh.onclick = () => { if (busy || sent || uncertain) return; if (preview) { renderPreview(); status.textContent = "Предпросмотр обновлён. Правки сохранены в текущем письме."; return; } if (attempted) { requestId = crypto.randomUUID(); attempted = false; } load(); };
     close.onclick = () => { if (!sending) dialog.close(); };
     dialog.addEventListener("cancel", event => { if (sending) event.preventDefault(); });
     dialog.addEventListener("close", () => { dialog.remove(); document.querySelector("[data-student-portal-menu]")?.focus({ preventScroll: true }); }, { once: true });

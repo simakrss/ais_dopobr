@@ -166,14 +166,14 @@ test("order email credentials require a signed recipient and are never cacheable
 
 test("staff cabinet access-email route requires staff POST, no demo, bounded body and no-store preview", async()=>{
  const {context}=handlers(),actor={id:"manager",role:"manager"},calls=[];
- let body={operation:"preview"};context.readJsonBody=async(_req,limit)=>{assert.equal(limit,4096);return body;};
+ let body={operation:"preview"};context.readJsonBody=async(_req,limit)=>{assert.equal(limit,128*1024);return body;};
  context.getStudentEnrollmentService=()=>({previewCabinetAccessEmail:async(user,id)=>{calls.push({operation:"preview",user,id});return{ok:true};},sendCabinetAccessEmail:async(user,id,payload)=>{calls.push({operation:"send",user,id,payload});return{ok:true};}});
  context.sendJson=(_res,status,data,headers)=>({status,data,headers});const url=new URL("https://example.test/api/students/portal-preview/access-email?studentId=one");
  for(const role of ["student","partner",undefined])await assert.rejects(context.handleStaffStudentPortal({method:"POST"},{},{role},url),{statusCode:403});
  await assert.rejects(context.handleStaffStudentPortal({method:"GET"},{},actor,url),{statusCode:405});
  context.isDatabaseDemoModeEnabled=()=>true;await assert.rejects(context.handleStaffStudentPortal({method:"POST"},{},actor,url),{statusCode:403});context.isDatabaseDemoModeEnabled=()=>false;
  const result=await context.handleStaffStudentPortal({method:"POST"},{},actor,url);assert.equal(result.status,200);assert.equal(result.headers["Cache-Control"],"private, no-store");
- body={operation:"send",revision:"fixture",requestId:"fixture"};await context.handleStaffStudentPortal({method:"POST"},{},actor,url);
+ body={operation:"send",revision:"fixture",requestId:"fixture",subject:"Правки",message:"<p>Дополнение</p>"};await context.handleStaffStudentPortal({method:"POST"},{},actor,url);
  assert.deepEqual(calls.map(c=>[c.operation,c.id]),[["preview","one"],["send","one"]]);assert.equal(calls[1].user,actor);assert.equal(calls[1].payload,body);
  body={operation:"delete"};await assert.rejects(context.handleStaffStudentPortal({method:"POST"},{},actor,url),{statusCode:400});
 });
