@@ -2,13 +2,13 @@
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const root = path.resolve(__dirname, ".."), png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
-const record = { id: "first", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Повышение квалификации", status: "Учится", citizenship: "Российская Федерация", workPlace: "Школа" };
+const record = { id: "first", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Повышение квалификации", status: "Учится", citizenship: "Россия", workPlace: "Школа", enrollmentNameChanged: false, educationDocumentSurname: "Тестовая" };
 const messages = [{ id: "root", threadId: "thread", direction: "student", status: "sent", createdAt: 1, subject: "Вопрос о документах", message: "Где получить документ?" },
   { id: "answer", threadId: "thread", direction: "center", status: "sent", createdAt: 2, subject: "Ответ", message: "Документ будет готов завтра. <script>window.injection=true</script>" }];
 let paid = false, photo = false, sent, photoUploads = 0, awardReads = [];
 const view = () => ({ user: { name: record.name, email: record.email }, record, photoAvailable: photo, applications: [{ id: "first", program: record.program, status: "Учится" }], fields: [
-  { key: "name", label: "ФИО", type: "text", required: true }, { key: "citizenship", label: "Гражданство", type: "select", required: true, options: ["Российская Федерация", "Казахстан"] },
-  { key: "workPlace", label: "Место работы", type: "combo", required: true, options: ["Школа", "Не работаю"] }],
+  { key: "name", label: "ФИО", type: "text", required: true }, { key: "citizenship", label: "Гражданство", type: "combo", required: true, options: ["Беларусь", "Казахстан", "Россия", "Узбекистан"] },
+  { key: "workPlace", label: "Место работы", type: "combo", required: true, options: ["Школа", "Не работаю"] }, { key: "enrollmentNameChanged", label: "ФИО в документе об образовании отличается от паспорта", type: "checkbox" }, { key: "educationDocumentSurname", label: "Фамилия в документе об образовании", type: "text", dependsOn: "enrollmentNameChanged" }],
   missing: [], documents: [], requirements: [], finances: { total: 10000, paid: paid ? 10000 : 5000, debt: paid ? 0 : 5000, payments: [] }, feedbackRecipient: "center@example.test" });
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://test"), chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -39,11 +39,21 @@ const server = http.createServer(async (req, res) => {
     await context.route("https://zifra-plus.ru/**", route => route.fulfill({ contentType: "text/html", body: "Тестовая страница оплаты ЮKassa" }));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('[data-tab="main"]').click();
-    assert.equal(await page.locator('[name="citizenship"]').evaluate(el => el.tagName), "SELECT");
-    assert.equal(await page.locator('[name="workPlace"]').getAttribute("list"), "student-options-workPlace");
+    assert.equal(await page.locator('.student-program-name, .student-program-status').count(), 0);
+    assert.equal(await page.locator('[name="citizenship"]').getAttribute("role"), "combobox");
+    assert.ok(await page.locator('[name="educationDocumentSurname"]').isHidden());
+    await page.locator('[name="enrollmentNameChanged"]').check();
+    assert.ok(await page.locator('[name="educationDocumentSurname"]').isVisible());
+    await page.locator('[name="educationDocumentSurname"]').fill('Прежняя');
+    await page.locator('[name="citizenship"]').fill('Бел');
+    await page.getByRole('option', { name: 'Беларусь', exact: true }).waitFor();
+    assert.equal(await page.locator('#student-options-citizenship [role="option"]:visible').count(), 1);
+    await page.locator('[name="citizenship"]').press('ArrowDown'); await page.locator('[name="citizenship"]').press('Enter');
+    assert.equal(await page.locator('[name="citizenship"]').inputValue(), 'Беларусь');
+    assert.equal(await page.locator('[name="citizenship"]').getAttribute('aria-expanded'), 'false');
     await page.locator('[name="workPlace"]').fill("Новая организация");
     await page.locator('[data-photo]').setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png });
-    await page.getByText("Фотография сохранена.", { exact: true }).waitFor(); assert.equal(photoUploads, 1); assert.equal(record.workPlace, "Новая организация");
+    await page.getByText("Фотография сохранена.", { exact: true }).waitFor(); assert.equal(photoUploads, 1); assert.equal(record.workPlace, "Новая организация"); assert.equal(record.educationDocumentSurname, "Прежняя"); assert.equal(record.citizenship, "Беларусь");
     assert.ok(await page.locator('.student-profile-photo img').isVisible());
     await page.locator('[data-tab="feedback"]').click(); await page.getByText("Документ будет готов завтра.", { exact: false }).waitFor();
     assert.equal(await page.evaluate(() => window.injection), undefined);
@@ -63,6 +73,11 @@ const server = http.createServer(async (req, res) => {
     await page.screenshot({ path: path.join(dir, 'mobile-correspondence.png'), fullPage: true, animations: 'disabled' });
     await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
     await page.screenshot({ path: path.join(dir, 'mobile-awards.png'), fullPage: true, animations: 'disabled' });
+    await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="main"]').click();
+    await page.locator('[name="citizenship"]').click();
+    const listBox = await page.locator('#student-options-citizenship').boundingBox();
+    assert.ok(listBox && listBox.x >= 0 && listBox.x + listBox.width <= 391 && listBox.y >= 0 && listBox.y + listBox.height <= 845);
+    await page.screenshot({ path: path.join(dir, 'mobile-profile-lookup.png'), fullPage: true, animations: 'disabled' });
     assert.deepEqual(errors, []); console.log('PASS: photo, dictionaries, persistent correspondence, escaped mail, thread reply, payment popup/refresh, multiple programs and mobile awards preview');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

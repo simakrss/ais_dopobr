@@ -3,6 +3,14 @@ const crypto = require("node:crypto");
 const text = value => String(value ?? "").trim();
 const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
 const cents = value => Math.round(Number(value) * 100);
+function layoutAvailable(record) {
+  const deleted = text(record.eventDeleted).split(/[,;\s]+/u);
+  return ["educationDocMaketApproved", "macro_hb0dir"].some(key => {
+    const state = text(record[`event_${key}_state`]).toLowerCase();
+    return !deleted.includes(key) && !["unchecked", "none", "false", "0"].includes(state)
+      && (["checked", "dated"].includes(state) || Boolean(record[`event_${key}_date`]));
+  });
+}
 function rootFolder(record, documentFolder) {
   const folder = documentFolder(record).replace(/\/+$/u, "").replace(/\/Документы$/iu, "");
   if (!folder || !folder.includes("/")) fail("Не настроена личная папка слушателя.", 409);
@@ -47,10 +55,11 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     await deps.audit(kind === "layout" ? "Сохранён макет документа в кабинете слушателя" : "Загружен скан выданного документа об образовании", updated, actor);
     return { ok: true, files: updated.educationDocumentFiles };
   }
-  function publicAwards(records) {
+  function publicAwards(records, staff = false) {
     return { programs: records.map(record => ({ id: record.id, program: record.program, educationType: record.educationType,
       number: text(record.diplomaBlankNo), debt: finances(record).debt,
-      files: (record.educationDocumentFiles || []).map(({ id, kind, name, size, uploadedAt, unassigned }) => ({ id, kind, name, size, uploadedAt, unassigned: Boolean(unassigned) })) })) };
+      files: (record.educationDocumentFiles || []).filter(entry => staff || entry.kind !== "layout" || (!entry.unassigned && layoutAvailable(record)))
+        .map(({ id, kind, name, size, uploadedAt, unassigned }) => ({ id, kind, name, size, uploadedAt, unassigned: Boolean(unassigned) })) })) };
   }
   async function awardRoot(record, current = null) {
     current ||= await deps.readState();
@@ -86,12 +95,13 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     return result;
   }
   async function awards(user, id) { return publicAwards(await discover((await context(user, id)).records)); }
-  async function staffAwards(actor, id) { return publicAwards(await discover([await staffRecord(actor, id)])); }
+  async function staffAwards(actor, id) { return publicAwards(await discover([await staffRecord(actor, id)]), true); }
   async function awardFile(user, id, fileId, staff = false) {
     let records = staff ? [await staffRecord(user, id)] : (await context(user, id)).records;
     if (String(fileId || "").startsWith("disk-")) records = await discover(records);
     const record = records.find(item => item.id === id), entry = record?.educationDocumentFiles?.find(item => item.id === fileId);
     if (!entry || /[\\/]/u.test(entry.name)) fail("Документ не найден.", 404);
+    if (!staff && entry.kind === "layout" && (entry.unassigned || !layoutAvailable(record))) fail("Макет пока недоступен. Доступ появится после согласования макета или отправки электронного документа учебным центром.", 403);
     // The location comes exclusively from the saved, staff-owned attachment metadata.
     const file = await deps.download(entry.folder, entry.name);
     if (/\.docx$/iu.test(entry.name)) return { body: await deps.toPdf(file.body), contentType: "application/pdf", name: entry.name.replace(/\.docx$/iu, ".pdf") };

@@ -110,8 +110,8 @@
     host.textContent = "Загрузка документов…";
     try {
       const result = await request("/awards"); if (id !== state.record.id || !host.isConnected) return;
-      host.innerHTML = result.programs.map(program => `<article class="student-award-program"><h3>${esc(program.program)}</h3>${program.number ? `<p>Номер бланка: ${esc(program.number)}</p>` : ""}${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}${program.files.length ? program.files.map(file => `<div class="student-award-file"><span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span><button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button><button type="button" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Скачать</button></div>`).join("") : "<p>Учебный центр пока не разместил макет или скан документа по этой программе.</p>"}</article>`).join("");
-      host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.onclick = () => openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName); });
+      host.innerHTML = result.programs.map(program => `<article class="student-award-program"><h3>${esc(program.program)}</h3>${program.number ? `<p>Номер бланка: ${esc(program.number)}</p>` : ""}${program.debt > 0 ? '<p class="student-debt-note">Документ об образовании будет выдан после полного погашения задолженности.</p>' : ""}${program.files.length ? program.files.map(file => `<div class="student-award-file"><span><strong>${file.kind === "layout" ? "Макет документа" : "Скан документа"}</strong><small>${file.unassigned ? "Из общей папки слушателя · программа не определена · " : ""}${esc(file.name)}</small></span><button type="button" data-award-view="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">Просмотр</button><a href="${esc(api.appUrl(url("/award-file", program.id)))}&amp;file=${encodeURIComponent(file.id)}" download="${esc(file.name)}" data-award-download="${esc(file.id)}" data-application-id="${esc(program.id)}" data-file-name="${esc(file.name)}">${file.kind === "layout" ? "Скачать макет" : "Скачать"}</a></div>`).join("") : "<p>Доступных документов по этой программе пока нет. Макет появится после согласования или отправки электронного документа учебным центром.</p>"}</article>`).join("");
+      host.querySelectorAll("[data-award-view], [data-award-download]").forEach(button => { button.onclick = event => { event.preventDefault(); openFile(button.dataset.awardView || button.dataset.awardDownload, Boolean(button.dataset.awardView), "/award-file", button.dataset.applicationId, button.dataset.fileName); }; });
     } catch (error) { host.textContent = error.message || "Не удалось загрузить документы."; }
   }
   function financeActions() {
@@ -193,16 +193,66 @@
     if (item.type === "checkbox") return `<label class="student-portal-check"><input type="checkbox" name="${esc(item.key)}" ${value === true ? "checked" : ""}> ${esc(item.label)}</label>`;
     let control;
     if (item.type === "select") control = `<select ${attributes}><option value="">Выберите значение</option>${item.options.map(option => `<option ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}</select>`;
-    else if (item.type === "combo") control = `<input ${attributes} type="text" list="student-options-${esc(item.key)}" value="${esc(value)}"><datalist id="student-options-${esc(item.key)}">${item.options.map(option => `<option value="${esc(option)}"></option>`).join("")}</datalist>`;
+    else if (item.type === "combo") control = `<div class="combo-field" data-student-combo><div class="combo-input-wrap"><input ${attributes} type="text" value="${esc(value)}" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="student-options-${esc(item.key)}"><button type="button" class="combo-clear" data-combo-clear aria-label="Очистить значение" title="Очистить"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"></path></svg></button></div><div class="combo-options student-combo-options" id="student-options-${esc(item.key)}" role="listbox" aria-label="${esc(item.label)}" popover="auto">${item.options.map((option, index) => `<button type="button" role="option" tabindex="-1" id="student-option-${esc(item.key)}-${index}" data-value="${esc(option)}" aria-selected="${option === value}" class="${option === value ? "is-selected" : ""}">${esc(option)}</button>`).join("")}<span class="combo-empty" hidden>Нет совпадений. Можно ввести своё значение.</span></div></div>`;
     else if (item.type === "textarea") control = `<textarea ${attributes} rows="3">${esc(value)}</textarea>`;
     else control = `<input ${attributes} type="${item.type}" value="${esc(value)}">`;
-    return `<label><span>${esc(item.label)}${item.required ? ' <b aria-label="обязательно">*</b>' : ""}</span>${control}</label>`;
+    return `<label ${item.dependsOn ? `data-depends-on="${esc(item.dependsOn)}"` : ""}><span>${esc(item.label)}${item.required || item.dependsOn ? ' <b aria-label="обязательно">*</b>' : ""}</span>${control}</label>`;
+  }
+  function conditionalFields() {
+    const form = root.querySelector("[data-profile]");
+    form.querySelectorAll("[data-depends-on]").forEach(label => {
+      label.hidden = !form.elements[label.dataset.dependsOn]?.checked;
+      label.querySelector("input").required = !label.hidden;
+    });
+  }
+  let comboEvents;
+  function bindCombos() {
+    comboEvents?.abort(); comboEvents = new AbortController();
+    root.querySelectorAll("[data-student-combo]").forEach(combo => {
+      const input = combo.querySelector("input"), list = combo.querySelector("[role=listbox]"), options = [...list.querySelectorAll("[role=option]")];
+      let active = -1;
+      const close = () => { if (list.matches(":popover-open")) list.hidePopover(); input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); active = -1; };
+      const place = () => {
+        if (!list.matches(":popover-open")) return;
+        const box = input.getBoundingClientRect(), below = innerHeight - box.bottom - 12, above = box.top - 12;
+        const up = below < 200 && above > below, height = Math.max(60, Math.min(260, up ? above : below));
+        list.style.width = `${Math.min(box.width, innerWidth - 16)}px`; list.style.left = `${Math.max(8, Math.min(box.left, innerWidth - box.width - 8))}px`;
+        list.style.maxHeight = `${height}px`; list.style.top = `${up ? Math.max(8, box.top - Math.min(list.scrollHeight, height) - 6) : box.bottom + 6}px`;
+      };
+      const open = (filter = false) => {
+        if (busy) return;
+        const search = filter ? input.value.trim().toLocaleLowerCase("ru") : "";
+        options.forEach(option => { option.hidden = !option.dataset.value.toLocaleLowerCase("ru").includes(search); option.classList.toggle("is-selected", option.dataset.value === input.value); option.setAttribute("aria-selected", String(option.dataset.value === input.value)); });
+        list.querySelector(".combo-empty").hidden = options.some(option => !option.hidden);
+        active = -1; input.removeAttribute("aria-activedescendant");
+        list.showPopover(); input.setAttribute("aria-expanded", "true"); place();
+      };
+      input.onfocus = () => open(); input.onclick = () => { if (!list.matches(":popover-open")) open(); }; input.oninput = () => open(true);
+      input.onblur = event => { if (!combo.contains(event.relatedTarget)) close(); };
+      list.addEventListener("toggle", () => { input.setAttribute("aria-expanded", String(list.matches(":popover-open"))); });
+      const choose = option => { input.value = option.dataset.value; input.dispatchEvent(new Event("input", { bubbles: true })); input.focus(); close(); };
+      options.forEach(option => { option.onpointerdown = event => event.preventDefault(); option.onclick = event => { event.preventDefault(); choose(option); }; });
+      combo.querySelector("[data-combo-clear]").onclick = event => { event.preventDefault(); input.value = ""; input.focus(); input.dispatchEvent(new Event("input", { bubbles: true })); };
+      input.onkeydown = event => {
+        if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+          event.preventDefault(); if (!list.matches(":popover-open")) open();
+          const visible = options.filter(option => !option.hidden); if (!visible.length) return;
+          active = (active + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length;
+          options.forEach(option => option.classList.remove("is-active")); visible[active].classList.add("is-active");
+          input.setAttribute("aria-activedescendant", visible[active].id); visible[active].scrollIntoView({ block: "nearest" });
+        } else if (event.key === "Enter" && list.matches(":popover-open") && active >= 0) {
+          event.preventDefault(); choose(options.filter(option => !option.hidden)[active]);
+        } else if (["Escape", "Tab"].includes(event.key)) { if (event.key === "Escape") event.preventDefault(); close(); }
+      };
+      window.addEventListener("resize", place, { signal: comboEvents.signal });
+      window.addEventListener("scroll", place, { capture: true, signal: comboEvents.signal });
+    });
   }
   function render() {
     dirty = false;
     root.innerHTML = `<div class="partner-shell student-shell">${shellSidebar()}<div class="partner-workspace">${shellHeader()}<main class="partner-content student-portal">
       ${previewStudentId ? '<p class="student-portal-staff-notice" role="status">Кабинет открыт от имени слушателя. Вы продолжаете работать как сотрудник; действия записываются в журнал под вашей учётной записью.</p>' : ""}
-      <section class="partner-panel student-program-panel" aria-label="Выбор программы"><label>Программа обучения<select data-application aria-label="Программа обучения">${state.applications.map(row => `<option value="${esc(row.id)}" ${row.id === state.record.id ? "selected" : ""}>${esc(row.program)} · ${esc(row.status)}</option>`).join("")}</select></label><p class="student-program-name">${esc(state.record.program)}</p><span class="student-program-status">${esc(state.record.status)}</span></section>
+      <section class="partner-panel student-program-panel" aria-label="Выбор программы"><label>Программа обучения<select data-application aria-label="Программа обучения">${state.applications.map(row => `<option value="${esc(row.id)}" ${row.id === state.record.id ? "selected" : ""}>${esc(row.program)} · ${esc(row.status)}</option>`).join("")}</select></label></section>
       <div data-message role="alert" hidden></div><div data-progress role="status" hidden><progress aria-label="Выполняется операция"></progress><span></span></div>
       <section class="partner-panel student-section-panel">
       <aside class="student-portal-review" data-review-status="${esc(state.record.enrollmentReviewStatus || "Заполняется")}" aria-label="Результат проверки документов"><div><strong>Документы: ${esc(state.record.enrollmentReviewStatus || "Заполняется")}</strong><button type="button" data-review-refresh>Обновить статус</button></div>${state.record.enrollmentReviewComment ? `<p class="muted">${["Приняты", "На доработке"].includes(state.record.enrollmentReviewStatus) ? "Комментарий учебного центра" : "Предыдущий комментарий учебного центра"}${state.record.enrollmentReviewedAt ? ` · ${esc(new Date(state.record.enrollmentReviewedAt).toLocaleString("ru-RU"))}` : ""}</p><p class="student-portal-review-comment">${esc(state.record.enrollmentReviewComment)}</p>` : ""}${state.record.enrollmentReviewStatus === "На доработке" ? "<p>Исправьте замечания, сохраните данные и нажмите «Отправить на проверку» повторно.</p>" : ""}</aside>
@@ -214,7 +264,8 @@
       <section data-panel="awards" ${tab !== "awards" ? "hidden" : ""}><h2>Документ об образовании</h2><p>Макеты и сканы по всем Вашим программам обучения.</p><button type="button" data-awards-refresh>Обновить документы</button><div data-awards-list></div></section>
       ${feedbackPanel()}
       <footer data-enrollment-footer ${["finances", "feedback", "awards"].includes(tab) ? "hidden" : ""}><p data-submit-hint role="status"></p><button class="primary-button" type="button" data-submit>Отправить на проверку</button></footer></section></main><footer class="partner-footer">ООО «Цифровизация Плюс» · Кабинет слушателя</footer></div></div>`;
-    root.querySelector("[data-profile]").addEventListener("input", () => { dirty = true; availability(); });
+    bindCombos(); conditionalFields();
+    root.querySelector("[data-profile]").addEventListener("input", () => { dirty = true; conditionalFields(); availability(); });
     root.querySelector("[data-profile]").addEventListener("submit", event => { event.preventDefault(); run("Сохранение данных…", async () => { state = await request("/profile", profile()); render(); message("Данные сохранены."); }); });
     const feedbackForm = root.querySelector("[data-feedback-form]");
     root.querySelector("[data-feedback-refresh]").onclick = () => loadHistory(true);

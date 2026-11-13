@@ -704,12 +704,27 @@ function Publish-VituEmailExport {
   Write-Host "VITU prior files preserved outside public_html and in $backupRoot"
 }
 
+function Resolve-MoodleSsoRoot {
+  # Moodle 5.3 moved public code into moodle53/public. Check only the live site
+  # paths; never select upgrade staging folders or backups.
+  $candidates = @('/portal.edu-plus.ru/moodle53/public', '/portal.edu-plus.ru/public_html')
+  $matches = @($candidates | Where-Object {
+    (Get-FtpFileSize "$_/ais-sso.php") -gt 0 -and (Get-FtpFileSize "$_/config.php") -gt 0
+  } | Where-Object {
+    $entry = Read-ProgramSitePrivateFile "$_/ais-sso.php"
+    $entry.Contains('https://portal.edu-plus.ru') -and $entry.Contains('ais_sso_assertion')
+  })
+  if ($matches.Count -ne 1) { throw 'Could not uniquely locate the existing Moodle SSO installation. No files changed.' }
+  return [string]$matches[0]
+}
+
 $results = if ($MoodleSso) {
-  if ((Get-FtpFileSize '/portal.edu-plus.ru/public_html/config.php') -lt 1) { throw 'Moodle config.php was not found. No files changed.' }
+  $moodleRoot = Resolve-MoodleSsoRoot
+  $moodlePrivateRoot = $moodleRoot.Substring(0, $moodleRoot.LastIndexOf('/'))
   $remoteKeys = (Read-ProgramSitePrivateFile '/edu-plus.ru/lms-runtime/data/program-site-keys.json') | ConvertFrom-Json
   $localKeys = [IO.File]::ReadAllText((Join-Path $appRoot 'storage/program-site-keys.json')) | ConvertFrom-Json
   if (-not $remoteKeys.edu -or $remoteKeys.edu -cne $localKeys.edu) { throw 'SSO issuer key mismatch. No files changed.' }
-  if ($MoodleCheckOnly) { Write-Host 'Moodle installation and private issuer key verified. No files changed.' }
+  if ($MoodleCheckOnly) { Write-Host "Moodle installation verified at $moodleRoot; private issuer key verified. No files changed." }
   else {
     $tracked = @(& (Get-GitPath) -C $repositoryRoot ls-files -- web-ais/services/moodle/ais-sso.php)
     if (-not $tracked.Count -or (& (Get-GitPath) -C $repositoryRoot diff HEAD --name-only -- web-ais/services/moodle/ais-sso.php)) { throw 'Commit Moodle integration before deployment.' }
@@ -721,8 +736,8 @@ $results = if ($MoodleSso) {
     [IO.Directory]::CreateDirectory((Split-Path -Parent $keyFile)) | Out-Null
     try {
       [IO.File]::WriteAllText($keyFile, $derived, $utf8)
-      Publish-FileTarget 'tmp/ais-sso-publish.key' '/portal.edu-plus.ru/ais-sso.key' 'private Moodle SSO key'
-      Publish-FileTarget 'services/moodle/ais-sso.php' '/portal.edu-plus.ru/public_html/ais-sso.php' 'Moodle SSO entry'
+      Publish-FileTarget 'tmp/ais-sso-publish.key' "$moodlePrivateRoot/ais-sso.key" 'private Moodle SSO key'
+      Publish-FileTarget 'services/moodle/ais-sso.php' "$moodleRoot/ais-sso.php" 'Moodle SSO entry'
     } finally { Remove-Item -LiteralPath $keyFile -Force -ErrorAction SilentlyContinue }
   }
 } elseif ($VituEmailExportRoot) {

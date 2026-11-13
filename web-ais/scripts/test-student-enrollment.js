@@ -32,11 +32,56 @@ test("dictionary controls preserve current legacy values, reject forged selectio
   f.snapshot.data.dictionaries = { citizenships: ["Российская Федерация", "Казахстан"], educationLevels: ["СПО", "Высшее"], workPlaces: ["Школа"] };
   record.passportType = "Архивный вид";
   const view = await f.service.portal(user, record.id);
-  assert.equal(view.fields.find(item => item.key === "passportType").type, "select");
+  assert.equal(view.fields.find(item => item.key === "passportType").type, "combo");
   assert.ok(view.fields.find(item => item.key === "passportType").options.includes("Архивный вид"));
   assert.equal(view.fields.find(item => item.key === "workPlace").type, "combo");
   await f.service.update(user, record.id, { citizenship: "Казахстан", educationLevel: "Высшее", workPlace: "Новая организация" });
   await assert.rejects(f.service.update(user, record.id, { educationLevel: "Несуществующий уровень" }), { statusCode: 400 });
+});
+test("portal lookups match card dictionaries and saved values without duplicate Russian citizenship", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  f.snapshot.data.dictionaries = { citizenships: ["Россия", "Российская Федерация", "Армения"] };
+  f.snapshot.data.collections.students.push({ id: "other", name: "Чужие личные данные", citizenship: "Узбекистан", workPlace: "Школа", passportType: "Иной документ" });
+  record.citizenship = "РФ";
+  const view = await f.service.portal(user, record.id);
+  assert.deepEqual(view.fields.find(item => item.key === "citizenship").options, ["Армения", "Россия", "Узбекистан"]);
+  assert.equal(view.record.citizenship, "Россия");
+  assert.ok(view.fields.find(item => item.key === "passportType").options.includes("Иной документ"));
+  assert.ok(!JSON.stringify(view).includes("Чужие личные данные"));
+  await f.service.update(user, record.id, { citizenship: "Франция" });
+  assert.equal(f.snapshot.data.collections.students[0].citizenship, "Франция");
+});
+test("education surname follows the name-change checkbox and the shared card field", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
+  let view = await f.service.update(user, record.id, { name: "Новая Анна Петровна", enrollmentNameChanged: false, educationDocumentSurname: "Старая" });
+  assert.equal(view.record.educationDocumentSurname, "Новая");
+  assert.equal(view.fields.find(item => item.key === "educationDocumentSurname").required, false);
+  assert.ok(!view.missing.includes("Фамилия в документе об образовании"));
+  view = await f.service.update(user, record.id, { enrollmentNameChanged: true, educationDocumentSurname: "" });
+  assert.ok(view.missing.includes("Фамилия в документе об образовании"));
+  view = await f.service.update(user, record.id, { educationDocumentSurname: "Прежняя" });
+  assert.equal(f.snapshot.data.collections.students[0].educationDocumentSurname, "Прежняя");
+  assert.equal(view.requirements.find(item => item.key === "nameChange").required, true);
+  f.snapshot.data.collections.students[0].enrollmentNameChanged = false;
+  assert.equal((await f.service.portal(user, record.id)).record.enrollmentNameChanged, true, "staff-entered different surname also selects the checkbox");
+});
+test("layout download and listing require the owning program's active approval or electronic-document event", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), actor = { role: "manager" };
+  const result = await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" }), file = result.files[0];
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0);
+  await assert.rejects(f.service.awardFile(user, record.id, file.id), { statusCode: 403 });
+  assert.equal((await f.service.staffAwards(actor, record.id)).programs[0].files.length, 1);
+  assert.ok((await f.service.awardFile(actor, record.id, file.id, true)).body.length);
+  const current = f.snapshot.data.collections.students[0];
+  current.event_educationDocMaketApproved_state = "checked";
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 1);
+  assert.ok((await f.service.awardFile(user, record.id, file.id)).body.length);
+  current.event_educationDocMaketApproved_state = "unchecked"; current.event_educationDocMaketApproved_date = "2026-11-13";
+  await assert.rejects(f.service.awardFile(user, record.id, file.id), { statusCode: 403 });
+  current.event_macro_hb0dir_state = "dated";
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 1);
+  current.eventDeleted = "macro_hb0dir";
+  assert.equal((await f.service.awards(user, record.id)).programs[0].files.length, 0);
 });
 test("photo is scoped, stored in the student folder and does not move existing document attachments", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), folder = enrollment.documentFolder(record);

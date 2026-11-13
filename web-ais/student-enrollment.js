@@ -16,8 +16,8 @@ const FIELDS = Object.freeze([
   ["passportIssuer", "Кем выдан", "textarea"], ["snils", "СНИЛС (для граждан РФ)", "text"],
   ["educationLevel", "Уровень образования", "text"],
   ["enrollmentEducationMode", "Подтверждение образования", "select", ["Диплом с приложением", "Справка с места учёбы"]],
-  ["educationDocumentSurname", "Фамилия в документе об образовании", "text"],
-  ["enrollmentNameChanged", "ФИО в документе об образовании отличается от паспорта", "checkbox"]
+  ["enrollmentNameChanged", "ФИО в документе об образовании отличается от паспорта", "checkbox"],
+  ["educationDocumentSurname", "Фамилия в документе об образовании", "text"]
 ]);
 const DOCS = Object.freeze({ passport: "Паспорт: основная страница", registration: "Паспорт: регистрация",
   snils: "СНИЛС", diploma: "Диплом об образовании", supplement: "Приложение к диплому",
@@ -39,18 +39,39 @@ function documentFolder(record) {
     ? `${parent ? "[-1]/" : ""}${parts.join("/")}` : `Слушатели/${record.id}/Документы`;
 }
 const PROFILE_LISTS = {
-  citizenship: ["citizenships", ["Российская Федерация"]],
+  citizenship: ["citizenships", ["Россия"]],
   passportType: ["documentTypes", ["Паспорт гражданина РФ", "Иностранный паспорт", "Вид на жительство", "Свидетельство о рождении"]],
   educationLevel: ["educationLevels", ["СПО", "Бакалавр", "Специалист", "Магистр", "Аттестат"]],
   workPlace: ["workPlaces", ["Не работаю"]], position: ["positions", ["Не работаю"]], passportIssuer: ["passportIssuers", []]
 };
+// Match the student card's getLookupOptions: dictionary + saved field values,
+// sorted in Russian. Only these lookup strings cross the portal boundary.
+function profileDictionaries(data) {
+  const result = { ...data.dictionaries }, students = data.collections.students || [];
+  for (const [key, [dictionary, defaults]] of Object.entries(PROFILE_LISTS)) {
+    const values = [...(result[dictionary] || []), ...defaults, ...students.map(row => row[key])];
+    if (key === "passportIssuer") values.push(...students.map(row => row.customerPassportIssuer), ...(data.collections.contracts || []).map(row => row.identityIssuer));
+    result[dictionary] = [...new Set(values.filter(value => typeof value === "string" && value.trim()).map(value =>
+      key === "citizenship" && russianCitizen({ citizenship: value }) ? "Россия" : text(value)))].sort((a, b) => a.localeCompare(b, "ru"));
+  }
+  return result;
+}
+function nameChanged(record) {
+  return record.enrollmentNameChanged === true || Boolean(text(record.educationDocumentSurname)
+    && identity(record.educationDocumentSurname) !== identity(record.name).split(/\s+/)[0]);
+}
+function requiredField(record, key, type) {
+  return type !== "checkbox" && (key !== "snils" || russianCitizen(record))
+    && (key !== "educationDocumentSurname" || nameChanged(record));
+}
 function profileFields(record, dictionaries = {}) {
   const fields = professional(record) ? FIELDS : FIELDS.filter(([key]) => !["snils", "educationLevel", "enrollmentEducationMode", "educationDocumentSurname", "enrollmentNameChanged", "workPlace", "position"].includes(key));
   return fields.map(item => {
     const [key, label] = item, list = PROFILE_LISTS[key];
     if (!list) return item;
-    const options = [...new Set([...(dictionaries[list[0]] || []), ...list[1], text(record[key])].filter(value => typeof value === "string" && value.trim()).map(text))];
-    return [key, label, ["workPlace", "position", "passportIssuer"].includes(key) ? "combo" : "select", options];
+    const options = [...new Set([...(dictionaries[list[0]] || []), ...list[1], text(record[key])].filter(value => typeof value === "string" && value.trim()).map(value =>
+      key === "citizenship" && russianCitizen({ citizenship: value }) ? "Россия" : text(value)))].sort((a, b) => a.localeCompare(b, "ru"));
+    return [key, label, key === "educationLevel" ? "select" : "combo", options];
   });
 }
 function sdoAvailable(record) {
@@ -65,12 +86,11 @@ function documentRequirements(record) {
   if (!professional(record)) return keys.map(key => ({ key, label: DOCS[key], required: true }));
   if (russianCitizen(record)) keys.push("snils");
   keys.push(...(record.enrollmentEducationMode === "Справка с места учёбы" ? ["study"] : ["diploma", "supplement"]));
-  const surname = identity(record.name).split(/\s+/)[0];
-  if (record.enrollmentNameChanged === true || (text(record.educationDocumentSurname) && identity(record.educationDocumentSurname) !== surname)) keys.push("nameChange");
+  if (nameChanged(record)) keys.push("nameChange");
   return Object.entries(DOCS).map(([key, label]) => ({ key, label, required: keys.includes(key) }));
 }
 function missingRequirements(record) {
-  const missing = profileFields(record).filter(([key, , type]) => type !== "checkbox" && (key !== "snils" || russianCitizen(record)))
+  const missing = profileFields(record).filter(([key, , type]) => requiredField(record, key, type))
     .filter(([key]) => !text(record[key])).map(([, label]) => label);
   if (text(record.phone) && record.phone.replace(/\D/g, "").length < 10) missing.push("Корректный телефон");
   if (professional(record) && russianCitizen(record) && text(record.snils) && record.snils.replace(/\D/g, "").length !== 11) missing.push("СНИЛС: 11 цифр");
@@ -205,7 +225,7 @@ function createService(deps) {
     const records = students.filter(row => row.studentPortalEnabled === true && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id);
     const record = id ? records.find(row => row.id === id) : records[0];
     if (!record) fail("Заявка не найдена.", 404);
-    return { owner, record, records, dictionaries: current.data.dictionaries || {} };
+    return { owner, record, records, dictionaries: profileDictionaries(current.data) };
   }
   async function staffSession(actor, studentId, applicationId = "") {
     if (!["admin", "manager"].includes(actor?.role)) fail("Кабинет слушателя может открыть только сотрудник учебного центра.", 403);
@@ -226,12 +246,14 @@ function createService(deps) {
       photoAvailable: Boolean(record.photoData || /\.(?:png|jpe?g|webp|gif)$/iu.test(text(record.photoPath))),
       record: { id: record.id, email: record.email, program: record.program, status: record.status,
         ...Object.fromEntries(FIELDS.map(([key]) => [key, record[key] ?? ""])),
+        citizenship: russianCitizen(record) ? "Россия" : text(record.citizenship),
+        enrollmentNameChanged: nameChanged(record),
         enrollmentSubmittedAt: record.enrollmentSubmittedAt || "",
         enrollmentReviewStatus: record.enrollmentReviewStatus || "Заполняется",
         enrollmentReviewComment: record.enrollmentReviewComment || "",
         enrollmentReviewedAt: record.enrollmentReviewedAt || "" },
       fields: profileFields(record, dictionaries).map(([key, label, type, options]) => ({ key, label, type, options,
-        required: type !== "checkbox" && (key !== "snils" || russianCitizen(record)) })),
+        required: requiredField(record, key, type), ...(key === "educationDocumentSurname" ? { dependsOn: "enrollmentNameChanged" } : {}) })),
       requirements: documentRequirements(record), missing: missingRequirements(record), finances: finances(record),
       documents: (record.enrollmentDocuments || []).map(({ id, kind, name, size, uploadedAt }) => ({ id, kind, name, size, uploadedAt })) };
   }
@@ -345,11 +367,18 @@ function createService(deps) {
   async function update(user, id, values) {
     const { record, dictionaries } = await context(user, id);
     const clean = sanitizeProfile(values);
+    if (clean.citizenship && russianCitizen(clean)) clean.citizenship = "Россия";
     for (const [key, , type, options] of profileFields(record, dictionaries)) {
       if (type === "select" && clean[key] && !options.includes(clean[key])) fail("Выберите значение из списка.");
     }
-    const updated = await mutate(id, user, item => ({ ...item, ...clean, enrollmentSubmittedAt: "", enrollmentSubmissionId: "",
-      enrollmentReviewStatus: item.enrollmentReviewStatus === "На доработке" ? "На доработке" : "Заполняется" }));
+    const updated = await mutate(id, user, item => {
+      const next = { ...item, ...clean };
+      if (professional(next) && (clean.enrollmentNameChanged === false || (!nameChanged(item) && clean.enrollmentNameChanged !== true && !Object.hasOwn(clean, "educationDocumentSurname")))) {
+        next.educationDocumentSurname = text(next.name).split(/\s+/)[0];
+      }
+      return { ...next, enrollmentSubmittedAt: "", enrollmentSubmissionId: "",
+        enrollmentReviewStatus: item.enrollmentReviewStatus === "На доработке" ? "На доработке" : "Заполняется" };
+    });
     await deps.audit("Слушатель заполнил данные для зачисления", updated, user);
     return portal(user, id);
   }

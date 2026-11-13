@@ -46,7 +46,8 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('[data-section-title]').textContent(), 'Рабочий стол');
     assert.ok(await page.locator('[data-panel="dashboard"]').isVisible());
     assert.ok(await page.locator('#student-sidebar').evaluate(element => element.getBoundingClientRect().right < 300 && !element.inert));
-    assert.ok(await page.locator('.student-program-name').evaluate(element => element.scrollWidth <= element.clientWidth));
+    assert.equal(await page.locator('.student-program-name, .student-program-status').count(), 0);
+    assert.ok(await page.locator('[data-application]').evaluate(element => element.scrollWidth <= element.clientWidth));
     await page.screenshot({ path: path.join(screenshots, "desktop-dashboard.png"), fullPage: true });
     await page.locator('[data-tab="feedback"]').click();
     assert.ok(await page.locator('[data-feedback-form]').isVisible());
