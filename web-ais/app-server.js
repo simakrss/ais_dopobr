@@ -25289,6 +25289,10 @@ async function handlePaidStudentEnrollment(req, res) {
   if (!crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) throw Object.assign(new Error("Не подтверждён источник оплаты."), { statusCode: 403 });
   if (isDatabaseDemoModeEnabled()) throw Object.assign(new Error("Импорт недоступен в деморежиме."), { statusCode: 503 });
   const payload = JSON.parse(source);
+  if (payload.orderEmailRecipient !== undefined) {
+    return sendJson(res, 200, await getStudentEnrollmentService().orderEmailAccess(payload.orderId, payload.orderEmailRecipient),
+      { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+  }
   if (payload.checkOnly === true) {
     const current = await readSharedApplicationStateDocument({ allowCache: false, skipOfflineSync: true });
     if (current.offline || current.syncPending) throw new Error("Общая база временно недоступна.");

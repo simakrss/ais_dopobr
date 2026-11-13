@@ -145,3 +145,20 @@ test("early route guards precede shared state, admin operations and protected se
   assert.ok(php.includes("$authenticatedHeaders['x-ais-student-version'] = (string) ($currentUser['studentCredentialVersion'] ?? '')"));
   assert.ok(source.includes('process.env.AIS_OCR_CLI !== "1" || !requestHasConfiguredGatewaySecret(req)'));
 });
+
+
+test("order email credentials require a signed recipient and are never cacheable", async () => {
+  const { context, key } = handlers(), calls = [];
+  context.getStudentEnrollmentService = () => ({ orderEmailAccess: async (id, recipient) => { calls.push({ id, recipient }); return { ok: true, accounts: [] }; } });
+  context.sendJson = (_res, status, body, headers) => ({ status, body, headers });
+  const body = JSON.stringify({ orderId: "101", orderEmailRecipient: "test@example.test" });
+  const stamp = String(Math.floor(Date.now() / 1000)), nonce = "b".repeat(32);
+  const headers = { "x-ais-timestamp": stamp, "x-ais-nonce": nonce, "x-ais-signature": generator.signature(key, "POST", "/api/student-enrollment/paid-order", stamp, nonce, body) };
+  const req = (data, h = headers) => Object.assign(Readable.from([Buffer.from(data)]), { headers: h });
+  await assert.rejects(context.handlePaidStudentEnrollment(req(body, {}), {}), { statusCode: 403 });
+  await assert.rejects(context.handlePaidStudentEnrollment(req(body.replace("test@example", "other@example")), {}), { statusCode: 403 });
+  assert.equal(calls.length, 0);
+  const result = await context.handlePaidStudentEnrollment(req(body), {});
+  assert.equal(result.status, 200); assert.equal(result.headers["Cache-Control"], "private, no-store");
+  assert.deepEqual(calls, [{ id: "101", recipient: "test@example.test" }]);
+});

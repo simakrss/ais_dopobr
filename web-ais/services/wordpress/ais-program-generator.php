@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.10
+ * Version: 1.7.11
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -72,6 +72,62 @@ add_action('woocommerce_payment_complete', 'ais_pg_queue_paid_enrollment', 20, 1
 add_action('woocommerce_order_status_processing', 'ais_pg_queue_paid_enrollment', 20, 1);
 add_action('woocommerce_order_status_completed', 'ais_pg_queue_paid_enrollment', 20, 1);
 add_action('ais_pg_paid_enrollment', 'ais_pg_process_paid_enrollment', 10, 1);
+// Credentials are fetched only for the recipient's paid educational order.
+// They live in this PHP request only, never in order metadata or diagnostic logs.
+function ais_pg_order_email_access($order, $recipient) {
+    static $cache = array();
+    $cache_key = (string) $order->get_id() . ':' . strtolower(trim($recipient));
+    if (array_key_exists($cache_key, $cache)) return $cache[$cache_key];
+    $cache[$cache_key] = array();
+    $key_file = dirname(rtrim(ABSPATH, '/\\')) . '/ais-program-site.key';
+    $secret = is_readable($key_file) ? trim(file_get_contents($key_file)) : '';
+    if (!preg_match('/^[a-f0-9]{64}$/D', $secret)) return array();
+    $resource = '/api/student-enrollment/paid-order';
+    $body = wp_json_encode(array('orderId' => (string) $order->get_id(), 'orderEmailRecipient' => $recipient));
+    $stamp = (string) time(); $nonce = bin2hex(random_bytes(16));
+    $response = wp_remote_post('https://edu-plus.ru/lms' . $resource, array('timeout' => 20, 'redirection' => 0, 'sslverify' => true,
+        'headers' => array('Content-Type' => 'application/json', 'X-AIS-Timestamp' => $stamp, 'X-AIS-Nonce' => $nonce,
+            'X-AIS-Signature' => ais_pg_signature($secret, 'POST', $resource, $stamp, $nonce, $body)), 'body' => $body));
+    if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) {
+        ais_pg_queue_paid_enrollment($order->get_id());
+        return array();
+    }
+    $result = json_decode(wp_remote_retrieve_body($response), true);
+    if (empty($result['ok']) || !isset($result['accounts']) || !is_array($result['accounts'])) return array();
+    foreach (array_slice($result['accounts'], 0, 20) as $account) {
+        if (!is_array($account) || !is_string($account['login'] ?? null) || !is_string($account['password'] ?? null)
+            || !$account['login'] || !$account['password'] || strlen($account['login']) > 256 || strlen($account['password']) > 256) continue;
+        $cache[$cache_key][] = array('login' => $account['login'], 'password' => $account['password'],
+            'programs' => array_values(array_filter((array) ($account['programs'] ?? array()), 'is_string')));
+    }
+    return $cache[$cache_key];
+}
+function ais_pg_order_email_instructions($order, $sent_to_admin, $plain_text, $email) {
+    if (ais_pg_role() !== 'shop' || $sent_to_admin || !$order || !$email
+        || !in_array($email->id ?? '', array('customer_processing_order', 'customer_completed_order', 'customer_invoice'), true)
+        || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_student_payment_intent')) return;
+    $recipient = trim((string) $email->get_recipient());
+    if (!is_email($recipient) || strcasecmp($recipient, trim((string) $order->get_billing_email())) !== 0) return;
+    try { $accounts = ais_pg_order_email_access($order, $recipient); }
+    catch (Throwable $error) { ais_pg_log_failure($error, 'order-email-access'); return; }
+    if (!$accounts) return;
+    if ($plain_text) {
+        echo "\nЛИЧНЫЙ КАБИНЕТ СЛУШАТЕЛЯ\nhttps://edu-plus.ru/lms/\n";
+        foreach ($accounts as $account) echo implode(', ', $account['programs']) . "\nЛогин: " . $account['login'] . "\nПароль: " . $account['password'] . "\n";
+        echo "\n1. В разделе «Основное» заполните личные и паспортные данные, адреса и остальные обязательные реквизиты.\n2. В разделе «Документы» приложите сканы по перечню для Вашей программы: https://zifra-plus.ru/edu_info/\n3. Сохраните данные и нажмите «Отправить на проверку». Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов.\nНе передавайте пароль другим людям.\n\n";
+        return;
+    }
+    echo '<h2>Личный кабинет слушателя</h2><p>Для оформления на обучение откройте <a href="https://edu-plus.ru/lms/">https://edu-plus.ru/lms/</a>.</p>';
+    foreach ($accounts as $account) echo '<p><strong>' . esc_html(implode(', ', $account['programs'])) . '</strong><br>Логин: <strong>' . esc_html($account['login']) . '</strong><br>Пароль: <strong>' . esc_html($account['password']) . '</strong></p>';
+    echo '<ol><li>В разделе <strong>«Основное»</strong> заполните личные и паспортные данные, адреса и остальные обязательные реквизиты.</li><li>В разделе <strong>«Документы»</strong> приложите сканы по <a href="https://zifra-plus.ru/edu_info/">перечню для Вашей программы</a>.</li><li>Сохраните данные и нажмите <strong>«Отправить на проверку»</strong>. Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов.</li></ol><p>Не передавайте пароль другим людям.</p>';
+}
+add_action('woocommerce_email_order_meta', 'ais_pg_order_email_instructions', 20, 4);
+add_filter('template_include', function ($template) {
+    if (ais_pg_role() !== 'shop' || !is_singular() || (get_queried_object()->post_name ?? '') !== 'edu_info'
+        || !function_exists('zifra_education_info_sections')) return $template;
+    $path = __DIR__ . '/ais-templates/education-info.php';
+    return is_readable($path) ? $path : $template;
+}, 130);
 function ais_pg_yookassa_gateways() {
     if (!function_exists('WC') || !WC()->payment_gateways()) return array();
     return array_filter(WC()->payment_gateways()->payment_gateways(), function ($gateway) {
@@ -1502,7 +1558,7 @@ function ais_pg_dispatch($request) {
             if (in_array($action, array('check-sync', 'sync-existing'), true)) return ais_pg_sync_existing($data, $action === 'check-sync');
             return ais_pg_mutate($action, $data);
         }
-        if ($action === 'health') return array('ok' => true, 'version' => '1.7.10', 'studentDebtPayments' => true, 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
+        if ($action === 'health') return array('ok' => true, 'version' => '1.7.11', 'orderEmailStudentAccess' => true, 'cabinetEnrollmentInstructions' => true, 'studentDebtPayments' => true, 'paidStudentEnrollment' => true, 'legacyWebinarHtmlSync' => true, 'variantVisibility' => true, 'programVariants' => true, 'sampleSync' => true, 'webinarScheduleSync' => true, 'webinarSync' => true, 'promoUrlSync' => true, 'soldIndividually' => true, 'prototypeStartLabel' => true, 'publicWebinarHtml' => true, 'imageSources' => true, 'draftRegistrationNotice' => true, 'productPresentation' => true, 'redirectManager' => is_callable(array('WF301_functions', 'save_redirect_rule')), 'syncExisting' => true, 'programTypes' => array('ПРО', 'ДОП', 'КПК', 'ППП'), 'certificateSamples' => true, 'role' => ais_pg_role(), 'acf' => function_exists('get_field_objects'), 'woocommerce' => class_exists('WC_Product_Simple'), 'downloadFormats' => ais_pg_download_formats());
         if (ais_pg_role() === 'shop' && strpos($request->get_route(), '/sync-product/') !== false) return ais_pg_sync_product((int) $request['id']);
         if (ais_pg_role() !== 'edu') return ais_pg_error('Операция доступна только на сайте программ.', 404);
         if (in_array($action, array('templates', 'catalog'), true)) {

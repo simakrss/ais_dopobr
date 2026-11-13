@@ -628,6 +628,9 @@ function Install-ProgramSiteModules {
     [IO.File]::WriteAllText((Join-Path $keyStageDir "$role.key"), [string]$keys.$role, $utf8)
     Publish-FileTarget ".runtime/program-sites/$role.key" "/$($target.Site)/ais-program-site.key" "private site key"
     Publish-FileTarget "services/wordpress/ais-program-generator.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-program-generator.php" "WordPress module $($target.Site)"
+    if ($role -eq 'shop') {
+      Publish-FileTarget "services/wordpress/ais-education-info-template.php" "/$($target.Site)/public_html/wp-content/mu-plugins/ais-templates/education-info.php" "Student enrollment instructions"
+    }
   }
 }
 

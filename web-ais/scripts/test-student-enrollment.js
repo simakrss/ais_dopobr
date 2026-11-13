@@ -555,3 +555,52 @@ test("staff can open a scoped student cabinet without modifying the staff identi
   first.studentPortalBlocked = true;
   await assert.rejects(f.service.staffSession({ role: "admin" }, second.id), { statusCode: 409 });
 });
+
+
+test("order email prepares existing access without sending messages or waiting for document storage", async () => {
+  const f = fixture({ ensureFolder: async () => { throw Error("storage is offline"); } });
+  const first = await f.service.orderEmailAccess("101", " TEST@example.test ");
+  assert.equal(first.accounts.length, 1); assert.equal(f.mails.length, 0);
+  assert.equal(f.snapshot.data.collections.students.length, 1);
+  const record = f.snapshot.data.collections.students[0];
+  assert.equal(record.enrollmentMailStatus, "pending");
+  assert.equal(first.accounts[0].login, record.studentPortalLogin);
+  assert.equal(first.accounts[0].password, record.studentPortalPassword);
+  assert.deepEqual(first.accounts[0].programs, ["Тестовый курс"]);
+  assert.deepEqual(await f.service.orderEmailAccess("101", "test@example.test"), first);
+  assert.equal(f.snapshot.data.collections.students.length, 1); assert.equal(f.mails.length, 0);
+  f.deps.ensureFolder = async () => {};
+  await f.service.provisionOrder("101"); await f.service.provisionOrder("101");
+  assert.equal(f.mails.length, 1, "normal queued welcome remains idempotent after order email preparation");
+});
+
+test("order email rejects other recipients, unpaid/free/webinar orders and blocked accounts", async () => {
+  for (const changes of [{ paid: false }, { paymentAmount: 0 }, { productId: "20" }, { orderId: "102" }, { email: "other@example.test" }]) {
+    const f = fixture(); Object.assign(f.rows[0], changes);
+    assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+    assert.equal(f.snapshot.data.collections.students.length, 0); assert.equal(f.mails.length, 0);
+  }
+  const f = fixture();
+  for (const recipient of ["invalid", "test@example.test,other@example.test", "test@example.test\r\nBcc: x@example.test"]) {
+    await assert.rejects(f.service.orderEmailAccess("101", recipient), { statusCode: 400 });
+  }
+  await f.service.orderEmailAccess("101", "test@example.test");
+  const record = f.snapshot.data.collections.students[0]; record.studentPortalBlocked = true;
+  assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+  record.studentPortalBlocked = false; record.email = "different@example.test";
+  assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+  assert.equal(f.mails.length, 0);
+});
+
+test("one paid order with multiple programs returns one account and preserves owner credentials", async () => {
+  const f = fixture(); f.snapshot.data.collections.programs.push({ id: "p3", productId: "30", name: "Второй курс", type: "ДОП", price: 5000 });
+  f.rows.push({ ...f.rows[0], id: "101-2", productId: "30" });
+  const result = await f.service.orderEmailAccess("101", "test@example.test");
+  assert.equal(result.accounts.length, 1); assert.equal(f.snapshot.data.collections.students.length, 2);
+  assert.deepEqual(result.accounts[0].programs, ["Тестовый курс", "Второй курс"]); assert.equal(f.mails.length, 0);
+  const owner = f.snapshot.data.collections.students.find(row => row.studentPortalAccountId === row.id);
+  owner.studentPortalPassword = "new-test-password";
+  assert.equal((await f.service.orderEmailAccess("101", "test@example.test")).accounts[0].password, "new-test-password");
+  owner.studentPortalBlocked = true;
+  assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+});

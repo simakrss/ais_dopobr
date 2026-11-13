@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.630",
+    version: "1.7.631",
     releasedAt: "2026-11-13"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.631",
+      releasedAt: "2026-11-13",
+      changes: ["В письмо магазина по оплаченному заказу КПК, ППП или ДОП добавлены логин, пароль и ссылка на кабинет слушателя. Инструкция на zifra-plus.ru направляет слушателей заполнять реквизиты и загружать сканы в кабинете, затем отправлять документы на проверку."]
+    },
     {
       version: "1.7.630",
       releasedAt: "2026-11-13",

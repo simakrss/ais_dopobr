@@ -268,7 +268,7 @@ function createService(deps) {
     await deps.loginSuccess(identity(login), clientKey);
     return publicUser(records[0]);
   }
-  async function provisionOrder(orderId) {
+  async function provisionOrder(orderId, { sendWelcome = true, prepareFolders = true } = {}) {
     if (!/^[1-9]\d{0,15}$/.test(text(orderId))) fail("Некорректный номер заказа.");
     return deps.lock("student-enrollment-provision", async () => {
       const rows = await deps.queryOrder(orderId);
@@ -321,8 +321,8 @@ function createService(deps) {
         }
         if (!resolved) fail("Общая база занята. Импорт будет повторён.", 503);
         if (!record) continue;
-        await deps.ensureFolder(documentFolder(record));
-        if (["pending", "failed"].includes(record.enrollmentMailStatus)) {
+        if (prepareFolders) await deps.ensureFolder(documentFolder(record));
+        if (sendWelcome && ["pending", "failed"].includes(record.enrollmentMailStatus)) {
           await mutate(record.id, deps.systemUser, item => ({ ...item, enrollmentMailStatus: "sending", enrollmentMailAttemptAt: new Date().toISOString() }));
           try {
             await deps.sendMail({ to: record.email, subject: `Документы для зачисления: ${record.program}`, message: welcomeMessage(record), idempotencyKey: `student-enrollment:${record.id}` });
@@ -338,6 +338,31 @@ function createService(deps) {
       }
       return { ok: true, imported: imported.length, skipped: skipped.length };
     });
+  }
+  async function orderEmailAccess(orderId, recipient) {
+    if (!/^[1-9]\d{0,15}$/u.test(text(orderId)) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(recipient))) fail("Некорректные параметры письма заказа.");
+    const rows = await deps.queryOrder(orderId), before = await deps.readState();
+    const eligible = rows.filter(row => row.paid && Number(row.paymentAmount) > 0 && text(row.orderId) === text(orderId)
+      && identity(row.email) === identity(recipient) && matchProgram(row, before.data.collections.programs || []));
+    if (!eligible.length) return { ok: true, accounts: [] };
+    // Preparing a store email must not send any message itself. The existing
+    // paid-order job remains responsible for the separate enrollment instruction.
+    const existing = before.data.collections.students || [];
+    const needsProvisioning = eligible.some(row => !existing.some(item => item.studentPortalEnabled && (item.sourceApplicationKey === `mysql:${row.orderId}:${row.id}`
+      || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)))));
+    if (needsProvisioning) await provisionOrder(orderId, { sendWelcome: false, prepareFolders: false });
+    const current = await deps.readState(), students = current.data.collections.students || [], accounts = new Map();
+    for (const row of eligible) {
+      const record = students.find(item => item.sourceApplicationKey === `mysql:${row.orderId}:${row.id}`
+        || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)));
+      const owner = record && students.find(item => item.id === (record.studentPortalAccountId || record.id));
+      if (!record?.studentPortalEnabled || record.studentPortalBlocked || !owner?.studentPortalEnabled || owner.studentPortalBlocked
+        || identity(record.email) !== identity(recipient) || identity(owner.email) !== identity(recipient)
+        || !portalLogin(owner) || !portalPassword(owner) || !owner.studentPortalCredentialSalt) continue;
+      if (!accounts.has(owner.id)) accounts.set(owner.id, { login: portalLogin(owner), password: portalPassword(owner), programs: [] });
+      const account = accounts.get(owner.id); if (!account.programs.includes(record.program)) account.programs.push(record.program);
+    }
+    return { ok: true, accounts: [...accounts.values()] };
   }
   async function portal(user, id) { return view(await context(user, id)); }
   async function provisionExisting({ apply = false, onProgress = () => {} } = {}) {
@@ -495,6 +520,7 @@ function createService(deps) {
       : deps.feedbackHistory.history(owner.id, record.id);
   }
   return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback, correspondence,
+    orderEmailAccess,
     ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) };
 }
 module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
