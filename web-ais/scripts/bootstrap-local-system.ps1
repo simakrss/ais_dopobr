@@ -292,6 +292,13 @@ function Write-WslLog([string]$LogPath, [string]$Message) {
   [IO.File]::AppendAllText($LogPath, $Message + "`r`n", (New-Object Text.UTF8Encoding($false)))
 }
 
+function Read-WslLog([string]$LogPath) {
+  # Keep the elevated writer free to append while the progress window reads.
+  $stream = [IO.File]::Open($LogPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+  $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+  try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
+
 function Invoke-WslSetup([string]$LogPath) {
   # Only this function runs elevated. Never reboot Windows automatically.
   $restart = $false
@@ -352,12 +359,12 @@ function Invoke-ElevatedWslSetup {
     $offset = 0
     do {
       if (Test-Path -LiteralPath $logPath) {
-        $text = [IO.File]::ReadAllText($logPath, [Text.Encoding]::UTF8)
+        $text = Read-WslLog $logPath
         if ($text.Length -gt $offset) { Write-Host $text.Substring($offset).TrimEnd(); $offset = $text.Length }
       }
     } while (-not $process.WaitForExit(1000))
     if (Test-Path -LiteralPath $logPath) {
-      $text = [IO.File]::ReadAllText($logPath, [Text.Encoding]::UTF8)
+      $text = Read-WslLog $logPath
       if ($text.Length -gt $offset) { Write-Host $text.Substring($offset).TrimEnd() }
     }
     if (-not (Test-Path -LiteralPath $resultPath)) { throw "Подготовка WSL прервана (код $($process.ExitCode)). Журнал: $logPath" }
