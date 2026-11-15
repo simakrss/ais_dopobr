@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.13
+ * Version: 1.7.14
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -22,7 +22,7 @@ function ais_pg_signature($secret, $method, $resource, $timestamp, $nonce, $body
 function ais_pg_queue_paid_enrollment($order_id, $delay = 3) {
     if (ais_pg_role() !== 'shop' || !function_exists('wc_get_order')) return;
     $order = wc_get_order((int) $order_id);
-    if (!$order || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_enrollment_done')) return;
+    if (!$order || !$order->is_paid() || (float) $order->get_total() < 0 || $order->get_meta('_ais_enrollment_done')) return;
     $args = array((int) $order_id);
     if (function_exists('as_schedule_single_action')) {
         as_schedule_single_action(time() + max(3, (int) $delay), 'ais_pg_paid_enrollment', $args, 'ais-enrollment', true);
@@ -33,7 +33,7 @@ function ais_pg_queue_paid_enrollment($order_id, $delay = 3) {
 function ais_pg_process_paid_enrollment($order_id) {
     if (ais_pg_role() !== 'shop') return;
     $order = wc_get_order((int) $order_id);
-    if (!$order || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_enrollment_done')) return;
+    if (!$order || !$order->is_paid() || (float) $order->get_total() < 0 || $order->get_meta('_ais_enrollment_done')) return;
     $attempt = (int) $order->get_meta('_ais_enrollment_attempts') + 1;
     $order->update_meta_data('_ais_enrollment_attempts', $attempt);
     try {
@@ -115,9 +115,10 @@ function ais_pg_order_email_access($order, $recipient, $strict = false) {
 function ais_pg_order_email_instructions($order, $sent_to_admin, $plain_text, $email) {
     if (ais_pg_role() !== 'shop' || $sent_to_admin || !$order || !$email
         || !in_array($email->id ?? '', array('customer_processing_order', 'customer_completed_order', 'customer_invoice'), true)
-        || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_student_payment_intent')) return;
+          || !$order->is_paid() || (float) $order->get_total() < 0 || $order->get_meta('_ais_student_payment_intent')) return;
     $recipient = trim((string) $email->get_recipient());
     if (!is_email($recipient) || strcasecmp($recipient, trim((string) $order->get_billing_email())) !== 0) return;
+    if (method_exists($email, 'get_headers') && preg_match('/^(?:Cc|Bcc):\s*\S/im', $email->get_headers())) return;
     try { $accounts = ais_pg_order_email_access($order, $recipient); }
     catch (Throwable $error) { ais_pg_log_failure($error, 'order-email-access'); return; }
     if (!$accounts) return;
@@ -136,7 +137,8 @@ function ais_pg_order_email_instructions($order, $sent_to_admin, $plain_text, $e
     foreach ($accounts as $account) echo '<p><strong>' . esc_html(implode(', ', $account['programs'])) . '</strong><br>Логин: <strong>' . esc_html($account['login']) . '</strong><br>Пароль: <strong>' . esc_html($account['password']) . '</strong></p>';
     echo '<ol><li>В разделе <strong>«Основное»</strong> заполните личные и паспортные данные, адреса и остальные обязательные реквизиты.</li><li>В разделе <strong>«Документы»</strong> приложите сканы по <a href="https://zifra-plus.ru/edu_info/">перечню для Вашей программы</a>.</li><li>Сохраните данные и нажмите <strong>«Отправить на проверку»</strong>. Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов.</li></ol><p>Не передавайте пароль другим людям.</p>';
 }
-add_action('woocommerce_email_order_meta', 'ais_pg_order_email_instructions', 20, 4);
+// After Downloads, before the order number; public hook survives Woo updates.
+add_action('woocommerce_email_before_order_table', 'ais_pg_order_email_instructions', 5, 4);
 add_filter('template_include', function ($template) {
     if (ais_pg_role() !== 'shop' || !is_singular() || (get_queried_object()->post_name ?? '') !== 'edu_info'
         || !function_exists('zifra_education_info_sections')) return $template;

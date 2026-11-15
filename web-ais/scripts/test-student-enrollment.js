@@ -27,6 +27,41 @@ function fixture(options = {}) {
 }
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
 const feedbackBody = () => ({ subject: "Вопрос об обучении", message: "Подскажите, пожалуйста, дату начала обучения.", requestId: require("node:crypto").randomUUID() });
+
+test("completed zero-price registration reuses access and prepares SDO fields without inventing payment or activating Moodle", async () => {
+  const calls = [];
+  const f = fixture({ paymentShop: async (route, body) => {
+    calls.push(route); assert.equal(route, "/student-registration-order");
+    return { ok: true, registered: true, orderId: body.orderId, productIds: ["10"] };
+  } });
+  Object.assign(f.rows[0], { paid: false, paymentAmount: 0, coupon: "" });
+  const first = await f.service.orderEmailAccess("101", "test@example.test");
+  assert.equal(first.accounts.length, 1); assert.equal(f.mails.length, 0);
+  const record = f.snapshot.data.collections.students[0];
+  assert.equal(record.login, first.accounts[0].login); assert.equal(record.password, first.accounts[0].password);
+  assert.equal(record.studentPortalLogin, record.login); assert.equal(record.studentPortalPassword, record.password);
+  assert.equal(record.payment1Amount, 0); assert.equal(record.payment1Date, ""); assert.equal(record.payment1Note, "");
+  assert.equal(record.contractAmount, 10000); assert.ok(!record.portalAccessMessage);
+  const login = await f.service.authenticate(record.login, record.password, "test"); assert.ok(login);
+  await assert.rejects(f.service.sdo(login, record.id), { statusCode: 403 });
+  await f.service.provisionOrder("101"); assert.equal(f.mails.length, 1);
+  assert.match(f.mails[0].message, /Получена заявка/); assert.doesNotMatch(f.mails[0].message, /Получена оплата/);
+  Object.assign(f.rows[0], { id: "102-1", orderId: "102" });
+  const again = await f.service.orderEmailAccess("102", "test@example.test");
+  assert.deepEqual(again.accounts, first.accounts); assert.equal(f.snapshot.data.collections.students.length, 2);
+  const repeat = f.snapshot.data.collections.students[1];
+  assert.equal(repeat.login, record.login); assert.equal(repeat.password, record.password); assert.equal(f.mails.length, 1);
+  assert.ok(calls.every(route => route === "/student-registration-order"));
+});
+
+test("zero-price registration requires current signed shop confirmation for the same order and product", async () => {
+  for (const confirmation of [{ registered: false }, { orderId: "foreign" }, { productIds: ["20"] }, { ok: false }]) {
+    const f = fixture({ paymentShop: async () => ({ ok: true, registered: true, orderId: "101", productIds: ["10"], ...confirmation }) });
+    Object.assign(f.rows[0], { paid: false, paymentAmount: 0, registrationConfirmed: true });
+    assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+    assert.equal(f.saves.length, 0); assert.equal(f.mails.length, 0);
+  }
+});
 test("dictionary controls preserve current legacy values, reject forged selections and allow combo input", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record);
   f.snapshot.data.dictionaries = { citizenships: ["Российская Федерация", "Казахстан"], educationLevels: ["СПО", "Высшее"], workPlaces: ["Школа"] };

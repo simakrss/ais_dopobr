@@ -59,6 +59,7 @@ class FakeOrder {
     public array $meta = []; public bool $paid = true; public float $total = 5000; public array $notes = [];
     public function __construct(public int $id, public string $email, public int $customer = 0) { $GLOBALS['orders'][$id] = $this; }
     public function get_id() { return $this->id; } public function is_paid() { return $this->paid; } public function get_total() { return $this->total; }
+    public function get_items() { return [new class { public function get_product_id() { return 10; } }]; }
     public function get_meta($key) { return $this->meta[$key] ?? ''; } public function get_billing_email() { return $this->email; }
     public function get_customer_id() { return $this->customer; } public function set_customer_id($id) { $this->customer = $id; }
     public function save() {} public function update_meta_data($key, $value) { $this->meta[$key] = $value; }
@@ -91,6 +92,25 @@ ob_start(); ais_pg_order_email_instructions($order, false, false, $email); $html
 check(str_contains($html, 'Курс &lt;пример&gt;') && str_contains($html, 'Интернет-магазин zifra-plus.ru'), 'Paid order email includes common access');
 ob_start(); ais_pg_order_email_instructions($order, false, true, $email); $plain = ob_get_clean();
 check(!str_contains($plain, '<strong>') && str_contains($plain, 'Пароль: 003456'), 'Plain email includes correct access');
+check(str_contains($plain, 'https://portal.edu-plus.ru/') && str_contains($html, 'подключает сотрудник учебного центра'), 'SDO activation is manual');
+check(isset($hooks['woocommerce_email_before_order_table'][5]) && !isset($hooks['woocommerce_email_order_meta']), 'Access appears before the order table once');
+$zero = new FakeOrder(150, 'zero@example.test'); $zero->total = 0;
+check(ais_sa_registration_order(['orderId' => '150'])['registered'], 'Completed zero-price application confirmed');
+$zero->paid = false; check(!ais_sa_registration_order(['orderId' => '150'])['registered'], 'Unpaid application rejected');
+$zero->paid = true; $zero->total = 10; check(!ais_sa_registration_order(['orderId' => '150'])['registered'], 'Positive-price application is not a free registration');
+$zero->total = 0; $zero->meta['_ais_student_payment_intent'] = true;
+check(!ais_sa_registration_order(['orderId' => '150'])['registered'], 'Debt-payment links do not create registrations');
+$zero->meta = []; $answers['150'] = [account('s-zero', 'zero')];
+$zeroAccess = ais_pg_order_email_access($zero, $zero->email);
+check(!empty($zeroAccess[0]['shopAccess']), 'Zero-price educational application gets shop access');
+$zeroHash = $users[$zero->customer]->user_pass;
+$zeroEmail = new class { public $id = 'customer_completed_order'; public $headers = ''; public function get_recipient() { return 'zero@example.test'; } public function get_headers() { return $this->headers; } };
+ob_start(); ais_pg_order_email_instructions($zero, false, false, $zeroEmail); $zeroHtml = ob_get_clean();
+check(str_contains($zeroHtml, '003456'), 'Completed zero-price email includes existing credentials');
+$zeroEmail->headers = "Bcc: other@example.test";
+ob_start(); ais_pg_order_email_instructions($zero, false, false, $zeroEmail); $hidden = ob_get_clean();
+check($hidden === '', 'Credentials never copied to other recipients');
+check($users[$zero->customer]->user_pass === $zeroHash, 'Repeated rendering keeps password');
 
 $old_id = count($users)+1; $users[$old_id] = new WP_User($old_id, 'old-native', 'old@example.test');
 $old_order = new FakeOrder(102, 'old@example.test', $old_id); $bound = ais_sa_prepare($old_order, [account('s2', 'old-common')]);

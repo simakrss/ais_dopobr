@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.639",
+    version: "1.7.640",
     releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.640",
+      releasedAt: "2026-11-15",
+      changes: ["Общий доступ в магазин и кабинет слушателя включён в письмо завершённой заявки, в том числе без оплаты. Реквизиты СДО сохраняются в карточке для ручного подключения; повторные заказы сохраняют существующий доступ."]
+    },
     {
       version: "1.7.639",
       releasedAt: "2026-11-15",

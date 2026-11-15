@@ -132,7 +132,7 @@ function publicUser(record) { return { id: `student:${record.id}`, studentId: re
   role: "student", status: "active", email: record.email, authSource: "student", studentCredentialVersion: fingerprint(record) }; }
 const escapeHtml = value => text(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function welcomeMessage(record, { repeat = false } = {}) {
-  return `<p>Добрый день, ${escapeHtml(record.name)}!</p>${repeat ? `<p>Направляем данные для доступа в личный кабинет по программе «${escapeHtml(record.program)}» и инструкцию по заполнению данных.</p>` : `<p>Получена оплата по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>`}
+  return `<p>Добрый день, ${escapeHtml(record.name)}!</p>${repeat ? `<p>Направляем данные для доступа в личный кабинет по программе «${escapeHtml(record.program)}» и инструкцию по заполнению данных.</p>` : `<p>${Number(record.payment1Amount) > 0 ? "Получена оплата" : "Получена заявка"} по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>`}
 <p>Для оформления на обучение войдите в <a href="https://edu-plus.ru/lms/">личный кабинет</a>.</p>
 <p>Логин: <strong>${escapeHtml(portalLogin(record))}</strong><br>Пароль: <strong>${escapeHtml(portalPassword(record))}</strong></p>
 <ol><li>На вкладке «Основное» заполните личные, паспортные данные, адрес регистрации и почтовый адрес с индексом.${professional(record) ? ' Укажите сведения об образовании, месте работы и должности. Если не работаете, укажите «Не работаю».' : ''} Сохраните данные.</li>
@@ -196,6 +196,20 @@ function planExistingAccounts(data, reserved) {
   return updates;
 }
 function createService(deps) {
+  const enrollmentEligible = row => (row.paid && Number(row.paymentAmount) > 0) || row.registrationConfirmed === true;
+  async function enrollmentRows(orderId) {
+    const rows = (await deps.queryOrder(orderId)).map(row => ({ ...row, registrationConfirmed: false }));
+    // Financial reports keep their original paid flag. A zero-price registration
+    // requires fresh confirmation from the signed shop API, never a client flag.
+    if (rows.some(row => text(row.orderId) === text(orderId) && Number(row.paymentAmount) === 0) && deps.paymentShop) {
+      const confirmed = await deps.paymentShop("/student-registration-order", { orderId: text(orderId) });
+      if (confirmed?.ok === true && confirmed.registered === true && text(confirmed.orderId) === text(orderId)) {
+        const products = new Set((confirmed.productIds || []).map(text));
+        for (const row of rows) if (text(row.orderId) === text(orderId) && Number(row.paymentAmount) === 0 && products.has(text(row.productId))) row.registrationConfirmed = true;
+      }
+    }
+    return rows;
+  }
   async function mutate(id, user, change) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const current = await deps.readState();
@@ -271,11 +285,11 @@ function createService(deps) {
   async function provisionOrder(orderId, { sendWelcome = true, prepareFolders = true } = {}) {
     if (!/^[1-9]\d{0,15}$/.test(text(orderId))) fail("Некорректный номер заказа.");
     return deps.lock("student-enrollment-provision", async () => {
-      const rows = await deps.queryOrder(orderId);
+      const rows = await enrollmentRows(orderId);
       if (!rows.length) fail("Оплаченный заказ пока не появился в базе магазина. Проверка будет повторена.", 503);
       const imported = [], skipped = [];
       for (const row of rows) {
-        if (!row.paid || Number(row.paymentAmount) <= 0 || text(row.orderId) !== text(orderId)) continue;
+        if (!enrollmentEligible(row) || text(row.orderId) !== text(orderId)) continue;
         if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(text(row.email)) || !text(row.name)) { skipped.push(row.id); continue; }
         let record, resolved = false;
         for (let attempt = 0; attempt < 5; attempt++) {
@@ -305,8 +319,8 @@ function createService(deps) {
             applicationDate: text(row.dateCreated).slice(0, 10), contractAmount,
             discount: registryPrice > 0 ? Math.round((registryPrice - contractAmount) / registryPrice * 10000) / 100 : 0,
             discountUnit: "percent", fundingSource: "Собственные средства",
-            payment1Date: new Date().toISOString().slice(0, 10), payment1Amount: Number(row.paymentAmount),
-            payment1Note: `Оплата на zifra-plus.ru, заказ №${row.orderId}`, coupon: text(row.coupon), directExpenses: [],
+            payment1Date: row.registrationConfirmed ? "" : new Date().toISOString().slice(0, 10), payment1Amount: Number(row.paymentAmount),
+            payment1Note: row.registrationConfirmed ? "" : `Оплата на zifra-plus.ru, заказ №${row.orderId}`, coupon: text(row.coupon), directExpenses: [],
             ...prior, login: prior?.login || access.login, password: prior?.password || access.password,
             studentPortalLogin: access.login, studentPortalPassword: access.password,
             photoPath: prior?.photoPath || `Слушатели/${id}/Документы`, studentPortalEnabled: true,
@@ -315,7 +329,7 @@ function createService(deps) {
           const saved = await deps.save(current.revision, [record], deps.systemUser);
           if (saved.conflict) { record = null; continue; }
           if (saved.offline || saved.syncPending || saved.locked) fail("Не удалось сохранить заявку в общей базе.", 503);
-          await deps.audit("Автоматически импортирована оплаченная заявка", record, deps.systemUser);
+          await deps.audit(row.registrationConfirmed ? "Создан кабинет по завершённой заявке без оплаты" : "Автоматически импортирована оплаченная заявка", record, deps.systemUser);
           resolved = true;
           break;
         }
@@ -396,8 +410,8 @@ function createService(deps) {
   }
   async function orderEmailAccess(orderId, recipient) {
     if (!/^[1-9]\d{0,15}$/u.test(text(orderId)) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(recipient))) fail("Некорректные параметры письма заказа.");
-    const rows = await deps.queryOrder(orderId), before = await deps.readState();
-    const eligible = rows.filter(row => row.paid && Number(row.paymentAmount) > 0 && text(row.orderId) === text(orderId)
+    const rows = await enrollmentRows(orderId), before = await deps.readState();
+    const eligible = rows.filter(row => enrollmentEligible(row) && text(row.orderId) === text(orderId)
       && identity(row.email) === identity(recipient) && matchProgram(row, before.data.collections.programs || []));
     if (!eligible.length) return { ok: true, accounts: [] };
     // Preparing a store email must not send any message itself. The existing

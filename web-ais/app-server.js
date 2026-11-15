@@ -25239,7 +25239,7 @@ function getStudentEnrollmentService() {
     loginLimit: studentEnrollmentLoginLimit,
     loginSuccess: (login, clientKey) => studentEnrollmentLoginLimit(login, clientKey, true),
     lock: studentEnrollmentLock,
-    queryOrder: async orderId => (await runStudentApplicationsQuery({ orderId, dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: true })).rows,
+    queryOrder: async orderId => (await runStudentApplicationsQuery({ orderId, dateFrom: "2000-01-01", dateTo: "2099-12-31", onlyPaid: false })).rows,
     shopSso: { issue: (user, shopUserId) => getStudentShopSsoService().issue(user, shopUserId) },
     async reservedLogins(data, orderRow) {
       const reserved = await readPartnerRegistrationReservedLogins(data.collections.contracts || []);

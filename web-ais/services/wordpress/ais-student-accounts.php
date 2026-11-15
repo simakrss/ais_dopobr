@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: АИС — единый кабинет покупателя и слушателя
- * Version: 1.1.1
+ * Version: 1.1.2
  * Customer-only bridge. No historical orders or emails are processed on installation.
  */
 defined('ABSPATH') || exit;
@@ -31,7 +31,7 @@ function ais_sa_locked(string $key, callable $operation) {
     try { return $operation(); } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $name)); }
 }
 function ais_sa_prepare($order, array $accounts): array {
-    if (!$accounts || !$order->is_paid() || (float) $order->get_total() <= 0 || $order->get_meta('_ais_student_payment_intent')) return $accounts;
+    if (!$accounts || !$order->is_paid() || (float) $order->get_total() < 0 || $order->get_meta('_ais_student_payment_intent')) return $accounts;
     if (count($accounts) !== 1) throw new RuntimeException('В заказе несколько разных кабинетов слушателей. Требуется проверка учебного центра.');
     $account = $accounts[0]; $email = strtolower(trim($order->get_billing_email()));
     if (!is_email($email) || empty($account['accountId']) || !preg_match('/^[a-f0-9]{64}$/D', (string) ($account['credentialVersion'] ?? ''))) throw new RuntimeException('Не подтверждены данные кабинета слушателя.');
@@ -73,8 +73,10 @@ function ais_sa_prepare($order, array $accounts): array {
 }
 function ais_sa_access_content(array $account, bool $plain = false): string {
     $shop = wc_get_page_permalink('myaccount');
-    if ($plain) return "ДОСТУП В ИНТЕРНЕТ-МАГАЗИН И УЧЕБНЫЙ ЦЕНТР\nИнтернет-магазин: $shop\nУчебный центр: https://edu-plus.ru/lms/\nЛогин: " . $account['login'] . "\nПароль: " . $account['password'] . "\nЭти данные подходят для обоих сайтов. Прежний пароль существующего аккаунта магазина также продолжает работать.\n\nВ кабинете учебного центра заполните раздел «Основное», загрузите сканы в разделе «Документы» и нажмите «Отправить на проверку». Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов. Перечень: https://zifra-plus.ru/edu_info/\nИз кабинета магазина можно открыть кабинет слушателя без повторного ввода пароля. Не передавайте пароль другим людям.\n";
-    return '<h2>Доступ в интернет-магазин и учебный центр</h2><p><a href="' . esc_url($shop) . '">Интернет-магазин zifra-plus.ru</a><br><a href="https://edu-plus.ru/lms/">Учебный центр edu-plus.ru/lms</a></p><p>Логин: <strong>' . esc_html($account['login']) . '</strong><br>Пароль: <strong>' . esc_html($account['password']) . '</strong></p><p>Эти данные подходят для обоих сайтов. Прежний пароль существующего аккаунта магазина также продолжает работать.</p><p>В кабинете учебного центра заполните раздел <strong>«Основное»</strong>, загрузите сканы в разделе <strong>«Документы»</strong> и нажмите <strong>«Отправить на проверку»</strong>. Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов. <a href="https://zifra-plus.ru/edu_info/">Перечень документов</a>.</p><p>Из кабинета магазина можно открыть кабинет слушателя без повторного ввода пароля. Не передавайте пароль другим людям.</p>';
+    $sdo = 'СДО portal.edu-plus.ru: доступ к обучению подключает сотрудник учебного центра. Дождитесь уведомления о начале обучения.';
+    $sdo_link = $plain ? "\n$sdo\nhttps://portal.edu-plus.ru/\n" : '<p>' . esc_html($sdo) . '<br><a href="https://portal.edu-plus.ru/">Система дистанционного обучения</a></p>';
+    if ($plain) return "ДОСТУП В ИНТЕРНЕТ-МАГАЗИН И УЧЕБНЫЙ ЦЕНТР\nИнтернет-магазин: $shop\nУчебный центр: https://edu-plus.ru/lms/\nЛогин: " . $account['login'] . "\nПароль: " . $account['password'] . "\nЭти данные подходят для обоих сайтов. Прежний пароль существующего аккаунта магазина также продолжает работать.\n\nВ кабинете учебного центра заполните раздел «Основное», загрузите сканы в разделе «Документы» и нажмите «Отправить на проверку». Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов. Перечень: https://zifra-plus.ru/edu_info/\nИз кабинета магазина можно открыть кабинет слушателя без повторного ввода пароля. Не передавайте пароль другим людям.\n" . $sdo_link;
+    return '<h2>Доступ в интернет-магазин и учебный центр</h2><p><a href="' . esc_url($shop) . '">Интернет-магазин zifra-plus.ru</a><br><a href="https://edu-plus.ru/lms/">Учебный центр edu-plus.ru/lms</a></p><p>Логин: <strong>' . esc_html($account['login']) . '</strong><br>Пароль: <strong>' . esc_html($account['password']) . '</strong></p><p>Эти данные подходят для обоих сайтов. Прежний пароль существующего аккаунта магазина также продолжает работать.</p><p>В кабинете учебного центра заполните раздел <strong>«Основное»</strong>, загрузите сканы в разделе <strong>«Документы»</strong> и нажмите <strong>«Отправить на проверку»</strong>. Кнопка станет доступна после заполнения обязательных полей и загрузки необходимых документов. <a href="https://zifra-plus.ru/edu_info/">Перечень документов</a>.</p><p>Из кабинета магазина можно открыть кабинет слушателя без повторного ввода пароля. Не передавайте пароль другим людям.</p>' . $sdo_link;
 }
 function ais_sa_process_order($order): void {
     if ($order->get_meta('_ais_student_payment_intent')) return;
@@ -282,7 +284,19 @@ function ais_sa_open_cabinet(): void {
 }
 add_action('admin_post_ais_student_cabinet', 'ais_sa_open_cabinet');
 add_action('admin_post_nopriv_ais_student_cabinet', function () { auth_redirect(); });
+function ais_sa_registration_order(array $payload): array {
+    if (ais_pg_role() !== 'shop' || !preg_match('/^[1-9]\d{0,15}$/D', (string) ($payload['orderId'] ?? ''))) throw new RuntimeException('Некорректная заявка.');
+    $order = wc_get_order((int) $payload['orderId']);
+    $registered = $order && $order->is_paid() && (float) $order->get_total() === 0.0 && !$order->get_meta('_ais_student_payment_intent');
+    $ids = [];
+    if ($registered) foreach ($order->get_items() as $item) $ids[] = (string) $item->get_product_id();
+    return ['ok' => true, 'orderId' => (string) $payload['orderId'], 'registered' => (bool) $registered, 'productIds' => array_values(array_unique($ids))];
+}
 add_action('rest_api_init', function () {
+    register_rest_route('ais-program-sites/v1', '/student-registration-order', ['methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => function ($request) {
+        try { return ais_sa_registration_order((array) $request->get_json_params()); }
+        catch (Throwable $error) { return ais_pg_error('Не удалось подтвердить заявку.', 409); }
+    }]);
     register_rest_route('ais-program-sites/v1', '/student-accounts-existing', ['methods' => 'POST', 'permission_callback' => 'ais_pg_permission', 'callback' => function ($request) {
         if (ais_pg_role() !== 'shop') return ais_pg_error('Недоступно.', 403);
         if (strlen($request->get_body()) > 100000) return ais_pg_error('Слишком большой пакет.', 413);
