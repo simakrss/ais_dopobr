@@ -11,6 +11,8 @@ param(
   # Existing private key may live in the desktop application's redirected LocalAppData.
   [string]$SigningKeyPath = "",
   [switch]$WindowsComponents,
+  # Publish the signed first-run installer without requiring the MSI build toolchain.
+  [switch]$StandaloneLauncher,
   # Explicit, separately approved installation only; never part of -All.
   [switch]$ProgramSites,
   [switch]$DocumentRelay,
@@ -841,7 +843,7 @@ if (-not $MoodleSso -and -not $VituEmailExportRoot -and -not $ProgramSites -and 
   }
   $updateResults += Publish-FileTarget $bootstrapRelative "$remoteRoot/$bootstrapRelative" 'first-time local update package'
   $updateResults | Format-Table -AutoSize
-  if ($nativePublisherReady) {
+  if ($StandaloneLauncher -or $nativePublisherReady) {
     & (Join-Path $PSScriptRoot 'build-standalone-launcher.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Standalone installer build failed.' }
     foreach ($launcherFile in @('updates/launcher/install-ais.ps1', 'updates/launcher/start-ais.bat')) {

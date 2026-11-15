@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.637",
-    releasedAt: "2026-11-13"
+    version: "1.7.638",
+    releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.638",
+      releasedAt: "2026-11-15",
+      changes: ["Исправлена подготовка WSL при установке на новый компьютер: включение компонентов Windows, продолжение после перезагрузки и подробный журнал ошибок. Повторный запуск BAT использует актуальный подписанный сценарий подготовки."]
+    },
     {
       version: "1.7.637",
       releasedAt: "2026-11-13",

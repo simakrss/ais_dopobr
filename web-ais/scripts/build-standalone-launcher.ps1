@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $appRoot = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $appRoot
-$inputs = @('ЗАПУСТИТЬ АИС.bat', 'web-ais/scripts/install-standalone.ps1', 'web-ais/scripts/standalone-package.js', 'web-ais/scripts/build-standalone-launcher.ps1')
+$inputs = @('ЗАПУСТИТЬ АИС.bat', 'web-ais/scripts/install-standalone.ps1', 'web-ais/scripts/standalone-package.js', 'web-ais/scripts/bootstrap-local-system.ps1', 'web-ais/scripts/build-standalone-launcher.ps1')
 foreach ($inputFile in $inputs) {
   if (-not (& git -C $repo ls-files -- $inputFile)) { throw "Untracked installer input: $inputFile" }
 }
@@ -23,9 +23,11 @@ $outputRoot = Join-Path $appRoot 'updates\launcher'
 [void][IO.Directory]::CreateDirectory($outputRoot)
 $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-standalone.ps1'))
 $helper = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'standalone-package.js')))
+$preparer = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'bootstrap-local-system.ps1')))
 if ([regex]::Matches($source, '@@AIS_PACKAGE_INSTALLER_BASE64@@').Count -ne 1) { throw 'Installer helper placeholder mismatch.' }
+if ([regex]::Matches($source, '@@AIS_COMPONENT_PREPARER_BASE64@@').Count -ne 1) { throw 'Component preparer placeholder mismatch.' }
 $target = Join-Path $outputRoot 'install-ais.ps1'
-[IO.File]::WriteAllText($target, $source.Replace('@@AIS_PACKAGE_INSTALLER_BASE64@@', $helper), (New-Object Text.UTF8Encoding($true)))
+[IO.File]::WriteAllText($target, $source.Replace('@@AIS_PACKAGE_INSTALLER_BASE64@@', $helper).Replace('@@AIS_COMPONENT_PREPARER_BASE64@@', $preparer), (New-Object Text.UTF8Encoding($true)))
 & $SignTool sign /sha1 $CertificateThumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d 'AIS standalone installer' $target
 if ($LASTEXITCODE -ne 0) { throw 'Standalone installer signing failed.' }
 & $SignTool verify /pa /all $target

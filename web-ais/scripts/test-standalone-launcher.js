@@ -78,36 +78,98 @@ async function main() {
       & ${psQuote(path.join(__dirname, "install-standalone.ps1"))} -ValidateOnly`);
       // Load functions only: no real downloads, installs, elevation, services, or shutdown.
       powershell(`$ast=[Management.Automation.Language.Parser]::ParseFile(${psQuote(path.join(__dirname, "bootstrap-local-system.ps1"))},[ref]$null,[ref]$null)
-      foreach ($name in @('Test-WslReady','Install-WslPrerequisite','Invoke-BootstrapProbe','Test-DockerInstallerSignature')) {
+      foreach ($name in @('Test-WslReady','Install-WslPrerequisite','Invoke-BootstrapProbe','Test-DockerInstallerSignature','Invoke-WslSetup','Write-WslLog','Test-WslRestartPending')) {
         $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$false)
         Invoke-Expression $function.Extent.Text
       }
       function Write-Step($text) {}
+      $runtimeRoot=${psQuote(temp)}; $utf8=New-Object Text.UTF8Encoding($false)
       function Get-Command { [pscustomobject]@{Source='wsl.exe'} }
       function Get-CimInstance { [pscustomobject]@{InstallState=1} }
       function Invoke-BootstrapProbe { [pscustomobject]@{Code=0;Text='WSL version: 2.1.5.0'} }
       if (-not (Test-WslReady)) { throw 'WSL 2.1.5 should be ready' }
       function Invoke-BootstrapProbe { [pscustomobject]@{Code=0;Text='WSL version: 1.0.0.0'} }
       if (Test-WslReady) { throw 'Old WSL must be rejected' }
-      $skipInstall=$false; $script:dockerRestartRequired=$false; $script:calls=@()
-      function Test-WslReady { return $script:calls.Count -ge 2 }
-      function Start-Process { param($FilePath,$ArgumentList,$Verb,$WindowStyle,[switch]$Wait,[switch]$PassThru)
-        if ($WindowStyle -ne 'Hidden' -or $Verb -ne 'RunAs') { throw 'Incorrect WSL launch' }
-        $script:calls += ,$ArgumentList; [pscustomobject]@{ExitCode=0}
-      }
-      if (-not (Install-WslPrerequisite)) { throw 'Install and update WSL failed' }
-      if ($script:calls.Count -ne 2 -or $script:calls[1][0] -ne '--update') { throw 'Missing WSL update' }
+      $skipInstall=$false; $script:dockerRestartRequired=$false; $script:ready=$false
+      function Test-WslReady { return $script:ready }
+      function Invoke-ElevatedWslSetup { $script:ready=$true; return 0 }
+      if (-not (Install-WslPrerequisite)) { throw 'WSL preparation failed' }
       function Test-WslReady { return $false }
-      function Start-Process { [pscustomobject]@{ExitCode=3010} }
+      $script:boot=[datetime]'2026-11-15T10:00:00Z'
+      function Get-CimInstance { [pscustomobject]@{LastBootUpTime=$script:boot} }
+      function Invoke-ElevatedWslSetup { return 3010 }
       if ((Install-WslPrerequisite) -or -not $script:dockerRestartRequired) { throw 'Reboot must be reported, never forced' }
+      function Invoke-ElevatedWslSetup { throw 'Must not repeat setup before reboot' }
+      $script:dockerRestartRequired=$false
+      if ((Install-WslPrerequisite) -or -not $script:dockerRestartRequired) { throw 'Must remember pending reboot' }
+      $script:boot=$script:boot.AddHours(1)
+      if (Test-WslRestartPending) { throw 'Reboot marker must clear logically after a new Windows boot' }
+      function Invoke-ElevatedWslSetup { throw (New-Object ComponentModel.Win32Exception(1223)) }
+      try { [void](Install-WslPrerequisite); throw 'Cancellation accepted' } catch { if ($_.Exception.Message -notmatch 'администратора отменено') { throw } }
+
+      # Fresh Windows: enable both prerequisites, return 3010 without calling WSL before reboot.
+      $script:enabled=@()
+      function Get-WindowsOptionalFeature { [pscustomobject]@{State='Disabled'} }
+      function Enable-WindowsOptionalFeature { param([switch]$Online,$FeatureName,[switch]$All,[switch]$NoRestart,$ErrorAction)
+        if (-not $NoRestart) { throw 'Never reboot automatically' }
+        $script:enabled += $FeatureName; [pscustomobject]@{RestartNeeded=$true}
+      }
+      function Invoke-BootstrapProbe { throw 'WSL must wait for reboot' }
+      $logPath=Join-Path $runtimeRoot 'wsl-test.log'
+      if ((Invoke-WslSetup $logPath) -ne 3010 -or $script:enabled.Count -ne 2) { throw 'Feature preparation did not request reboot' }
+      function Get-WindowsOptionalFeature { [pscustomobject]@{State='EnablePending'} }
+      function Enable-WindowsOptionalFeature { throw 'Pending feature must not be enabled again' }
+      if ((Invoke-WslSetup $logPath) -ne 3010) { throw 'Pending reboot missed' }
+
+      # Older inbox WSL does not support --web-download: use only supported flags.
+      function Get-WindowsOptionalFeature { [pscustomobject]@{State='Enabled'} }
+      $script:ready=$false; $script:calls=@()
+      function Test-WslReady { return $script:ready }
+      function Invoke-BootstrapProbe { param($FilePath,$Arguments,$TimeoutMilliseconds,$LogPath)
+        $script:calls += $Arguments
+        if ($Arguments -eq '--help') { return [pscustomobject]@{Code=0;Text='--install --no-distribution'} }
+        if ($Arguments -eq '--version') { return [pscustomobject]@{Code=1;Text='unsupported'} }
+        if ($Arguments -ne '--install --no-distribution') { throw 'Unsupported flag used' }
+        $script:ready=$true; return [pscustomobject]@{Code=0;Text='installed'}
+      }
+      if ((Invoke-WslSetup $logPath) -ne 0) { throw 'Inbox WSL installation failed' }
+      # Network/web-channel error: preserve OS details and retry the standard Microsoft channel.
+      $script:ready=$false; $script:calls=@()
+      function Invoke-BootstrapProbe { param($FilePath,$Arguments,$TimeoutMilliseconds,$LogPath)
+        $script:calls += $Arguments
+        if ($Arguments -eq '--help') { return [pscustomobject]@{Code=0;Text='--web-download'} }
+        if ($Arguments -eq '--version') { return [pscustomobject]@{Code=1;Text='not installed'} }
+        if ($Arguments -match '--web-download') { return [pscustomobject]@{Code=1;Text='Сбой загрузки 0x80072ee7'} }
+        $script:ready=$true; return [pscustomobject]@{Code=0;Text='installed'}
+      }
+      if ((Invoke-WslSetup $logPath) -ne 0 -or $script:calls[-1] -ne '--install --no-distribution') { throw 'Missing standard channel fallback' }
+      if ([IO.File]::ReadAllText($logPath) -notmatch '0x80072ee7') { throw 'Lost Windows error details' }
+      $script:ready=$false
+      function Invoke-BootstrapProbe { [pscustomobject]@{Code=1;Text='Отказано в доступе 0x80070005'} }
+      try { [void](Invoke-WslSetup $logPath); throw 'Failure accepted' } catch { if ($_.Exception.Message -notmatch '0x80070005') { throw } }
       function Get-AuthenticodeSignature { [pscustomobject]@{Status='NotSigned';SignerCertificate=$null} }
       if (Test-DockerInstallerSignature ${psQuote(path.join(__dirname, "bootstrap-local-system.ps1"))}) { throw 'Unsigned installer accepted' }
+      `);
+      powershell(`$ast=[Management.Automation.Language.Parser]::ParseFile(${psQuote(path.join(__dirname, "bootstrap-local-system.ps1"))},[ref]$null,[ref]$null)
+      $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-BootstrapProbe'},$false)
+      Invoke-Expression $function.Extent.Text
+      $result=Invoke-BootstrapProbe $env:ComSpec '/d /c "echo stdout-value & echo stderr-value 1>&2 & exit /b 17"'
+      if ($result.Code -ne 17 -or $result.Text -notmatch 'stdout-value' -or $result.Text -notmatch 'stderr-value') { throw 'Probe lost stderr or exit code' }
+      # Compile a tiny fixture that behaves like WSL redirected output, not an actual WSL install.
+      $fixture=${psQuote(path.join(temp, "wsl.exe"))}
+      Add-Type -TypeDefinition 'using System; using System.Text; public class WslProbeFixture { public static void Main() { Console.OutputEncoding = Encoding.Unicode; Console.WriteLine("Ошибка Windows"); Console.Error.WriteLine("Подробности 0x80070005"); Environment.Exit(1); } }' -OutputAssembly $fixture -OutputType ConsoleApplication
+      $result=Invoke-BootstrapProbe $fixture '--version'
+      if ($result.Code -ne 1 -or $result.Text -notmatch 'Ошибка Windows' -or $result.Text -notmatch 'Подробности 0x80070005') { throw 'WSL Unicode output corrupted' }
       `);
     }
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   const installer = fs.readFileSync(path.join(__dirname, "install-standalone.ps1"), "utf8");
   assert.match(installer, /Import-DockerPath[\s\S]*?Start-LocalWorker/);
   assert.match(installer, /-Action', 'Prepare'/);
+  assert.match(installer, /@@AIS_COMPONENT_PREPARER_BASE64@@/);
+  assert.match(installer, /-PreparationRoot', \$appRoot/);
+  assert.match(installer, /Открыть журнал/);
+  assert.match(installer, /\$bar.Value = if \(\$exitCode -eq 0\) \{ 100 \} else \{ 0 \}/);
   assert.doesNotMatch(installer, /Restart-Computer|shutdown\.exe|InstallIfMissing|Add-Type[^\n]+TypeDefinition/);
   const supervisor = fs.readFileSync(path.join(__dirname, "start-lan-system.js"), "utf8");
   assert.match(supervisor, /host: cloudClient \? "127\.0\.0\.1" : "0\.0\.0\.0"/);

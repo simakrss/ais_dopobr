@@ -1,8 +1,11 @@
 ﻿[CmdletBinding()]
 param(
-  [ValidateSet("Start", "Validate", "Prepare")]
+  [ValidateSet("Start", "Validate", "Prepare", "PrepareWsl")]
   [string]$Action = "Start",
-  [string]$LauncherArguments = ""
+  [string]$LauncherArguments = "",
+  [string]$PreparationRoot = "",
+  [ValidatePattern('^[a-f0-9]{32}$')]
+  [string]$WslRequestId
 )
 
 Set-StrictMode -Version Latest
@@ -13,12 +16,16 @@ $OutputEncoding = $utf8
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $appRoot = Split-Path -Parent $PSScriptRoot
+if ($PreparationRoot) {
+  if ($Action -notin @('Prepare', 'PrepareWsl')) { throw 'PreparationRoot is only valid for component preparation.' }
+  $appRoot = [IO.Path]::GetFullPath($PreparationRoot)
+}
 $runtimeRoot = Join-Path $appRoot ".runtime"
 $downloadRoot = Join-Path $runtimeRoot "downloads"
 $portableNodeRoot = Join-Path $runtimeRoot "node"
-$launcherPath = Join-Path $PSScriptRoot "start-lan-system.js"
-$startupUpdatePath = Join-Path $PSScriptRoot "sync-and-deploy-startup.ps1"
-$stopScriptPath = Join-Path $PSScriptRoot "stop-lan-system.ps1"
+$launcherPath = Join-Path $appRoot "scripts/start-lan-system.js"
+$startupUpdatePath = Join-Path $appRoot "scripts/sync-and-deploy-startup.ps1"
+$stopScriptPath = Join-Path $appRoot "scripts/stop-lan-system.ps1"
 $minimumNodeMajor = 20
 $validateOnly = $Action -eq "Validate" -or $env:AIS_LAUNCHER_VALIDATE_ONLY -eq "1"
 $skipInstall = $env:AIS_BOOTSTRAP_SKIP_INSTALL -eq "1"
@@ -215,7 +222,7 @@ function Test-DockerEngine([string]$DockerPath) {
   }
 }
 
-function Invoke-BootstrapProbe([string]$FilePath, [string]$Arguments, [int]$TimeoutMilliseconds = 15000) {
+function Invoke-BootstrapProbe([string]$FilePath, [string]$Arguments, [int]$TimeoutMilliseconds = 15000, [string]$LogPath = '') {
   $info = New-Object Diagnostics.ProcessStartInfo
   $info.FileName = $FilePath
   $info.Arguments = $Arguments
@@ -223,18 +230,32 @@ function Invoke-BootstrapProbe([string]$FilePath, [string]$Arguments, [int]$Time
   $info.CreateNoWindow = $true
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
+  if ([IO.Path]::GetFileName($FilePath) -ieq 'wsl.exe') {
+    # WSL emits UTF-16 to redirected pipes; removing NULs corrupts Cyrillic.
+    $info.StandardOutputEncoding = [Text.Encoding]::Unicode
+    $info.StandardErrorEncoding = [Text.Encoding]::Unicode
+  }
   $process = New-Object Diagnostics.Process
   $process.StartInfo = $info
   try {
     [void]$process.Start()
     $output = $process.StandardOutput.ReadToEndAsync()
     $errors = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMilliseconds)
+    $nextProgress = (Get-Date).AddSeconds(10)
+    while (-not $process.WaitForExit(1000) -and (Get-Date) -lt $deadline) {
+      if ($LogPath -and (Get-Date) -ge $nextProgress) {
+        Write-WslLog $LogPath "Выполняется wsl $Arguments…"
+        $nextProgress = (Get-Date).AddSeconds(10)
+      }
+    }
+    if (-not $process.HasExited) {
       # Only the diagnostic child created here is terminated, never Docker Desktop.
       try { $process.Kill() } catch { }
       return [pscustomobject]@{ Code = -1; Text = "Превышено время проверки" }
     }
-    return [pscustomobject]@{ Code = $process.ExitCode; Text = $output.GetAwaiter().GetResult().Replace([string][char]0, "") }
+    $text = @($output.GetAwaiter().GetResult(), $errors.GetAwaiter().GetResult()) -join "`r`n"
+    return [pscustomobject]@{ Code = $process.ExitCode; Text = $text.Replace([string][char]0, '').Trim() }
   } finally { $process.Dispose() }
 }
 
@@ -267,40 +288,118 @@ function Test-DockerInstallerSignature([string]$InstallerPath) {
   }
 }
 
+function Write-WslLog([string]$LogPath, [string]$Message) {
+  [IO.File]::AppendAllText($LogPath, $Message + "`r`n", (New-Object Text.UTF8Encoding($false)))
+}
+
+function Invoke-WslSetup([string]$LogPath) {
+  # Only this function runs elevated. Never reboot Windows automatically.
+  $restart = $false
+  foreach ($name in @('VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux')) {
+    $feature = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction Stop
+    Write-WslLog $LogPath "$name : $($feature.State)"
+    if ([string]$feature.State -match 'Pending') { $restart = $true; continue }
+    if ([string]$feature.State -ne 'Enabled') {
+      Write-WslLog $LogPath "Включение компонента Windows: $name…"
+      $result = Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart -ErrorAction Stop
+      if ($result.RestartNeeded) { $restart = $true }
+    }
+  }
+  if ($restart) {
+    Write-WslLog $LogPath 'Компоненты Windows включены. Сохраните работу, перезагрузите Windows и снова запустите BAT — установка продолжится.'
+    return 3010
+  }
+  if (Test-WslReady) { return 0 }
+  $wsl = Get-Command wsl.exe -ErrorAction Stop
+  $help = Invoke-BootstrapProbe $wsl.Source '--help'
+  $version = Invoke-BootstrapProbe $wsl.Source '--version'
+  $operation = if ($version.Code -eq 0) { '--update' } else { '--install --no-distribution' }
+  # Inbox WSL on a fresh Windows 11 can lack --web-download.
+  $arguments = $operation
+  if ($help.Text -match '--web-download') { $arguments += ' --web-download' }
+  Write-WslLog $LogPath "Запуск wsl $arguments"
+  $result = Invoke-BootstrapProbe $wsl.Source $arguments 1200000 $LogPath
+  Write-WslLog $LogPath ("Код WSL: $($result.Code)`r`n" + $result.Text)
+  if ($result.Code -eq 3010) { return 3010 }
+  # Retry through Windows' normal download channel if web-download failed.
+  if ($result.Code -ne 0 -and $arguments -ne $operation) {
+    Write-WslLog $LogPath "Повтор через стандартный канал Microsoft: wsl $operation"
+    $result = Invoke-BootstrapProbe $wsl.Source $operation 1200000 $LogPath
+    Write-WslLog $LogPath ("Код WSL: $($result.Code)`r`n" + $result.Text)
+    if ($result.Code -eq 3010) { return 3010 }
+  }
+  if (Test-WslReady) { return 0 }
+  if ($result.Code -ne 0) { throw "WSL не установлен (код $($result.Code)). $($result.Text)" }
+  # An inbox install may succeed but leave the old WSL package in place.
+  $result = Invoke-BootstrapProbe $wsl.Source '--update' 1200000 $LogPath
+  Write-WslLog $LogPath ("Обновление WSL, код $($result.Code)`r`n" + $result.Text)
+  if ($result.Code -eq 3010) { return 3010 }
+  if (Test-WslReady) { return 0 }
+  throw "WSL пока не готов (код $($result.Code)). Нужна версия 2.1.5 или новее. $($result.Text)"
+}
+
+function Invoke-ElevatedWslSetup {
+  [void][IO.Directory]::CreateDirectory($runtimeRoot)
+  $id = [Guid]::NewGuid().ToString('N')
+  $logPath = Join-Path $runtimeRoot "wsl-setup-$id.log"
+  $resultPath = Join-Path $runtimeRoot "wsl-setup-$id.json"
+  Write-Step "Журнал подготовки WSL: $logPath"
+  $powershell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+  # Fixed action, no command text from the environment or downloaded responses.
+  $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action PrepareWsl -PreparationRoot "' + $appRoot.TrimEnd('\') + '" -WslRequestId ' + $id
+  $process = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru
+  try {
+    $offset = 0
+    do {
+      if (Test-Path -LiteralPath $logPath) {
+        $text = [IO.File]::ReadAllText($logPath, [Text.Encoding]::UTF8)
+        if ($text.Length -gt $offset) { Write-Host $text.Substring($offset).TrimEnd(); $offset = $text.Length }
+      }
+    } while (-not $process.WaitForExit(1000))
+    if (Test-Path -LiteralPath $logPath) {
+      $text = [IO.File]::ReadAllText($logPath, [Text.Encoding]::UTF8)
+      if ($text.Length -gt $offset) { Write-Host $text.Substring($offset).TrimEnd() }
+    }
+    if (-not (Test-Path -LiteralPath $resultPath)) { throw "Подготовка WSL прервана (код $($process.ExitCode)). Журнал: $logPath" }
+    $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($result.Code -notin @(0, 3010)) { throw "$($result.Message) Журнал: $logPath" }
+    return [int]$result.Code
+  } finally { $process.Dispose() }
+}
+
+function Test-WslRestartPending {
+  $marker = Join-Path $runtimeRoot 'wsl-restart-required.json'
+  if (-not (Test-Path -LiteralPath $marker)) { return $false }
+  $state = Get-Content -LiteralPath $marker -Raw -Encoding UTF8 | ConvertFrom-Json
+  $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+  return $state.boot -eq $boot
+}
+
 function Install-WslPrerequisite {
-  if (Test-WslReady) { return $true }
-  if ($skipInstall) { return $false }
-  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
-  if (-not $wsl) {
-    Write-Warning "Компонент WSL отсутствует. Docker Desktop может потребовать его ручной установки."
+  if (Test-WslRestartPending) {
+    $script:dockerRestartRequired = $true
+    Write-Step 'Windows ещё не перезагружена после включения компонентов WSL. Сохраните работу, перезагрузите компьютер и повторите BAT.'
     return $false
   }
+  if (Test-WslReady) { return $true }
+  if ($skipInstall) { return $false }
   Write-Step "Для Docker требуется WSL 2. Windows запросит разрешение администратора."
   try {
-    $process = Start-Process -FilePath $wsl.Source -ArgumentList @(
-      "--install", "--no-distribution", "--web-download"
-    ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-    if ($process.ExitCode -notin @(0, 3010)) {
-      Write-Warning "Установка WSL завершилась с кодом $($process.ExitCode)."
-      return $false
-    }
-    if ($process.ExitCode -eq 0 -and -not (Test-WslReady)) {
-      Write-Step "Обновление WSL с официального сервера Microsoft..."
-      $process = Start-Process -FilePath $wsl.Source -ArgumentList @("--update", "--web-download") -Verb RunAs -WindowStyle Hidden -Wait -PassThru
-      if ($process.ExitCode -notin @(0, 3010)) {
-        Write-Warning "Обновление WSL завершилось с кодом $($process.ExitCode)."
-        return $false
-      }
-    }
-    if ($process.ExitCode -eq 3010 -or -not (Test-WslReady)) {
+    $code = Invoke-ElevatedWslSetup
+    if ($code -eq 3010) {
       $script:dockerRestartRequired = $true
-      Write-Warning "Компоненты WSL установлены. Для Docker может потребоваться перезагрузка Windows."
+      $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+      [IO.File]::WriteAllText((Join-Path $runtimeRoot 'wsl-restart-required.json'), (@{boot=$boot} | ConvertTo-Json -Compress), $utf8)
+      Write-Step "Для продолжения установки требуется перезагрузка Windows. После неё снова запустите BAT."
       return $false
     }
+    if (-not (Test-WslReady)) { throw 'WSL установлен, но проверка готовности не пройдена. Проверьте журнал подготовки.' }
     return $true
   } catch {
-    Write-Warning "Не удалось установить WSL автоматически: $($_.Exception.Message)"
-    return $false
+    if ($_.Exception.ToString() -match '1223|canceled by the user|отменена пользователем') {
+      throw 'Разрешение администратора отменено. Запустите BAT повторно и подтвердите запрос Windows на подготовку WSL.'
+    }
+    throw
   }
 }
 
@@ -406,6 +505,19 @@ function Assert-DockerComputerSupported {
   if (-not $system.HypervisorPresent -and $processor.VirtualizationFirmwareEnabled -eq $false) {
     throw "В BIOS/UEFI выключена виртуализация. Включите Intel VT-x / AMD-V и повторите запуск. Общая АИС доступна через сайт."
   }
+}
+
+if ($Action -eq 'PrepareWsl') {
+  if (-not $WslRequestId) { throw 'WslRequestId is required.' }
+  $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'WSL preparation requires administrator approval.' }
+  [void][IO.Directory]::CreateDirectory($runtimeRoot)
+  $logPath = Join-Path $runtimeRoot "wsl-setup-$WslRequestId.log"
+  $resultPath = Join-Path $runtimeRoot "wsl-setup-$WslRequestId.json"
+  $code = 10; $message = ''
+  try { $code = Invoke-WslSetup $logPath } catch { $message = $_.Exception.Message; Write-WslLog $logPath $message }
+  [IO.File]::WriteAllText($resultPath, (@{ Code = $code; Message = $message } | ConvertTo-Json -Compress), $utf8)
+  exit $code
 }
 
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {

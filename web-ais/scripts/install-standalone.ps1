@@ -12,6 +12,7 @@ $installBase = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 
 $appRoot = Join-Path $installBase 'web-ais'
 $powerShell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
 $packageInstaller = '@@AIS_PACKAGE_INSTALLER_BASE64@@'
+$componentPreparer = '@@AIS_COMPONENT_PREPARER_BASE64@@'
 if ($ValidateOnly) {
   Write-Output "Standalone installer syntax and configuration: OK"
   exit 0
@@ -46,7 +47,13 @@ $open.Add_Click({ Start-Process $cloudUrl })
 $close = New-Object Windows.Forms.Button
 $close.SetBounds(523, 342, 120, 32); $close.Text = 'Закрыть'; $close.Enabled = $false
 $close.Add_Click({ $form.Close() })
-$form.Controls.AddRange(@($label, $bar, $log, $open, $close))
+$diagnostics = New-Object Windows.Forms.Button
+$diagnostics.SetBounds(230, 342, 200, 32); $diagnostics.Text = 'Открыть журнал'; $diagnostics.Enabled = $false
+$diagnosticPath = Join-Path $installBase ('installation-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+$diagnostics.Add_Click({ if (Test-Path -LiteralPath $diagnosticPath) { Start-Process notepad.exe -ArgumentList (Quote-Argument $diagnosticPath) } })
+$form.Controls.AddRange(@($label, $bar, $log, $open, $diagnostics, $close))
+$script:restartNeeded = $false
+$script:lastProcessLine = ''
 $script:working = $true
 $script:exiting = $false
 $script:worker = $null
@@ -62,6 +69,9 @@ function Step([string]$Text) {
   $label.Text = $Text
   if ($log.TextLength -gt 30000) { $log.Text = $log.Text.Substring($log.TextLength - 15000) }
   $log.AppendText($Text + "`r`n")
+  if (Test-Path -LiteralPath $installBase -PathType Container) {
+    try { [IO.File]::AppendAllText($diagnosticPath, $Text + "`r`n", $utf8); $diagnostics.Enabled = $true } catch { }
+  }
   Update-Ui
 }
 function Quote-Argument([string]$Value) {
@@ -97,6 +107,7 @@ function Download([string]$Url, [string]$Target, [long]$MaxBytes) {
   } finally { $response.Dispose() }
 }
 function Run-Process([string]$File, [string[]]$Arguments, [string]$WorkingDirectory = $installBase) {
+  $script:lastProcessLine = ''
   $info = New-Object Diagnostics.ProcessStartInfo
   $info.FileName = $File; $info.Arguments = ($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
   $info.WorkingDirectory = $WorkingDirectory
@@ -110,11 +121,11 @@ function Run-Process([string]$File, [string[]]$Arguments, [string]$WorkingDirect
     while (-not $process.HasExited -or $null -ne $out -or $null -ne $err) {
       if ($null -ne $out -and $out.IsCompleted) {
         $line = $out.GetAwaiter().GetResult()
-        if ($null -eq $line) { $out = $null } else { Step $line; $out = $process.StandardOutput.ReadLineAsync() }
+        if ($null -eq $line) { $out = $null } else { if ($line.Trim()) { $script:lastProcessLine = $line }; Step $line; $out = $process.StandardOutput.ReadLineAsync() }
       }
       if ($null -ne $err -and $err.IsCompleted) {
         $line = $err.GetAwaiter().GetResult()
-        if ($null -eq $line) { $err = $null } else { Step $line; $err = $process.StandardError.ReadLineAsync() }
+        if ($null -eq $line) { $err = $null } else { if ($line.Trim()) { $script:lastProcessLine = $line }; Step $line; $err = $process.StandardError.ReadLineAsync() }
       }
       Update-Ui
       Start-Sleep -Milliseconds 50
@@ -229,6 +240,8 @@ try {
   } else {
     Assert-LocalPath $installBase
     [void][IO.Directory]::CreateDirectory($installBase)
+    $os = Get-CimInstance Win32_OperatingSystem
+    Step ("Windows: $($os.Caption), сборка $($os.BuildNumber). Журнал: $diagnosticPath")
     $node = Get-Node
     $env:AIS_NODE_PATH = $node
     $existing = Find-ExistingRoot
@@ -246,9 +259,19 @@ try {
     }
     Step 'Подготовка Docker и WSL. При необходимости Windows запросит разрешение администратора.'
     Step 'Установка Docker означает принятие условий https://www.docker.com/legal/docker-subscription-service-agreement/ .'
-    $code = Run-Process $powerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $appRoot 'scripts\bootstrap-local-system.ps1'), '-Action', 'Prepare') $appRoot
-    if ($code -eq 3010) { throw 'WSL установлен. Сохраните работу, перезагрузите компьютер и снова запустите BAT. Пока можно работать в общей АИС через сайт.' }
-    if ($code -ne 0) { throw 'Локальные компоненты пока не готовы: причина указана выше. Устраните её и повторите запуск. Общая АИС доступна по кнопке ниже.' }
+    # Use the preparer from THIS signed installer, including after a failed older install.
+    # Do not replace files in an existing/running AIS outside its normal update workflow.
+    if ($componentPreparer -like '@@*') { throw 'Сценарий подготовки компонентов не подписан издателем.' }
+    $preparerPath = Join-Path $installBase ('prepare-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    [IO.File]::WriteAllBytes($preparerPath, [Convert]::FromBase64String($componentPreparer))
+    try {
+      $code = Run-Process $powerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $preparerPath, '-Action', 'Prepare', '-PreparationRoot', $appRoot) $appRoot
+    } finally { Remove-Item -LiteralPath $preparerPath -Force }
+    if ($code -eq 3010) {
+      $script:restartNeeded = $true
+      throw 'Сохраните работу, перезагрузите Windows и снова запустите BAT. Установка продолжится. Общая АИС уже доступна по кнопке ниже.'
+    }
+    if ($code -ne 0) { throw ("Локальные компоненты не готовы. $script:lastProcessLine Подробности — в журнале установки.") }
     Import-DockerPath
     if ($registeredService -and -not ($health -and $health.appServerAvailable)) {
       Step 'Запуск уже установленной службы АИС без переустановки…'
@@ -282,11 +305,13 @@ try {
     Start-Process $cloudUrl
   }
 } catch {
-  $exitCode = 1
+  $exitCode = if ($script:restartNeeded) { 3010 } else { 1 }
   $form.Show()
-  Step ('Ошибка: ' + $_.Exception.Message)
+  $prefix = if ($script:restartNeeded) { 'Требуется перезагрузка. ' } else { 'Ошибка: ' }
+  Step ($prefix + $_.Exception.Message)
 } finally {
-  $script:working = $false; $close.Enabled = $true; $bar.Style = 'Blocks'; $bar.Value = 100
+  $script:working = $false; $close.Enabled = $true; $bar.Style = 'Blocks'
+  $bar.Value = if ($exitCode -eq 0) { 100 } else { 0 }
 }
 if ($script:tray) {
   # Closing the progress form keeps only the user-owned tray and document worker.
