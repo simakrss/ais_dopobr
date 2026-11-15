@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$ValidateOnly)
+param([switch]$ValidateOnly, [switch]$Resume)
 
 # This source is published ONLY after Authenticode signing. The BAT pins its publisher.
 Set-StrictMode -Version Latest
@@ -9,6 +9,11 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $cloudUrl = "https://edu-plus.ru/lms/"
 $installBase = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrLocal'
+$publisherPin = 'FAB72DC25B08084C8E7D2782D65D3ECF0A1D7ABDEB36A91790641D515DA26EC2'
+$resumeScriptPath = Join-Path $installBase 'resume-install.ps1'
+$resumeLauncherPath = Join-Path $installBase 'resume-launcher.ps1'
+$resumeStatePath = Join-Path $installBase 'resume-install.json'
+$resumeShortcutPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'АИС — продолжение установки.lnk'
 $appRoot = Join-Path $installBase 'web-ais'
 $powerShell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
 $packageInstaller = '@@AIS_PACKAGE_INSTALLER_BASE64@@'
@@ -16,6 +21,12 @@ $componentPreparer = '@@AIS_COMPONENT_PREPARER_BASE64@@'
 if ($ValidateOnly) {
   Write-Output "Standalone installer syntax and configuration: OK"
   exit 0
+}
+if ($Resume) {
+  # A stale or manually opened shortcut must never start a completed installation.
+  if (-not (Test-Path -LiteralPath $resumeStatePath -PathType Leaf)) { exit 0 }
+  $resumeState = Get-Content -LiteralPath $resumeStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($resumeState.protocol -ne 1 -or $resumeState.reason -ne 'reboot') { throw 'Некорректное состояние продолжения установки АИС.' }
 }
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'Нужна 64-битная Windows. Общая АИС доступна на https://edu-plus.ru/lms/.' }
 
@@ -85,6 +96,84 @@ function Assert-LocalPath([string]$PathValue) {
     }
     $parent = [IO.Directory]::GetParent($current)
     $current = if ($parent) { $parent.FullName } else { '' }
+  }
+}
+
+function Assert-ResumeInstallerSignature([string]$FilePath) {
+  $signature = Get-AuthenticodeSignature -LiteralPath $FilePath
+  if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) { throw 'Подпись установщика для продолжения установки не подтверждена.' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-', '') } finally { $sha.Dispose() }
+  if ($pin -cne $publisherPin) { throw 'Издатель установщика для продолжения установки не подтверждён.' }
+}
+
+function Get-InstallationResumeCommand {
+  # Local bootstrap, generated only by this signed installer, like the standalone BAT.
+  # Consume the shortcut, then check Authenticode AND the pinned publisher.
+  $command = @'
+$ErrorActionPreference = 'Stop'
+$directory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrLocal'
+$shortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'АИС — продолжение установки.lnk'
+try {
+  if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force }
+  if (-not (Test-Path -LiteralPath (Join-Path $directory 'resume-install.json'))) { exit 0 }
+  $file = Join-Path $directory 'resume-install.ps1'
+  $signature = Get-AuthenticodeSignature -LiteralPath $file
+  if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) { throw 'Подпись установщика АИС не подтверждена. Запустите актуальный BAT.' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-', '') } finally { $sha.Dispose() }
+  if ($pin -cne '@@PIN@@') { throw 'Издатель установщика АИС не подтверждён. Запустите актуальный BAT.' }
+  & $file -Resume
+  exit $LASTEXITCODE
+} catch {
+  Add-Type -AssemblyName System.Windows.Forms
+  [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Продолжение установки АИС', 'OK', 'Error')
+  exit 1
+}
+'@
+  return $command.Replace('@@PIN@@', $publisherPin)
+}
+
+function Clear-InstallationResume {
+  # Only exact files owned by this installer; leave all other startup entries.
+  foreach ($file in @($resumeShortcutPath, $resumeStatePath, $resumeLauncherPath)) {
+    if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+  }
+}
+
+function Register-InstallationResume([string]$InstallerPath) {
+  Assert-LocalPath $installBase
+  Assert-LocalPath $resumeScriptPath
+  Assert-LocalPath $resumeLauncherPath
+  Assert-LocalPath $resumeStatePath
+  Assert-LocalPath $resumeShortcutPath
+  Assert-ResumeInstallerSignature $InstallerPath
+  [void][IO.Directory]::CreateDirectory($installBase)
+  [void][IO.Directory]::CreateDirectory((Split-Path -Parent $resumeShortcutPath))
+  if ([IO.Path]::GetFullPath($InstallerPath) -ine [IO.Path]::GetFullPath($resumeScriptPath)) {
+    [IO.File]::Copy($InstallerPath, $resumeScriptPath, $true)
+  }
+  Assert-ResumeInstallerSignature $resumeScriptPath
+  [IO.File]::WriteAllText($resumeStatePath, (@{protocol=1; reason='reboot'; createdAt=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress), $utf8)
+  $shell = $null; $shortcut = $null
+  try {
+    # Keep the shortcut command short: Windows may truncate long inline scripts.
+    [IO.File]::WriteAllText($resumeLauncherPath, (Get-InstallationResumeCommand), (New-Object Text.UTF8Encoding($true)))
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($resumeShortcutPath)
+    $shortcut.TargetPath = $powerShell
+    $shortcut.Arguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + (Quote-Argument $resumeLauncherPath)
+    $shortcut.WorkingDirectory = $installBase
+    $shortcut.WindowStyle = 7
+    $shortcut.Description = 'Однократное продолжение установки АИС после перезагрузки и входа в Windows'
+    $shortcut.Save()
+    if (-not (Test-Path -LiteralPath $resumeShortcutPath -PathType Leaf)) { throw 'Windows не сохранила автозапуск установки.' }
+  } catch {
+    Clear-InstallationResume
+    throw
+  } finally {
+    if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+    if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
   }
 }
 function Download([string]$Url, [string]$Target, [long]$MaxBytes) {
@@ -233,7 +322,9 @@ function Add-ClientTray {
 
 $exitCode = 0
 try {
+  Clear-InstallationResume
   $form.Show(); Update-Ui
+  if ($Resume) { Step 'Продолжение установки после перезагрузки Windows…' }
   $health = Get-LocalHealth
   if ($health -and $health.appServerAvailable -and $health.ocrAvailable -and $health.documentEditingAvailable) {
     Start-Process $cloudUrl
@@ -269,7 +360,10 @@ try {
     } finally { Remove-Item -LiteralPath $preparerPath -Force }
     if ($code -eq 3010) {
       $script:restartNeeded = $true
-      throw 'Сохраните работу, перезагрузите Windows и снова запустите BAT. Установка продолжится. Общая АИС уже доступна по кнопке ниже.'
+      try { Register-InstallationResume $PSCommandPath } catch {
+        throw ("Не удалось включить автоматическое продолжение: $($_.Exception.Message) После перезагрузки запустите BAT вручную.")
+      }
+      throw 'Сохраните работу и перезагрузите компьютер. После входа в эту учётную запись Windows установка продолжится автоматически. Общая АИС уже доступна по кнопке ниже.'
     }
     if ($code -ne 0) { throw ("Локальные компоненты не готовы. $script:lastProcessLine Подробности — в журнале установки.") }
     Import-DockerPath

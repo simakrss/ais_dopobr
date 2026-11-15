@@ -22,6 +22,7 @@ if (-not $bat.Contains("`$publisherPin = '$pin'")) { throw 'Standalone BAT publi
 $outputRoot = Join-Path $appRoot 'updates\launcher'
 [void][IO.Directory]::CreateDirectory($outputRoot)
 $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-standalone.ps1'))
+if (-not $source.Contains("`$publisherPin = '$pin'")) { throw 'Resume launcher publisher pin does not match the certificate.' }
 $helper = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'standalone-package.js')))
 $preparer = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'bootstrap-local-system.ps1')))
 if ([regex]::Matches($source, '@@AIS_PACKAGE_INSTALLER_BASE64@@').Count -ne 1) { throw 'Installer helper placeholder mismatch.' }
