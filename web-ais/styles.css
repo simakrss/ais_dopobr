@@ -571,6 +571,10 @@ body.is-session-expired {
   text-align: center;
 }
 
+.auth-card-footer .auth-center-link { display: block; margin-bottom: 14px; color: var(--teal); font-size: 13px; font-weight: 600; text-underline-offset: 3px; }
+.auth-center-link:hover { text-decoration-thickness: 2px; }
+.auth-center-link:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; border-radius: 3px; }
+
 .auth-partner-invite {
   display: flex;
   align-items: center;
@@ -21388,7 +21392,13 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
 .student-results-tab .form-section {
   min-width: 0;
+  align-self: stretch;
 }
+
+.student-results-tab .student-education-section .student-form-grid { gap: 3px; }
+.student-results-tab .student-education-section .student-form-grid input { min-height: 28px; height: 28px; padding-top: 3px; padding-bottom: 3px; }
+.student-results-tab .student-education-section .education-document-actions { margin-top: 5px; gap: 3px; }
+.student-results-tab > .student-review-actions { grid-column: 1 / -1; }
 
 .student-results-tab .student-form-grid {
   grid-template-columns: 1fr;
@@ -32302,6 +32312,12 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .student-award-upload-button { grid-column: 1 / -1; width: 100%; justify-content: center; white-space: normal; }
 .student-award-upload-status, .student-award-file-link { grid-column: 1 / -1; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
 .student-award-upload-status:empty { display: none; }
+.student-logout-dialog { width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; padding: 20px; border: 1px solid var(--line); border-radius: 14px; color: var(--text); }
+.student-logout-dialog::backdrop { background: #152f2b77; }
+.student-logout-dialog h2 { margin: 0; font-size: 20px; }
+.student-logout-body { padding-top: 18px; }
+.student-logout-body progress { width: 100%; height: 8px; accent-color: var(--teal); }
+.student-logout-body p { margin: 12px 0 0; line-height: 1.5; color: var(--muted); }
 .student-access-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; border: 1px solid var(--line); padding: 0; color: var(--text); }
 .student-access-dialog::backdrop { background: #152f2b77; }
 .student-access-dialog .student-access-body { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; }

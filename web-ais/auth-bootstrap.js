@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261115-standalone-auto-resume";
+  const AUTH_BUILD = "20261115-order-access-and-portal-layout";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>
@@ -429,7 +429,7 @@
               <button data-open-partner-registration type="button">Стать партнёром</button>
             </div>
             <button class="ghost-button pwa-login-install" data-pwa-install type="button">Установить приложение</button>
-            <footer class="auth-card-footer">ООО «Цифровизация Плюс»</footer>
+            <footer class="auth-card-footer"><a class="auth-center-link" href="https://edu-plus.ru/">Перейти на edu-plus.ru <span aria-hidden="true">↗</span></a><span>ООО «Цифровизация Плюс»</span></footer>
           </div>
         </section>
       </main>

@@ -222,7 +222,7 @@
     busy = value;
     root.querySelectorAll("button, input, select, textarea").forEach(element => { element.disabled = value; });
     const progress = root.querySelector("[data-progress]");
-    if (progress) { progress.hidden = !value; progress.querySelector("span").textContent = label; }
+    if (progress) { progress.hidden = !value || !label; progress.querySelector("span").textContent = label; }
     availability();
   }
   function availability() {
@@ -376,11 +376,7 @@
       if (dirty) { message("Сначала сохраните изменённые данные.", true); return; }
       run("Обновление статуса проверки…", async () => { state = await request(""); render(); });
     });
-    root.querySelectorAll("[data-logout]").forEach(button => button.addEventListener("click", () => run("Выход…", async () => {
-      if (dirty) await request("/profile", profile());
-      if (previewStudentId) { dirty = false; busy = false; window.close(); if (!window.closed) window.location.assign(api.appUrl("")); return; }
-      await api.request("api/auth/logout", { method: "POST" }); api.redirectToLogin();
-    })));
+    root.querySelectorAll("[data-logout]").forEach(button => button.addEventListener("click", logout));
     root.querySelector(".student-portal-review").hidden = ["feedback", "awards"].includes(tab);
     setSidebar(false, false); availability();
     if (tab === "feedback") { drawHistory(); loadHistory(); }
@@ -395,6 +391,26 @@
     setBusy(true, label); message("");
     try { await operation(); } catch (error) { message(error.message || "Не удалось выполнить операцию.", true); }
     finally { setBusy(false); }
+  }
+  async function logout() {
+    if (busy) return;
+    setSidebar(false, false); accountMenu(false); setBusy(true); message("");
+    const dialog = document.createElement("dialog");
+    dialog.className = "modal student-logout-dialog";
+    dialog.setAttribute("aria-labelledby", "student-logout-title");
+    dialog.innerHTML = `<header class="modal-head"><h2 id="student-logout-title">Выход из кабинета</h2></header><div class="student-logout-body" role="status" aria-live="polite"><progress aria-label="Выход из кабинета"></progress><p>${dirty ? "Сохраняем изменения и завершаем сеанс…" : "Завершаем сеанс…"}</p></div>`;
+    dialog.addEventListener("cancel", event => event.preventDefault());
+    document.body.append(dialog); dialog.showModal();
+    try {
+      if (dirty) { await request("/profile", profile()); dirty = false; }
+      if (previewStudentId) { busy = false; window.close(); if (!window.closed) window.location.assign(api.appUrl("")); return; }
+      await api.request("api/auth/logout", { method: "POST" });
+      api.redirectToLogin();
+    } catch (error) {
+      message(error.message || "Не удалось выйти. Попробуйте ещё раз.", true);
+    } finally {
+      dialog.close(); dialog.remove(); setBusy(false);
+    }
   }
   async function upload(input) {
     const file = input.files[0]; if (!file) return;

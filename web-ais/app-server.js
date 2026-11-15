@@ -25234,6 +25234,10 @@ function getStudentEnrollmentService() {
       const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
       return programSiteGenerator.createClient(keys)("shop", endpoint, payload);
     },
+    async shopAccountSeed(orderId, email) {
+      const keys = await programSiteGenerator.readKeys(SERVER_CODE_ROOT === ROOT ? STORAGE_ROOT : path.resolve(SERVER_CODE_ROOT, "..", "data"));
+      return programSiteGenerator.createClient(keys)("shop", "/student-account-seed", { orderId, email });
+    },
     readFeedbackState: readStudentFeedbackState,
     saveFeedbackState: saveStudentFeedbackState,
     loginLimit: studentEnrollmentLoginLimit,

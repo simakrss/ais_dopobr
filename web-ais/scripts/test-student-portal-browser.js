@@ -6,12 +6,19 @@ const root = path.resolve(__dirname, "..");
 const record = { id: "fixture", name: "Тестовая Светлана Александровна", email: "fixture@example.test", program: "Организация образовательного процесса вуза на основе современных информационных технологий (72 ч)", status: "На зачисление",
   contractAmount: 10000, payment1Amount: 5000, payment1Date: "2026-11-11" };
 let saved = false, logout = 0;
+let releaseLogout;
 const feedbackCalls = []; let feedbackReceived, releaseFeedback;
 const payload = () => ({ user: { name: record.name, email: record.email }, record, applications: [{ id: record.id, program: record.program, status: record.status }],
   fields: [{ key: "name", label: "ФИО", type: "text", required: true }, { key: "phone", label: "Телефон", type: "tel", required: true }],
   missing: saved ? [] : ["Телефон"], documents: [], requirements: model.documentRequirements({ citizenship: "РФ" }), finances: model.finances(record), sdoAvailable: model.sdoAvailable(record), feedbackRecipient: "center@example.test" });
 const server = http.createServer(async (req, res) => {
-  if (req.url === "/api/auth/logout") { logout++; res.setHeader("Content-Type", "application/json"); res.end('{}'); return; }
+  if (req.url === "/api/auth/logout") {
+    logout++; await new Promise(resolve => { releaseLogout = resolve; });
+    res.setHeader("Content-Type", "application/json");
+    if (logout === 1) { res.statusCode = 503; res.end('{"error":"Не удалось выйти. Повторите попытку."}'); }
+    else res.end('{}');
+    return;
+  }
   if (req.url.startsWith("/api/student-portal")) {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     if (req.url.startsWith("/api/student-portal/feedback") && (req.method === "GET" || req.url.includes("feedback-sync"))) { res.setHeader("Content-Type", "application/json"); return res.end(JSON.stringify({ messages: [] })); }
@@ -141,8 +148,18 @@ const server = http.createServer(async (req, res) => {
     assert.equal(feedbackCalls[0].requestId, feedbackCalls[1].requestId, 'A retry keeps its idempotency key');
     assert.match(feedbackCalls[0].requestId, /^[a-f0-9-]{36}$/);
     await page.locator('[data-account-toggle]').click(); await page.getByRole('menuitem', { name:'Выйти', exact:true }).click();
+    await page.getByRole('dialog', { name:'Выход из кабинета' }).waitFor();
+    assert.equal(await page.locator('[data-progress]').isVisible(), false);
+    assert.ok(await page.locator('.student-logout-dialog').evaluate(el => el.getBoundingClientRect().right <= innerWidth && el.getBoundingClientRect().left >= 0));
+    await page.screenshot({ path: path.join(screenshots, 'mobile-logout.png') });
+    await page.waitForTimeout(50); releaseLogout();
+    await page.getByText('Не удалось выйти. Повторите попытку.', { exact:true }).waitFor();
+    assert.equal(await page.locator('.student-logout-dialog').count(), 0);
+    await page.locator('[data-account-toggle]').click(); await page.getByRole('menuitem', { name:'Выйти', exact:true }).click();
+    await page.getByRole('dialog', { name:'Выход из кабинета' }).waitFor();
+    await page.waitForTimeout(50); releaseLogout();
     await page.waitForFunction(() => window.loginRedirect === true);
-    assert.equal(logout, 1); assert.equal(record.phone, '+79991234567', 'Logout saves the active draft');
+    assert.equal(logout, 2); assert.equal(record.phone, '+79991234567', 'Logout saves the active draft');
     assert.deepEqual(errors, []);
     console.log("PASS: student shell, mobile navigation, preserved drafts, feedback validation/busy/error/retry/success, profile, review, finances and SDO");
   } finally { await browser.close(); server.close(); }

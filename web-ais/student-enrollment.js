@@ -305,7 +305,19 @@ function createService(deps) {
             && (!item.studentPortalAccountId || item.studentPortalAccountId === item.id)
             && identity(item.email) === identity(row.email) && identity(item.name) === identity(row.name));
           const reserved = await deps.reservedLogins(data, row);
-          const access = owner ? { login: portalLogin(owner), password: portalPassword(owner) } : credentials(row.email, reserved);
+          let access = owner ? { login: portalLogin(owner), password: portalPassword(owner) } : null;
+          if (!access && deps.shopAccountSeed) {
+            const seed = await deps.shopAccountSeed(text(orderId), text(row.email));
+            if (seed?.ok && seed.access) {
+              const candidate = seed.access;
+              if (typeof candidate.login !== 'string' || !candidate.login || candidate.login.length > 256 || /\s/u.test(candidate.login)
+                  || typeof candidate.password !== 'string' || !candidate.password || candidate.password.length > 256) fail('Некорректные реквизиты магазина.', 409);
+              const localUsers = [...students, ...(data.collections.employees || []), ...(data.collections.contracts || [])];
+              if (localUsers.some(item => [item.login, item.studentPortalLogin].some(login => login && identity(login) === identity(candidate.login)))) fail('Логин магазина занят в АИС. Требуется проверка учебного центра.', 409);
+              access = { login: candidate.login, password: candidate.password };
+            }
+          }
+          access ||= credentials(row.email, reserved);
           const id = prior?.id || `student-${crypto.randomUUID()}`;
           const uid = String(Math.max(0, ...students.map(item => Number(item.uid) || 0)) + 1);
           const registryPrice = Number(program.price) || Number(row.paymentAmount);
@@ -441,7 +453,7 @@ function createService(deps) {
       return { ok: true, productIds: payload.productIds.map(text).filter(id => /^[1-9]\d{0,15}$/u.test(id)
         && matchProgram({ productId: id }, current.data.collections.programs || [])) };
     }
-    if (!["authenticate", "sso"].includes(operation) || !/^[1-9]\d{0,15}$/u.test(text(payload.shopUserId))
+    if (!["authenticate", "sso", "email-access"].includes(operation) || !/^[1-9]\d{0,15}$/u.test(text(payload.shopUserId))
       || !text(payload.accountId) || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/u.test(text(payload.email))) fail("Некорректный запрос магазина.");
     const current = await deps.readState(), students = current.data.collections.students || [], owner = students.find(row => row.id === payload.accountId);
     if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
@@ -449,6 +461,9 @@ function createService(deps) {
       || identity(owner.email) !== identity(payload.email)
       || !students.some(row => row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id
         && ["КПК", "ППП", "ДОП"].includes(row.educationType))) fail("Кабинет слушателя недоступен.", 403);
+    if (operation === "email-access") {
+      return { ok: true, account: { accountId: owner.id, login: portalLogin(owner), password: portalPassword(owner), credentialVersion: fingerprint(owner) } };
+    }
     if (operation === "authenticate") {
       if (identity(payload.login) !== identity(portalLogin(owner))) return { ok: false };
       const user = await authenticate(payload.login, payload.password, `shop:${text(payload.clientKey).slice(0, 80)}`);

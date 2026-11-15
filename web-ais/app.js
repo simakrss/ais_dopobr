@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.642",
+    version: "1.7.643",
     releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.643",
+      releasedAt: "2026-11-15",
+      changes: ["Письма любых заказов используют прежние реквизиты покупателя; кабинет слушателя упоминается только при покупке курса. Выход из кабинета показан в отдельном окне, на странице входа добавлена ссылка на учебный центр. Блок документа об образовании уплотнён, кнопки курса и отчётов подняты над отзывом."]
+    },
     {
       version: "1.7.642",
       releasedAt: "2026-11-15",
@@ -38694,7 +38699,8 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       ${tab.id === "documents" ? renderStudentDocumentRecognitionToolbar(record) : ""}
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
-        <section class="form-section ${section.reviewPanel ? "student-review-section" : ""}">
+        ${section.reviewPanel ? renderStudentCourseActions(record) : ""}
+        <section class="form-section ${section.reviewPanel ? "student-review-section" : ""} ${section.educationDocument ? "student-education-section" : ""}">
           <div class="form-section-head">
             <h3>${escapeHtml(section.title)}</h3>
             ${section.customerPassport ? `
@@ -38774,7 +38780,7 @@ MAX - https://bizvmax.ru/zifra_plus
       </button>
     `;
   }
-  function renderStudentReviewPanel(record) {
+  function renderStudentCourseActions(record) {
     const program = findProgramByName(record.program);
     const courseUrl = getProgramPromoUrl(program);
     const gradeReportUrl = getProgramGradeReportUrl(program);
@@ -38789,8 +38795,7 @@ MAX - https://bizvmax.ru/zifra_plus
       ? `Открыть журнал активности\n${activityLogUrl}`
       : "Открыть журнал активности";
     return `
-      <div class="student-review-panel">
-        <div class="student-review-actions">
+        <div class="student-review-actions" role="group" aria-label="Курс и результаты обучения">
           <button class="ghost-button student-course-page-button" data-action="open-student-course-page" type="button" title="${escapeAttr(buttonTitle)}" aria-label="${escapeAttr(buttonTitle)}">
             ${renderExternalLinkIcon()}
             <span>Открыть страницу курса</span>
@@ -38804,6 +38809,12 @@ MAX - https://bizvmax.ru/zifra_plus
             <span>Журнал активности</span>
           </button>
         </div>
+    `;
+  }
+
+  function renderStudentReviewPanel(record) {
+    return `
+      <div class="student-review-panel">
         <label class="student-review-text">
           <textarea name="review">${escapeHtml(record.review || "")}</textarea>
         </label>

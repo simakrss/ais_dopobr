@@ -28,6 +28,41 @@ function fixture(options = {}) {
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
 const feedbackBody = () => ({ subject: "Вопрос об обучении", message: "Подскажите, пожалуйста, дату начала обучения.", requestId: require("node:crypto").randomUUID() });
 
+test("a first course keeps verified shop credentials; repeat courses and shop-only access reuse them without mail or writes", async () => {
+  let seeds = 0;
+  const access = { login: "shop.buyer", password: "Fixture-only-8zA!" };
+  const f = fixture({ shopAccountSeed: async (id, email) => {
+    seeds++; assert.equal(id, "101"); assert.equal(email, "test@example.test");
+    return { ok: true, access };
+  } });
+  const first = (await f.service.orderEmailAccess("101", "test@example.test")).accounts[0];
+  assert.equal(first.login, access.login); assert.equal(first.password, access.password);
+  const record = f.snapshot.data.collections.students[0];
+  assert.equal(record.password, access.password); assert.ok(!record.portalAccessMessage);
+  Object.assign(f.rows[0], { id: "102-1", orderId: "102" });
+  const repeat = (await f.service.orderEmailAccess("102", "test@example.test")).accounts[0];
+  assert.deepEqual(repeat, first); assert.equal(seeds, 1);
+  const snapshot = JSON.stringify(f.snapshot);
+  const request = { shopAccountOperation: "email-access", shopUserId: "12", accountId: first.accountId, email: "test@example.test" };
+  const result = await f.service.shopAccountOperation(request);
+  assert.equal(result.account.login, access.login); assert.equal(result.account.password, access.password);
+  assert.equal(JSON.stringify(f.snapshot), snapshot); assert.equal(f.mails.length, 0);
+  await assert.rejects(f.service.shopAccountOperation({ ...request, email: "other@example.test" }), { statusCode: 403 });
+  record.studentPortalBlocked = true;
+  await assert.rejects(f.service.shopAccountOperation(request), { statusCode: 403 });
+});
+
+test("a colliding shop seed cannot take over an AIS account, and an unavailable seed retries without changing credentials", async () => {
+  for (const login of ["test", "bad login"]) {
+    const f = fixture({ shopAccountSeed: async () => ({ ok: true, access: { login, password: "Fixture-only" } }) });
+    await assert.rejects(f.service.orderEmailAccess("101", "test@example.test"), { statusCode: 409 });
+    assert.equal(f.saves.length, 0); assert.equal(f.mails.length, 0);
+  }
+  const f = fixture({ shopAccountSeed: async () => { throw Error("Temporary shop outage"); } });
+  await assert.rejects(f.service.orderEmailAccess("101", "test@example.test"), /Temporary shop outage/);
+  assert.equal(f.saves.length, 0);
+});
+
 test("completed zero-price registration reuses access and prepares SDO fields without inventing payment or activating Moodle", async () => {
   const calls = [];
   const f = fixture({ paymentShop: async (route, body) => {
