@@ -18847,9 +18847,21 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .student-events-block {
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
     align-self: stretch;
+    gap: 2px;
     overflow: hidden;
+  }
+
+  .student-events-block .event-add-button {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+  }
+
+  .student-events-block .student-events-head {
+    line-height: 1.1;
   }
 
   .student-events-list {

@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.644",
+    version: "1.7.645",
     releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.645",
+      releasedAt: "2026-11-15",
+      changes: ["Уплотнена область заголовка «Перечень событий»: уменьшены отступы, высота кнопки добавления и строки заголовков, освободившееся место отдано списку событий."]
+    },
     {
       version: "1.7.644",
       releasedAt: "2026-11-15",
