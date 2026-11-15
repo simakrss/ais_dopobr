@@ -32,6 +32,9 @@ add_filter('pre_http_request', function ($result, $options, $url) use (&$fixture
 }, PHP_INT_MAX, 3);
 add_filter('woocommerce_defer_transactional_emails', '__return_false', PHP_INT_MAX);
 add_filter('woocommerce_email_enabled_customer_new_account', '__return_false', PHP_INT_MAX);
+// The admin notification writes its own order flag; only customer notifications
+// are under test, and the fixture forbids any real order writes.
+add_filter('woocommerce_email_enabled_new_order', '__return_false', PHP_INT_MAX);
 try {
     WC()->mailer();
     $suffix = strtolower(wp_generate_password(14, false));
