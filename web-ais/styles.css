@@ -21398,7 +21398,6 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-results-tab .student-education-section .student-form-grid { gap: 3px; }
 .student-results-tab .student-education-section .student-form-grid input { min-height: 28px; height: 28px; padding-top: 3px; padding-bottom: 3px; }
 .student-results-tab .student-education-section .education-document-actions { margin-top: 5px; gap: 3px; }
-.student-results-tab > .student-review-actions { grid-column: 1 / -1; }
 
 .student-results-tab .student-form-grid {
   grid-template-columns: 1fr;
@@ -21562,10 +21561,12 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 .student-review-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  width: 100%;
+  width: auto;
   min-width: 0;
   max-width: 100%;
+  margin-left: auto;
   gap: 8px 10px;
   padding-left: 0;
 }

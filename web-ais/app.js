@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.643",
+    version: "1.7.644",
     releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.644",
+      releasedAt: "2026-11-15",
+      changes: ["Кнопки страницы курса, отчёта по оценкам и журнала активности размещены справа от заголовка «Отзыв» в одной строке."]
+    },
     {
       version: "1.7.643",
       releasedAt: "2026-11-15",
@@ -38699,10 +38704,10 @@ MAX - https://bizvmax.ru/zifra_plus
     return `
       ${tab.id === "documents" ? renderStudentDocumentRecognitionToolbar(record) : ""}
       ${tab.sections.filter((section) => !(tab.id === "main" && !section.fields.some((item) => item.key === "name"))).map((section) => `
-        ${section.reviewPanel ? renderStudentCourseActions(record) : ""}
         <section class="form-section ${section.reviewPanel ? "student-review-section" : ""} ${section.educationDocument ? "student-education-section" : ""}">
           <div class="form-section-head">
             <h3>${escapeHtml(section.title)}</h3>
+            ${section.reviewPanel ? renderStudentCourseActions(record) : ""}
             ${section.customerPassport ? `
               <button class="ghost-button passport-copy-button" data-action="copy-student-passport-to-customer" type="button" title="Скопировать паспортные данные обучающегося" aria-label="Скопировать паспортные данные обучающегося">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h13"></path><path d="M14 8l4 4-4 4"></path></svg>
