@@ -59,6 +59,7 @@ class FakeOrder {
     public array $meta = []; public bool $paid = true; public float $total = 5000; public array $notes = [];
     public function __construct(public int $id, public string $email, public int $customer = 0) { $GLOBALS['orders'][$id] = $this; }
     public function get_id() { return $this->id; } public function is_paid() { return $this->paid; } public function get_total() { return $this->total; }
+    public function get_order_number() { return (string)$this->id; } public function read_meta_data($force = false) {} public function save_meta_data() {}
     public function get_items() { return [new class { public function get_product_id() { return 10; } }]; }
     public function get_meta($key) { return $this->meta[$key] ?? ''; } public function get_billing_email() { return $this->email; }
     public function get_customer_id() { return $this->customer; } public function set_customer_id($id) { $this->customer = $id; }
@@ -87,6 +88,32 @@ check(count($mails) === 1 && $mails[0]['to'] === 'new@example.test', 'Exactly on
 foreach (['https://zifra-plus.ru/my-account/', 'https://edu-plus.ru/lms/', '003456', 'Отправить на проверку', 'Основное', 'Документы'] as $part) check(str_contains($mails[0]['body'], $part), 'Registration email contains both sites and instructions');
 ais_sa_process_order($order); check(count($mails) === 1 && count($users) === 1, 'Repeated jobs do not recreate accounts or resend notices');
 check(!apply_filters('woocommerce_email_enabled_customer_new_account', true, $users[1]), 'A delayed generic registration email is not sent after the common instruction');
+$again = new FakeOrder(151, 'new@example.test', $order->customer); $answers['151'] = [account('s1', 'new')];
+$beforeRepeat = count($mails); $oldHash = $users[$order->customer]->user_pass;
+ais_sa_process_order($again);
+check(count($mails) === $beforeRepeat + 1 && str_contains($mails[array_key_last($mails)]['body'], '003456'), 'Repeat order receives the existing credentials despite the previous user-level notice');
+ais_sa_process_order($again);
+check(count($mails) === $beforeRepeat + 1 && $users[$order->customer]->user_pass === $oldHash, 'Retry of the same order does not duplicate a confirmed notice or change the password');
+$native = new FakeOrder(152, 'new@example.test', $order->customer); $answers['152'] = [account('s1', 'new')];
+$nativeEmail = new class($native) { public $id = 'customer_completed_order'; public function __construct(public $object) {} public function get_recipient() { return 'new@example.test'; } };
+ob_start(); ais_pg_order_email_instructions($native, false, false, $nativeEmail); $nativeBody = ob_get_clean();
+apply_filters('woocommerce_mail_callback_params', ['new@example.test', 'Order', $nativeBody, '', []], $nativeEmail);
+do_action('woocommerce_email_sent', true, $nativeEmail->id, $nativeEmail);
+$beforeNativeFallback = count($mails); ais_sa_process_order($native);
+check(count($mails) === $beforeNativeFallback && $native->get_meta('_ais_order_access_notice')['status'] === 'sent', 'Successful native order email prevents an unnecessary access-only email');
+$failed = new FakeOrder(153, 'new@example.test', $order->customer); $answers['153'] = [account('s1', 'new')];
+$send_ok = false; denied(fn() => ais_sa_process_order($failed), 'SMTP failure must remain retryable');
+check($failed->get_meta('_ais_order_access_notice')['status'] === 'failed', 'Failed delivery never marked sent');
+$send_ok = true; $beforeRetry = count($mails); ais_sa_process_order($failed);
+check(count($mails) === $beforeRetry + 1 && $failed->get_meta('_ais_order_access_notice')['status'] === 'sent', 'Failed delivery retries per order');
+$waiting = new FakeOrder(154, 'new@example.test', $order->customer);
+denied(fn() => ais_sa_process_order($waiting), 'Missing course account must retry instead of marking the order finished');
+$falseProof = new FakeOrder(155, 'new@example.test', $order->customer); $answers['155'] = [account('s1', 'new')];
+$nativeEmail->object = $falseProof;
+ob_start(); ais_pg_order_email_instructions($falseProof, false, false, $nativeEmail); ob_end_clean();
+apply_filters('woocommerce_mail_callback_params', ['new@example.test', 'Order', 'No credentials in this body', '', []], $nativeEmail);
+do_action('woocommerce_email_sent', true, $nativeEmail->id, $nativeEmail);
+check(!$falseProof->get_meta('_ais_order_access_notice'), 'Receipt without credentials cannot suppress the fallback');
 $email = new class { public $id = 'customer_processing_order'; public function get_recipient() { return 'new@example.test'; } };
 ob_start(); ais_pg_order_email_instructions($order, false, false, $email); $html = ob_get_clean();
 check(str_contains($html, 'Курс &lt;пример&gt;') && str_contains($html, 'Интернет-магазин zifra-plus.ru'), 'Paid order email includes common access');
@@ -169,8 +196,10 @@ $existing_sso = ais_sa_cabinet_payload($users[$existing_id]); check($existing_ss
 denied(fn() => ais_sa_cabinet_payload($users[$admin_id]), 'Privileged users cannot use existing-customer SSO');
 check(ais_sa_existing_batch(['accounts' => [$candidate], 'apply' => true])['results'][0]['status'] === 'unchanged', 'Migration is idempotent');
 $users[$existing_id]->user_email = 'changed@example.test'; check(!ais_sa_existing_binding($users[$existing_id]), 'Changed shop email invalidates the old binding'); $users[$existing_id]->user_email = $candidate['email'];
-$historical_order = new FakeOrder(110, $candidate['email'], $existing_id); $answers['110'] = [array_merge($candidate, ['password' => '003456', 'programs' => ['Старая программа']])];
-ais_sa_process_order($historical_order); check(count($mails) === $mail_count, 'The existing registration instruction is suppressed on retries');
+$repeat_order = new FakeOrder(110, $candidate['email'], $existing_id); $answers['110'] = [array_merge($candidate, ['password' => '003456', 'programs' => ['Повторная заявка']])];
+ais_sa_process_order($repeat_order); check(count($mails) === $mail_count + 1, 'A new order after migration receives the existing credentials');
+ais_sa_process_order($repeat_order); check(count($mails) === $mail_count + 1, 'Retry of the same order does not repeat a confirmed delivery');
+$mail_count++;
 check(ais_sa_authenticate(new WP_Error('invalid_username'), 'existing-common', '003456') === $users[$existing_id], 'Existing common login works after migration');
 check(ais_sa_existing_batch(['accounts' => [array_merge($candidate, ['email' => 'missing@example.test', 'accountId' => 'missing'])]])['results'][0]['reason'] === 'shop_account_missing', 'Missing shop account is not created');
 check(ais_sa_existing_batch(['accounts' => [array_merge($candidate, ['email' => 'admin@example.test', 'accountId' => 'admin-student'])]])['results'][0]['reason'] === 'privileged_shop_account', 'Privileged existing account rejected');

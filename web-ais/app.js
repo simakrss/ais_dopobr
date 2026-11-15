@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.640",
+    version: "1.7.641",
     releasedAt: "2026-11-15"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.641",
+      releasedAt: "2026-11-15",
+      changes: ["Отправка данных доступа отслеживается для каждого заказа. При сбое письмо отправляется повторно автоматически, с прежними реквизитами кабинета слушателя."]
+    },
     {
       version: "1.7.640",
       releasedAt: "2026-11-15",

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: АИС — генератор образовательных программ
  * Description: Копирование проверяемых черновиков и создание файлов подключения к вебинарам.
- * Version: 1.7.14
+ * Version: 1.7.15
  * Install as a MU plugin. The signing key belongs OUTSIDE public_html.
  */
 defined('ABSPATH') || exit;
@@ -19,7 +19,7 @@ function ais_pg_signature($secret, $method, $resource, $timestamp, $nonce, $body
 }
 
 // Queue new payment events only; installing this module never mails historical orders.
-function ais_pg_queue_paid_enrollment($order_id, $delay = 3) {
+function ais_pg_queue_paid_enrollment($order_id, $delay = 60) {
     if (ais_pg_role() !== 'shop' || !function_exists('wc_get_order')) return;
     $order = wc_get_order((int) $order_id);
     if (!$order || !$order->is_paid() || (float) $order->get_total() < 0 || $order->get_meta('_ais_enrollment_done')) return;
@@ -123,6 +123,7 @@ function ais_pg_order_email_instructions($order, $sent_to_admin, $plain_text, $e
     catch (Throwable $error) { ais_pg_log_failure($error, 'order-email-access'); return; }
     if (!$accounts) return;
     if (function_exists('ais_sa_access_content') && count($accounts) === 1 && !empty($accounts[0]['shopAccess'])) {
+        if (function_exists('ais_sa_track_order_email')) ais_sa_track_order_email($order, $accounts[0], $email);
         echo $plain_text ? "\n" . implode(', ', $accounts[0]['programs']) . "\n" : '<p>' . esc_html(implode(', ', $accounts[0]['programs'])) . '</p>';
         echo ais_sa_access_content($accounts[0], (bool) $plain_text);
         return;

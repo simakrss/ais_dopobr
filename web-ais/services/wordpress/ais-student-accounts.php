@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: АИС — единый кабинет покупателя и слушателя
- * Version: 1.1.2
+ * Version: 1.1.3
  * Customer-only bridge. No historical orders or emails are processed on installation.
  */
 defined('ABSPATH') || exit;
@@ -81,17 +81,27 @@ function ais_sa_access_content(array $account, bool $plain = false): string {
 function ais_sa_process_order($order): void {
     if ($order->get_meta('_ais_student_payment_intent')) return;
     $accounts = ais_pg_order_email_access($order, $order->get_billing_email(), true);
+    if (!$accounts) {
+        $ids = [];
+        foreach ($order->get_items() as $item) $ids[] = (string) $item->get_product_id();
+        if ($ids && !empty(ais_sa_rpc(['shopAccountOperation' => 'eligible-products', 'productIds' => array_values(array_unique($ids))])['productIds']))
+            throw new RuntimeException('Кабинет образовательной заявки ещё не подготовлен. Попытка будет повторена.');
+    }
     foreach ($accounts as $account) {
         if (empty($account['shopAccess'])) throw new RuntimeException('Общий доступ в магазин и учебный центр пока не подготовлен.');
-        ais_sa_locked('mail:' . $account['shopUserId'], function () use ($account) {
-            $state = get_user_meta($account['shopUserId'], '_ais_student_access_notice', true);
-            if (is_array($state) && ($state['version'] ?? '') === $account['credentialVersion'] && in_array($state['status'] ?? '', ['sent', 'sending', 'suppressed'], true)) return;
+        ais_sa_locked('order-mail:' . $order->get_id(), function () use ($order, $account) {
+            // Read a fresh receipt without discarding the worker's pending retry metadata.
+            $fresh_order = wc_get_order($order->get_id());
+            $state = ($fresh_order ?: $order)->get_meta('_ais_order_access_notice', true);
+            if (is_array($state) && ($state['version'] ?? '') === $account['credentialVersion']
+                && ($state['recipient'] ?? '') === hash('sha256', strtolower(trim($order->get_billing_email()))) && ($state['status'] ?? '') === 'sent') return;
             $user = get_user_by('id', $account['shopUserId']);
-            if (!ais_sa_customer($user)) throw new RuntimeException('Получатель письма недоступен.');
-            update_user_meta($user->ID, '_ais_student_access_notice', ['version' => $account['credentialVersion'], 'status' => 'sending', 'at' => time()]);
+            if (!ais_sa_customer($user) || strcasecmp($user->user_email, trim($order->get_billing_email())) !== 0) throw new RuntimeException('Получатель письма недоступен.');
+            ais_sa_order_mail_state($order, $account, 'sending');
             $mailer = WC()->mailer();
-            $sent = $mailer->send($user->user_email, 'Ваш доступ в интернет-магазин и учебный центр',
+            $sent = $mailer->send($user->user_email, 'Данные доступа по заказу № ' . $order->get_order_number(),
                 $mailer->wrap_message('Личные кабинеты готовы', ais_sa_access_content($account)), ['Content-Type: text/html; charset=UTF-8']);
+            ais_sa_order_mail_state($order, $account, $sent ? 'sent' : 'failed');
             update_user_meta($user->ID, '_ais_student_access_notice', ['version' => $account['credentialVersion'], 'status' => $sent ? 'sent' : 'failed', 'at' => time()]);
             if (!$sent) throw new RuntimeException('Письмо с общими данными доступа не отправлено. Попытка будет повторена.');
             update_user_meta($user->ID, '_ais_student_registration_handled', true);
@@ -99,6 +109,40 @@ function ais_sa_process_order($order): void {
         });
     }
 }
+function ais_sa_order_mail_state($order, array $account, string $status): void {
+    // One delivery record per order; never persist credentials in order metadata.
+    $order->update_meta_data('_ais_order_access_notice', ['version' => $account['credentialVersion'],
+        'recipient' => hash('sha256', strtolower(trim($order->get_billing_email()))), 'status' => $status, 'at' => time()]);
+    $order->save_meta_data();
+}
+function ais_sa_track_order_email($order, array $account, $email): void {
+    $GLOBALS['ais_sa_email_proofs'][spl_object_id($email)] = ['order' => $order, 'account' => $account, 'checked' => false];
+}
+add_filter('woocommerce_mail_callback_params', function ($params, $email) {
+    $key = spl_object_id($email); $proof = $GLOBALS['ais_sa_email_proofs'][$key] ?? null;
+    if (!$proof) return $params;
+    $account = $proof['account']; $recipient = trim($proof['order']->get_billing_email());
+    $to = (array) $params[0]; $headers = is_array($params[3]) ? implode("\n", $params[3]) : (string) $params[3];
+    $body = html_entity_decode((string) $params[2], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $checked = ($email->object ?? null) === $proof['order'] && count($to) === 1 && strcasecmp(trim(reset($to)), $recipient) === 0 && !preg_match('/^(?:Cc|Bcc):\s*\S/im', $headers)
+        && str_contains($body, $account['login']) && str_contains($body, $account['password'])
+        && str_contains($body, 'https://edu-plus.ru/lms/') && str_contains($body, wc_get_page_permalink('myaccount'));
+    $GLOBALS['ais_sa_email_proofs'][$key]['checked'] = $checked;
+    return $params;
+}, PHP_INT_MAX, 2);
+add_action('woocommerce_email_sent', function ($sent, $id, $email) {
+    $key = spl_object_id($email); $proof = $GLOBALS['ais_sa_email_proofs'][$key] ?? null;
+    unset($GLOBALS['ais_sa_email_proofs'][$key]);
+    if (!$sent || empty($proof['checked'])) return;
+    try {
+        ais_sa_locked('order-mail:' . $proof['order']->get_id(), function () use ($proof) {
+            ais_sa_order_mail_state($proof['order'], $proof['account'], 'sent');
+        });
+    } catch (Throwable $error) { ais_pg_log_failure($error, 'order-mail-receipt'); return; }
+    update_user_meta($proof['account']['shopUserId'], '_ais_student_access_notice', ['version' => $proof['account']['credentialVersion'], 'status' => 'sent', 'at' => time()]);
+    update_user_meta($proof['account']['shopUserId'], '_ais_student_registration_handled', true);
+    delete_user_meta($proof['account']['shopUserId'], '_ais_student_registration_pending');
+}, 20, 3);
 function ais_sa_mark_created($uid): void {
     if (ais_pg_role() !== 'shop') return;
     $eligible = !empty($GLOBALS['ais_sa_creating']);
