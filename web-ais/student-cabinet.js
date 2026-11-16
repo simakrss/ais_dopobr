@@ -45,22 +45,40 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
   async function awardUpload(actor, id, body) {
     const record = await staffRecord(actor, id);
     const kind = body.kind === "layout" ? "layout" : "scan";
-    let file;
-    if (kind === "layout" && body.format === "docx") {
-      if (typeof body.base64 !== "string" || body.base64.length > 28 * 1024 * 1024) fail("Слишком большой файл.");
-      const bytes = Buffer.from(body.base64, "base64");
-      if (bytes.subarray(0, 2).toString() !== "PK") fail("Некорректный DOCX.");
-      file = { bytes: await deps.toPdf(bytes), extension: "pdf", contentType: "application/pdf" };
-    } else file = validateUpload({ ...body, kind: "passport" });
-    const folder = await awardRoot(record), fileId = crypto.randomUUID();
-    const program = text(record.program).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 75);
-    const name = `${kind === "layout" ? "Макет" : "Документ об образовании"} — ${program || "Программа"} — ${fileId}.${file.extension}`;
-    await deps.upload(folder, name, file.bytes, file.contentType);
-    const entry = { id: fileId, kind, name, folder, size: file.bytes.length, uploadedAt: new Date().toISOString() };
-    const updated = await mutate(id, actor, item => ({ ...item, educationDocumentFiles: [
-      ...(item.educationDocumentFiles || []).filter(value => kind !== "layout" || value.kind !== "layout"), entry] }));
-    await deps.audit(kind === "layout" ? "Сохранён макет документа в кабинете слушателя" : "Загружен скан выданного документа об образовании", updated, actor);
-    return { ok: true, files: updated.educationDocumentFiles };
+    let stage = "Проверка блокировки карточки";
+    try {
+      const lock = (await deps.readRecordLocks?.() || []).find(item => item.entityType === "students" && String(item.entityId) === String(id));
+      const clientId = text(body.clientId);
+      // A known client id alone is not permission to write through someone else's lock.
+      if (lock && (!clientId || lock.clientId !== clientId || !actor.login || text(lock.ownerLogin) !== text(actor.login))) {
+        fail("Карточка редактируется в другом окне. Сохраните и закройте её перед загрузкой документа.", 423);
+      }
+      const writeOptions = { clientId: lock ? clientId : "" };
+      stage = "Подготовка файла";
+      let file;
+      if (kind === "layout" && body.format === "docx") {
+        if (typeof body.base64 !== "string" || body.base64.length > 28 * 1024 * 1024) fail("Слишком большой файл.");
+        const bytes = Buffer.from(body.base64, "base64");
+        if (bytes.subarray(0, 2).toString() !== "PK") fail("Некорректный DOCX.");
+        file = { bytes: await deps.toPdf(bytes), extension: "pdf", contentType: "application/pdf" };
+      } else file = validateUpload({ ...body, kind: "passport" });
+      const folder = await awardRoot(record), fileId = crypto.randomUUID();
+      const program = text(record.program).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 75);
+      const name = `${kind === "layout" ? "Макет" : "Документ об образовании"} — ${program || "Программа"} — ${fileId}.${file.extension}`;
+      stage = "Загрузка файла в папку слушателя";
+      await deps.upload(folder, name, file.bytes, file.contentType);
+      const entry = { id: fileId, kind, name, folder, size: file.bytes.length, uploadedAt: new Date().toISOString() };
+      stage = "Сохранение ссылки в карточке слушателя";
+      const updated = await mutate(id, actor, item => ({ ...item, educationDocumentFiles: [
+        ...(item.educationDocumentFiles || []).filter(value => kind !== "layout" || value.kind !== "layout"), entry] }), writeOptions);
+      await deps.audit(kind === "layout" ? "Сохранён макет документа в кабинете слушателя" : "Загружен скан выданного документа об образовании", updated, actor);
+      return { ok: true, files: updated.educationDocumentFiles };
+    } catch (error) {
+      // Keep the failure trace in the record history without logging file bytes or credentials.
+      await Promise.resolve().then(() => deps.audit(kind === "layout" ? "Не удалось сохранить макет в кабинете слушателя" : "Не удалось сохранить скан документа", record, actor,
+        `${stage}. Код: ${Number(error.statusCode) || 503}.`)).catch(() => {});
+      throw error;
+    }
   }
   function publicAwards(records, staff = false) {
     return { programs: records.map(record => ({ id: record.id, program: record.program, educationType: record.educationType,

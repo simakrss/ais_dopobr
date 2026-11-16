@@ -15636,6 +15636,8 @@ function isFrdoRecordExportRequired(record) {
 }
 
 function sanitizeFrdoExportPayload(body) {
+  // Use the same Moscow calendar day as the registry, regardless of server timezone.
+  const currentDate = getMoscowCalendarDateKey();
   const source = Array.isArray(body?.records) ? body.records : [];
   if (!source.length) throw new Error("Нет невыгруженных документов для экспорта в ФРДО.");
   if (source.length > MAX_FRDO_EXPORT_RECORDS) {
@@ -15675,9 +15677,10 @@ function sanitizeFrdoExportPayload(body) {
       && !isFrdoRecordAlreadyExported(record)
       && isFrdoRecordExportRequired(record)
       && Boolean(record.documentNumber)
+      && (!record.issueDate || record.issueDate <= currentDate)
     ));
   if (!records.length) {
-    throw new Error("Нет невыгруженных удостоверений или дипломов с заполненным номером документа для экспорта в ФРДО.");
+    throw new Error("Нет невыгруженных удостоверений или дипломов с заполненным номером документа для экспорта в ФРДО. Документы с будущей датой выдачи можно выгрузить только после наступления этой даты.");
   }
   return records.sort((left, right) => (
     String(left.issueDate || "9999-12-31").localeCompare(String(right.issueDate || "9999-12-31"))
@@ -25213,7 +25216,9 @@ function getStudentEnrollmentService() {
       if (current.offline || current.syncPending || !current.document?.data?.collections) throw Object.assign(new Error("Общая база недоступна. Повторите позже."), { statusCode: 503 });
       return current.document;
     },
-    save: (revision, students, user) => saveSharedApplicationState({ baseRevision: revision, strictRevision: true,
+    readRecordLocks: async () => activeSharedRecordLocks((await readSharedRecordLocksDocument()).document),
+    save: (revision, students, user, options = {}) => saveSharedApplicationState({ baseRevision: revision, strictRevision: true,
+      clientId: String(options.clientId || ""),
       patch: { collections: { students: { upserts: students } }, recordKeys: students.map(row => `students:${row.id}`) } }, user?.actingStaff || user),
     audit: (action, record, user, details = "") => appendAuditEntry({ action: user?.actingStaff ? `Сотрудник в кабинете слушателя: ${action}` : action, area: "Слушатели", entityType: "students", entityId: record.id,
       entityLabel: record.name, source: "student-portal", details }, user?.actingStaff || user, { headers: {}, socket: {} }).catch(error => console.warn("Enrollment audit:", error.message)),

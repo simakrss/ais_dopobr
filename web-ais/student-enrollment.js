@@ -210,7 +210,7 @@ function createService(deps) {
     }
     return rows;
   }
-  async function mutate(id, user, change) {
+  async function mutate(id, user, change, options = {}) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const current = await deps.readState();
       const record = (current.data.collections.students || []).find(row => row.id === id);
@@ -222,7 +222,7 @@ function createService(deps) {
           || (record.studentPortalAccountId || record.id) !== owner.id) fail("Доступ к заявке закрыт.", 403);
       }
       const updated = await change(structuredClone(record));
-      const result = await deps.save(current.revision, [updated], user);
+      const result = await deps.save(current.revision, [updated], user, options);
       if (result.conflict) continue;
       if (result.locked) fail("Карточка редактируется сотрудником. Повторите позже.", 423);
       if (result.offline || result.syncPending) fail("Общая база недоступна. Повторите позже.", 503);

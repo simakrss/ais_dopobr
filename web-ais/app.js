@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.645",
-    releasedAt: "2026-11-15"
+    version: "1.7.646",
+    releasedAt: "2026-11-16"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.646",
+      releasedAt: "2026-11-16",
+      changes: ["Документы с будущей датой выдачи исключены из выгрузки, очереди и плитки ФРДО до наступления даты выдачи. В общем реестре они отмечены как ожидающие даты выдачи.", "Исправлено сохранение макетов и сканов в кабинет слушателя из открытой карточки: учитывается блокировка своего окна, а сбои сохранения отражаются в истории действий."]
+    },
     {
       version: "1.7.645",
       releasedAt: "2026-11-15",
@@ -20593,9 +20598,19 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function refreshDashboardCalendarDay() {
-    if (state.view !== "dashboard" || state.modal || document.visibilityState === "hidden" || document.querySelector(".modal-backdrop")) return;
+    if (!["dashboard", "issuedDocuments"].includes(state.view) || state.modal || document.visibilityState === "hidden" || document.querySelector(".modal-backdrop")) return;
+    if (state.issuedDocumentExportRunning || state.issuedDocumentMarkRunning) return;
+    if (state.view === "issuedDocuments") {
+      const registry = document.querySelector("[data-issued-documents-calendar-date]");
+      if (registry && registry.dataset.issuedDocumentsCalendarDate !== getMoscowCalendarDateKey()) {
+        if (state.issuedDocumentAutoFallback) state.issuedDocumentViewInitialized = false;
+        render();
+      }
+      return;
+    }
     const tasks = document.querySelector("[data-dashboard-calendar-date]");
-    if (tasks && tasks.dataset.dashboardCalendarDate !== todayIso()) render();
+    if (tasks && (tasks.dataset.dashboardCalendarDate !== todayIso()
+      || tasks.dataset.frdoCalendarDate !== getMoscowCalendarDateKey())) render();
   }
 
   function getGeneralExpenseAccountingRows(currentDate = todayIso()) {
@@ -20676,7 +20691,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const enrollmentReviewDashboardTile = renderEnrollmentReviewDashboardTile();
     const accountingDashboardTile = renderGeneralExpenseAccountingDashboardTile();
     const pendingIssuedDocuments = getIssuedDocumentRows()
-      .filter((row) => row.frdoKey === "pending");
+      .filter(isIssuedDocumentFrdoExportEligible);
     const pendingIssuedDocumentDays = pendingIssuedDocuments
       .map((row) => row.remainingDays)
       .filter((days) => Number.isFinite(days));
@@ -20708,7 +20723,7 @@ MAX - https://bizvmax.ru/zifra_plus
           : `Осталось дней: ${nearestFrdoDays}`));
 
     return `
-      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}${enrollmentReviewDashboardTile || accountingDashboardTile ? " with-enrollment-review" : ""}" data-dashboard-calendar-date="${todayIso()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile || enrollmentReviewDashboardTile || accountingDashboardTile ? "" : "hidden"}>
+      <div class="dashboard-document-tasks ${pendingIssuedDocuments.length ? "" : "without-frdo"} ${attestationDashboardTile ? "" : "without-attestation"}${deferredStartDashboardTile ? " with-deferred-start" : ""}${enrollmentReviewDashboardTile || accountingDashboardTile ? " with-enrollment-review" : ""}" data-dashboard-calendar-date="${todayIso()}" data-frdo-calendar-date="${getMoscowCalendarDateKey()}" ${pendingIssuedDocuments.length || attestationDashboardTile || deferredStartDashboardTile || enrollmentReviewDashboardTile || accountingDashboardTile ? "" : "hidden"}>
       ${pendingIssuedDocuments.length ? `
       <button
         class="panel dashboard-frdo-widget ${frdoWidgetTone}"
@@ -21542,7 +21557,12 @@ MAX - https://bizvmax.ru/zifra_plus
       || /^\d{1,2}\.\d{1,2}\.\d{4}(?:[T\s].*)?$/u.test(text);
   }
 
-  function getIssuedDocumentFrdoDetails(student = {}, programType = "") {
+  function isIssuedDocumentFutureDated(issueDate, currentDate = getMoscowCalendarDateKey()) {
+    const dateKey = normalizeContractCalendarDateKey(issueDate);
+    return Boolean(dateKey && dateKey > currentDate);
+  }
+
+  function getIssuedDocumentFrdoDetails(student = {}, programType = "", currentDate = getMoscowCalendarDateKey()) {
     const sourceStatus = String(student.frdoStatus || "").trim();
     const statusDate = isIssuedDocumentDateValue(sourceStatus) ? sourceStatus : "";
     const date = String(student.frdoDate || statusDate || "").trim();
@@ -21567,10 +21587,13 @@ MAX - https://bizvmax.ru/zifra_plus
     if (normalizedStatus.includes("не треб") || !isFrdoProgramType(programType)) {
       return { key: "not-required", label: "Не требуется", date: "" };
     }
+    if (isIssuedDocumentFutureDated(student.diplomaIssueDate, currentDate)) {
+      return { key: "not-issued", label: "Ожидает даты выдачи", date: "" };
+    }
     return { key: "pending", label: statusText || "Не выгружено", date: "" };
   }
 
-  function getIssuedDocumentElapsedDays(issueDate, currentDate = todayIso()) {
+  function getIssuedDocumentElapsedDays(issueDate, currentDate = getMoscowCalendarDateKey()) {
     const issueTimestamp = parseTableSortDate(issueDate);
     const currentTimestamp = parseTableSortDate(currentDate);
     if (issueTimestamp === null || currentTimestamp === null) return null;
@@ -21594,6 +21617,7 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function getIssuedDocumentRows() {
     const programs = getProgramRows();
+    const currentDate = getMoscowCalendarDateKey();
     return (state.data.collections.students || []).flatMap((student) => {
       const documentNumber = String(student.diplomaBlankNo || "").trim();
       const registrationNumber = String(student.registrationNo || "").trim();
@@ -21601,8 +21625,8 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!documentNumber) return [];
       const program = String(student.program || "").trim();
       const programType = getIssuedDocumentProgramType(student, programs);
-      const frdo = getIssuedDocumentFrdoDetails(student, programType);
-      const elapsedDays = getIssuedDocumentElapsedDays(issueDate);
+      const frdo = getIssuedDocumentFrdoDetails(student, programType, currentDate);
+      const elapsedDays = getIssuedDocumentElapsedDays(issueDate, currentDate);
       const deadlineDays = getIssuedDocumentDeadlineDays();
       const hasFrdoValue = Boolean(String(student.frdoDate || student.frdoStatus || "").trim());
       const plannedFrdoDate = frdo.key === "pending" && !hasFrdoValue
@@ -21633,7 +21657,8 @@ MAX - https://bizvmax.ru/zifra_plus
   function isIssuedDocumentFrdoExportEligible(row = {}) {
     return row.frdoKey === "pending"
       && isFrdoProgramType(row.programType)
-      && Boolean(String(row.documentNumber || "").trim());
+      && Boolean(String(row.documentNumber || "").trim())
+      && !isIssuedDocumentFutureDated(row.issueDate);
   }
 
   function getIssuedDocumentsOpeningView(rows = []) {
@@ -22057,7 +22082,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const pageRows = rows.slice(pagination.start, pagination.end);
     const columns = getTableFields(issuedDocumentTableConfig, ISSUED_DOCUMENT_TABLE_CONFIG_ID);
     const exportedCount = allRows.filter((row) => row.frdoKey === "exported").length;
-    const pendingCount = allRows.filter((row) => row.frdoKey === "pending").length;
+    const pendingCount = allRows.filter(isIssuedDocumentFrdoExportEligible).length;
     const mobileFiltersOpen = Boolean(state.mobileRegistryFiltersOpen?.[ISSUED_DOCUMENT_TABLE_CONFIG_ID]);
     const activeFilterCount = getIssuedDocumentActiveFilterCount(filters);
     const filterControlsId = "issuedDocumentFilters";
@@ -22065,6 +22090,7 @@ MAX - https://bizvmax.ru/zifra_plus
       <section
         class="panel issued-documents-register ${mobileFiltersOpen ? "mobile-registry-filters-open" : ""}"
         data-issued-documents-register
+        data-issued-documents-calendar-date="${getMoscowCalendarDateKey()}"
         data-main-registry
         data-registry-view="${escapeAttr(ISSUED_DOCUMENT_TABLE_CONFIG_ID)}"
       >
@@ -22133,6 +22159,7 @@ MAX - https://bizvmax.ru/zifra_plus
               <option value="">Все состояния</option>
               <option value="exported" ${filters.frdo === "exported" ? "selected" : ""}>Выгружено</option>
               <option value="pending" ${filters.frdo === "pending" ? "selected" : ""}>Не выгружено</option>
+              <option value="not-issued" ${filters.frdo === "not-issued" ? "selected" : ""}>Ожидает даты выдачи</option>
               <option value="not-required" ${filters.frdo === "not-required" ? "selected" : ""}>Не требуется</option>
             </select>
           </label>
@@ -38313,7 +38340,7 @@ MAX - https://bizvmax.ru/zifra_plus
   async function saveStudentAwardFile(recordId, file, kind = "scan", format = "") {
     if (file.size > 20 * 1024 * 1024) throw Error("Максимальный размер — 20 МБ.");
     const base64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });
-    const result = await window.AIS_AUTH_API.request("api/students/education-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: recordId, kind, format, base64 }) });
+    const result = await window.AIS_AUTH_API.request("api/students/education-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: recordId, kind, format, base64, clientId: recordLockClientId }) });
     const record = state.data.collections.students.find(item => item.id === recordId);
     if (record) record.educationDocumentFiles = result.files;
     if (state.modal?.id === recordId && state.modal.draft) state.modal.draft.educationDocumentFiles = result.files;

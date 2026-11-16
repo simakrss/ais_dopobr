@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261115-compact-events-header";
+  const AUTH_BUILD = "20261116-frdo-issue-date";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

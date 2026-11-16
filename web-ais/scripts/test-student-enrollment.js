@@ -294,6 +294,42 @@ test("award scans and layouts are staff-only, kept in one person root and scoped
   await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout" });
   assert.equal(f.snapshot.data.collections.students[0].educationDocumentFiles.length, 2, "replace layout metadata, preserve scan");
 });
+test("award uploads honor the open card owner and carry its client id through revision retries", async () => {
+  const f = fixture(); await f.service.provisionOrder("101");
+  const record = f.snapshot.data.collections.students[0]; record.diplomaIssueDate = "2099-12-07";
+  const actor = { role: "manager", login: "manager" }, clientId = "own-card";
+  f.deps.readRecordLocks = async () => [{ entityType: "students", entityId: record.id, clientId, ownerLogin: actor.login }];
+  const originalSave = f.deps.save; let attempts = 0;
+  f.deps.save = async (revision, records, user, options) => {
+    assert.equal(options.clientId, clientId); assert.equal(user, actor);
+    if (++attempts === 1) { f.snapshot.revision++; f.snapshot.data.collections.students[0].workPlace = "Latest value"; return { conflict: true }; }
+    return originalSave(revision, records);
+  };
+  const result = await f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout", clientId });
+  assert.equal(result.files.length, 1); assert.equal(attempts, 2);
+  assert.equal(f.snapshot.data.collections.students[0].workPlace, "Latest value");
+  assert.equal(f.snapshot.data.collections.students[0].diplomaIssueDate, "2099-12-07", "A future issue date does not prevent layout preparation");
+  assert.equal(f.files.size, 1, "CAS retry must not upload another file");
+  assert.ok(f.audit.includes("Сохранён макет документа в кабинете слушателя"));
+});
+
+test("award upload rejects another window or user before uploading, and logs later lock conflicts", async () => {
+  const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0];
+  const actor = { role: "manager", login: "owner" }, clientId = "locked-window";
+  f.deps.readRecordLocks = async () => [{ entityType: "students", entityId: record.id, clientId, ownerLogin: actor.login }];
+  for (const [user, supplied] of [[actor, ""], [actor, "another-window"], [{ ...actor, login: "other-user" }, clientId]]) {
+    await assert.rejects(f.service.awardUpload(user, record.id, { ...pdf, kind: "layout", clientId: supplied }), { statusCode: 423 });
+  }
+  assert.equal(f.files.size, 0); assert.equal(record.educationDocumentFiles, undefined);
+  const logged = [];
+  f.deps.audit = async (action, record, actor, details) => logged.push({ action, details });
+  f.deps.save = async () => ({ locked: true });
+  await assert.rejects(f.service.awardUpload(actor, record.id, { ...pdf, kind: "layout", clientId }), { statusCode: 423 });
+  assert.equal(logged.length, 1);
+  assert.match(logged[0].details, /Сохранение ссылки.*423/);
+  assert.equal(f.snapshot.data.collections.students[0].educationDocumentFiles, undefined);
+});
+
 test("debt payment uses authoritative debt, reuses orders and credits only confirmed payments once", async () => {
   const orders = new Map(); let sequence = 700;
   const f = fixture({ paymentShop: async (endpoint, data) => {
