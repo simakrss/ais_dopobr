@@ -81,6 +81,7 @@ const {
   normalizeSharedApplicationData,
   normalizeSharedApplicationStatePatch,
   sharedApplicationDataNeedsCitizenshipMigration,
+  sharedApplicationDataNeedsContractExpiration,
   sanitizeFrdoExportPayload,
   sanitizeStudentDatabaseExportPayload
 } = require(path.join(__dirname, "..", "app-server.js"));
@@ -135,7 +136,74 @@ assert.strictEqual(sharedPatch.collections.contracts.replace[0].citizenship, "Р
 assert.deepStrictEqual(sharedPatch.dictionaries.citizenships, ["Россия"]);
 
 const serverSource = fs.readFileSync(path.join(__dirname, "..", "app-server.js"), "utf8");
-assert.match(serverSource, /needsCitizenshipMigration[\s\S]*updatedBy:\s*"citizenship-migration"/u);
+const migrationStart = serverSource.indexOf("async function ensureSharedApplicationStateMySqlDocument(");
+const migrationEnd = serverSource.indexOf("async function readSharedApplicationStatePendingDocument(", migrationStart);
+assert.ok(migrationStart >= 0 && migrationEnd > migrationStart, "automatic shared-state migration handler must exist");
+
+async function verifyAutomaticMigrations() {
+  const withExpiredContract = (data) => ({
+    ...structuredClone(data),
+    collections: {
+      ...structuredClone(data.collections),
+      contracts: data.collections.contracts.map((record) => ({
+        ...record, section: "Действующие договора", endDate: "2000-01-01"
+      }))
+    }
+  });
+  for (const { name, initial, updatedBy, failFirst = false } of [
+    { name: "citizenship only", initial: legacySharedData, updatedBy: "citizenship-migration" },
+    { name: "citizenship and expired contracts", initial: withExpiredContract(legacySharedData), updatedBy: "automatic-contract-expiration" },
+    { name: "expired contracts only", initial: withExpiredContract(sharedData), updatedBy: "automatic-contract-expiration" },
+    { name: "already normalized", initial: sharedData, updatedBy: null },
+    { name: "retry after failed migration", initial: legacySharedData, updatedBy: "citizenship-migration", failFirst: true }
+  ]) {
+    // Exercise the production migration handler without connecting to a real database.
+    const pool = {};
+    const writes = [], warnings = [];
+    let stored = structuredClone(initial), revision = 7, shouldFail = failFirst;
+    const migrate = new Function(
+      "readSharedApplicationStateMySqlDocument", "saveSharedApplicationStateMySqlOperation", "console",
+      `${serverSource.slice(migrationStart, migrationEnd)}\nreturn ensureSharedApplicationStateMySqlDocument;`
+    )(
+      async (receivedPool) => {
+        assert.strictEqual(receivedPool, pool, name);
+        return {
+          exists: true,
+          needsCitizenshipMigration: sharedApplicationDataNeedsCitizenshipMigration(stored),
+          needsContractExpiration: sharedApplicationDataNeedsContractExpiration(stored),
+          document: { revision, data: normalizeSharedApplicationData(stored) }
+        };
+      },
+      async (receivedPool, operation, user, options) => {
+        assert.strictEqual(receivedPool, pool, name);
+        assert.strictEqual(operation.baseRevision, revision, name);
+        assert.strictEqual(user, null, name);
+        assert.deepStrictEqual(options, { skipCache: true }, name);
+        if (shouldFail) { shouldFail = false; throw new Error("fixture storage unavailable"); }
+        writes.push(structuredClone(operation));
+        stored = structuredClone(operation.data);
+        revision++;
+      },
+      { warn: message => warnings.push(message) }
+    );
+    if (failFirst) {
+      const failed = await migrate(pool);
+      assert.strictEqual(failed.needsCitizenshipMigration, true, name);
+      assert.deepStrictEqual(stored, initial, name);
+      assert.strictEqual(writes.length, 0, name);
+      assert.strictEqual(warnings.length, 1, name);
+    }
+    const result = await migrate(pool);
+    assert.strictEqual(writes.length, updatedBy ? 1 : 0, name);
+    if (updatedBy) assert.strictEqual(writes[0].updatedBy, updatedBy, name);
+    assert.deepStrictEqual(stored, normalizeSharedApplicationData(initial), name);
+    assert.strictEqual(result.needsCitizenshipMigration, false, name);
+    assert.strictEqual(result.needsContractExpiration, false, name);
+    assert.strictEqual(result.document.revision, revision, name);
+    await migrate(pool);
+    assert.strictEqual(writes.length, updatedBy ? 1 : 0, `${name}: migration must not repeat`);
+  }
+}
 
 const listControlStart = source.indexOf("  function getDocumentRecognitionListControl");
 const listControlEnd = source.indexOf("\n\n  function renderStudentDocumentRecognitionField", listControlStart);
@@ -151,4 +219,9 @@ assert.match(
   /key === "citizenship"[\s\S]*matchDocumentRecognitionCitizenship\(value\)/u
 );
 
-console.log("document recognition citizenship tests: OK");
+verifyAutomaticMigrations().then(() => {
+  console.log("document recognition citizenship tests: OK (normalization, migration persistence, combined updates, idempotence, retry)");
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
