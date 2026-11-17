@@ -13,7 +13,7 @@ if(process.argv.includes("--init-signing-key")) {
   console.log(crypto.createPublicKey(fs.readFileSync(keyFile)).export({format:"der",type:"spki"}).toString("base64"));
   process.exit(0);
 }
-if(!fs.existsSync(keyFile)){console.log("SKIP: на этом компьютере нет ключа публикации обновлений.");process.exit(0);}
+if(!fs.existsSync(keyFile))throw Error("Ключ подписи пакета не найден. Укажите существующий ключ через --signing-key-path.");
 const git=(...args)=>cp.execFileSync("git",["-C",repo,...args],{encoding:"utf8",windowsHide:true,stdio:["ignore","pipe","pipe"]}).trim();
 const allPaths=[...update.FILES,...update.COMPONENTS];
 const files=allPaths.map(name=>"web-ais/"+name);
