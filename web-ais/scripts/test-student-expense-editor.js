@@ -47,7 +47,8 @@ const context = {
   }
 };
 vm.runInNewContext(
-  `${extractFunction("applyDirectExpenseFormulaValueOverride")};\n`
+  `${extractFunction("isAutomaticProgramAuthorExpense")};\n`
+    + `${extractFunction("applyDirectExpenseFormulaValueOverride")};\n`
     + `${extractFunction("applyStudentExpenseEditorValues")};\n`
     + "this.applyValues = applyStudentExpenseEditorValues;",
   context
@@ -192,7 +193,7 @@ assert.match(appSource, /applyStudentExpenseInventoryChoice\(inventoryChoice, \{
 assert.match(appSource, /\[data-student-expense-inventory-choice\]:not\(\[data-student-expense-editor-type\]\)/u);
 assert.match(
   extractFunction("collectStudentDirectExpenses"),
-  /return applyDirectExpenseFormulaValueOverride\(expense,/u
+  /return applyDirectExpenseFormulaValueOverride\(displayedExpense,/u
 );
 assert.match(
   extractFunction("saveFormRecord"),

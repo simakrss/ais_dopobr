@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.646",
-    releasedAt: "2026-11-16"
+    version: "1.7.647",
+    releasedAt: "2026-11-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.647",
+      releasedAt: "2026-11-17",
+      changes: ["В расходах слушателя можно вручную изменить сумму с точностью до копеек: ручное значение сохраняется при дальнейших перерасчётах. Автоматическая оплата преподавателю округляется вверх по настройке «Шаг округления оплаты преподавателю» (по умолчанию 50 ₽). Оплаченные расходы и полученные акты не пересчитываются."]
+    },
     {
       version: "1.7.646",
       releasedAt: "2026-11-16",
@@ -6478,6 +6483,7 @@ MAX - https://bizvmax.ru/zifra_plus
   ];
   const paymentSettingDefaults = [
     { key: "incomeTaxRate", marker: "СтавкаПодохНалога", label: "Ставка подоходного налога", type: "number", unit: "%", value: "13" },
+    { key: "paymentRoundingStep", marker: "ШагОкругленияОплаты", label: "Шаг округления оплаты преподавателю", type: "number", unit: " ₽", value: "50" },
     {
       key: "authorRate",
       marker: "АвторскаяСтавка",
@@ -9173,6 +9179,10 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function normalizePaymentConstantNumber(key, value) {
+    if (key === "paymentRoundingStep") {
+      const number = Number(String(value ?? "").replace(",", "."));
+      return Number.isFinite(number) && number >= 0.01 && number <= 1000000 ? Math.round(number * 100) / 100 : 50;
+    }
     if (key !== "incomeTaxRate") return normalizePaymentRateValue(value);
     if (value === null || value === undefined || String(value).trim() === "") return 13;
     const number = Number(String(value).replace(",", "."));
@@ -9180,6 +9190,8 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function isPaymentConstantNumberValid(key, value) {
+    if (key === "paymentRoundingStep") return Number.isFinite(value) && value >= 0.01 && value <= 1000000
+      && Math.abs(value * 100 - Math.round(value * 100)) < 1e-7;
     return key === "incomeTaxRate"
       ? Number.isFinite(value) && value >= 0 && value <= 100
       : isPaymentRateValueValid(value);
@@ -9285,6 +9297,7 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getPaymentConstantInputAttributes(setting, value = setting?.value) {
+    if (setting?.key === "paymentRoundingStep") return 'min="0.01" max="1000000" step="0.01"';
     if (setting?.key === "incomeTaxRate") return 'min="0" max="100" step="0.01"';
     if (getPaymentConstantUnit(setting) === "%") return 'min="0" step="10"';
     return `data-money-input data-money-nonnegative step="${MONEY_INPUT_STEP}"`;
@@ -24567,10 +24580,19 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function evaluateProgramAuthorPaymentFormula(formula, paymentTotal) {
     const percent = getProgramAuthorPaymentPercent(formula);
-    if (percent !== "") {
-      return Math.round(Math.max(0, Number(paymentTotal || 0)) * Number(percent || 0)) / 100;
-    }
-    return evaluatePaymentAmountFormula(formula);
+    const amount = percent !== ""
+      ? Math.round(Math.max(0, Number(paymentTotal || 0)) * Number(percent || 0)) / 100
+      : evaluatePaymentAmountFormula(formula);
+    return roundAutomaticTeacherPayment(amount);
+  }
+
+  function roundAutomaticTeacherPayment(amount, settings = state.data?.dictionaries?.paymentSettings) {
+    const step = normalizePaymentConstantNumber("paymentRoundingStep",
+      (Array.isArray(settings) ? settings : []).find((item) => item?.key === "paymentRoundingStep")?.value);
+    // Work in kopecks so exact multiples do not gain an extra step due to floating-point error.
+    const cents = Math.round(Math.max(0, Number(amount) || 0) * 100);
+    const stepCents = Math.round(step * 100);
+    return Math.ceil(cents / stepCents) * stepCents / 100;
   }
 
   function extractPaymentRecipientName(value) {
@@ -24663,6 +24685,8 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       if (!specification) return expense;
       unusedSpecifications.delete(specification);
+      if (isChecked(expense.isPaid) || isEmployeePaymentSettled(expense)
+        || (Array.isArray(expense.databaseFixedValueOverrides) && expense.databaseFixedValueOverrides.includes("amount"))) return expense;
       const nextExpense = {
         ...expense,
         type: rule.type,
@@ -28778,7 +28802,7 @@ MAX - https://bizvmax.ru/zifra_plus
         return { error: `Константа [${marker}] указана несколько раз.`, input: field("marker") };
       }
       if (!rawValue || !isPaymentConstantNumberValid(key, value)) {
-        return { error: key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : `Значение константы [${marker}] должно быть неотрицательным и кратным 10.`, input: field("value") };
+        return { error: key === "paymentRoundingStep" ? "Шаг округления должен быть от 0,01 до 1 000 000 ₽ с точностью до копеек." : key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : `Значение константы [${marker}] должно быть неотрицательным и кратным 10.`, input: field("value") };
       }
       markers.add(normalizedMarker);
       const custom = row.dataset.paymentConstantCustom === "true";
@@ -42593,7 +42617,13 @@ MAX - https://bizvmax.ru/zifra_plus
     (values.directExpenses || []).forEach((expense, index) => {
       if (!isAutomaticProgramAuthorExpense(expense)) return;
       const amountInput = form.elements[`directExpense${index}Amount`];
-      if (amountInput instanceof HTMLInputElement) amountInput.value = String(expense.amount ?? 0);
+      if (amountInput instanceof HTMLInputElement) {
+        // Do not replace a manual value mid-typing (for example, "152." or an empty field).
+        if (!Array.isArray(expense.databaseFixedValueOverrides) || !expense.databaseFixedValueOverrides.includes("amount")) {
+          amountInput.value = String(expense.amount ?? 0);
+        }
+        amountInput.dataset.expenseRenderedAmount = String(expense.amount ?? 0);
+      }
     });
     const expenses = Math.round(sumStudentExpenses(values) * 100) / 100;
     const financialResult = Math.round((values.paidAmount - expenses) * 100) / 100;
@@ -42973,7 +43003,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
-                  <input name="expense${n}Amount" data-expense-index="${n}" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
+                  <input name="expense${n}Amount" data-expense-index="${n}" data-money-input type="number" step="0.01" value="${escapeAttr(record[`expense${n}Amount`] || "")}">
                 </label>
                 <div class="editable-grid-cell expense-note-cell" data-label="Примечание">
                   ${renderComboField({
@@ -43061,7 +43091,7 @@ MAX - https://bizvmax.ru/zifra_plus
                   })}
                 </label>
                 <label class="editable-grid-cell" data-label="Сумма">
-                  <input name="directExpense${index}Amount" data-direct-expense-index="${index}" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(expense.amount || "")}">
+                  <input name="directExpense${index}Amount" data-direct-expense-index="${index}" data-expense-rendered-amount="${escapeAttr(expense.amount ?? 0)}" data-money-input type="number" step="0.01" value="${escapeAttr(expense.amount ?? "")}" title="Ручная сумма сохраняется без автоматического округления">
                 </label>
                 <div class="editable-grid-cell expense-note-cell" data-label="Примечание">
                   ${renderComboField({
@@ -43255,7 +43285,7 @@ MAX - https://bizvmax.ru/zifra_plus
               </label>
               <label data-field-key="studentExpenseEditorAmount">
                 <span>Сумма</span>
-                <input name="studentExpenseEditorAmount" data-money-input type="number" step="${MONEY_INPUT_STEP}" value="${escapeAttr(expense.amount ?? "")}">
+                <input name="studentExpenseEditorAmount" data-money-input type="number" step="0.01" value="${escapeAttr(expense.amount ?? "")}">
               </label>
               <label class="student-expense-editor-wide" data-field-key="studentExpenseEditorType">
                 <span>Вид затрат или запас</span>
@@ -49844,11 +49874,11 @@ MAX - https://bizvmax.ru/zifra_plus
     ).map((fieldName) => String(fieldName || "").trim()).filter(Boolean);
     const formulaMetadataKnown = Array.isArray(sourceExpense.databaseSyncFormulaFields);
     if (studentDatabaseFixedValuesEqual(sourceExpense.amount, nextExpense.amount)
-      || (formulaMetadataKnown && !formulaFields.includes("amount"))) {
+      || (formulaMetadataKnown && !formulaFields.includes("amount") && !isAutomaticProgramAuthorExpense(sourceExpense))) {
       return nextExpense;
     }
     const fixedValueOverrides = new Set(
-      normalizeStudentDatabaseFixedValueOverrides(sourceExpense.databaseFixedValueOverrides)
+      Array.isArray(sourceExpense.databaseFixedValueOverrides) ? sourceExpense.databaseFixedValueOverrides : []
     );
     fixedValueOverrides.add("amount");
     nextExpense.databaseSyncFormulaFields = formulaFields.filter((fieldName) => fieldName !== "amount");
@@ -49870,7 +49900,12 @@ MAX - https://bizvmax.ru/zifra_plus
       const noteInput = field("Note");
       const inventoryIdInput = field("InventoryId");
       const inventoryLinkInput = field("InventoryLink");
-      return applyDirectExpenseFormulaValueOverride(expense, {
+      // Rendering/recalculating an automatic amount is not a manual edit.
+      const displayedExpense = isAutomaticProgramAuthorExpense(expense)
+        && amountInput?.dataset?.expenseRenderedAmount !== undefined
+        ? { ...expense, amount: Number(amountInput.dataset.expenseRenderedAmount) }
+        : expense;
+      return applyDirectExpenseFormulaValueOverride(displayedExpense, {
         ...expense,
         date: String(dateInput.value || ""),
         type: String(typeInput?.value || ""),
@@ -53720,7 +53755,7 @@ MAX - https://bizvmax.ru/zifra_plus
         return;
       }
       if (!String(form.elements.value.value || "").trim() || !isPaymentConstantNumberValid(currentSetting?.key, value)) {
-        alert(currentSetting?.key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : "Значение должно быть неотрицательным и кратным 10.");
+        alert(currentSetting?.key === "paymentRoundingStep" ? "Шаг округления должен быть от 0,01 до 1 000 000 ₽ с точностью до копеек." : currentSetting?.key === "incomeTaxRate" ? "Ставка подоходного налога должна быть числом от 0 до 100%." : "Значение должно быть неотрицательным и кратным 10.");
         form.elements.value.focus();
         return;
       }
@@ -53753,6 +53788,8 @@ MAX - https://bizvmax.ru/zifra_plus
         );
         state.data.meta.defaultAuthorPaymentPercent = nextAuthorRate;
         syncVisibleGlobalAuthorRate(previousAuthorRate, nextAuthorRate);
+        refreshAllProgramAuthorExpensesForStudents();
+      } else if (nextSetting.key === "paymentRoundingStep") {
         refreshAllProgramAuthorExpensesForStudents();
       } else {
         const affectedPrograms = unique([

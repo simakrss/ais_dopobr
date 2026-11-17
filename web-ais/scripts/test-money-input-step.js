@@ -155,14 +155,18 @@ assert.equal(
   paymentConstantContext.getPaymentConstantInputAttributes({ key: "authorRate", value: 50 }),
   'min="0" step="10"'
 );
+assert.equal(
+  paymentConstantContext.getPaymentConstantInputAttributes({ key: "paymentRoundingStep", value: 50 }),
+  'min="0.01" max="1000000" step="0.01"'
+);
 
 [
   /data-employee-payment-field="amount"[^>]*data-money-input[^>]*data-money-nonnegative[^>]*step="\$\{MONEY_INPUT_STEP\}"/u,
   /name="paymentAmount"[^>]*data-money-input[^>]*data-money-nonnegative[^>]*step="\$\{MONEY_INPUT_STEP\}"/u,
   /name="payment\$\{n\}Amount"[^>]*data-money-input[^>]*step="\$\{MONEY_INPUT_STEP\}"/u,
-  /name="expense\$\{n\}Amount"[^>]*data-money-input[^>]*step="\$\{MONEY_INPUT_STEP\}"/u,
-  /name="directExpense\$\{index\}Amount"[^>]*data-money-input[^>]*step="\$\{MONEY_INPUT_STEP\}"/u,
-  /name="studentExpenseEditorAmount"[^>]*data-money-input[^>]*step="\$\{MONEY_INPUT_STEP\}"/u
+  /name="expense\$\{n\}Amount"[^>]*data-money-input[^>]*step="0\.01"/u,
+  /name="directExpense\$\{index\}Amount"[^>]*data-money-input[^>]*step="0\.01"/u,
+  /name="studentExpenseEditorAmount"[^>]*data-money-input[^>]*step="0\.01"/u
 ].forEach((pattern) => assert.match(appSource, pattern));
 
 assert.match(
