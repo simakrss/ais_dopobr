@@ -137,7 +137,8 @@ async function download(url, maxBytes, fetcher = fetch) {
 }
 function readStatus(root) {
   const status = readJson(path.join(runtimeDir(root), "status.json"), {phase:"idle"});
-  // A durable journal is deliberately NOT expired: interrupted installs fail closed.
+  // Journals never expire by age. Only the updater can archive one after proving
+  // that a newer signed release has already been installed in full.
   if (fs.existsSync(path.join(runtimeDir(root), "journal.json")) && !BLOCKING.has(status.phase)) return {...status,phase:"recovery-error",label:"Восстановление прерванного обновления. Перезапустите систему."};
   if (status.phase !== "recovery-error" && BLOCKING.has(status.phase) && Date.now() - Number(status.updatedAt || 0) > 120000 && !fs.existsSync(path.join(runtimeDir(root), "journal.json"))) {
     return {...status, phase:"error", label:"Обновление прервано до установки. Работа продолжается на прежней версии."};
@@ -203,6 +204,93 @@ function replaceFile(target, bytes) {
     try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     retryFileOperation(() => fs.renameSync(temp,target));
   } finally { cleanupTemp(temp); }
+}
+function clearAbandonedInstallLock(root) {
+  const lock=path.join(root,".runtime","local-update-install.lock"),ownerFile=path.join(lock,"owner.json");
+  if(!fs.existsSync(lock))return true;
+  let bytes,owner;
+  try {bytes=fs.readFileSync(ownerFile);owner=JSON.parse(bytes);} catch {return false;}
+  if(owner?.host!==hostKey || !Number.isInteger(owner.pid) || owner.pid<=0)return false;
+  try {process.kill(owner.pid,0);return false;}
+  catch(error){if(error.code!=="ESRCH")return false;}
+  // Never remove a live, foreign-host, unknown or repurposed lock.
+  const names=fs.readdirSync(lock);
+  if(names.length!==1 || names[0]!=="owner.json" || !fs.readFileSync(ownerFile).equals(bytes))return false;
+  retryFileOperation(()=>fs.unlinkSync(ownerFile));
+  retryFileOperation(()=>fs.rmdirSync(lock));
+  return true;
+}
+function withRecoveryLock(root, action) {
+  if(!clearAbandonedInstallLock(root))return null;
+  const lock=path.join(root,".runtime","local-update-install.lock"),ownerFile=path.join(lock,"owner.json");
+  fs.mkdirSync(path.dirname(lock),{recursive:true});
+  try {fs.mkdirSync(lock);} catch(error){if(error.code==="EEXIST")return null;throw error;}
+  const owner={host:hostKey,pid:process.pid,operation:"journal-recovery",token:crypto.randomUUID()};
+  let ownsLock=false;
+  try {
+    atomicJson(ownerFile,owner);ownsLock=true;
+    return action();
+  } finally {
+    if(ownsLock && readJson(ownerFile)?.token===owner.token){
+      retryFileOperation(()=>fs.unlinkSync(ownerFile));
+      retryFileOperation(()=>fs.rmdirSync(lock));
+    } else if(!ownsLock && fs.existsSync(lock) && fs.readdirSync(lock).length===0) {
+      retryFileOperation(()=>fs.rmdirSync(lock));
+    }
+  }
+}
+function archiveSupersededJournal(root, options) {
+    const dir=runtimeDir(root),journalFile=path.join(dir,"journal.json");
+    let journalBytes,releaseBytes,installedBytes,journal,release,installed,files;
+    const matchesFiles=()=>files.every(file=>{
+      const bytes=fs.readFileSync(safeTarget(root,file.path));
+      return bytes.length===file.size && hash(bytes)===file.sha256;
+    });
+    try {
+      journalBytes=fs.readFileSync(journalFile);journal=JSON.parse(journalBytes);
+      releaseBytes=fs.readFileSync(path.join(dir,"release.json"));
+      release=validateEnvelope(JSON.parse(releaseBytes),options.publicKey||PUBLIC_KEY);
+      installedBytes=fs.readFileSync(path.join(dir,"installed.json"));installed=JSON.parse(installedBytes);
+      if(!/^\d+\.\d+\.\d+$/.test(journal.version) || compareVersions(release.version,journal.version)<=0
+        || installed.version!==release.version || installed.commit!==release.commit
+        || (release.components && installed.componentsComplete!==true)
+        || version(root)!==release.version || build(root)!==release.build)return null;
+      files=releaseFiles(release);
+      const paths=new Set(files.map(file=>file.path)),seen=new Set();
+      if(!Array.isArray(journal.files) || journal.files.length>300)return null;
+      for(const item of journal.files){
+        if(!item || !paths.has(item.path) || seen.has(item.path)
+          || (item.before!==null && !/^[a-f0-9]{64}$/.test(item.before)) || !/^[a-f0-9]{64}$/.test(item.after))return null;
+        seen.add(item.path);
+      }
+      if(!matchesFiles())return null;
+    } catch {return null;} // Incomplete, modified or untrusted installations still require normal recovery.
+    const instance=hash(Buffer.from(fs.realpathSync(root))).slice(0,16);
+    const archiveRoot=options.recoveryArchiveRoot || process.env.AIS_UPDATE_ARCHIVE_ROOT
+      || (process.platform==="win32" ? "D:/Jupiter/AIS/update-journal-archive" : path.join(dir,"archived-journals"));
+    const archive=path.join(archiveRoot,hostKey,instance,`${journal.version}-${crypto.randomUUID()}.json`);
+    atomicJson(archive,{
+      reason:"superseded-by-verified-installation",archivedAt:new Date().toISOString(),root:fs.realpathSync(root),
+      installed,journal,release:JSON.parse(releaseBytes)
+    });
+    const saved=readJson(archive);
+    if(!saved || JSON.stringify(saved.journal)!==JSON.stringify(journal) || JSON.stringify(saved.installed)!==JSON.stringify(installed)
+      || saved.release.payload!==JSON.parse(releaseBytes).payload || saved.release.signature!==JSON.parse(releaseBytes).signature) {
+      throw Error("Не удалось проверить архив журнала обновления.");
+    }
+    // Folder sync can replace files even while our own installer is locked.
+    // Recheck both metadata and code before retiring the obsolete transaction.
+    if(!fs.readFileSync(journalFile).equals(journalBytes)
+      || !fs.readFileSync(path.join(dir,"release.json")).equals(releaseBytes)
+      || !fs.readFileSync(path.join(dir,"installed.json")).equals(installedBytes) || !matchesFiles()) {
+      throw Error("Файлы изменились во время проверки журнала. Восстановление отложено.");
+    }
+    retryFileOperation(()=>fs.unlinkSync(journalFile));
+    return {version:release.version,build:release.build,journalVersion:journal.version,archive};
+}
+function reconcileSupersededJournal(root, options={}) {
+  if(!fs.existsSync(path.join(runtimeDir(root),"journal.json")))return null;
+  return withRecoveryLock(root,()=>archiveSupersededJournal(root,options));
 }
 function restore(root) {
   const dir=runtimeDir(root), journal=readJson(path.join(dir,"journal.json"));
@@ -275,7 +363,7 @@ function createUpdater(root, hooks, options={}) {
   const dir=runtimeDir(root), fetcher=options.fetcher||fetch;
   const pollMs=options.pollMs??2000, warningMs=options.warningMs??30000, drainMs=options.drainMs??4000;
   const runningVersion=version(root);
-  let running=false, disposed=false, maintenance=false, updated=false, nextCheck=Date.now()+15000, failures=0;
+  let running=false, disposed=false, maintenance=false, updated=false, nextCheck=Date.now()+15000, nextRecoveryCheck=0, failures=0;
   let state={phase:"idle",version:version(root),build:build(root),label:"Обновления проверяются автоматически"};
   const report=patch=>{
     const phase=patch.phase||state.phase;
@@ -286,8 +374,23 @@ function createUpdater(root, hooks, options={}) {
   const heartbeat=setInterval(()=>{if(running)reportBestEffort(report,{});},5000);heartbeat.unref?.();
   async function check() {
     if(running||disposed)return;
-    // A durable recovery journal must never be bypassed by retry or background polling.
-    if(state.phase==="recovery-error" || fs.existsSync(path.join(dir,"journal.json")))return;
+    // A folder synchronizer may bring an old journal back after startup.
+    // Prove completion of a newer installation; never bypass a real crash journal.
+    if(fs.existsSync(path.join(dir,"journal.json"))){
+      if(Date.now()<nextRecoveryCheck)return;
+      nextRecoveryCheck=Date.now()+60000;
+      try {
+        const recovered=reconcileSupersededJournal(root,options);
+        if(!recovered)return;
+        maintenance=false;nextCheck=0;
+        report({phase:"idle",version:recovered.version,build:recovered.build,label:"Устаревший журнал обновления сохранён в архив. Работа продолжена."});
+      } catch(error) {
+        maintenance=true;
+        reportBestEffort(report,{phase:"recovery-error",...updateErrorInfo(error),label:"Не удалось завершить проверку журнала обновления. Повторная проверка через минуту."});
+        return;
+      }
+    }
+    if(state.phase==="recovery-error")return;
     const manualCheck=readJson(path.join(dir,"check-request.json"));
     if(manualCheck?.requestedAt>Number(state.checkedAt||0) && manualCheck.requestedAt>Date.now()-60000){
       nextCheck=0;fs.unlinkSync(path.join(dir,"check-request.json"));
@@ -360,16 +463,31 @@ function createUpdater(root, hooks, options={}) {
     } finally {maintenance=state.phase==="recovery-error";running=false;}
   }
   async function recover() {
-    const lock=path.join(root,".runtime","local-update-install.lock"),owner=readJson(path.join(lock,"owner.json"));
-    if(owner?.host===hostKey){
-      let alive=false;try{process.kill(owner.pid,0);alive=true;}catch{}
-      if(!alive||owner.pid===process.pid){fs.unlinkSync(path.join(lock,"owner.json"));fs.rmdirSync(lock);}
+    if(!fs.existsSync(path.join(dir,"journal.json"))) {
+      if(!clearAbandonedInstallLock(root))throw Error("Другой экземпляр обновляет эту папку. Восстановление отложено.");
+      reportBestEffort(report,{phase:"idle"});return;
     }
-    if(!fs.existsSync(path.join(dir,"journal.json"))) {reportBestEffort(report,{phase:"idle"});return;}
-    maintenance=true;reportBestEffort(report,{phase:"rollback",label:"Восстановление прерванного обновления"});
-    try {restore(root);maintenance=false;reportBestEffort(report,{phase:"error",errorId:crypto.randomUUID(),label:"Предыдущая версия восстановлена после прерванного обновления. Можно повторить обновление.",retryAt:nextCheck});}
-    catch(error){reportBestEffort(report,{phase:"recovery-error",label:error.message});throw error;}
+    let recoveryStarted=false;
+    try {
+      const recovered=withRecoveryLock(root,()=>{
+        recoveryStarted=true;maintenance=true;
+        reportBestEffort(report,{phase:"rollback",label:"Восстановление прерванного обновления"});
+        const archived=archiveSupersededJournal(root,options);
+        if(archived)return archived;
+        if(!restore(root))throw Error("Не удалось прочитать журнал восстановления обновления.");
+        return {restored:true};
+      });
+      if(!recovered)throw Error("Другой экземпляр обновляет эту папку. Восстановление отложено.");
+      if(!recovered.restored){
+        maintenance=false;nextCheck=0;
+        reportBestEffort(report,{phase:"idle",version:recovered.version,build:recovered.build,label:"Устаревший журнал обновления сохранён в архив. Работа продолжена."});
+        return;
+      }
+      maintenance=false;
+      reportBestEffort(report,{phase:"error",errorId:crypto.randomUUID(),label:"Предыдущая версия восстановлена после прерванного обновления. Можно повторить обновление.",retryAt:nextCheck});
+    }
+    catch(error){if(recoveryStarted)reportBestEffort(report,{phase:"recovery-error",label:error.message});throw error;}
   }
   return {check,recover,maintenance:()=>maintenance,didUpdate:()=>updated,dispose(){disposed=true;clearInterval(heartbeat);},checkNow(){nextCheck=0;return check();}};
 }
-module.exports={BASE,PUBLIC_KEY,FILES,COMPONENTS,releaseFiles,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,requestUpdateRetry,retryFileOperation,updateErrorInfo,restore,install,createUpdater};
+module.exports={BASE,PUBLIC_KEY,FILES,COMPONENTS,releaseFiles,BLOCKING,hash,runtimeDir,readStatus,atomicJson,readJson,safeTarget,version,compareVersions,validateEnvelope,download,writeLease,clientsReady,requestImmediateUpdate,requestUpdateRetry,retryFileOperation,updateErrorInfo,reconcileSupersededJournal,restore,install,createUpdater};

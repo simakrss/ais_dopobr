@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.647",
+    version: "1.7.648",
     releasedAt: "2026-11-17"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.648",
+      releasedAt: "2026-11-17",
+      changes: ["Устаревшие журналы обновлений автоматически сохраняются в архив и больше не блокируют работу, если более новый выпуск уже установлен полностью и подтверждён подписью и хешами всех файлов. Проверка выполняется при запуске и в фоне; восстановление настоящих прерванных установок и ожидание сохранения карточек сохранены."]
+    },
     {
       version: "1.7.647",
       releasedAt: "2026-11-17",
