@@ -34,6 +34,7 @@ function checkGeneralExpenses() {
     getStudentListSelectedPrograms: () => [], GENERAL_EXPENSE_SECTIONS: ["Физлица"],
     getRegistryRowSearchText: row => JSON.stringify(row).toLowerCase(), parseTableSortDate: Date.parse,
     normalizeContractSection: () => "", normalizeGeneralExpenseSection: value => value,
+    matchesGeneralExpenseNumberFilter: () => true,
     filterRowsByTableValueFilters: input => input.filter(row => !row.paid),
     getTableCellValue: (_config, row, key) => row[key]
   });
@@ -83,6 +84,8 @@ async function checkEmployeeExpenses() {
         let counter = 0, renders = 0;
         const original = { id: "original", date: "2026-01-01", paid: "", amount: 350, comment: "Иван", recommendation: true };
         const getEmployeePaymentCollections = () => collections;
+        const getEmployeePaymentSourceIndex = () => null, invalidateEmployeePaymentSourceIndex = () => {};
+        const normalizeEmployeeActPersonName = value => String(value || '').trim();
         const getEmployeePaymentFilters = () => state.employeePaymentFilters;
         const getEmployeePaymentSort = () => ({ key: "" });
         const getEmployeePaymentAccountingDraft = () => state.modal.draft;
@@ -150,6 +153,7 @@ async function checkEmployeeExpenses() {
         const copy = page.locator('[data-payment-source-id^="copy-"]');
         assert.equal(await copy.count(), 1);
         assert.equal(await copy.isVisible(), true);
+        assert.equal(await copy.locator('[data-employee-payment-field="paid"]').inputValue(), "");
         assert.match(await copy.getAttribute("class"), /is-duplicated-expense/);
         assert.equal(await page.locator('[data-employee-payment-selected-count]').textContent(), "1");
         assert.equal(await copy.locator('[type="checkbox"]').isChecked(), true);
@@ -160,7 +164,20 @@ async function checkEmployeeExpenses() {
         });
         assert.equal(inViewport, true, "New editable field is scrolled into view vertically and horizontally");
         assert.equal(await page.evaluate(() => renders), 0, "No full-card redraw for duplication");
+        await page.evaluate(type => {
+          const row = document.querySelector('[data-payment-source-id^="copy-"]');
+          const id = row.dataset.paymentSourceId;
+          const source = findEmployeePaymentSourceRecord(type, id); source.amount = 777;
+          commitEmployeePaymentAccountingChange(state.modal.draft, { sourceId: id, sourceType: type, afterRow: row, replaceRow: true }, true);
+        }, sourceType);
+        assert.equal(await copy.locator('[data-employee-payment-field="amount"]').inputValue(), "777");
+        assert.equal(await copy.locator('[type="checkbox"]').isChecked(), true, "Editing retains the selected row");
+        assert.equal(await page.evaluate(() => renders), 0, "Expense editor updates one row without rebuilding the card");
         await copy.locator('[data-employee-payment-field="comment"]').fill("Изменённый комментарий");
+        await page.evaluate(type => {
+          const row = document.querySelector('[data-payment-source-id^="copy-"]');
+          findEmployeePaymentSourceRecord(type, row.dataset.paymentSourceId).comment = row.querySelector('[data-employee-payment-field="comment"]').value;
+        }, sourceType);
         await page.evaluate(() => applyEmployeePaymentFiltersToDom());
         assert.equal(await copy.isVisible(), true, "Filter refresh after editing preserves the copy");
         await page.evaluate(() => renderRows());

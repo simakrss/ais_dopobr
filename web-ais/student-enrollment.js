@@ -2,6 +2,7 @@
 const crypto = require("node:crypto");
 const feedbackHistory = require("./student-feedback-history.js");
 const text = value => String(value ?? "").trim();
+const portalEligible = record => ["КПК", "ППП", "ДОП"].includes(text(record?.educationType).toUpperCase());
 const identity = value => text(value).normalize("NFKC").toLocaleLowerCase("ru-RU");
 const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
 const FIELDS = Object.freeze([
@@ -123,7 +124,7 @@ function credentials(email, reserved) {
 function matchProgram(row, programs) {
   const matches = programs.filter(program => [program.productId, program.siteSync?.product?.id, program.sitePublication?.product?.id,
     ...(program.siteVariants || []).map(variant => variant.productId)].some(id => text(id) && text(id) === text(row.productId)));
-  return matches.length === 1 && ["КПК", "ППП", "ДОП"].includes(matches[0].type) ? matches[0] : null;
+  return matches.length === 1 && portalEligible({ educationType: matches[0].type }) ? matches[0] : null;
 }
 // Private random salt prevents the public session version from being a six-digit-password oracle.
 const fingerprint = record => crypto.createHmac("sha256", record.studentPortalCredentialSalt || "disabled")
@@ -132,6 +133,7 @@ function publicUser(record) { return { id: `student:${record.id}`, studentId: re
   role: "student", status: "active", email: record.email, authSource: "student", studentCredentialVersion: fingerprint(record) }; }
 const escapeHtml = value => text(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function welcomeMessage(record, { repeat = false } = {}) {
+  if (!portalEligible(record)) fail("Кабинет слушателя предусмотрен только для программ КПК, ППП и ДОП.", 409);
   return `<p>Добрый день, ${escapeHtml(record.name)}!</p>${repeat ? `<p>Направляем данные для доступа в личный кабинет по программе «${escapeHtml(record.program)}» и инструкцию по заполнению данных.</p>` : `<p>${Number(record.payment1Amount) > 0 ? "Получена оплата" : "Получена заявка"} по программе «${escapeHtml(record.program)}». Ваша заявка импортирована со статусом «На зачисление».</p>`}
 <p>Для оформления на обучение войдите в <a href="https://edu-plus.ru/lms/">личный кабинет</a>.</p>
 <p>Логин: <strong>${escapeHtml(portalLogin(record))}</strong><br>Пароль: <strong>${escapeHtml(portalPassword(record))}</strong></p>
@@ -179,7 +181,7 @@ function planExistingAccounts(data, reserved) {
       // Multiple pre-existing accounts are preserved; never silently merge their permissions.
       let owner = existing.length === 1 ? existing[0] : null;
       for (const row of rows) {
-        if (row.studentPortalEnabled || row.studentPortalBlocked) continue;
+        if (!portalEligible(row) || row.studentPortalEnabled || row.studentPortalBlocked) continue;
         const access = owner ? { login: portalLogin(owner), password: portalPassword(owner) }
           : credentials(text(row.email) || `student.${text(row.uid) || text(row.id)}`, reserved);
         reserved.add(identity(access.login));
@@ -218,7 +220,7 @@ function createService(deps) {
       if (user?.role === "student") {
         const owner = current.data.collections.students.find(row => row.id === user.studentId);
         if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt
-          || fingerprint(owner) !== user.studentCredentialVersion || !record.studentPortalEnabled || record.studentPortalBlocked
+          || fingerprint(owner) !== user.studentCredentialVersion || !portalEligible(record) || !record.studentPortalEnabled || record.studentPortalBlocked
           || (record.studentPortalAccountId || record.id) !== owner.id) fail("Доступ к заявке закрыт.", 403);
       }
       const updated = await change(structuredClone(record));
@@ -236,7 +238,7 @@ function createService(deps) {
     const students = current.data.collections.students || [];
     const owner = students.find(row => row.id === user.studentId && row.studentPortalEnabled === true && !row.studentPortalBlocked);
     if (!owner?.studentPortalCredentialSalt || identity(portalLogin(owner)) !== identity(user.login) || fingerprint(owner) !== user.studentCredentialVersion) fail("Сессия устарела. Войдите повторно.", 401);
-    const records = students.filter(row => row.studentPortalEnabled === true && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id);
+    const records = students.filter(row => portalEligible(row) && row.studentPortalEnabled === true && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id);
     const record = id ? records.find(row => row.id === id) : records[0];
     if (!record) fail("Заявка не найдена.", 404);
     return { owner, record, records, dictionaries: profileDictionaries(current.data) };
@@ -246,11 +248,11 @@ function createService(deps) {
     const current = await deps.readState(), students = current.data.collections.students || [];
     const record = students.find(row => row.id === studentId);
     if (!record) fail("Слушатель не найден.", 404);
-    if (!record.studentPortalEnabled || record.studentPortalBlocked) fail("Личный кабинет слушателя недоступен.", 409);
+    if (!portalEligible(record) || !record.studentPortalEnabled || record.studentPortalBlocked) fail("Личный кабинет слушателя недоступен.", 409);
     const owner = students.find(row => row.id === (record.studentPortalAccountId || record.id));
     if (!owner?.studentPortalEnabled || owner.studentPortalBlocked || !owner.studentPortalCredentialSalt) fail("Личный кабинет слушателя недоступен.", 409);
     const id = applicationId || record.id;
-    if (!students.some(row => row.id === id && row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id)) fail("Заявка не относится к этому кабинету.", 403);
+    if (!students.some(row => row.id === id && portalEligible(row) && row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id)) fail("Заявка не относится к этому кабинету.", 403);
     // Request-scoped identity only. Never replace the staff member's login or cookie.
     return { user: { ...publicUser(owner), actingStaff: actor }, id, record };
   }
@@ -274,7 +276,12 @@ function createService(deps) {
   async function authenticate(login, password, clientKey) {
     await deps.loginLimit(identity(login), clientKey);
     const current = await deps.readState();
-    const records = (current.data.collections.students || []).filter(row => row.studentPortalEnabled === true && row.studentPortalCredentialSalt && !row.studentPortalBlocked
+    const students = current.data.collections.students || [];
+    // Keep legacy shared identities (including webinar owners), but grant access only to qualifying programs.
+    const eligibleOwners = new Set(students.filter(row => portalEligible(row) && row.studentPortalEnabled && !row.studentPortalBlocked)
+      .map(row => row.studentPortalAccountId || row.id));
+    const records = students.filter(row => row.studentPortalEnabled === true && row.studentPortalCredentialSalt && !row.studentPortalBlocked
+      && eligibleOwners.has(row.id)
       && (!row.studentPortalAccountId || row.studentPortalAccountId === row.id) && identity(portalLogin(row)) === identity(login));
     if (records.length !== 1) return null;
     const expected = Buffer.from(portalPassword(records[0])), actual = Buffer.from(String(password || ""));
@@ -299,6 +306,7 @@ function createService(deps) {
           const sourceKey = `mysql:${row.orderId}:${row.id}`;
           const prior = students.find(item => item.sourceApplicationKey === sourceKey
             || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)));
+          if (prior && !portalEligible(prior)) { skipped.push(row.id); resolved = true; break; }
           if (prior?.studentPortalEnabled) { record = prior; resolved = true; break; }
           if (prior && prior.status !== "На зачисление") { skipped.push(row.id); resolved = true; break; }
           const owner = students.find(item => item.studentPortalEnabled && !item.studentPortalBlocked
@@ -429,7 +437,7 @@ function createService(deps) {
     // Preparing a store email must not send any message itself. The existing
     // paid-order job remains responsible for the separate enrollment instruction.
     const existing = before.data.collections.students || [];
-    const needsProvisioning = eligible.some(row => !existing.some(item => item.studentPortalEnabled && (item.sourceApplicationKey === `mysql:${row.orderId}:${row.id}`
+    const needsProvisioning = eligible.some(row => !existing.some(item => portalEligible(item) && item.studentPortalEnabled && (item.sourceApplicationKey === `mysql:${row.orderId}:${row.id}`
       || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)))));
     if (needsProvisioning) await provisionOrder(orderId, { sendWelcome: false, prepareFolders: false });
     const current = await deps.readState(), students = current.data.collections.students || [], accounts = new Map();
@@ -437,7 +445,7 @@ function createService(deps) {
       const record = students.find(item => item.sourceApplicationKey === `mysql:${row.orderId}:${row.id}`
         || (text(item.sourceOrderId) === text(row.orderId) && text(item.sourceProductId) === text(row.productId)));
       const owner = record && students.find(item => item.id === (record.studentPortalAccountId || record.id));
-      if (!record?.studentPortalEnabled || record.studentPortalBlocked || !owner?.studentPortalEnabled || owner.studentPortalBlocked
+      if (!portalEligible(record) || !record?.studentPortalEnabled || record.studentPortalBlocked || !owner?.studentPortalEnabled || owner.studentPortalBlocked
         || identity(record.email) !== identity(recipient) || identity(owner.email) !== identity(recipient)
         || !portalLogin(owner) || !portalPassword(owner) || !owner.studentPortalCredentialSalt) continue;
       if (!accounts.has(owner.id)) accounts.set(owner.id, { accountId: owner.id, credentialVersion: fingerprint(owner), login: portalLogin(owner), password: portalPassword(owner), programs: [] });
@@ -460,7 +468,7 @@ function createService(deps) {
       || (owner.studentPortalAccountId && owner.studentPortalAccountId !== owner.id)
       || identity(owner.email) !== identity(payload.email)
       || !students.some(row => row.studentPortalEnabled && !row.studentPortalBlocked && (row.studentPortalAccountId || row.id) === owner.id
-        && ["КПК", "ППП", "ДОП"].includes(row.educationType))) fail("Кабинет слушателя недоступен.", 403);
+        && portalEligible(row))) fail("Кабинет слушателя недоступен.", 403);
     if (operation === "email-access") {
       return { ok: true, account: { accountId: owner.id, login: portalLogin(owner), password: portalPassword(owner), credentialVersion: fingerprint(owner) } };
     }
@@ -634,7 +642,7 @@ function createService(deps) {
   }
   return { authenticate, context, portal, update, upload, file, submit, provisionOrder, provisionExisting, sdo, staffSession, review, feedback, correspondence,
     orderEmailAccess, shopAccountOperation, previewCabinetAccessEmail, sendCabinetAccessEmail,
-    ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) };
+    ...require("./student-cabinet.js").createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload, portalEligible }) };
 }
-module.exports = { FIELDS, DOCS, credentials, matchProgram, documentRequirements, missingRequirements, sanitizeProfile,
+module.exports = { FIELDS, DOCS, credentials, matchProgram, portalEligible, documentRequirements, missingRequirements, sanitizeProfile,
   fingerprint, publicUser, welcomeMessage, validateUpload, finances, createService, planExistingAccounts, sdoAvailable, portalLogin, documentFolder };

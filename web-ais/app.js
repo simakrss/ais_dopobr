@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.648",
-    releasedAt: "2026-11-17"
+    version: "1.7.649",
+    releasedAt: "2026-11-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.649",
+      releasedAt: "2026-11-18",
+      changes: ["Кабинеты слушателей, письма с доступом и сохранение макетов в личные папки предусмотрены только для КПК, ППП и ДОП. ПРО исключены; формирование сертификатов вебинаров сохранено.", "Ускорены поиск и пересчёт выплат в карточке сотрудника. Редактор обновляет изменённую строку без перерисовки всей карточки. При дублировании выплата получает статус «К выплате», пустую дату оплаты и сброшенное состояние акта; новая строка остаётся видимой и выделенной."]
+    },
     {
       version: "1.7.648",
       releasedAt: "2026-11-17",
@@ -38270,13 +38275,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function renderStudentPortalOpenButton(record) {
-    if (!record.id || !record.studentPortalEnabled || record.studentPortalBlocked || isDatabaseDemoMode()
+    if (!studentCabinetProgramAllowed(record) || !record.id || !record.studentPortalEnabled || record.studentPortalBlocked || isDatabaseDemoMode()
       || !["admin", "manager"].includes(getCurrentAuthUser().role)) return "";
     return `<button type="button" class="icon-button student-card-header-action" data-student-portal-menu title="Кабинет слушателя: ${escapeAttr(record.enrollmentReviewStatus || "Заполняется")}" aria-label="Кабинет слушателя и данные доступа"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></button>`;
   }
+  function studentCabinetProgramAllowed(record) {
+    return ["КПК", "ППП", "ДОП"].includes(String(record?.educationType || "").trim().toUpperCase());
+  }
   function openStudentPortalMenu() {
     const record = state.data.collections.students.find(item => item.id === state.modal?.id);
-    if (!record) return;
+    if (!studentCabinetProgramAllowed(record)) return;
     const dialog = document.createElement("dialog"); dialog.className = "modal student-access-dialog";
     dialog.setAttribute("aria-labelledby", "student-access-title");
     const href = window.AIS_AUTH_API.appUrl(`?student-cabinet=${encodeURIComponent(record.id)}`);
@@ -38367,10 +38375,11 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   async function saveStudentAwardFile(recordId, file, kind = "scan", format = "") {
+    const record = state.data.collections.students.find(item => item.id === recordId);
+    if (!studentCabinetProgramAllowed(record)) throw Error("Документы в кабинете слушателя сохраняются только для программ КПК, ППП и ДОП.");
     if (file.size > 20 * 1024 * 1024) throw Error("Максимальный размер — 20 МБ.");
     const base64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });
     const result = await window.AIS_AUTH_API.request("api/students/education-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: recordId, kind, format, base64, clientId: recordLockClientId }) });
-    const record = state.data.collections.students.find(item => item.id === recordId);
     if (record) record.educationDocumentFiles = result.files;
     if (state.modal?.id === recordId && state.modal.draft) state.modal.draft.educationDocumentFiles = result.files;
     return result;
@@ -38677,11 +38686,11 @@ MAX - https://bizvmax.ru/zifra_plus
             ${renderOrdersSdoIcon("documentText")}<span>${definition.title}</span>
           </button>`;
         }).join("")}
-        <button class="ghost-button student-document-generate-button education-document-open-button student-award-upload-button" data-action="upload-student-award-scan" type="button" title="Загрузить скан документа об образовании. PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете." ${record.id ? "" : "disabled"}>
+        ${studentCabinetProgramAllowed(record) ? `<button class="ghost-button student-document-generate-button education-document-open-button student-award-upload-button" data-action="upload-student-award-scan" type="button" title="Загрузить скан документа об образовании. PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете." ${record.id ? "" : "disabled"}>
           ${renderOrdersSdoIcon("arrowUp")}<span>Загрузить скан документа</span>
         </button>
         <input type="file" data-student-award-upload accept="application/pdf,image/jpeg,image/png" hidden ${record.id ? "" : "disabled"}>
-        <p class="student-award-upload-status" data-award-upload-status role="status"></p>
+        <p class="student-award-upload-status" data-award-upload-status role="status"></p>` : ""}
         ${(record.educationDocumentFiles || []).map(file => `<a class="student-award-file-link" href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" target="_blank" rel="noopener">${escapeHtml(file.kind === "layout" ? "Макет документа" : "Скан документа")} · ${escapeHtml(file.name)}</a>`).join("")}
       </div>
       ${renderStudentLayoutRemarks(record)}
@@ -48711,7 +48720,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (!event.target.closest("[data-employee-payment-field]")) return;
       updateEmployeePaymentAccountingField(event);
       window.requestAnimationFrame(() => {
-        applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"));
+        applyEmployeePaymentSortToDom(document.querySelector("[data-employee-payment-accounting]"), true);
       });
     });
     employeePaymentAccounting?.addEventListener("click", (event) => scheduleEmployeePaymentActCheckboxChange(event, employeePaymentAccounting));
@@ -49995,6 +50004,41 @@ MAX - https://bizvmax.ru/zifra_plus
     return getEmployeePaymentTransaction({ create })?.collections || state.data.collections;
   }
 
+  function getEmployeePaymentSourceIndex(collections = getEmployeePaymentCollections()) {
+    const transaction = getEmployeePaymentTransaction();
+    if (!transaction || transaction.collections !== collections) return null;
+    let index = transaction.sourceIndex;
+    if (index && index.students === collections.students && index.directExpenses === collections.directExpenses
+      && index.generalExpenses === collections.generalExpenses && index.contracts === collections.contracts) return index;
+    index = { students: collections.students, directExpenses: collections.directExpenses,
+      generalExpenses: collections.generalExpenses, contracts: collections.contracts,
+      direct: new Map(), general: new Map(), byEmployee: new Map() };
+    const sources = (name) => {
+      const key = normalizeEmployeeActPersonName(name);
+      if (!index.byEmployee.has(key)) index.byEmployee.set(key, { directEntries: [], generalEntries: [], partnerStudents: [] });
+      return index.byEmployee.get(key);
+    };
+    for (const entry of getDirectExpenseEntriesFromCollections(collections)) {
+      index.direct.set(String(entry.expense.id || entry.identity || "").trim(), entry);
+      sources(entry.expense.note).directEntries.push(entry);
+    }
+    for (const expense of collections.generalExpenses || []) {
+      const identity = String(expense.id || "").trim();
+      index.general.set(identity, expense);
+      sources(expense.counterparty).generalEntries.push({ expense, identity });
+    }
+    for (const student of collections.students || []) {
+      if (student.agent) sources(student.agent).partnerStudents.push(student);
+    }
+    transaction.sourceIndex = index;
+    return index;
+  }
+
+  function invalidateEmployeePaymentSourceIndex() {
+    const transaction = getEmployeePaymentTransaction();
+    if (transaction) delete transaction.sourceIndex;
+  }
+
   function markEmployeePaymentTransactionDirty() {
     const transaction = getEmployeePaymentTransaction({ create: true });
     if (!transaction) return false;
@@ -50089,10 +50133,13 @@ MAX - https://bizvmax.ru/zifra_plus
     const collections = getEmployeePaymentCollections({ create: true });
     const id = String(sourceId || "").trim();
     if (!id) return null;
+    const index = getEmployeePaymentSourceIndex(collections);
     if (sourceType === "general") {
+      if (index) return index.general.get(id) || null;
       return (collections.generalExpenses || []).find((expense) => String(expense?.id || "").trim() === id) || null;
     }
     if (sourceType === "direct") {
+      if (index) return index.direct.get(id)?.expense || null;
       return getDirectExpenseEntriesFromCollections(collections)
         .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id)?.expense || null;
     }
@@ -50364,7 +50411,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const contractForm = document.querySelector("#recordForm[data-config='contracts']");
     if (state.modal && contractForm) {
       state.modal.hasDraftChanges = state.modal.hasDraftChanges || hasUnsavedFormChanges(contractForm);
-      state.modal.draft = collectContractFormDraft();
+      state.modal.draft = collectContractFormDraft({ recalculatePaymentAccounting: false });
     }
     state.employeeExpenseEditor = { sourceType, sourceId };
     document.querySelector("[data-employee-expense-editor]")?.remove();
@@ -50602,7 +50649,9 @@ MAX - https://bizvmax.ru/zifra_plus
       source: "employee-payment-editor"
     });
     state.employeeExpenseEditor = null;
-    commitEmployeePaymentAccountingChange(draft, { sourceId }, true);
+    document.querySelector("[data-employee-expense-editor]")?.remove();
+    const previousRow = document.querySelector(`[data-employee-payment-row][data-payment-source-id="${CSS.escape(context.sourceId)}"]`);
+    commitEmployeePaymentAccountingChange(draft, { sourceId, sourceType, afterRow: previousRow, replaceRow: true }, true);
   }
 
   function getEmployeePaymentAccountingDraft(options = {}) {
@@ -50638,7 +50687,7 @@ MAX - https://bizvmax.ru/zifra_plus
     section.querySelector("[data-employee-payment-balance-card]")
       ?.classList.toggle("has-balance", Boolean(accounting.balance));
     if (!focus.sourceId) {
-      applyEmployeePaymentFiltersToDom(section);
+      applyEmployeePaymentFiltersToDom(section, true);
       return;
     }
     const row = section.querySelector(
@@ -50647,7 +50696,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const sourceType = String(row?.dataset.paymentSource || "");
     const source = findEmployeePaymentSourceRecord(sourceType, focus.sourceId);
     if (!row || !source) {
-      applyEmployeePaymentFiltersToDom(section);
+      applyEmployeePaymentFiltersToDom(section, true);
       return;
     }
     const values = normalizeEmployeePaymentSourceRow(sourceType, source);
@@ -50679,7 +50728,7 @@ MAX - https://bizvmax.ru/zifra_plus
         ...values
       });
     }
-    applyEmployeePaymentFiltersToDom(section);
+    applyEmployeePaymentFiltersToDom(section, true);
   }
 
   function insertEmployeePaymentDuplicateRow(accounting, focus) {
@@ -50688,7 +50737,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!section?.isConnected || !["direct", "general"].includes(focus.sourceType)) return null;
     const entries = focus.sourceType === "direct" ? accounting.directEntries : accounting.generalEntries;
     const entry = entries.find(({ expense, identity }) => String(expense.id || identity || "") === focus.sourceId);
-    if (!entry) return null;
+    if (!entry) {
+      if (focus.replaceRow) { afterRow.remove(); return section; }
+      return null;
+    }
     const model = {
       sourceType: focus.sourceType, sourceId: focus.sourceId,
       details: focus.sourceType === "direct" ? [
@@ -50697,10 +50749,16 @@ MAX - https://bizvmax.ru/zifra_plus
       ...normalizeEmployeePaymentSourceRow(focus.sourceType, entry.expense)
     };
     const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
-    afterRow.insertAdjacentHTML("afterend", renderEmployeePaymentAccountingRow(
+    const wasSelected = focus.replaceRow && afterRow.querySelector("[data-action='select-employee-payment-row']")?.checked;
+    afterRow.insertAdjacentHTML(focus.replaceRow ? "beforebegin" : "afterend", renderEmployeePaymentAccountingRow(
       model, columns, getEmployeePaymentFilters(), getEmployeePaymentSort()
     ));
-    const insertedRow = afterRow.nextElementSibling;
+    const insertedRow = focus.replaceRow ? afterRow.previousElementSibling : afterRow.nextElementSibling;
+    if (focus.replaceRow) {
+      afterRow.remove();
+      const selector = insertedRow.querySelector("[data-action='select-employee-payment-row']");
+      if (selector) selector.checked = Boolean(wasSelected);
+    }
     bindComboFieldEvents(insertedRow);
     bindMoneyInputStepControls(insertedRow);
     syncEmployeePaymentActCheckboxes(insertedRow);
@@ -50709,7 +50767,13 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function commitEmployeePaymentAccountingChange(draft, focus = {}, renderAfter = false) {
     const collections = getEmployeePaymentCollections({ create: true });
-    const accounting = getEmployeePaymentAccounting(draft, collections);
+    // Structural/editor changes may alter source membership; inline edits retain the same indexed objects.
+    if (renderAfter) invalidateEmployeePaymentSourceIndex();
+    const employeeName = normalizeEmployeeActPersonName(draft.name);
+    const index = getEmployeePaymentSourceIndex(collections);
+    const sources = index ? (employeeName && index.byEmployee.get(employeeName))
+      || { directEntries: [], generalEntries: [], partnerStudents: [] } : null;
+    const accounting = getEmployeePaymentAccounting(draft, collections, state.data?.dictionaries?.paymentSettings, null, sources);
     const metrics = {
       amount: accounting.amount,
       paid: accounting.paid,
@@ -50730,6 +50794,10 @@ MAX - https://bizvmax.ru/zifra_plus
         : { ...(state.modal.draft || {}), ...metrics };
     }
     scheduleEmployeePaymentAccountingPersist();
+    const accountingSection = document.querySelector("[data-employee-payment-accounting]");
+    if (accountingSection) accountingSection.employeePaymentAccountingSnapshot = {
+      record: nextDraft, collections, paymentSettings: state.data?.dictionaries?.paymentSettings, modal: state.modal, accounting
+    };
     if (renderAfter) {
       const section = insertEmployeePaymentDuplicateRow(accounting, focus);
       if (section) {
@@ -50918,10 +50986,19 @@ MAX - https://bizvmax.ru/zifra_plus
       const id = String(sourceId || "").trim();
       if (id && source) lookup.set(`${sourceType}\u0000${id}`, source);
     };
-    getDirectExpenseEntriesFromCollections(collections).forEach(({ expense, identity }) => {
-      add("direct", expense?.id || identity, expense);
-    });
-    (collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
+    const index = getEmployeePaymentSourceIndex(collections);
+    if (index && tbody) {
+      for (const row of tbody.querySelectorAll("[data-employee-payment-row]")) {
+        const type = row.dataset.paymentSource, id = row.dataset.paymentSourceId;
+        if (type === "direct") add(type, id, index.direct.get(id)?.expense);
+        if (type === "general") add(type, id, index.general.get(id));
+      }
+    } else {
+      getDirectExpenseEntriesFromCollections(collections).forEach(({ expense, identity }) => {
+        add("direct", expense?.id || identity, expense);
+      });
+      (collections.generalExpenses || []).forEach((expense) => add("general", expense?.id, expense));
+    }
     (collections.students || []).forEach((student) => {
       const legacyId = String(student?.id || student?.uid || "").trim();
       if (partnerIds && !partnerIds.has(legacyId)) return;
@@ -51115,10 +51192,12 @@ MAX - https://bizvmax.ru/zifra_plus
         date: currentDate,
         act: "",
         actStatus: "",
-        paid: currentDate,
+        paid: "",
         isPaid: "",
         accountingClosed: ""
       }),
+      paid: "", isPaid: "", act: "", actStatus: "", accountingClosed: "",
+      recommendation: "+", recommendationManual: true,
       employeePaymentOrder: (Number(source.employeePaymentOrder) || 0) + 5
     };
     const nextId = duplicate.id;
@@ -51133,8 +51212,9 @@ MAX - https://bizvmax.ru/zifra_plus
       }
     } else {
       const collections = getEmployeePaymentCollections({ create: true });
-      const entry = getDirectExpenseEntriesFromCollections(collections)
-        .find(({ expense, identity }) => expense === source || String(expense?.id || identity || "").trim() === sourceId);
+      const entry = getEmployeePaymentSourceIndex(collections)?.direct.get(sourceId)
+        || getDirectExpenseEntriesFromCollections(collections)
+          .find(({ expense, identity }) => expense === source || String(expense?.id || identity || "").trim() === sourceId);
       if (entry) {
         const expenses = entry.student
           ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
@@ -51176,12 +51256,13 @@ MAX - https://bizvmax.ru/zifra_plus
       sourceId: nextId, sourceType, afterRow: row, field: "amount", revealDuplicate: true
     }, true);
     showDocumentGenerationNotice(
-      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода и оплаты: ${formatContractDate(duplicate.date)}. Новая строка показана независимо от фильтра до его изменения.`
+      `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода: ${formatContractDate(duplicate.date)}. Статус: «К выплате», дата оплаты не заполнена. Новая строка показана независимо от фильтра до его изменения.`
     );
   }
 
   function removeEmployeePaymentSourceRecord(sourceType, sourceId) {
     const collections = getEmployeePaymentCollections({ create: true });
+    invalidateEmployeePaymentSourceIndex();
     const id = String(sourceId || "").trim();
     if (!id) return null;
     if (sourceType === "general") {
@@ -76310,7 +76391,7 @@ MAX - https://bizvmax.ru/zifra_plus
       } else if (additionalSaveResult?.failed?.length) {
         alert(`Основной документ сформирован, но не все дополнительные копии сохранены:\n${additionalSaveResult.failed.map((item) => `Копия ${item.index + 1}: ${item.error}`).join("\n")}`);
       }
-      if (documentAuditContext.entityType === "students" && (/^education-document-(?:diploma|certificate)/u.test(documentTemplate.id || "")
+      if (documentAuditContext.entityType === "students" && studentCabinetProgramAllowed(record) && (/^education-document-(?:diploma|certificate)/u.test(documentTemplate.id || "")
         || (documentTemplate.id && getEducationDocumentTemplateForRecord(record)?.id === documentTemplate.id))) {
         setDocumentGenerationStatus(generationTaskId, "Сохранение макета в кабинет слушателя…");
         try { await saveStudentAwardFile(documentAuditContext.entityId, generatedBlob, "layout", outputFormat); }

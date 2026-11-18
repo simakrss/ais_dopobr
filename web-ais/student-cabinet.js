@@ -12,7 +12,7 @@ function eventActive(record, key) {
 const layoutAvailable = record => eventActive(record, "educationDocMaketSent") || eventActive(record, "macro_hb0dir");
 const fileRevision = entry => crypto.createHash("sha256").update(JSON.stringify([entry.id, entry.size, entry.uploadedAt])).digest("hex");
 function legacyLayoutLocation(record) {
-  const types = { "КПК": ["Удостоверение", "Удостоверения ПК"], "ППП": ["Диплом", "Дипломы ПП"], "ДОП": ["Сертификат", "Сертификаты мероприятия"], "ПРО": ["Сертификат", "Сертификаты мероприятия"] };
+  const types = { "КПК": ["Удостоверение", "Удостоверения ПК"], "ППП": ["Диплом", "Дипломы ПП"], "ДОП": ["Сертификат", "Сертификаты мероприятия"] };
   const type = types[text(record.educationType)], name = text(record.name), number = text(record.registrationNo || record.diplomaRegistrationNo);
   if (!type || name.split(/\s+/u).length < 2 || number.length < 3) return null;
   const part = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "").replace(/\s+/gu, "_");
@@ -23,7 +23,7 @@ function rootFolder(record, documentFolder) {
   if (!folder || !folder.includes("/")) fail("Не настроена личная папка слушателя.", 409);
   return folder;
 }
-function createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload }) {
+function createService({ deps, context, mutate, portal, documentFolder, finances, validateUpload, portalEligible }) {
   async function photo(user, id, body) {
     const { record } = await context(user, id);
     const file = validateUpload({ ...body, kind: "passport" });
@@ -44,6 +44,7 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
   }
   async function awardUpload(actor, id, body) {
     const record = await staffRecord(actor, id);
+    if (!portalEligible(record)) fail("Документы в кабинете слушателя сохраняются только для программ КПК, ППП и ДОП.", 409);
     const kind = body.kind === "layout" ? "layout" : "scan";
     let stage = "Проверка блокировки карточки";
     try {
@@ -99,7 +100,7 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     return rootFolder(owner || record, documentFolder);
   }
   async function discover(records) {
-    const result = records.map(item => ({ ...item, educationDocumentFiles: [...(item.educationDocumentFiles || [])] }));
+    const result = records.filter(portalEligible).map(item => ({ ...item, educationDocumentFiles: [...(item.educationDocumentFiles || [])] }));
     if (!deps.listRoot && !deps.legacyLayout) return result;
     const current = await deps.readState(), checked = new Set();
     for (const record of result) {

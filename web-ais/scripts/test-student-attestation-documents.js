@@ -36,7 +36,7 @@ vm.runInContext([
   "normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById",
   "applyProgramCommissionSetToProgram", "resolveProgramCommissionRecord", "normalizeEmployeeActPersonName",
   "formatEmployeeContractShortName", "getStudentAttestationDocumentUnavailableReason", "getAttestationChairRecipient",
-  "isFinalAttestationPlanRow", "formatStudentGradeSheetDisciplines", "prepareStudentAttestationDocumentRecord", "renderEducationDocumentActions",
+  "isFinalAttestationPlanRow", "formatStudentGradeSheetDisciplines", "prepareStudentAttestationDocumentRecord", "renderEducationDocumentActions", "studentCabinetProgramAllowed", "renderStudentLayoutRemarks",
   "isGetSqlQueryFormula", "evaluateContractTemplateField", "getContractFormulaDocumentReferences",
   "normalizeContractTemplateField", "normalizeContractTemplateDocumentFields", "findContractTemplateFormulaCycle", "validateContractTemplateFormulaGraph"
 ].map(extract).join("\n"), c);
@@ -162,7 +162,7 @@ if (args.includes("--serve")) {
     function escapeAttr(value){return String(value).replace(/"/g,"&quot;");}
     function escapeMultilineAttr(value){return escapeAttr(value);}
     function renderOrdersSdoIcon(){return "";}
-    ${["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "getStudentAttestationDocumentUnavailableReason", "renderEducationDocumentActions", "getEmployeeNetPayment", "normalizePaymentRateValue", "normalizePaymentConstantNumber"].map(extract).join("\n")}
+    ${["normalizeProgramName", "getStudentContextProgram", "getProgramCommissionSetById", "getStudentAttestationDocumentUnavailableReason", "renderEducationDocumentActions", "studentCabinetProgramAllowed", "renderStudentLayoutRemarks", "getEmployeeNetPayment", "normalizePaymentRateValue", "normalizePaymentConstantNumber"].map(extract).join("\n")}
     function paint(){
       const p=state.data.collections.programs[0];
       p.type=document.querySelector('#type').value;

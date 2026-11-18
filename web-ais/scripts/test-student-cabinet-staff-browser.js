@@ -6,8 +6,8 @@ const buttonCode = app.slice(app.indexOf("  function renderStudentPortalOpenButt
 const user = { id: "staff", login: "staff", name: "Сотрудник", role: "manager", status: "active" };
 let logout = 0, login = 0, personalApi = 0, fileReads = 0, feedbackSent = 0;
 const requests = [], records = [
-  { id: "one", name: "Первый слушатель", program: "Программа один", status: "Учится", phone: "+79990000001" },
-  { id: "two", name: "Первый слушатель", program: "Программа два", status: "На зачисление", phone: "+79990000002" }
+  { id: "one", name: "Первый слушатель", program: "Программа один", educationType: "КПК", status: "Учится", phone: "+79990000001" },
+  { id: "two", name: "Первый слушатель", program: "Программа два", educationType: "ППП", status: "На зачисление", phone: "+79990000002" }
 ];
 const view = id => ({ user: { name: records[0].name, email: "fixture@example.test" }, record: records.find(row => row.id === id) || records[0],
   applications: records, fields: [{ key: "phone", label: "Телефон", type: "tel", required: true }], missing: [],
@@ -46,7 +46,7 @@ const server = http.createServer(async (req, res) => {
     function escapeAttr(v){return String(v).replaceAll('&','&amp;').replaceAll('"','&quot;');}
     const escapeHtml=escapeAttr; const state={modal:{id:'two'},data:{collections:{students:${JSON.stringify(records)}}}};
     ${buttonCode}
-    document.querySelector('#cardActions').innerHTML=renderStudentPortalOpenButton({id:'two',studentPortalEnabled:true});
+    document.querySelector('#cardActions').innerHTML=renderStudentPortalOpenButton({id:'two',educationType:'ППП',studentPortalEnabled:true});
     document.querySelector('[data-student-portal-menu]').onclick=openStudentPortalMenu;
     </script>`);
   res.end(head + '<div id="app" class="app-shell"></div><script src="/auth-bootstrap.js"></script>');
@@ -59,6 +59,7 @@ const server = http.createServer(async (req, res) => {
     context.on("page", page => page.on("pageerror", error => errors.push(error.message)));
     await parent.goto(`http://127.0.0.1:${server.address().port}/card`);
     assert.equal(await parent.locator('#cardActions button').count(), 1);
+    assert.equal(await parent.evaluate(() => renderStudentPortalOpenButton({id:'webinar',educationType:'ПРО',studentPortalEnabled:true})), "");
     await parent.locator('[data-student-portal-menu]').click();
     assert.ok(await parent.locator('dialog[open] input[type="password"]').isVisible());
     await parent.locator('[data-show-password]').click(); assert.equal(await parent.locator('input[data-visible-password]').getAttribute('type'), 'text');

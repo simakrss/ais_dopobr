@@ -28,6 +28,71 @@ function fixture(options = {}) {
 const pdf = { kind: "passport", base64: Buffer.from("%PDF-1.4\nfixture").toString("base64") };
 const feedbackBody = () => ({ subject: "Вопрос об обучении", message: "Подскажите, пожалуйста, дату начала обучения.", requestId: require("node:crypto").randomUUID() });
 
+test("webinar purchases and legacy pending instructions create no cabinets, folders or access emails", async () => {
+  for (const amount of [0, 100]) {
+    const folders = [], f = fixture({ ensureFolder: async folder => folders.push(folder),
+      paymentShop: async () => ({ ok: true, registered: true, orderId: "101", productIds: ["20"] }) });
+    Object.assign(f.rows[0], { productId: "20", paymentAmount: amount, paid: amount > 0 });
+    assert.equal((await f.service.provisionOrder("101")).imported, 0);
+    assert.deepEqual((await f.service.orderEmailAccess("101", "test@example.test")).accounts, []);
+    assert.equal(f.saves.length, 0); assert.equal(f.mails.length, 0); assert.equal(folders.length, 0);
+  }
+  const folders = [], f = fixture({ ensureFolder: async folder => folders.push(folder) });
+  await f.service.provisionOrder("101", { sendWelcome: false, prepareFolders: false });
+  const record = f.snapshot.data.collections.students[0]; record.educationType = "ПРО";
+  const before = JSON.stringify(f.snapshot), saves = f.saves.length;
+  assert.equal((await f.service.provisionOrder("101")).imported, 0);
+  assert.deepEqual((await f.service.orderEmailAccess("101", record.email)).accounts, []);
+  assert.equal(JSON.stringify(f.snapshot), before); assert.equal(f.saves.length, saves);
+  assert.equal(f.mails.length, 0); assert.equal(folders.length, 0);
+  assert.throws(() => enrollment.welcomeMessage(record), { statusCode: 409 });
+});
+
+test("mixed orders provision only qualifying programs and send only their instructions", async () => {
+  for (const type of ["КПК", "ППП", "ДОП"]) {
+    const folders = [], f = fixture({ ensureFolder: async folder => folders.push(folder) });
+    f.snapshot.data.collections.programs[0].type = type;
+    f.rows.unshift({ ...f.rows[0], id: "101-webinar", productId: "20", paymentAmount: 100 });
+    assert.equal((await f.service.provisionOrder("101")).imported, 1);
+    assert.deepEqual(f.snapshot.data.collections.students.map(row => row.educationType), [type]);
+    assert.equal(folders.length, 1); assert.equal(f.mails.length, 1);
+    assert.ok(!f.mails[0].message.includes("Тестовый вебинар"));
+    const access = await f.service.orderEmailAccess("101", "test@example.test");
+    assert.deepEqual(access.accounts[0].programs, ["Тестовый курс"]);
+  }
+});
+
+test("webinar and unknown programs reject cabinet uploads before conversion, storage or record writes", async () => {
+  let touched = 0;
+  const f = fixture({ upload: async () => touched++, toPdf: async () => touched++, listRoot: async () => { touched++; return []; } });
+  for (const type of ["ПРО", "ИТ", "", "НЕИЗВЕСТНО"]) {
+    f.snapshot.data.collections.students = [{ id: "webinar", educationType: type }];
+    for (const kind of ["layout", "scan"]) await assert.rejects(f.service.awardUpload({ role: "manager" }, "webinar", { ...pdf, kind, format: "docx" }), { statusCode: 409 });
+    assert.deepEqual((await f.service.staffAwards({ role: "manager" }, "webinar")).programs, []);
+  }
+  assert.equal(touched, 0); assert.equal(f.saves.length, 0); assert.equal(f.audit.length, 0);
+});
+
+test("legacy webinar identities remain usable only through their linked qualifying programs", async () => {
+  const f = fixture(), actor = { role: "manager" };
+  await f.service.provisionOrder("101", { sendWelcome: false });
+  const owner = f.snapshot.data.collections.students[0], user = enrollment.publicUser(owner);
+  const course = { ...owner, id: "course", studentPortalAccountId: owner.id };
+  owner.educationType = "ПРО";
+  assert.equal(await f.service.authenticate(owner.studentPortalLogin, owner.studentPortalPassword, "test"), null);
+  await assert.rejects(f.service.portal(user), { statusCode: 404 });
+  await assert.rejects(f.service.previewCabinetAccessEmail(actor, owner.id), { statusCode: 409 });
+  await assert.rejects(f.service.sendCabinetAccessEmail(actor, owner.id, { requestId: require("node:crypto").randomUUID() }), { statusCode: 409 });
+  f.snapshot.data.collections.students.push(course);
+  const signedIn = await f.service.authenticate(owner.studentPortalLogin, owner.studentPortalPassword, "test");
+  assert.equal(signedIn.studentId, owner.id);
+  assert.deepEqual((await f.service.portal(signedIn)).applications.map(row => row.id), ["course"]);
+  assert.equal((await f.service.staffSession(actor, "course")).id, "course");
+  await assert.rejects(f.service.portal(signedIn, owner.id), { statusCode: 404 });
+  await assert.rejects(f.service.update(signedIn, owner.id, { phone: "+79990000000" }), { statusCode: 404 });
+  assert.equal(f.mails.length, 0);
+});
+
 test("a first course keeps verified shop credentials; repeat courses and shop-only access reuse them without mail or writes", async () => {
   let seeds = 0;
   const access = { login: "shop.buyer", password: "Fixture-only-8zA!" };
@@ -569,46 +634,48 @@ test("repeated state conflicts cause retryable failure instead of silently losin
   const f = fixture({ save: async () => ({ conflict: true }) }); await assert.rejects(f.service.provisionOrder("101"), { statusCode: 503 }); assert.equal(f.mails.length, 0);
 });
 
-test("existing accounts: all types and statuses, no mail, no SDO or financial edits, repeat is harmless", async () => {
+test("existing accounts: only KPK, PPP and DOP, no mail, no SDO or financial edits, repeat is harmless", async () => {
   const f = fixture();
   const rows = [
     { id: "a", name: "Иванов Иван", email: "test@example.test", login: "old-sdo", password: "sdo-secret", educationType: "ПРО", status: "Отчисленные", payment1Amount: 321, photoPath: "old-folder" },
     { id: "b", name: "Иванов Иван", email: "test@example.test", educationType: "ДОП" },
     { id: "c", name: "Другой человек", email: "test@example.test", educationType: "КПК" },
-    { id: "d", name: "Без почты", uid: "42", educationType: "ППП" }
+    { id: "d", name: "Без почты", uid: "42", educationType: "ППП" },
+    { id: "unknown", name: "Неизвестная программа", email: "unknown@example.test" }
   ];
   f.snapshot.data.collections.students = structuredClone(rows);
-  assert.equal((await f.service.provisionExisting()).remaining, 4); assert.equal(f.saves.length, 0);
-  const result = await f.service.provisionExisting({ apply: true }); assert.equal(result.created, 4); assert.equal(result.accounts, 3);
+  assert.equal((await f.service.provisionExisting()).remaining, 3); assert.equal(f.saves.length, 0);
+  const result = await f.service.provisionExisting({ apply: true }); assert.equal(result.created, 3); assert.equal(result.accounts, 3);
   for (const original of rows) {
     const saved = f.snapshot.data.collections.students.find(row => row.id === original.id);
     for (const [key, value] of Object.entries(original)) assert.deepEqual(saved[key], value);
-    assert.match(saved.studentPortalPassword, /^\d{6}$/);
+    if (enrollment.portalEligible(original)) assert.match(saved.studentPortalPassword, /^\d{6}$/);
+    else assert.deepEqual(saved, original, "webinar and unknown program records stay unchanged");
   }
-  assert.equal(f.mails.length, 0); assert.equal(f.snapshot.data.collections.students[0].studentPortalLogin, "test.2");
-  const owner = f.snapshot.data.collections.students[0];
+  assert.equal(f.mails.length, 0); assert.equal(f.snapshot.data.collections.students[1].studentPortalLogin, "test.2");
+  const owner = f.snapshot.data.collections.students[1];
   const user = await f.service.authenticate(owner.studentPortalLogin, owner.studentPortalPassword, "local");
-  assert.equal((await f.service.portal(user)).applications.length, 2);
+  assert.equal((await f.service.portal(user)).applications.length, 1);
   await assert.rejects(f.service.portal(user, "c"), { statusCode: 404 });
   assert.equal((await f.service.provisionExisting({ apply: true })).created, 0);
 });
 
 test("matching email and name with contradictory passports or dates never combines people", async () => {
   const f = fixture(); f.snapshot.data.collections.students = [
-    { id: "a", name: "Иван Иванов", email: "a@example.test", birthDate: "1990-01-01" },
-    { id: "b", name: "Иван Иванов", email: "a@example.test", birthDate: "1991-01-01" }
+    { id: "a", name: "Иван Иванов", email: "a@example.test", birthDate: "1990-01-01", educationType: "КПК" },
+    { id: "b", name: "Иван Иванов", email: "a@example.test", birthDate: "1991-01-01", educationType: "КПК" }
   ];
   assert.equal((await f.service.provisionExisting({ apply: true })).accounts, 2);
 });
 
 test("bulk provisioning preserves blocking and retries revisions; batches link the same owner", async () => {
-  const f = fixture(); f.snapshot.data.collections.students = Array.from({ length: 75 }, (_, n) => ({ id: String(n), name: "Один человек", email: "same@example.test" }));
+  const f = fixture(); f.snapshot.data.collections.students = Array.from({ length: 75 }, (_, n) => ({ id: String(n), name: "Один человек", email: "same@example.test", educationType: "КПК" }));
   f.snapshot.data.collections.students.push({ id: "blocked", studentPortalBlocked: true });
   const save = f.deps.save; let conflict = true; f.deps.save = async (...args) => { if (conflict) { conflict = false; return { conflict: true }; } return save(...args); };
   assert.equal((await f.service.provisionExisting({ apply: true })).created, 75);
   assert.equal(new Set(f.snapshot.data.collections.students.filter(row => row.studentPortalEnabled).map(row => row.studentPortalAccountId)).size, 1);
   assert.ok(!f.snapshot.data.collections.students.at(-1).studentPortalEnabled);
-  const locked = fixture({ save: async () => ({ locked: true }) }); locked.snapshot.data.collections.students = [{ id: "x" }];
+  const locked = fixture({ save: async () => ({ locked: true }) }); locked.snapshot.data.collections.students = [{ id: "x", educationType: "КПК" }];
   await assert.rejects(locked.service.provisionExisting({ apply: true }), { statusCode: 503 });
 });
 

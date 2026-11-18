@@ -11,6 +11,7 @@ function extract(name) {
   return match[0];
 }
 let scans = 0, partnerCalculations = 0, drafts = 0;
+let transaction = null;
 let record = { id: "c", name: "Сотрудник", paid: 0, balance: 0 };
 let collections = {
   contracts: [record], generalExpenses: [], directExpenses: [],
@@ -37,6 +38,7 @@ const c = vm.createContext({
   normalizeEmployeePaymentSourceRow: (_type, value) => value,
   isEmployeePaymentSettled: (value = {}) => Boolean(value.paid || value.isPaid || ["Получен", "Без акта"].includes(value.actStatus)),
   getEmployeePaymentCollections: () => collections,
+  getEmployeePaymentTransaction: () => transaction,
   getEmployeePaymentAccountingDraft: () => { drafts++; return { ...record }; },
   getEmployeeNetPayment: (amount) => Math.round(amount * 87) / 100,
   getEmployeePaymentSummaryScope: (section) => ({ selectedRows: [], visibleRows: [], restricted: true, includedRowKeys: section.keys }),
@@ -46,7 +48,8 @@ const c = vm.createContext({
 vm.runInContext([
   "getEmployeePaymentAccounting", "formatEmployeePaymentSummaryAmount", "syncEmployeePaymentSummaryUi",
   "buildEmployeePaymentSourceLookup", "syncEmployeePaymentOrderFromTable", "updateEmployeePaymentFilters",
-  "duplicateEmployeePaymentAccountingRow", "insertEmployeePaymentDuplicateRow", "commitEmployeePaymentAccountingChange"
+  "duplicateEmployeePaymentAccountingRow", "insertEmployeePaymentDuplicateRow", "commitEmployeePaymentAccountingChange",
+  "getEmployeePaymentSourceIndex", "invalidateEmployeePaymentSourceIndex"
 ].map(extract).join("\n"), c);
 const outputs = new Map();
 const section = {
@@ -128,6 +131,7 @@ c.updateEmployeePaymentFilters(panel);
 assert.equal(filterPasses, 2);
 
 let renderCount = 0, comboBindings = 0, moneyBindings = 0, actBindings = 0, notices = 0, sortCalls = 0, ids = 0;
+transaction = { collections };
 let activeSort = "";
 const domSection = { isConnected: true, selectedCount: 2, scrollTop: 240 };
 const insertedModels = [];
@@ -178,7 +182,8 @@ const duplicate = collections.students[0].directExpenses[1];
 assert.equal(duplicate.id, "duplicate-1");
 assert.equal(duplicate.date, "2026-10-12");
 assert.equal(duplicate.amount, original.amount);
-assert.equal(duplicate.paid, "2026-10-12");
+assert.equal(duplicate.paid, "");
+assert.equal(duplicate.recommendation, "+"); assert.equal(duplicate.recommendationManual, true);
 for (const key of ["act", "actStatus", "isPaid"]) assert.equal(duplicate[key], "");
 assert.equal(original.actStatus, "Получен", "The source record is preserved");
 assert.equal(domRow.unsavedComment, "Не сохранённое поле");
@@ -191,6 +196,7 @@ assert.equal(comboBindings, 1); assert.equal(moneyBindings, 1); assert.equal(act
 
 const general = { id: "g", counterparty: record.name, amount: 500, date: "2026-09-01" };
 collections.generalExpenses.push(general);
+c.invalidateEmployeePaymentSourceIndex();
 domRow.dataset = { paymentSource: "general", paymentSourceId: "g" };
 activeSort = "date";
 c.duplicateEmployeePaymentAccountingRow({ target: { closest: () => button } });
@@ -198,7 +204,31 @@ assert.equal(renderCount, 0);
 assert.equal(sortCalls, 1, "An active sort is reapplied after inserting the duplicate");
 assert.equal(insertedModels[1].sourceType, "general");
 assert.equal(collections.generalExpenses[1].id, "duplicate-2");
-assert.equal(collections.generalExpenses[1].paid, "2026-10-12");
+assert.equal(collections.generalExpenses[1].paid, "");
+assert.equal(collections.generalExpenses[1].recommendation, "+");
 assert.equal(notices, 2);
 
-console.log(`Employee payment performance: OK; 20,000 students / 30 filter passes: ${baselineMs.toFixed(1)} ms full scan, ${optimizedMs.toFixed(1)} ms scoped snapshot. Duplicate inserts one row; unrelated partner calculations skipped.`);
+// Use the actual indexed lookup and commit for successive amount edits.
+vm.runInContext(extract("findEmployeePaymentSourceRecord"), c);
+c.updateEmployeePaymentAccountingUi = () => {};
+c.getEmployeePaymentSourceIndex();
+scans = 0;
+const editStarted = performance.now();
+for (let i = 0; i < 30; i++) {
+  const expense = c.findEmployeePaymentSourceRecord("general", "duplicate-2");
+  expense.amount = 1000 + i;
+  c.commitEmployeePaymentAccountingChange(record, { sourceId: expense.id, field: "amount" });
+  const expected = c.getEmployeePaymentAccounting(record, collections);
+  assert.equal(c.state.modal.draft.amount, expected.amount, "Indexed totals always agree with a full calculation");
+}
+assert.equal(scans, 30, "Only the independent verification scans; editing never scans all records again");
+const editMs = performance.now() - editStarted;
+assert.equal(c.findEmployeePaymentSourceRecord("direct", "duplicate-1"), duplicate);
+collections.generalExpenses = [{ id: "fresh", counterparty: record.name, amount: 23 }];
+assert.equal(c.findEmployeePaymentSourceRecord("general", "duplicate-2"), null, "Replacing a source array invalidates the index");
+assert.equal(c.findEmployeePaymentSourceRecord("general", "fresh").amount, 23);
+const removed = collections.students[0].directExpenses.splice(1, 1)[0];
+c.invalidateEmployeePaymentSourceIndex();
+assert.equal(c.findEmployeePaymentSourceRecord("direct", removed.id), null, "Structural changes never reuse a removed source");
+
+console.log(`Employee payment performance: OK; 20,000 students / 30 filter passes: ${baselineMs.toFixed(1)} ms full scan, ${optimizedMs.toFixed(1)} ms scoped snapshot. 30 edits and independent verification: ${editMs.toFixed(1)} ms; no full scans during edits. Duplicates are unpaid and recommended.`);

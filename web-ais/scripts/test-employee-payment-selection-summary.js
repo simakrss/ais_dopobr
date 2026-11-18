@@ -254,7 +254,7 @@ assert.match(render, /<small>К зачислению<\/small>/u);
 assert.match(css, /\.employee-payment-formula-summary\s*\{\s*display: grid;\s*grid-template-columns: repeat\(5,/u);
 assert.match(css, /\.employee-payment-formula-summary\s*\{\s*grid-template-columns: repeat\(2,/u);
 assert.match(extract("applyEmployeePaymentFiltersToDom"), /syncEmployeePaymentSelectionUi\(section, reuseAccounting\)/u);
-assert.match(extract("commitEmployeePaymentAccountingChange"), /getEmployeePaymentAccounting\(draft, collections\)/u);
+assert.match(extract("commitEmployeePaymentAccountingChange"), /getEmployeePaymentAccounting\(draft, collections, state\.data\?\.dictionaries\?\.paymentSettings, null, sources\)/u);
 async function testActWorkflowSnapshot() {
   const draftRecord = { ...record, id: "employee-1", contractDate: "2026-10-12", subject: "Услуги" };
   let generated = null, sends = 0, emailed = true, warnings = 0;
