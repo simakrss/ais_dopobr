@@ -49,7 +49,7 @@ vm.runInContext([
   "getEmployeePaymentAccounting", "formatEmployeePaymentSummaryAmount", "syncEmployeePaymentSummaryUi",
   "buildEmployeePaymentSourceLookup", "syncEmployeePaymentOrderFromTable", "updateEmployeePaymentFilters",
   "duplicateEmployeePaymentAccountingRow", "insertEmployeePaymentDuplicateRow", "commitEmployeePaymentAccountingChange",
-  "getEmployeePaymentSourceIndex", "invalidateEmployeePaymentSourceIndex"
+  "getEmployeePaymentSourceIndex", "invalidateEmployeePaymentSourceIndex", "updateEmployeePaymentSourceIndex"
 ].map(extract).join("\n"), c);
 const outputs = new Map();
 const section = {

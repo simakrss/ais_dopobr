@@ -32,7 +32,7 @@ vm.runInContext([
     "normalizeCommunicationTemplateFieldName", "getCommunicationTemplateFieldAlias", "replaceCommunicationTemplateFieldAliases",
     "getCommunicationTemplateFieldDefinitions", "generateEmployeeCommunicationMessages", "buildContractPortalCredentials",
     "applyStudentCommunicationTemplate", "resolveStudentCommunicationFormulaConditions", "isStudentCommunicationFormulaConditionTrue",
-    "getStudentCommunicationAddressee", "formatStudentCommunicationDate", "renderCommunicationTemplateAudienceForm",
+    "getStudentCommunicationAddressee", "splitFullName", "formatStudentCommunicationDate", "renderCommunicationTemplateAudienceForm",
     "renderCommunicationTemplateFieldToken", "renderCommunicationTemplateEditorContent", "renderCommunicationTemplateLinks",
     "renderCommunicationTemplateSyntax", "renderCommunicationTemplateFormulaEditorContent"].map(extract),
   "this.messageKeys = employeeCommunicationMessages.map(message => message.key);"

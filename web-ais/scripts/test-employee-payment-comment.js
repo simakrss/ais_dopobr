@@ -37,7 +37,7 @@ const stylesSource = fs.readFileSync(stylesPath, "utf8");
 const commentColumnRule = stylesSource.match(/\.employee-payment-comment-column\s*\{([^}]*)\}/u)?.[1] || "";
 assert.match(commentColumnRule, /width:\s*96px/u);
 
-const start = source.indexOf("  function renderEmployeePaymentAccounting(record) {");
+const start = source.indexOf("  function getEmployeePaymentAccountingRows(accounting) {");
 const end = source.indexOf("  function getEmployeePaymentDomRowFilterModel(row) {", start);
 assert.ok(start >= 0 && end > start, "Employee payment table renderer was not found.");
 

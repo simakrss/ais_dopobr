@@ -203,13 +203,13 @@ const employeeHandler = extractBetween(appSource, "  function duplicateEmployeeP
 const employeeDuplicateBlock = extractBetween(employeeHandler, "  const currentDate = todayIso();", "  let inserted = false;");
 const buildEmployeeDuplicate = vm.runInContext(`(function(source, sourceType) { ${employeeDuplicateBlock}; return duplicate; })`, context);
 const generalPaymentCopy = buildEmployeeDuplicate({ ...first, bkExpenseNo: "Личная карта" }, "general");
-assert.equal(generalPaymentCopy.paid, "2026-09-10", "Общая затрата из карточки сотрудника получает текущую дату оплаты.");
+assert.equal(generalPaymentCopy.paid, "", "В карточке сотрудника дубликат остаётся неоплаченным.");
 assert.equal(generalPaymentCopy.bkExpenseNo, "Личная карта");
 assert.equal(generalPaymentCopy.employeePaymentOrder, 25);
 assert.equal(generalPaymentCopy.databaseSync, undefined);
 const directPaymentCopy = buildEmployeeDuplicate(first, "direct");
 assert.equal(directPaymentCopy.date, "2026-09-10");
-assert.equal(directPaymentCopy.paid, "2026-09-10", "Прямая затрата из карточки сотрудника получает текущую дату оплаты.");
+assert.equal(directPaymentCopy.paid, "", "В карточке сотрудника дубликат остаётся неоплаченным.");
 assert.equal(directPaymentCopy.isPaid, "");
 assert.equal(directPaymentCopy.bkExpenseNo, "15");
 assert.equal(directPaymentCopy.employeePaymentOrder, 25);
@@ -234,7 +234,7 @@ for (const type of ["general", "direct"]) {
   context.todayIso = () => (++calls === 1 ? "2027-01-01" : "2027-01-02");
   const duplicate = buildEmployeeDuplicate(first, type);
   assert.equal(duplicate.date, "2027-01-01");
-  assert.equal(duplicate.paid, duplicate.date);
+  assert.equal(duplicate.paid, "");
   assert.equal(calls, 1);
   assert.equal(first.paid, "2026-08-02");
 }

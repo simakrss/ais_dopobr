@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.650",
+    version: "1.7.651",
     releasedAt: "2026-11-18"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.651",
+      releasedAt: "2026-11-18",
+      changes: ["Дублирование и удаление выплат сотрудникам обновляют только изменённые записи без повторного обхода всей базы. Групповое удаление выполняет один пересчёт; карточка, фильтры и несохранённые поля сохраняются. При удалении последней затраты итог выплаты обнуляется. Состояние «К выплате» и пустая дата оплаты у дубликата сохранены."]
+    },
     {
       version: "1.7.650",
       releasedAt: "2026-11-18",
@@ -10526,7 +10531,7 @@ MAX - https://bizvmax.ru/zifra_plus
     });
   }
 
-  function getDirectExpenseEntriesFromCollections(collections = {}) {
+  function getDirectExpenseEntriesFromCollections(collections = {}, duplicateIds = null) {
     const entries = [];
     const seen = new Set();
     (collections.students || []).forEach((student) => {
@@ -10534,7 +10539,7 @@ MAX - https://bizvmax.ru/zifra_plus
         if (!expense || typeof expense !== "object") return;
         const identity = String(expense.id || "").trim()
           || `student:${String(student.id || student.uid || "").trim()}:${directExpenseIdentity(expense, index)}`;
-        if (seen.has(identity)) return;
+        if (seen.has(identity)) { duplicateIds?.add(identity); return; }
         seen.add(identity);
         entries.push({ expense, identity, student });
       });
@@ -10542,7 +10547,7 @@ MAX - https://bizvmax.ru/zifra_plus
     (collections.directExpenses || []).forEach((expense, index) => {
       if (!expense || typeof expense !== "object") return;
       const identity = String(expense.id || "").trim() || `global:${directExpenseIdentity(expense, index)}`;
-      if (seen.has(identity)) return;
+      if (seen.has(identity)) { duplicateIds?.add(identity); return; }
       seen.add(identity);
       entries.push({ expense, identity, student: null });
     });
@@ -35052,8 +35057,7 @@ MAX - https://bizvmax.ru/zifra_plus
     `;
   }
 
-  function renderEmployeePaymentAccounting(record) {
-    const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
+  function getEmployeePaymentAccountingRows(accounting) {
     const directRows = accounting.directEntries.map(({ expense, identity, student }) => ({
       sourceType: "direct",
       sourceId: String(expense.id || identity || "").trim(),
@@ -35084,8 +35088,13 @@ MAX - https://bizvmax.ru/zifra_plus
       ...normalizeEmployeePaymentSourceRow("partner", source),
       amount
     }));
+    return [...directRows, ...generalRows, ...partnerRows];
+  }
+
+  function renderEmployeePaymentAccounting(record) {
+    const accounting = getEmployeePaymentAccounting(record, getEmployeePaymentCollections());
     const sort = getEmployeePaymentSort();
-    const rows = sortEmployeePaymentRows([...directRows, ...generalRows, ...partnerRows], sort);
+    const rows = sortEmployeePaymentRows(getEmployeePaymentAccountingRows(accounting), sort);
     const filters = getEmployeePaymentFilters();
     const filterFacets = getEmployeePaymentFilterFacets(rows, filters);
     const duplicateKey = getEmployeePaymentDuplicateKey();
@@ -35404,7 +35413,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const draft = getEmployeePaymentAccountingDraft({ recalculatePaymentAccounting: false });
       const auditFields = getEmployeePaymentAuditFields();
       const changes = [];
-      let removedCount = 0;
+      const removedRows = [];
       deletableRows.forEach((row) => {
         const sourceType = String(row.dataset.paymentSource || "");
         const sourceId = String(row.dataset.paymentSourceId || "");
@@ -35413,21 +35422,21 @@ MAX - https://bizvmax.ru/zifra_plus
         const before = getEmployeePaymentEditorAuditRecord(sourceType, source);
         const removed = removeEmployeePaymentSourceRecord(sourceType, sourceId);
         if (!removed) return;
-        removedCount += 1;
+        removedRows.push(row);
         const rowLabel = before.description || sourceId;
         buildAuditChanges(before, {}, auditFields).forEach((change) => changes.push({
           ...change,
           label: `${rowLabel}: ${change.label}`
         }));
       });
-      if (!removedCount) {
+      if (!removedRows.length) {
         alert("Не удалось удалить выбранные выплаты.");
         return;
       }
       addEmployeePaymentAudit(
         "Удалены выбранные выплаты",
         "Договоры сотрудников",
-        `${draft.name || "Сотрудник"}: удалено выплат — ${removedCount}`,
+        `${draft.name || "Сотрудник"}: удалено выплат — ${removedRows.length}`,
         {
           entityType: "contracts",
           entityId: String(draft.id || state.modal?.id || ""),
@@ -35436,7 +35445,7 @@ MAX - https://bizvmax.ru/zifra_plus
           source: "employee-payment-group-accounting"
         }
       );
-      commitEmployeePaymentAccountingChange(draft, {}, true);
+      commitEmployeePaymentAccountingChange(draft, { removedRows, sourceIndexUpdated: true }, true);
       return;
     }
     const operation = button.matches("[data-action='apply-employee-payment-group-act']") ? "act" : "paid";
@@ -50017,20 +50026,28 @@ MAX - https://bizvmax.ru/zifra_plus
       && index.generalExpenses === collections.generalExpenses && index.contracts === collections.contracts) return index;
     index = { students: collections.students, directExpenses: collections.directExpenses,
       generalExpenses: collections.generalExpenses, contracts: collections.contracts,
-      direct: new Map(), general: new Map(), byEmployee: new Map() };
+      direct: new Map(), general: new Map(), byEmployee: new Map(), membership: new Map(), duplicateDirectIds: new Set() };
+    // Many expenses share a payee. Locale normalization is needed once per name, not per expense.
+    const names = new Map();
     const sources = (name) => {
-      const key = normalizeEmployeeActPersonName(name);
+      if (!names.has(name)) names.set(name, normalizeEmployeeActPersonName(name));
+      const key = names.get(name);
       if (!index.byEmployee.has(key)) index.byEmployee.set(key, { directEntries: [], generalEntries: [], partnerStudents: [] });
       return index.byEmployee.get(key);
     };
-    for (const entry of getDirectExpenseEntriesFromCollections(collections)) {
+    for (const entry of getDirectExpenseEntriesFromCollections(collections, index.duplicateDirectIds)) {
       index.direct.set(String(entry.expense.id || entry.identity || "").trim(), entry);
-      sources(entry.expense.note).directEntries.push(entry);
+      const entries = sources(entry.expense.note).directEntries;
+      entries.push(entry);
+      index.membership.set(`direct:${entry.identity}`, { entries, entry });
     }
     for (const expense of collections.generalExpenses || []) {
       const identity = String(expense.id || "").trim();
       index.general.set(identity, expense);
-      sources(expense.counterparty).generalEntries.push({ expense, identity });
+      const entry = { expense, identity };
+      const entries = sources(expense.counterparty).generalEntries;
+      entries.push(entry);
+      index.membership.set(`general:${identity}`, { entries, entry });
     }
     for (const student of collections.students || []) {
       if (student.agent) sources(student.agent).partnerStudents.push(student);
@@ -50042,6 +50059,32 @@ MAX - https://bizvmax.ru/zifra_plus
   function invalidateEmployeePaymentSourceIndex() {
     const transaction = getEmployeePaymentTransaction();
     if (transaction) delete transaction.sourceIndex;
+  }
+
+  function updateEmployeePaymentSourceIndex(sourceType, sourceId, entry = null) {
+    // Mutations update only the affected payee's group. Never rebuild the database index per row.
+    const index = getEmployeePaymentTransaction()?.sourceIndex;
+    if (!index) return;
+    const id = String(sourceId || "").trim();
+    const key = `${sourceType}:${id}`;
+    const previous = index.membership.get(key);
+    if (previous) {
+      const position = previous.entries.indexOf(previous.entry);
+      if (position >= 0) previous.entries.splice(position, 1);
+      index.membership.delete(key);
+    }
+    const lookup = sourceType === "direct" ? index.direct : index.general;
+    lookup.delete(id);
+    if (!entry) return;
+    const employeeName = normalizeEmployeeActPersonName(sourceType === "direct" ? entry.expense.note : entry.expense.counterparty);
+    if (!index.byEmployee.has(employeeName)) index.byEmployee.set(employeeName, {
+      directEntries: [], generalEntries: [], partnerStudents: []
+    });
+    const group = index.byEmployee.get(employeeName);
+    const entries = sourceType === "direct" ? group.directEntries : group.generalEntries;
+    entries.push(entry);
+    index.membership.set(key, { entries, entry });
+    lookup.set(id, sourceType === "direct" ? entry : entry.expense);
   }
 
   function markEmployeePaymentTransactionDirty() {
@@ -50773,11 +50816,16 @@ MAX - https://bizvmax.ru/zifra_plus
   function commitEmployeePaymentAccountingChange(draft, focus = {}, renderAfter = false) {
     const collections = getEmployeePaymentCollections({ create: true });
     // Structural/editor changes may alter source membership; inline edits retain the same indexed objects.
-    if (renderAfter) invalidateEmployeePaymentSourceIndex();
+    if (renderAfter && !focus.sourceIndexUpdated) invalidateEmployeePaymentSourceIndex();
     const employeeName = normalizeEmployeeActPersonName(draft.name);
     const index = getEmployeePaymentSourceIndex(collections);
     const sources = index ? (employeeName && index.byEmployee.get(employeeName))
       || { directEntries: [], generalEntries: [], partnerStudents: [] } : null;
+    if (focus.removedRows?.some(row => ["direct", "general"].includes(row.dataset.paymentSource))
+      && sources && !sources.directEntries.length && !sources.generalEntries.length) {
+      // Deleting the last expense must not revive the contract's former cached total as a legacy payment.
+      draft = { ...draft, paid: 0, balance: 0 };
+    }
     const accounting = getEmployeePaymentAccounting(draft, collections, state.data?.dictionaries?.paymentSettings, null, sources);
     const metrics = {
       amount: accounting.amount,
@@ -50804,13 +50852,33 @@ MAX - https://bizvmax.ru/zifra_plus
       record: nextDraft, collections, paymentSettings: state.data?.dictionaries?.paymentSettings, modal: state.modal, accounting
     };
     if (renderAfter) {
-      const section = insertEmployeePaymentDuplicateRow(accounting, focus);
+      let section;
+      let rowsNeedSorting = true;
+      const remainingExpenseKeys = focus.removedRows?.length ? new Set([
+        ...accounting.directEntries.map(entry => `direct:${entry.expense.id || entry.identity}`),
+        ...accounting.generalEntries.map(entry => `general:${entry.identity}`)
+      ]) : null;
+      if (focus.removedRows?.length && accountingSection && focus.removedRows.every(row => (
+        ["direct", "general"].includes(row.dataset.paymentSource)
+        && !remainingExpenseKeys.has(`${row.dataset.paymentSource}:${row.dataset.paymentSourceId}`)
+      ))) {
+        focus.removedRows.forEach(row => row.remove());
+        section = accountingSection;
+        rowsNeedSorting = false;
+      } else {
+        section = insertEmployeePaymentDuplicateRow(accounting, focus);
+      }
+      // Partner settlement can add/remove calculated rows. Refresh this table, not the entire application.
+      if (!section) {
+        section = refreshEmployeePaymentAccountingRows(accounting, accountingSection);
+        rowsNeedSorting = false;
+      }
       if (section) {
         section.employeePaymentAccountingSnapshot = {
           record: nextDraft, collections, paymentSettings: state.data?.dictionaries?.paymentSettings,
           modal: state.modal, accounting
         };
-        if (getEmployeePaymentSort().key) applyEmployeePaymentSortToDom(section, true);
+        if (rowsNeedSorting && getEmployeePaymentSort().key) applyEmployeePaymentSortToDom(section, true);
         else applyEmployeePaymentFiltersToDom(section, true);
       } else {
         render();
@@ -50836,6 +50904,25 @@ MAX - https://bizvmax.ru/zifra_plus
         input?.focus({ preventScroll: true });
       });
     }
+  }
+
+  function refreshEmployeePaymentAccountingRows(accounting, section) {
+    const tbody = section?.querySelector(".employee-payment-table tbody");
+    if (!tbody) return null;
+    const selectedKeys = new Set(getSelectedEmployeePaymentRows(section).map(row => `${row.dataset.paymentSource}:${row.dataset.paymentSourceId}`));
+    const columns = getTableFields(employeePaymentTableConfig, EMPLOYEE_PAYMENT_TABLE_CONFIG_ID);
+    const sort = getEmployeePaymentSort(), filters = getEmployeePaymentFilters();
+    const rows = sortEmployeePaymentRows(getEmployeePaymentAccountingRows(accounting), sort);
+    tbody.innerHTML = rows.map(row => renderEmployeePaymentAccountingRow(row, columns, filters, sort)).join("")
+      + `<tr data-employee-payment-filter-empty hidden><td colspan="${columns.length}" class="employee-payment-empty"></td></tr>`;
+    tbody.querySelectorAll("[data-employee-payment-row]").forEach(row => {
+      const selector = row.querySelector("[data-action='select-employee-payment-row']");
+      if (selector) selector.checked = selectedKeys.has(`${row.dataset.paymentSource}:${row.dataset.paymentSourceId}`);
+    });
+    bindComboFieldEvents(tbody);
+    bindMoneyInputStepControls(tbody);
+    syncEmployeePaymentActCheckboxes(tbody);
+    return section;
   }
 
   function previewEmployeePaymentAccountingField(event) {
@@ -51212,7 +51299,9 @@ MAX - https://bizvmax.ru/zifra_plus
       const expenses = collections.generalExpenses || [];
       const sourceIndex = expenses.indexOf(source);
       if (sourceIndex >= 0) {
-        expenses.splice(sourceIndex + 1, 0, normalizeGeneralExpenseRecord(duplicate));
+        const expense = normalizeGeneralExpenseRecord(duplicate);
+        expenses.splice(sourceIndex + 1, 0, expense);
+        updateEmployeePaymentSourceIndex("general", nextId, { expense, identity: nextId });
         inserted = true;
       }
     } else {
@@ -51227,6 +51316,7 @@ MAX - https://bizvmax.ru/zifra_plus
         const sourceIndex = expenses.indexOf(entry.expense);
         if (sourceIndex >= 0) {
           expenses.splice(sourceIndex + 1, 0, duplicate);
+          updateEmployeePaymentSourceIndex("direct", nextId, { expense: duplicate, identity: nextId, student: entry.student });
           inserted = true;
         }
       }
@@ -51258,7 +51348,7 @@ MAX - https://bizvmax.ru/zifra_plus
       filters: JSON.stringify(getEmployeePaymentFilters())
     };
     commitEmployeePaymentAccountingChange(draft, {
-      sourceId: nextId, sourceType, afterRow: row, field: "amount", revealDuplicate: true
+      sourceId: nextId, sourceType, afterRow: row, field: "amount", revealDuplicate: true, sourceIndexUpdated: true
     }, true);
     showDocumentGenerationNotice(
       `${sourceType === "general" ? "Общий" : "Прямой"} расход продублирован. Дата расхода: ${formatContractDate(duplicate.date)}. Статус: «К выплате», дата оплаты не заполнена. Новая строка показана независимо от фильтра до его изменения.`
@@ -51267,23 +51357,32 @@ MAX - https://bizvmax.ru/zifra_plus
 
   function removeEmployeePaymentSourceRecord(sourceType, sourceId) {
     const collections = getEmployeePaymentCollections({ create: true });
-    invalidateEmployeePaymentSourceIndex();
     const id = String(sourceId || "").trim();
     if (!id) return null;
+    const sourceIndex = getEmployeePaymentSourceIndex(collections);
     if (sourceType === "general") {
       const expenses = collections.generalExpenses || [];
-      const index = expenses.findIndex((expense) => String(expense?.id || "").trim() === id);
-      return index >= 0 ? expenses.splice(index, 1)[0] : null;
+      const source = sourceIndex?.general.get(id);
+      const index = sourceIndex ? expenses.indexOf(source) : expenses.findIndex((expense) => String(expense?.id || "").trim() === id);
+      if (index < 0) return null;
+      const removed = expenses.splice(index, 1)[0];
+      updateEmployeePaymentSourceIndex(sourceType, id);
+      return removed;
     }
     if (sourceType === "direct") {
-      const entry = getDirectExpenseEntriesFromCollections(collections)
+      const entry = sourceIndex ? sourceIndex.direct.get(id) : getDirectExpenseEntriesFromCollections(collections)
         .find(({ expense, identity }) => String(expense?.id || identity || "").trim() === id);
       if (!entry) return null;
       const expenses = entry.student
         ? (Array.isArray(entry.student.directExpenses) ? entry.student.directExpenses : [])
         : (collections.directExpenses || []);
       const index = expenses.indexOf(entry.expense);
-      return index >= 0 ? expenses.splice(index, 1)[0] : null;
+      if (index < 0) return null;
+      const removed = expenses.splice(index, 1)[0];
+      updateEmployeePaymentSourceIndex(sourceType, id);
+      // Legacy identities without IDs depend on the position in their source array.
+      if (!removed.id || sourceIndex?.duplicateDirectIds.has(id)) invalidateEmployeePaymentSourceIndex();
+      return removed;
     }
     if (sourceType === "partner") {
       const source = findEmployeePaymentSourceRecord(sourceType, id);

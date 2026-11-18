@@ -72,7 +72,8 @@ async function checkEmployeeExpenses() {
       await page.setContent(`<style>
         .scroller { height: 220px; overflow: auto; } td { height: 32px; }
         input { width: 110px; } input[type=checkbox] { width: 20px; }
-      </style><section data-employee-payment-accounting>
+      </style><input id="unsaved-card-field" value="Несохранённые данные карточки"><section data-employee-payment-accounting>
+        <button data-action="delete-selected-employee-payments">Удалить</button>
         <span data-employee-payment-selected-count></span><span data-employee-payment-filter-count></span>
         <div class="scroller"><table class="data-table employee-payment-table"><tbody></tbody></table></div>
       </section>`);
@@ -85,9 +86,11 @@ async function checkEmployeeExpenses() {
         const original = { id: "original", date: "2026-01-01", paid: "", amount: 350, comment: "Иван", recommendation: true };
         const getEmployeePaymentCollections = () => collections;
         const getEmployeePaymentSourceIndex = () => null, invalidateEmployeePaymentSourceIndex = () => {};
+        const updateEmployeePaymentSourceIndex = () => {};
         const normalizeEmployeeActPersonName = value => String(value || '').trim();
         const getEmployeePaymentFilters = () => state.employeePaymentFilters;
         const getEmployeePaymentSort = () => ({ key: "" });
+        const sortEmployeePaymentRows = rows => rows, isChecked = Boolean;
         const getEmployeePaymentAccountingDraft = () => state.modal.draft;
         const getEmployeePaymentAccounting = () => ({ amount: 0, paid: 0, agencyAmount: 0, balance: 0,
           directEntries: collections.directExpenses.map(expense => ({ expense })),
@@ -110,6 +113,8 @@ async function checkEmployeeExpenses() {
         const getEmployeePaymentAuditFields = () => [];
         const buildAuditChanges = () => [];
         const addEmployeePaymentAudit = () => {};
+        const AUDIT_CLIENT_MAX_CHANGES = 200;
+        window.confirm = () => true;
         const scheduleEmployeePaymentAccountingPersist = () => {};
         const showDocumentGenerationNotice = () => {};
         const syncEmployeePaymentOrderFromTable = () => {};
@@ -131,11 +136,14 @@ async function checkEmployeeExpenses() {
           ].map(row => renderEmployeePaymentAccountingRow(row, getTableFields(), getEmployeePaymentFilters(), getEmployeePaymentSort())).join('');
         };
         document.querySelector('section').addEventListener('click', event => duplicateEmployeePaymentAccountingRow(event));
+        document.querySelector('section').addEventListener('click', event => applyEmployeePaymentGroupOperation(event, event.currentTarget));
       ` + ["getEmployeePaymentDuplicateKey", "employeePaymentFiltersAreActive", "normalizeEmployeePaymentFilterText",
         "getEmployeePaymentStatusFilterValue", "getEmployeePaymentStatusFilterValues", "employeePaymentRowMatchesFilters",
         "renderEmployeePaymentAccountingRow", "getEmployeePaymentDomRowFilterModel", "getSelectedEmployeePaymentRows",
         "syncEmployeePaymentSelectionUi", "applyEmployeePaymentFiltersToDom", "createGeneralExpenseDuplicate",
-        "duplicateEmployeePaymentAccountingRow", "insertEmployeePaymentDuplicateRow", "commitEmployeePaymentAccountingChange"
+        "duplicateEmployeePaymentAccountingRow", "insertEmployeePaymentDuplicateRow", "commitEmployeePaymentAccountingChange",
+        "removeEmployeePaymentSourceRecord", "applyEmployeePaymentGroupOperation",
+        "getEmployeePaymentAccountingRows", "refreshEmployeePaymentAccountingRows"
       ].map(extract).join("\n") });
       for (const sourceType of ["direct", "general"]) {
         await page.evaluate(type => {
@@ -186,7 +194,38 @@ async function checkEmployeeExpenses() {
         assert.equal(await copy.isVisible(), false, "Explicit filter change restores normal filtering");
         await page.evaluate(() => { state.employeePaymentFilters.comment = "Иван"; applyEmployeePaymentFiltersToDom(); });
         assert.equal(await copy.isVisible(), false, "Returning to old filters must not revive the exception");
+        await page.evaluate(() => {
+          document.querySelector('[data-payment-source-id="before-0"] [type="checkbox"]').checked = true;
+          document.querySelector('[data-payment-source-id="original"] [type="checkbox"]').checked = true;
+          document.querySelector('[data-payment-source-id^="copy-"] [type="checkbox"]').checked = true;
+          window.preservedPaymentRow = document.querySelector('[data-payment-source-id="before-1"]');
+          preservedPaymentRow.querySelector('[data-employee-payment-field="comment"]').value = 'Не потерять черновик';
+          syncEmployeePaymentSelectionUi(document.querySelector('section'), true);
+        });
+        await page.locator('[data-action="delete-selected-employee-payments"]').click();
+        assert.equal(await page.locator('[data-employee-payment-row]').count(), 49);
+        assert.equal(await page.locator('[data-employee-payment-selected-count]').textContent(), '0');
+        assert.equal(await page.locator('#unsaved-card-field').inputValue(), 'Несохранённые данные карточки');
+        assert.equal(await page.locator('[data-payment-source-id="before-1"] [data-employee-payment-field="comment"]').inputValue(), 'Не потерять черновик');
+        assert.equal(await page.evaluate(() => preservedPaymentRow === document.querySelector('[data-payment-source-id="before-1"]')), true);
+        assert.equal(await page.evaluate(() => renders), 0, 'Deletion preserves the card and all unaffected DOM rows');
       }
+      await page.evaluate(() => {
+        state.employeePaymentFilters = { comment: '', payment: '', source: '', act: '', description: '' };
+        const section = document.querySelector('section');
+        const old = document.querySelector('[data-payment-source-id="before-1"]');
+        old.querySelector('[type="checkbox"]').checked = true;
+        const employeeName = document.getElementById('unsaved-card-field');
+        const entry = findEmployeePaymentSourceRecord('general', 'before-1');
+        refreshEmployeePaymentAccountingRows({ directEntries: [], generalEntries: [{ expense: entry, identity: entry.id }],
+          partnerRows: [{ student: { name: 'Партнёр' }, source: { amount: 123, comment: 'Агентские' }, sourceId: 'student::agent-due',
+            slot: 'due', amount: 123, calculation: { rate: 10, receiptsTotal: 1230 } }] }, section);
+        applyEmployeePaymentFiltersToDom(section, true);
+        if (employeeName !== document.getElementById('unsaved-card-field')) throw new Error('Partner rows rebuilt the card');
+      });
+      assert.equal(await page.locator('[data-payment-source-id="before-1"] [type="checkbox"]').isChecked(), true);
+      assert.equal(await page.locator('[data-payment-source="partner"]').count(), 1);
+      assert.equal(await page.locator('[data-payment-source="partner"] [data-employee-payment-field="amount"]').inputValue(), '123');
       assert.deepEqual(errors, []);
       await page.close();
     }
