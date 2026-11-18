@@ -34976,7 +34976,11 @@ async function acquireGeneratedDocumentPreviewCleanupWorkerLease() {
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       const health = await getGeneratedDocumentPreviewCleanupWorkerHealth();
-      if (health.alive) {
+      // Windows can reuse a dead worker's PID for an unrelated process. The
+      // heartbeat, not PID existence alone, proves ownership of this lease.
+      // A previous worker notices the changed nonce and exits without releasing
+      // the replacement lease; cleanup itself remains protected by the store lock.
+      if (health.healthy) {
         return null;
       }
       const stalePath = `${leasePath}.stale-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
@@ -35001,7 +35005,28 @@ async function pruneGeneratedDocumentPreviewFileStore(now = Date.now()) {
   });
 }
 
-async function ensureGeneratedDocumentPreviewCleanupWorker() {
+let generatedDocumentPreviewCleanupWorkerStart = null;
+let generatedDocumentPreviewCleanupWorkerNextCheck = 0;
+
+function ensureGeneratedDocumentPreviewCleanupWorker() {
+  if (!generatedDocumentPreviewCleanupWorkerStart) {
+    generatedDocumentPreviewCleanupWorkerStart = launchGeneratedDocumentPreviewCleanupWorker()
+      .finally(() => { generatedDocumentPreviewCleanupWorkerStart = null; });
+  }
+  return generatedDocumentPreviewCleanupWorkerStart;
+}
+
+function superviseGeneratedDocumentPreviewCleanupWorker() {
+  if (Date.now() < generatedDocumentPreviewCleanupWorkerNextCheck) return;
+  generatedDocumentPreviewCleanupWorkerNextCheck = Date.now() + 30000;
+  // Housekeeping must not delay ordinary API requests or create one child per
+  // request during an outage. Document creation still awaits ensure directly.
+  ensureGeneratedDocumentPreviewCleanupWorker().catch((error) => {
+    console.error(`Generated document preview cleanup supervision failed: ${error.message}`);
+  });
+}
+
+async function launchGeneratedDocumentPreviewCleanupWorker() {
   if (
     !useGeneratedDocumentPreviewFileStore()
     || process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER === "1"
@@ -41132,15 +41157,12 @@ async function route(req, res) {
     return;
   }
   if (
-    useGeneratedDocumentPreviewFileStore()
+    requestUrl.pathname !== "/api/health"
+    && useGeneratedDocumentPreviewFileStore()
     && process.env.AIS_GENERATED_DOCUMENT_PREVIEW_CLEANUP_WORKER !== "1"
     && process.env.AIS_DISABLE_PREVIEW_CLEANUP_WORKER !== "1"
   ) {
-    try {
-      await ensureGeneratedDocumentPreviewCleanupWorker();
-    } catch (error) {
-      console.error(`Generated document preview cleanup supervision failed: ${error.message}`);
-    }
+    superviseGeneratedDocumentPreviewCleanupWorker();
   }
   if (req.method === "OPTIONS") {
     const headers = requestUrl.pathname.startsWith("/api/students/recognize-documents/")
