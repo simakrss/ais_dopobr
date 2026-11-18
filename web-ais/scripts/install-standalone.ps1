@@ -1,0 +1,422 @@
+﻿[CmdletBinding()]
+param([switch]$ValidateOnly, [switch]$Resume)
+
+# This source is published ONLY after Authenticode signing. The BAT pins its publisher.
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$utf8 = New-Object Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$cloudUrl = "https://edu-plus.ru/lms/"
+$installBase = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrLocal'
+$publisherPin = 'FAB72DC25B08084C8E7D2782D65D3ECF0A1D7ABDEB36A91790641D515DA26EC2'
+$resumeScriptPath = Join-Path $installBase 'resume-install.ps1'
+$resumeLauncherPath = Join-Path $installBase 'resume-launcher.ps1'
+$resumeStatePath = Join-Path $installBase 'resume-install.json'
+$resumeShortcutPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'АИС — продолжение установки.lnk'
+$appRoot = Join-Path $installBase 'web-ais'
+$powerShell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+$packageInstaller = '@@AIS_PACKAGE_INSTALLER_BASE64@@'
+$componentPreparer = '@@AIS_COMPONENT_PREPARER_BASE64@@'
+if ($ValidateOnly) {
+  Write-Output "Standalone installer syntax and configuration: OK"
+  exit 0
+}
+if ($Resume) {
+  # A stale or manually opened shortcut must never start a completed installation.
+  if (-not (Test-Path -LiteralPath $resumeStatePath -PathType Leaf)) { exit 0 }
+  $resumeState = Get-Content -LiteralPath $resumeStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($resumeState.protocol -ne 1 -or $resumeState.reason -ne 'reboot') { throw 'Некорректное состояние продолжения установки АИС.' }
+}
+if (-not [Environment]::Is64BitOperatingSystem) { throw 'Нужна 64-битная Windows. Общая АИС доступна на https://edu-plus.ru/lms/.' }
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[Windows.Forms.Application]::EnableVisualStyles()
+$mutex = New-Object Threading.Mutex($false, 'Local\AisDopobrStandaloneLauncher')
+$ownsMutex = $false
+try { $ownsMutex = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsMutex = $true }
+if (-not $ownsMutex) { Start-Process $cloudUrl; $mutex.Dispose(); exit 0 }
+
+$form = New-Object Windows.Forms.Form
+$form.Text = 'Подготовка и запуск АИС'
+$form.Size = New-Object Drawing.Size(680, 430)
+$form.StartPosition = 'CenterScreen'
+$form.MinimumSize = $form.Size
+$label = New-Object Windows.Forms.Label
+$label.SetBounds(18, 16, 625, 48)
+$label.Text = 'Проверка компьютера…'
+$bar = New-Object Windows.Forms.ProgressBar
+$bar.SetBounds(18, 70, 625, 18)
+$bar.Style = 'Marquee'
+$log = New-Object Windows.Forms.TextBox
+$log.SetBounds(18, 104, 625, 224)
+$log.Multiline = $true; $log.ReadOnly = $true; $log.ScrollBars = 'Vertical'
+$open = New-Object Windows.Forms.Button
+$open.SetBounds(18, 342, 200, 32); $open.Text = 'Открыть общую АИС'
+$open.Add_Click({ Start-Process $cloudUrl })
+$close = New-Object Windows.Forms.Button
+$close.SetBounds(523, 342, 120, 32); $close.Text = 'Закрыть'; $close.Enabled = $false
+$close.Add_Click({ $form.Close() })
+$diagnostics = New-Object Windows.Forms.Button
+$diagnostics.SetBounds(230, 342, 200, 32); $diagnostics.Text = 'Открыть журнал'; $diagnostics.Enabled = $false
+$diagnosticPath = Join-Path $installBase ('installation-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+$diagnostics.Add_Click({ if (Test-Path -LiteralPath $diagnosticPath) { Start-Process notepad.exe -ArgumentList (Quote-Argument $diagnosticPath) } })
+$form.Controls.AddRange(@($label, $bar, $log, $open, $diagnostics, $close))
+$script:restartNeeded = $false
+$script:lastProcessLine = ''
+$script:working = $true
+$script:exiting = $false
+$script:worker = $null
+$form.Add_FormClosing({ param($sender, $event) if ($script:working) { $event.Cancel = $true; $form.Hide() } })
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$script:tray = $null
+
+function Update-Ui {
+  $form.Text = 'Подготовка АИС · ' + $clock.Elapsed.ToString('hh\:mm\:ss')
+  [Windows.Forms.Application]::DoEvents()
+}
+function Step([string]$Text) {
+  $label.Text = $Text
+  if ($log.TextLength -gt 30000) { $log.Text = $log.Text.Substring($log.TextLength - 15000) }
+  $log.AppendText($Text + "`r`n")
+  if (Test-Path -LiteralPath $installBase -PathType Container) {
+    try { [IO.File]::AppendAllText($diagnosticPath, $Text + "`r`n", $utf8); $diagnostics.Enabled = $true } catch { }
+  }
+  Update-Ui
+}
+function Quote-Argument([string]$Value) {
+  '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '${1}${1}\"'), '(\\+)$', '${1}${1}') + '"'
+}
+function Assert-LocalPath([string]$PathValue) {
+  $current = [IO.Path]::GetFullPath($PathValue)
+  while ($current) {
+    if (Test-Path -LiteralPath $current) {
+      if (((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Папка установки не должна быть ссылкой.' }
+    }
+    $parent = [IO.Directory]::GetParent($current)
+    $current = if ($parent) { $parent.FullName } else { '' }
+  }
+}
+
+function Assert-ResumeInstallerSignature([string]$FilePath) {
+  $signature = Get-AuthenticodeSignature -LiteralPath $FilePath
+  if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) { throw 'Подпись установщика для продолжения установки не подтверждена.' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-', '') } finally { $sha.Dispose() }
+  if ($pin -cne $publisherPin) { throw 'Издатель установщика для продолжения установки не подтверждён.' }
+}
+
+function Get-InstallationResumeCommand {
+  # Local bootstrap, generated only by this signed installer, like the standalone BAT.
+  # Consume the shortcut, then check Authenticode AND the pinned publisher.
+  $command = @'
+$ErrorActionPreference = 'Stop'
+$directory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AisDopobrLocal'
+$shortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'АИС — продолжение установки.lnk'
+try {
+  if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force }
+  if (-not (Test-Path -LiteralPath (Join-Path $directory 'resume-install.json'))) { exit 0 }
+  $file = Join-Path $directory 'resume-install.ps1'
+  $signature = Get-AuthenticodeSignature -LiteralPath $file
+  if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) { throw 'Подпись установщика АИС не подтверждена. Запустите актуальный BAT.' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-', '') } finally { $sha.Dispose() }
+  if ($pin -cne '@@PIN@@') { throw 'Издатель установщика АИС не подтверждён. Запустите актуальный BAT.' }
+  & $file -Resume
+  exit $LASTEXITCODE
+} catch {
+  Add-Type -AssemblyName System.Windows.Forms
+  [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Продолжение установки АИС', 'OK', 'Error')
+  exit 1
+}
+'@
+  return $command.Replace('@@PIN@@', $publisherPin)
+}
+
+function Clear-InstallationResume {
+  # Only exact files owned by this installer; leave all other startup entries.
+  foreach ($file in @($resumeShortcutPath, $resumeStatePath, $resumeLauncherPath)) {
+    if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+  }
+}
+
+function Register-InstallationResume([string]$InstallerPath) {
+  Assert-LocalPath $installBase
+  Assert-LocalPath $resumeScriptPath
+  Assert-LocalPath $resumeLauncherPath
+  Assert-LocalPath $resumeStatePath
+  Assert-LocalPath $resumeShortcutPath
+  Assert-ResumeInstallerSignature $InstallerPath
+  [void][IO.Directory]::CreateDirectory($installBase)
+  [void][IO.Directory]::CreateDirectory((Split-Path -Parent $resumeShortcutPath))
+  if ([IO.Path]::GetFullPath($InstallerPath) -ine [IO.Path]::GetFullPath($resumeScriptPath)) {
+    [IO.File]::Copy($InstallerPath, $resumeScriptPath, $true)
+  }
+  Assert-ResumeInstallerSignature $resumeScriptPath
+  [IO.File]::WriteAllText($resumeStatePath, (@{protocol=1; reason='reboot'; createdAt=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress), $utf8)
+  $shell = $null; $shortcut = $null
+  try {
+    # Keep the shortcut command short: Windows may truncate long inline scripts.
+    [IO.File]::WriteAllText($resumeLauncherPath, (Get-InstallationResumeCommand), (New-Object Text.UTF8Encoding($true)))
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($resumeShortcutPath)
+    $shortcut.TargetPath = $powerShell
+    $shortcut.Arguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + (Quote-Argument $resumeLauncherPath)
+    $shortcut.WorkingDirectory = $installBase
+    $shortcut.WindowStyle = 7
+    $shortcut.Description = 'Однократное продолжение установки АИС после перезагрузки и входа в Windows'
+    $shortcut.Save()
+    if (-not (Test-Path -LiteralPath $resumeShortcutPath -PathType Leaf)) { throw 'Windows не сохранила автозапуск установки.' }
+  } catch {
+    Clear-InstallationResume
+    throw
+  } finally {
+    if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+    if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
+  }
+}
+function Download([string]$Url, [string]$Target, [long]$MaxBytes) {
+  $request = [Net.HttpWebRequest]::Create($Url)
+  $request.Timeout = 30000; $request.ReadWriteTimeout = 30000
+  $response = $request.GetResponse()
+  try {
+    if ($response.ResponseUri.Scheme -ne 'https' -or $response.ContentLength -gt $MaxBytes) { throw 'Недопустимый ответ сервера установки.' }
+    $inputStream = $response.GetResponseStream()
+    $output = [IO.File]::Open($Target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+      $buffer = New-Object byte[] 65536
+      while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        if ($output.Length + $count -gt $MaxBytes) { throw 'Превышен размер загрузки.' }
+        $output.Write($buffer, 0, $count)
+        $label.Text = 'Скачивание: ' + [Math]::Round($output.Length / 1MB, 1) + ' МБ'
+        Update-Ui
+      }
+    } finally { $output.Dispose(); $inputStream.Dispose() }
+  } finally { $response.Dispose() }
+}
+function Run-Process([string]$File, [string[]]$Arguments, [string]$WorkingDirectory = $installBase) {
+  $script:lastProcessLine = ''
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = $File; $info.Arguments = ($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
+  $info.WorkingDirectory = $WorkingDirectory
+  $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+  $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+  $info.StandardOutputEncoding = $utf8; $info.StandardErrorEncoding = $utf8
+  $process = New-Object Diagnostics.Process; $process.StartInfo = $info
+  try {
+    [void]$process.Start()
+    $out = $process.StandardOutput.ReadLineAsync(); $err = $process.StandardError.ReadLineAsync()
+    while (-not $process.HasExited -or $null -ne $out -or $null -ne $err) {
+      if ($null -ne $out -and $out.IsCompleted) {
+        $line = $out.GetAwaiter().GetResult()
+        if ($null -eq $line) { $out = $null } else { if ($line.Trim()) { $script:lastProcessLine = $line }; Step $line; $out = $process.StandardOutput.ReadLineAsync() }
+      }
+      if ($null -ne $err -and $err.IsCompleted) {
+        $line = $err.GetAwaiter().GetResult()
+        if ($null -eq $line) { $err = $null } else { if ($line.Trim()) { $script:lastProcessLine = $line }; Step $line; $err = $process.StandardError.ReadLineAsync() }
+      }
+      Update-Ui
+      Start-Sleep -Milliseconds 50
+    }
+    return [int]$process.ExitCode
+  } finally { $process.Dispose() }
+}
+function Get-Node {
+  $nodeRoot = Join-Path $installBase 'node'
+  $node = Join-Path $nodeRoot 'node.exe'
+  Assert-LocalPath $nodeRoot
+  if (Test-Path -LiteralPath $node) {
+    $version = & $node --version
+    if ($LASTEXITCODE -eq 0 -and $version -match '^v(2[4-9]|[3-9]\d)\.') { return $node }
+    throw 'Сохранённая среда Node.js повреждена или устарела. Установка остановлена без изменения файлов.'
+  }
+  Step 'Скачивание переносимого Node.js LTS с официального сайта…'
+  $platform = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
+  $releases = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' -UseBasicParsing -TimeoutSec 30
+  $release = $releases | Where-Object { $_.version -match '^v24\.\d+\.\d+$' -and $_.lts -is [string] -and $_.files -contains "$platform-zip" } | Select-Object -First 1
+  if (-not $release) { throw 'Не найдена поддерживаемая LTS-версия Node.js.' }
+  $name = "node-$($release.version)-$platform.zip"
+  $url = "https://nodejs.org/dist/$($release.version)/"
+  $sums = (Invoke-WebRequest -UseBasicParsing -Uri ($url + 'SHASUMS256.txt') -TimeoutSec 30).Content
+  $match = [regex]::Match($sums, '(?m)^([a-fA-F0-9]{64})\s+\*?' + [regex]::Escape($name) + '\r?$')
+  if (-not $match.Success) { throw 'Нет контрольной суммы Node.js.' }
+  $stage = Join-Path $installBase ('node-install-' + [Guid]::NewGuid().ToString('N'))
+  [void][IO.Directory]::CreateDirectory($stage)
+  $zip = Join-Path $stage $name
+  Download ($url + $name) $zip 100MB
+  if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ine $match.Groups[1].Value) { throw 'Контрольная сумма Node.js не совпала. Файл не запущен.' }
+  Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $stage 'extracted')
+  $source = Join-Path $stage ('extracted\node-' + $release.version + '-' + $platform)
+  $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $source 'node.exe')
+  if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(OpenJS Foundation|Node\.js Foundation)') { throw 'Цифровая подпись Node.js не подтверждена.' }
+  Assert-LocalPath $nodeRoot
+  [IO.Directory]::Move($source, $nodeRoot)
+  return $node
+}
+function Get-LocalHealth {
+  try { return Invoke-RestMethod -Uri 'http://127.0.0.1:8081/api/local-document-services/health' -TimeoutSec 4 -UseBasicParsing } catch { return $null }
+}
+function Find-ExistingRoot {
+  $configPath = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'AisDopobrWeb\service-config.json'
+  if (Test-Path -LiteralPath $configPath) {
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($property in @('sourceAppRoot', 'serviceAppRoot')) {
+      $candidate = if ($config.PSObject.Properties[$property]) { [string]$config.$property } else { '' }
+      if ($candidate -and (Test-Path -LiteralPath (Join-Path $candidate 'scripts\bootstrap-local-system.ps1'))) { return [string]$candidate }
+    }
+  }
+  if (Test-Path -LiteralPath (Join-Path $appRoot '.runtime\standalone-install.json')) { return $appRoot }
+  return ''
+}
+function Import-DockerPath {
+  # Environment changes in the preparation child do not reach this process.
+  $command = Get-Command docker.exe -ErrorAction SilentlyContinue
+  $candidates = @(
+    $env:AIS_DOCKER_PATH,
+    $(if ($command) { $command.Source }),
+    (Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Docker\resources\bin\docker.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Docker\Docker\resources\bin\docker.exe')
+  )
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { $env:AIS_DOCKER_PATH = $candidate; return }
+  }
+  throw 'После подготовки не найден Docker CLI. Повторите запуск BAT.'
+}
+function Test-LocalPortBusy([int]$Port) {
+  $client = New-Object Net.Sockets.TcpClient
+  try {
+    $pending = $client.ConnectAsync('127.0.0.1', $Port)
+    [void]$pending.Wait(1000)
+    return $client.Connected
+  } catch { return $false } finally { $client.Dispose() }
+}
+function Start-LocalWorker([string]$Node, [string]$Root) {
+  $runtime = Join-Path $Root '.runtime'
+  $arguments = @((Join-Path $Root 'scripts\start-lan-system.js'), '--cloud-client')
+  $script:worker = Start-Process -FilePath $Node -ArgumentList (($arguments | ForEach-Object { Quote-Argument $_ }) -join ' ') `
+    -WorkingDirectory $Root -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput (Join-Path $runtime 'standalone-start.log') -RedirectStandardError (Join-Path $runtime 'standalone-error.log')
+}
+function Add-ClientTray {
+  $script:tray = New-Object Windows.Forms.NotifyIcon
+  $script:tray.Icon = [Drawing.SystemIcons]::Application
+  $script:tray.Text = 'АИС · локальные документы'
+  $menu = New-Object Windows.Forms.ContextMenuStrip
+  [void]$menu.Items.Add('Открыть АИС', $null, { Start-Process $cloudUrl })
+  [void]$menu.Items.Add('Подготовка и состояние', $null, { $form.Show(); $form.Activate() })
+  [void]$menu.Items.Add('Остановить локальную АИС', $null, {
+    if ([Windows.Forms.MessageBox]::Show('Остановить локальные средства? Завершите работу с документами перед остановкой.', 'АИС', 'YesNo', 'Question') -ne 'Yes') { return }
+    $script:working = $true
+    $code = Run-Process $powerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $appRoot 'scripts\stop-lan-system.ps1'), '-KeepDocker', '-AppRoot', $appRoot) $appRoot
+    $script:working = $false
+    if ($code -eq 0) { $script:exiting = $true; $script:tray.Visible = $false; [Windows.Forms.Application]::Exit() }
+    else { Step 'Не удалось подтвердить остановку. Проверьте журнал.'; $form.Show() }
+  })
+  $script:tray.ContextMenuStrip = $menu
+  $script:tray.Add_DoubleClick({ Start-Process $cloudUrl })
+  $script:tray.Visible = $true
+}
+
+$exitCode = 0
+try {
+  Clear-InstallationResume
+  $form.Show(); Update-Ui
+  if ($Resume) { Step 'Продолжение установки после перезагрузки Windows…' }
+  $health = Get-LocalHealth
+  if ($health -and $health.appServerAvailable -and $health.ocrAvailable -and $health.documentEditingAvailable) {
+    Start-Process $cloudUrl
+  } else {
+    Assert-LocalPath $installBase
+    [void][IO.Directory]::CreateDirectory($installBase)
+    $os = Get-CimInstance Win32_OperatingSystem
+    Step ("Windows: $($os.Caption), сборка $($os.BuildNumber). Журнал: $diagnosticPath")
+    $node = Get-Node
+    $env:AIS_NODE_PATH = $node
+    $existing = Find-ExistingRoot
+    $registeredService = Get-Service -Name 'AisDopobrWeb' -ErrorAction SilentlyContinue
+    if ($registeredService -and -not $existing) { throw 'Найдена служба АИС, но папка её установки недоступна. Восстановите доступ к ней. Второй сервер не запущен.' }
+    if ($health -and $health.appServerAvailable -and -not $existing) { throw 'АИС уже работает, но её папка не определена. Второй сервер не запущен. Откройте общую АИС или запустите подготовку из имеющегося дистрибутива.' }
+    if (-not ($health -and $health.appServerAvailable) -and -not $registeredService -and ((Test-LocalPortBusy 8081) -or (Test-LocalPortBusy 19081))) { throw 'Локальный адрес занят или АИС ещё запускается. Подождите и повторите BAT. Работающий процесс не остановлен.' }
+    if ($existing) { $appRoot = $existing } else {
+      if ($packageInstaller -like '@@*') { throw 'Установщик не подготовлен издателем.' }
+      Step 'Загрузка подписанного пакета АИС. База данных и пароли не загружаются.'
+      $helperPath = Join-Path $installBase ('package-' + [Guid]::NewGuid().ToString('N') + '.js')
+      [IO.File]::WriteAllBytes($helperPath, [Convert]::FromBase64String($packageInstaller))
+      try { $code = Run-Process $node @($helperPath, $appRoot) } finally { Remove-Item -LiteralPath $helperPath -Force }
+      if ($code -ne 0) { throw 'Не удалось установить проверенный пакет АИС.' }
+    }
+    Step 'Подготовка Docker и WSL. При необходимости Windows запросит разрешение администратора.'
+    Step 'Установка Docker означает принятие условий https://www.docker.com/legal/docker-subscription-service-agreement/ .'
+    # Use the preparer from THIS signed installer, including after a failed older install.
+    # Do not replace files in an existing/running AIS outside its normal update workflow.
+    if ($componentPreparer -like '@@*') { throw 'Сценарий подготовки компонентов не подписан издателем.' }
+    $preparerPath = Join-Path $installBase ('prepare-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    [IO.File]::WriteAllBytes($preparerPath, [Convert]::FromBase64String($componentPreparer))
+    try {
+      $code = Run-Process $powerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $preparerPath, '-Action', 'Prepare', '-PreparationRoot', $appRoot) $appRoot
+    } finally { Remove-Item -LiteralPath $preparerPath -Force }
+    if ($code -eq 3010) {
+      $script:restartNeeded = $true
+      try { Register-InstallationResume $PSCommandPath } catch {
+        throw ("Не удалось включить автоматическое продолжение: $($_.Exception.Message) После перезагрузки запустите BAT вручную.")
+      }
+      throw 'Сохраните работу и перезагрузите компьютер. После входа в эту учётную запись Windows установка продолжится автоматически. Общая АИС уже доступна по кнопке ниже.'
+    }
+    if ($code -ne 0) { throw ("Локальные компоненты не готовы. $script:lastProcessLine Подробности — в журнале установки.") }
+    Import-DockerPath
+    if ($registeredService -and -not ($health -and $health.appServerAvailable)) {
+      Step 'Запуск уже установленной службы АИС без переустановки…'
+      $code = Run-Process $powerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $appRoot 'scripts\control-ais-service.ps1'), '-Action', 'Start', '-ShowTray', '-SourceAppRoot', $appRoot) $appRoot
+      if ($code -ne 0) { throw 'Не удалось запустить существующую службу. Причина указана выше; второй сервер не запущен.' }
+      $health = Get-LocalHealth
+      if (-not ($health -and $health.appServerAvailable)) { throw 'Существующая служба ещё не ответила. Повторите запуск позже; второй сервер не запущен.' }
+    }
+    if ($health -and $health.appServerAvailable) {
+      Step 'Подготовка редактора, PDF и распознавания документов в существующей АИС…'
+      $code = Run-Process $node @((Join-Path $appRoot 'scripts\start-lan-system.js'), '--refresh-document-services') $appRoot
+      if ($code -ne 0) { throw 'Локальные средства обработки документов пока не готовы. Подробности приведены выше.' }
+    } else { Start-LocalWorker $node $appRoot; Add-ClientTray }
+    Step 'Первый запуск: скачивание редактора, PDF-компонентов и моделей распознавания. Можно уже открыть общую АИС.'
+    $deadline = (Get-Date).AddMinutes(35)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+      $health = Get-LocalHealth
+      if ($health -and $health.appServerAvailable -and $health.ocrAvailable -and $health.documentEditingAvailable) { $ready = $true; break }
+      if ($script:worker -and $script:worker.HasExited) { throw 'Локальный процесс завершился. Проверьте .runtime/standalone-error.log и повторите запуск.' }
+      $outputPath = Join-Path $appRoot '.runtime\standalone-start.log'
+      if (Test-Path -LiteralPath $outputPath) {
+        $lines = @(Get-Content -LiteralPath $outputPath -Tail 10 -Encoding UTF8 -ErrorAction SilentlyContinue)
+        if ($lines.Count) { $log.Text = $lines -join "`r`n" }
+      }
+      Update-Ui
+      Start-Sleep -Milliseconds 500
+    }
+    if (-not $ready) { throw 'Подготовка не завершена за 35 минут. Проверьте интернет и журнал в папке .runtime. Уже запущенные компоненты не удалены; повторный запуск продолжит подготовку.' }
+    Step 'АИС готова. Документы обрабатываются локально; база остаётся на сайте.'
+    Start-Process $cloudUrl
+  }
+} catch {
+  $exitCode = if ($script:restartNeeded) { 3010 } else { 1 }
+  $form.Show()
+  $prefix = if ($script:restartNeeded) { 'Требуется перезагрузка. ' } else { 'Ошибка: ' }
+  Step ($prefix + $_.Exception.Message)
+} finally {
+  $script:working = $false; $close.Enabled = $true; $bar.Style = 'Blocks'
+  $bar.Value = if ($exitCode -eq 0) { 100 } else { 0 }
+}
+if ($script:tray) {
+  # Closing the progress form keeps only the user-owned tray and document worker.
+  $form.Add_FormClosing({ param($sender, $event) if (-not $script:exiting) { $event.Cancel = $true; $form.Hide() } })
+  if ($exitCode -eq 0) { $form.Hide() }
+  [Windows.Forms.Application]::Run()
+  $script:tray.Dispose()
+} elseif ($exitCode -ne 0) {
+  while (-not $form.IsDisposed) { Update-Ui; Start-Sleep -Milliseconds 100 }
+}
+$form.Dispose()
+if ($ownsMutex) { $mutex.ReleaseMutex() }
+$mutex.Dispose()
+exit $exitCode
