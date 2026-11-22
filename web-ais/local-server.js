@@ -84,6 +84,7 @@ function isSameRequestOrigin(req, origin) {
 
 function isRemoteDocumentServicePath(pathname) {
   return pathname === localDocumentServicesHealthPath
+    || pathname === "/api/students/education-documents/local-upload"
     || pathname === "/api/documents/template-reveal-local"
     || pathname === "/api/contracts/student-document"
     || pathname.startsWith("/api/contracts/student-document-preview/")
@@ -199,6 +200,8 @@ async function handleLocalDocumentServicesHealth(req, res, accessContext) {
     documentEditingAvailable,
     localDocumentsAvailable: appServerAvailable
       && appServerHealth.localDocumentsAvailable === true,
+    studentAwardLocalUploadAvailable: appServerAvailable
+      && appServerHealth.studentAwardLocalUploadAvailable === true,
     openDocumentsLocally: appServerAvailable
       && appServerHealth.openDocumentsLocally === true
   });

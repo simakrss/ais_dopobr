@@ -25204,6 +25204,78 @@ async function saveStudentFeedbackState(accountId, entry) {
     ON DUPLICATE KEY UPDATE message_hash = VALUES(message_hash), status = VALUES(status), created_at = VALUES(created_at)`,
     [studentFeedbackAccountKey(accountId), entry.requestId, entry.messageHash, entry.status, entry.createdAt]);
 }
+async function issueStudentAwardLocalTicket(actor, claim) {
+  if (!["admin", "manager"].includes(actor?.role)) throw Object.assign(new Error("Операция недоступна."), { statusCode: 403 });
+  const pool = await studentEnrollmentPool();
+  await pool.query(`CREATE TABLE IF NOT EXISTS ais_student_award_tickets (
+    ticket_hash CHAR(64) PRIMARY KEY, payload TEXT NOT NULL, expires_at BIGINT NOT NULL, KEY expires (expires_at))`);
+  await pool.query("DELETE FROM ais_student_award_tickets WHERE expires_at < ? LIMIT 100", [Date.now()]);
+  const ticket = crypto.randomBytes(32).toString("hex"), expiresAt = Date.now() + 120000;
+  const ticketHash = crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:${ticket}`).digest("hex");
+  const payload = { ...claim, actor: { id: actor.id, login: actor.login, name: actor.name, role: actor.role } };
+  await pool.query("INSERT INTO ais_student_award_tickets (ticket_hash,payload,expires_at) VALUES (?,?,?)", [ticketHash, JSON.stringify(payload), expiresAt]);
+  return { ticket, expiresAt };
+}
+
+async function consumeStudentAwardLocalTicket(body) {
+  const reject = () => { throw Object.assign(new Error("Разрешение на локальную загрузку истекло или не соответствует файлу. Повторите загрузку из карточки."), { statusCode: 403 }); };
+  if (!/^[a-f0-9]{64}$/u.test(String(body.ticket || "")) || typeof body.base64 !== "string"
+    || body.base64.length > 28 * 1024 * 1024 || !/^[a-z0-9+/]*={0,2}$/iu.test(body.base64)) reject();
+  const pool = await studentEnrollmentPool();
+  const ticketHash = crypto.createHash("sha256").update(`${SHARED_STATE_MYSQL_KEY}:${body.ticket}`).digest("hex");
+  const [rows] = await pool.query("SELECT payload,expires_at FROM ais_student_award_tickets WHERE ticket_hash=?", [ticketHash]);
+  if (!rows.length || Number(rows[0].expires_at) <= Date.now()) reject();
+  const claim = JSON.parse(rows[0].payload);
+  if (!["admin", "manager"].includes(claim.actor?.role)
+    || crypto.createHash("sha256").update(Buffer.from(body.base64, "base64")).digest("hex") !== claim.sha256) reject();
+  const [deleted] = await pool.query("DELETE FROM ais_student_award_tickets WHERE ticket_hash=? AND expires_at>?", [ticketHash, Date.now()]);
+  if (Number(deleted.affectedRows) !== 1) reject();
+  return claim;
+}
+
+async function resolveLocalStudentAwardFile(folder, name, create = false) {
+  if (!name || /[<>:"/\\|?*\u0000-\u001f]/u.test(name) || !/\.(pdf|jpe?g|png)$/iu.test(name)) {
+    throw Object.assign(new Error("Недопустимое имя скана документа."), { statusCode: 400 });
+  }
+  const folderPath = resolveLocalDocumentsFolder(folder);
+  const root = path.resolve(serverSettings.localDocumentsRoot || DEFAULT_LOCAL_DOCUMENTS_ROOT);
+  const relative = path.relative(root, folderPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw Object.assign(new Error("Папка вне локального хранилища."), { statusCode: 400 });
+  let current = root;
+  // Do not follow junctions/symlinks outside the configured document root, including before mkdir.
+  for (const part of [...relative.split(path.sep).filter(Boolean), name]) {
+    current = path.join(current, part);
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) throw Object.assign(new Error("Ссылка в пути документа не разрешена."), { statusCode: 400 });
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  if (create) await fs.mkdir(folderPath, { recursive: true });
+  return path.join(folderPath, name);
+}
+
+async function uploadStudentAwardFile(folder, name, bytes, contentType, storage) {
+  const local = storage === "local" || (!storage && await isLocalDocumentStorageAvailable());
+  if (local) {
+    if (!await isLocalDocumentStorageAvailable()) throw Object.assign(new Error("Локальная папка документов недоступна. Проверьте путь в настройках и доступ к диску."), { statusCode: 503 });
+    const target = await resolveLocalStudentAwardFile(folder, name, true);
+    await fs.writeFile(target, bytes, { flag: "wx" });
+    return { storage: "local" };
+  }
+  const target = resolveStudentWebDavBrowserResource(folder, name).targetPath;
+  await ensureYandexDiskFolder(resolveStudentWebDavBrowserResource(folder).targetPath);
+  await requestYandexWebDav("PUT", target, { body: bytes, contentType, acceptedStatuses: [200, 201, 204] });
+  return { storage: "yandex" };
+}
+
+async function readLocalStudentAwardFile(entry, metadataOnly = false) {
+  if (entry.storage !== "local" || !(await getLocalSystemDocumentsAvailability()).available) return null;
+  try {
+    const target = await resolveLocalStudentAwardFile(entry.folder, entry.name), stat = await fs.stat(target);
+    if (!stat.isFile() || stat.size > 21 * 1024 * 1024) throw Object.assign(new Error("Некорректный файл документа."), { statusCode: 400 });
+    return metadataOnly ? true : { body: await fs.readFile(target), contentType: getWebDavBrowserContentType(entry.name) };
+  } catch (error) { if (isUnavailableDocumentPathError(error)) return null; throw error; }
+}
+
 function getStudentEnrollmentService() {
   if (studentEnrollmentService) return studentEnrollmentService;
   const systemUser = { id: "paid-enrollment", login: "paid-enrollment", name: "Импорт оплаченных заявок", role: "system" };
@@ -25226,6 +25298,23 @@ function getStudentEnrollmentService() {
     feedbackHistory: getStudentCorrespondenceStore(),
     photoPath: (folder, name) => formatSystemDocumentsCardPath(`${folder}/${name}`),
     toPdf: bytes => convertDocxBytesToPdf(bytes),
+    issueAwardTicket: issueStudentAwardLocalTicket,
+    uploadAward: uploadStudentAwardFile,
+    async downloadAward(entry) {
+      const local = await readLocalStudentAwardFile(entry);
+      if (local) return local;
+      try {
+        const result = await requestYandexWebDav("GET", location(entry.folder, entry.name), { acceptedStatuses: [200], maxResponseBytes: 21 * 1024 * 1024 });
+        return { body: result.body, contentType: getWebDavBrowserContentType(entry.name) };
+      } catch (error) {
+        if (entry.storage === "local") throw Object.assign(new Error("Локальный документ пока недоступен на Яндекс Диске. Дождитесь синхронизации папки слушателя."), { statusCode: 503 });
+        throw error;
+      }
+    },
+    async awardFileExists(entry) {
+      if (await readLocalStudentAwardFile(entry, true)) return true;
+      return (await requestYandexWebDav("HEAD", location(entry.folder, entry.name), { acceptedStatuses: [200, 404] })).statusCode === 200;
+    },
     async listRoot(folder) {
       const target = location(folder).replace(/\/+$/u, "");
       return (await readWebDavDirectory(target)).filter(entry => !entry.isCollection && path.posix.dirname(normalizeWebDavPath(entry.href)) === target)
@@ -41271,6 +41360,7 @@ async function route(req, res) {
       highQualityPdfConversionAvailable: Boolean(highQualityPdfConverterBinary),
       highQualityPdfConverter: highQualityPdfConverterBinary ? "libreoffice" : null,
       localDocumentsAvailable: Boolean(localDocuments.available),
+      studentAwardLocalUploadAvailable: true,
       openDocumentsLocally: serverSettings.openDocumentsLocally !== false,
       ...(runtimeSecrets ? { runtimeSecrets } : {})
     });
@@ -41281,6 +41371,19 @@ async function route(req, res) {
     && requestUrl.pathname.startsWith("/api/document-conversion/source/")
   ) {
     await handleDocumentConversionSource(req, res, requestUrl);
+    return;
+  }
+  if (req.method === "POST" && requestUrl.pathname === "/api/students/education-documents/local-upload") {
+    try {
+      const body = await readJsonBody(req, 29 * 1024 * 1024);
+      // Cloud sessions never become a generic local manager session. This single-use
+      // authorization binds the real staff identity, card lock and exact file bytes.
+      const claim = await consumeStudentAwardLocalTicket(body);
+      const result = await getStudentEnrollmentService().awardUpload(claim.actor, claim.id, {
+        kind: claim.kind, format: claim.format, clientId: claim.clientId, base64: body.base64, storage: "local"
+      });
+      sendJson(res, 200, result);
+    } catch (error) { sendError(res, Number(error.statusCode) || 503, Number(error.statusCode) ? error.message : "Не удалось сохранить документ в локальную папку. Проверьте доступность локальной АИС и общей базы."); }
     return;
   }
   const authUser = await getRequestAuthUser(req);
@@ -41340,7 +41443,9 @@ async function route(req, res) {
       const service = getStudentEnrollmentService();
       if (req.method === "POST") {
         const body = await readJsonBody(req, 29 * 1024 * 1024);
-        sendJson(res, 200, await service.awardUpload(authUser, String(body.id || ""), body));
+        sendJson(res, 200, body.operation === "local-ticket"
+          ? await service.localAwardTicket(authUser, String(body.id || ""), body)
+          : await service.awardUpload(authUser, String(body.id || ""), body));
       } else if (req.method === "GET" && requestUrl.searchParams.get("file")) {
         const file = await service.awardFile(authUser, requestUrl.searchParams.get("id"), requestUrl.searchParams.get("file"), true);
         sendFile(res, 200, file.body, file.name, file.contentType, { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });

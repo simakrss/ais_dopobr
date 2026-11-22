@@ -46,15 +46,10 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     const record = await staffRecord(actor, id);
     if (!portalEligible(record)) fail("Документы в кабинете слушателя сохраняются только для программ КПК, ППП и ДОП.", 409);
     const kind = body.kind === "layout" ? "layout" : "scan";
-    let stage = "Проверка блокировки карточки";
+    let stage = "Проверка блокировки карточки", savedStorage = "";
     try {
-      const lock = (await deps.readRecordLocks?.() || []).find(item => item.entityType === "students" && String(item.entityId) === String(id));
-      const clientId = text(body.clientId);
-      // A known client id alone is not permission to write through someone else's lock.
-      if (lock && (!clientId || lock.clientId !== clientId || !actor.login || text(lock.ownerLogin) !== text(actor.login))) {
-        fail("Карточка редактируется в другом окне. Сохраните и закройте её перед загрузкой документа.", 423);
-      }
-      const writeOptions = { clientId: lock ? clientId : "" };
+      const writeOptions = await awardWriteOptions(actor, id, body);
+      if (body.storage && !["local", "yandex"].includes(body.storage)) fail("Неизвестное место сохранения документа.");
       stage = "Подготовка файла";
       let file;
       if (kind === "layout" && body.format === "docx") {
@@ -67,19 +62,42 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
       const program = text(record.program).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 75);
       const name = `${kind === "layout" ? "Макет" : "Документ об образовании"} — ${program || "Программа"} — ${fileId}.${file.extension}`;
       stage = "Загрузка файла в папку слушателя";
-      await deps.upload(folder, name, file.bytes, file.contentType);
-      const entry = { id: fileId, kind, name, folder, size: file.bytes.length, uploadedAt: new Date().toISOString() };
+      const saved = deps.uploadAward
+        ? await deps.uploadAward(folder, name, file.bytes, file.contentType, body.storage)
+        : (await deps.upload(folder, name, file.bytes, file.contentType), { storage: "yandex" });
+      savedStorage = saved.storage;
+      const entry = { id: fileId, kind, name, folder, storage: savedStorage, size: file.bytes.length, uploadedAt: new Date().toISOString() };
       stage = "Сохранение ссылки в карточке слушателя";
       const updated = await mutate(id, actor, item => ({ ...item, educationDocumentFiles: [
         ...(item.educationDocumentFiles || []).filter(value => kind !== "layout" || value.kind !== "layout"), entry] }), writeOptions);
       await deps.audit(kind === "layout" ? "Сохранён макет документа в кабинете слушателя" : "Загружен скан выданного документа об образовании", updated, actor);
-      return { ok: true, files: updated.educationDocumentFiles };
+      return { ok: true, storage: savedStorage, files: updated.educationDocumentFiles };
     } catch (error) {
       // Keep the failure trace in the record history without logging file bytes or credentials.
       await Promise.resolve().then(() => deps.audit(kind === "layout" ? "Не удалось сохранить макет в кабинете слушателя" : "Не удалось сохранить скан документа", record, actor,
         `${stage}. Код: ${Number(error.statusCode) || 503}.`)).catch(() => {});
-      throw error;
+      if (error.statusCode) throw error;
+      fail(savedStorage
+        ? "Файл сохранён, но не удалось записать ссылку в карточку слушателя. Проверьте доступность общей базы и повторите загрузку."
+        : `${stage}. ${body.storage === "local" ? "Проверьте доступность локальной папки документов и право записи в неё." : "Проверьте подключение к Яндекс Диску и право записи в папку слушателя."}`, 503);
     }
+  }
+  async function awardWriteOptions(actor, id, body) {
+    const lock = (await deps.readRecordLocks?.() || []).find(item => item.entityType === "students" && String(item.entityId) === String(id));
+    const clientId = text(body.clientId);
+    // A known client id alone is not permission to write through someone else's lock.
+    if (lock && (!clientId || lock.clientId !== clientId || !actor.login || text(lock.ownerLogin) !== text(actor.login))) {
+      fail("Карточка редактируется в другом окне. Сохраните и закройте её перед загрузкой документа.", 423);
+    }
+    return { clientId: lock ? clientId : "" };
+  }
+  async function localAwardTicket(actor, id, body) {
+    const record = await staffRecord(actor, id);
+    if (!portalEligible(record)) fail("Документы в кабинете слушателя сохраняются только для программ КПК, ППП и ДОП.", 409);
+    await awardWriteOptions(actor, id, body);
+    if (!/^[a-f0-9]{64}$/u.test(text(body.sha256))) fail("Не удалось проверить файл для локального сохранения.");
+    return deps.issueAwardTicket(actor, { id, kind: body.kind === "layout" ? "layout" : "scan",
+      format: body.format === "docx" ? "docx" : "", clientId: text(body.clientId), sha256: body.sha256 });
   }
   function publicAwards(records, staff = false) {
     return { programs: records.map(record => ({ id: record.id, program: record.program, educationType: record.educationType,
@@ -149,7 +167,7 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     if (!entry || /[\\/]/u.test(entry.name)) fail("Документ не найден.", 404);
     if (!staff && entry.kind === "layout" && (entry.unassigned || !layoutAvailable(record))) fail("Макет пока недоступен. Доступ появится после отправки макета на согласование или отправки электронного документа учебным центром.", 403);
     // The location comes exclusively from the saved, staff-owned attachment metadata.
-    const file = await deps.download(entry.folder, entry.name);
+    const file = deps.downloadAward ? await deps.downloadAward(entry) : await deps.download(entry.folder, entry.name);
     if (/\.docx$/iu.test(entry.name)) return { body: await deps.toPdf(file.body), contentType: "application/pdf", name: entry.name.replace(/\.docx$/iu, ".pdf") };
     return { ...file, name: entry.name };
   }
@@ -162,7 +180,8 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
       ? (await discover(records.map(item => item.id === record.id ? record : item))).find(item => item.id === record.id) : record;
     const entry = current?.educationDocumentFiles?.find(item => item.id === body.fileId && item.kind === "layout" && !item.unassigned);
     if (!entry || fileRevision(entry) !== body.revision) fail("Макет изменился. Обновите список и проверьте новый макет.", 409);
-    if (deps.fileExists && !await deps.fileExists(entry.folder, entry.name)) fail("Файл макета недоступен. Обновите список документов или обратитесь в учебный центр.", 409);
+    const exists = deps.awardFileExists ? await deps.awardFileExists(entry) : !deps.fileExists || await deps.fileExists(entry.folder, entry.name);
+    if (!exists) fail("Файл макета недоступен. Обновите список документов или обратитесь в учебный центр.", 409);
     return entry;
   }
   async function approveLayout(user, id, body) {
@@ -278,6 +297,6 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     for (const intent of (record.portalPaymentIntents || []).filter(item => item.orderId && item.status === "pending")) await settlePayment(intent.orderId);
     return portal(user, id);
   }
-  return { photo, awardUpload, awards, staffAwards, awardFile, approveLayout, layoutRemarks, payment, paymentStatus, settlePayment };
+  return { photo, awardUpload, localAwardTicket, awards, staffAwards, awardFile, approveLayout, layoutRemarks, payment, paymentStatus, settlePayment };
 }
 module.exports = { createService, rootFolder };

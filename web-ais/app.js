@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.651",
-    releasedAt: "2026-11-18"
+    version: "1.7.652",
+    releasedAt: "2026-11-22"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.652",
+      releasedAt: "2026-11-22",
+      changes: ["Сканы документов об образовании сохраняются в корневую папку слушателя согласно выбранному режиму: локально либо на Яндекс Диск. Загрузка с сайта в локальную папку выполняется с проверкой разрешения сотрудника и блокировки карточки. Добавлены чтение локальных файлов и понятные сообщения о месте сохранения и недоступной папке."]
+    },
     {
       version: "1.7.651",
       releasedAt: "2026-11-18",
@@ -38393,7 +38398,35 @@ MAX - https://bizvmax.ru/zifra_plus
     if (!studentCabinetProgramAllowed(record)) throw Error("Документы в кабинете слушателя сохраняются только для программ КПК, ППП и ДОП.");
     if (file.size > 20 * 1024 * 1024) throw Error("Максимальный размер — 20 МБ.");
     const base64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = () => reject(Error("Не удалось прочитать файл.")); reader.readAsDataURL(file); });
-    const result = await window.AIS_AUTH_API.request("api/students/education-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: recordId, kind, format, base64, clientId: recordLockClientId }) });
+    const preferLocal = getOpenDocumentsLocally();
+    const capabilities = preferLocal ? await probeLocalDocumentServices() : null;
+    const storage = preferLocal && (kind === "scan" || capabilities?.localDocumentsAvailable) ? "local" : "yandex";
+    if (storage === "local" && !capabilities?.localDocumentsAvailable) {
+      throw new Error("Локальная папка документов недоступна. Проверьте запуск локальной АИС и путь в настройках. Для загрузки на Яндекс Диск отключите локальный режим.");
+    }
+    const body = { id: recordId, kind, format, base64, storage, clientId: recordLockClientId };
+    const localOrigin = String(capabilities?.apiOrigin || photoServerOrigin()).replace(/\/+$/, "");
+    let result;
+    if (storage === "local" && localOrigin !== photoServerOrigin().replace(/\/+$/, "")) {
+      if (!capabilities.studentAwardLocalUploadAvailable) throw new Error("Дождитесь обновления локальной АИС, чтобы загрузить скан с сайта в папку компьютера.");
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))]
+        .map(byte => byte.toString(16).padStart(2, "0")).join("");
+      const authorization = await window.AIS_AUTH_API.request("api/students/education-documents", {
+        method: "POST", body: JSON.stringify({ operation: "local-ticket", id: recordId, kind, format, clientId: recordLockClientId, sha256 })
+      });
+      const response = await fetch(documentProcessingApiUrl("/api/students/education-documents/local-upload", localOrigin), {
+        method: "POST", mode: "cors", credentials: "omit", targetAddressSpace: "local",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "AIS-Web" },
+        body: JSON.stringify({ ticket: authorization.ticket, base64 }), signal: AbortSignal.timeout(150000)
+      });
+      result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Не удалось загрузить документ через локальную АИС.");
+    } else {
+      result = await window.AIS_AUTH_API.request("api/students/education-documents", {
+        method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(150000)
+      });
+    }
+    if (!result.ok || !Array.isArray(result.files)) throw new Error("Сервер не подтвердил сохранение документа.");
     if (record) record.educationDocumentFiles = result.files;
     if (state.modal?.id === recordId && state.modal.draft) state.modal.draft.educationDocumentFiles = result.files;
     return result;
@@ -38401,15 +38434,27 @@ MAX - https://bizvmax.ru/zifra_plus
   async function uploadStudentAwardScan(event) {
     const input = event.target, file = input.files[0]; if (!file) return;
     const button = input.closest(".education-document-actions")?.querySelector("[data-action='upload-student-award-scan']");
-    input.disabled = true;
-    if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
-    const label = document.querySelector("[data-award-upload-status]"); label.textContent = "Загрузка скана в папку слушателя…";
+    const setBusy = busy => {
+      for (const control of new Set([input, document.querySelector("[data-student-award-upload]")])) if (control) {
+        control.disabled = busy; if (!busy) control.value = "";
+      }
+      for (const control of new Set([button, document.querySelector("[data-action='upload-student-award-scan']")])) if (control) {
+        control.disabled = busy; if (busy) control.setAttribute("aria-busy", "true"); else control.removeAttribute("aria-busy");
+      }
+    };
+    setBusy(true);
+    const status = message => { const label = document.querySelector("[data-award-upload-status]"); if (label) label.textContent = message; };
+    status("Загрузка скана в папку слушателя…");
     try {
       const id = await saveRecordFormBeforeContinuation(document.getElementById("recordForm"), { flush: true });
       if (!id) throw Error("Сначала сохраните карточку слушателя.");
-      await saveStudentAwardFile(id, file); label.textContent = "Скан сохранён в корневой папке и доступен в кабинете слушателя.";
-    } catch (error) { label.textContent = error.message || "Не удалось загрузить скан."; }
-    finally { input.disabled = false; input.value = ""; if (button) { button.disabled = false; button.removeAttribute("aria-busy"); } }
+      setBusy(true);
+      const result = await saveStudentAwardFile(id, file);
+      status(result.storage === "local"
+        ? "Скан сохранён в локальной корневой папке слушателя. На сайте файл станет доступен после синхронизации Яндекс Диска."
+        : "Скан сохранён на Яндекс Диске в корневой папке слушателя и доступен в его кабинете.");
+    } catch (error) { status(error.message || "Не удалось загрузить скан."); }
+    finally { setBusy(false); }
   }
 
   function renderStudentModal(record) {
@@ -56406,6 +56451,7 @@ MAX - https://bizvmax.ru/zifra_plus
         documentConversionAvailable: payload.documentConversionAvailable === true,
         documentEditingAvailable: payload.documentEditingAvailable === true,
         localDocumentsAvailable: payload.localDocumentsAvailable === true,
+        studentAwardLocalUploadAvailable: payload.studentAwardLocalUploadAvailable === true,
         openDocumentsLocally: payload.openDocumentsLocally !== false,
         apiOrigin: processingHeader === "local-docker"
           ? localDocumentServicesOrigin

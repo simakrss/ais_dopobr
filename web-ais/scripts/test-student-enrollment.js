@@ -378,6 +378,57 @@ test("award uploads honor the open card owner and carry its client id through re
   assert.ok(f.audit.includes("Сохранён макет документа в кабинете слушателя"));
 });
 
+test("award storage mode and local metadata survive saving, download and layout approval", async () => {
+  const calls = [], f = fixture({ uploadAward: async (folder, name, bytes, type, storage) => {
+    calls.push({ folder, name, bytes, type, storage }); return { storage };
+  }, downloadAward: async entry => ({ body: Buffer.from(entry.storage), contentType: "application/pdf" }),
+  awardFileExists: async entry => entry.storage === "local" });
+  await f.service.provisionOrder("101");
+  const record = f.snapshot.data.collections.students[0], actor = { role: "manager", login: "manager" };
+  for (const storage of ["local", "yandex"]) {
+    const result = await f.service.awardUpload(actor, record.id, { ...pdf, storage });
+    assert.equal(result.storage, storage); assert.equal(result.files.at(-1).storage, storage);
+    assert.ok(!calls.at(-1).folder.endsWith("/Документы"));
+    assert.equal((await f.service.awardFile(actor, record.id, result.files.at(-1).id, true)).body.toString(), storage);
+  }
+  assert.equal(f.files.size, 0, "Award-specific storage must not also invoke the default Yandex upload");
+  const layout = await f.service.awardUpload(actor, record.id, { ...pdf, storage: "local", kind: "layout" });
+  f.snapshot.data.collections.students[0].event_educationDocMaketSent_state = "checked";
+  const user = enrollment.publicUser(f.snapshot.data.collections.students[0]);
+  const listing = await f.service.awards(user, record.id), file = listing.programs[0].files.find(entry => entry.id === layout.files.at(-1).id);
+  await f.service.approveLayout(user, record.id, { fileId: file.id, revision: file.revision });
+  assert.equal(f.snapshot.data.collections.students[0].event_educationDocMaketApproved_state, "dated");
+  await assert.rejects(f.service.awardUpload(actor, record.id, { ...pdf, storage: "arbitrary" }), { statusCode: 400 });
+});
+
+test("cloud-to-local award authorization preserves the actual staff identity and card lock", async () => {
+  const issued = [], actor = { role: "manager", login: "real-staff" }, f = fixture({
+    issueAwardTicket: async (user, claim) => { issued.push({ user, claim }); return { ticket: "fixture" }; }
+  });
+  await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0];
+  f.deps.readRecordLocks = async () => [{ entityType: "students", entityId: record.id, clientId: "window", ownerLogin: actor.login }];
+  const body = { sha256: "a".repeat(64), clientId: "window", kind: "scan", folder: "forged", actor: { role: "admin" } };
+  await assert.rejects(f.service.localAwardTicket({ role: "student" }, record.id, body), { statusCode: 403 });
+  await assert.rejects(f.service.localAwardTicket({ ...actor, login: "another" }, record.id, body), { statusCode: 423 });
+  await assert.rejects(f.service.localAwardTicket(actor, record.id, { ...body, sha256: "invalid" }), { statusCode: 400 });
+  assert.equal((await f.service.localAwardTicket(actor, record.id, body)).ticket, "fixture");
+  assert.equal(issued.length, 1); assert.equal(issued[0].user, actor);
+  assert.deepEqual(issued[0].claim, { id: record.id, sha256: body.sha256, clientId: "window", kind: "scan", format: "" });
+  assert.equal(record.educationDocumentFiles, undefined, "An authorization alone must not claim a saved file");
+});
+
+test("award storage failures are actionable and never create attachment metadata", async () => {
+  for (const storage of ["local", "yandex"]) {
+    const f = fixture({ uploadAward: async () => { throw Object.assign(new Error("private backend details"), { code: "EACCES" }); } });
+    await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0];
+    await assert.rejects(f.service.awardUpload({ role: "manager" }, record.id, { ...pdf, storage }), error => {
+      assert.equal(error.statusCode, 503); assert.ok(!error.message.includes("private backend"));
+      assert.match(error.message, storage === "local" ? /локальной папки/ : /Яндекс Диску/); return true;
+    });
+    assert.equal(f.snapshot.data.collections.students[0].educationDocumentFiles, undefined);
+  }
+});
+
 test("award upload rejects another window or user before uploading, and logs later lock conflicts", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0];
   const actor = { role: "manager", login: "owner" }, clientId = "locked-window";

@@ -335,8 +335,11 @@ async function main() {
       documentConversionAvailable: true,
       documentEditingAvailable: true,
       localDocumentsAvailable: true,
+      studentAwardLocalUploadAvailable: false,
       openDocumentsLocally: true
     });
+    appHealthPayload.studentAwardLocalUploadAvailable = true;
+    assert.equal((await (await fetch(`${baseUrl}/api/local-document-services/health`, { headers: remoteHeaders })).json()).studentAwardLocalUploadAvailable, true);
 
     const preflight = await fetch(`${baseUrl}/api/students/recognize-documents/files`, {
       method: "OPTIONS",
@@ -350,7 +353,8 @@ async function main() {
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
     for (const action of ["/api/contracts/student-document", "/api/contracts/student-document-preview/editor-save",
-      "/api/contracts/student-document-preview/finalize", "/api/contracts/student-document-preview/abort-generation"]) {
+      "/api/contracts/student-document-preview/finalize", "/api/contracts/student-document-preview/abort-generation",
+      "/api/students/education-documents/local-upload"]) {
       const response = await fetch(baseUrl + action, { method: "OPTIONS", headers: {
         ...remoteHeaders, "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "content-type,x-document-generation-id"
@@ -433,6 +437,7 @@ async function main() {
       documentConversionAvailable: false,
       documentEditingAvailable: true,
       localDocumentsAvailable: false,
+      studentAwardLocalUploadAvailable: false,
       openDocumentsLocally: false
     });
 
@@ -449,6 +454,7 @@ async function main() {
       documentConversionAvailable: true,
       documentEditingAvailable: false,
       localDocumentsAvailable: false,
+      studentAwardLocalUploadAvailable: false,
       openDocumentsLocally: false
     });
     documentEditingHealthy = true;
