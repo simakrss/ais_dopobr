@@ -3,7 +3,7 @@ const { test } = require("node:test"), assert = require("node:assert/strict");
 const enrollment = require("../student-enrollment.js");
 function fixture(options = {}) {
   const snapshot = { revision: 1, data: { collections: { students: [], contracts: [{ login: "test" }], programs: [
-    { id: "p1", productId: "10", name: "Тестовый курс", type: "КПК", price: 10000 },
+    { id: "p1", productId: "10", name: "Тестовый курс", groupIndex: "ТК", type: "КПК", price: 10000 },
     { id: "p2", productId: "20", name: "Тестовый вебинар", type: "ПРО", price: 100 }
   ] } } };
   const rows = [{ id: "101-1", orderId: "101", productId: "10", paid: true, paymentAmount: 5000, coupon: "RASS50", email: "test@example.test", name: "Тестов Тест Тестович" }];
@@ -345,7 +345,8 @@ test("photo is scoped, stored in the student folder and does not move existing d
 test("award scans and layouts are staff-only, kept in one person root and scoped across owned programs", async () => {
   const f = fixture(); await f.service.provisionOrder("101"); const record = f.snapshot.data.collections.students[0], user = enrollment.publicUser(record), actor = { role: "manager" };
   record.photoPath = "Слушатели/ТестовТТ/Документы/ТестовТТ.jpg";
-  const second = { ...record, id: "second", program: "Вторая программа", studentPortalAccountId: record.id, photoPath: "Слушатели/second/Документы" };
+  f.snapshot.data.collections.programs.push({ id: "p3", name: "Вторая программа", groupIndex: "ВП", type: "КПК" });
+  const second = { ...record, id: "second", programId: "p3", program: "Вторая программа", studentPortalAccountId: record.id, photoPath: "Слушатели/second/Документы" };
   f.snapshot.data.collections.students.push(second, { ...second, id: "foreign", studentPortalAccountId: "foreign" });
   await assert.rejects(f.service.awardUpload(user, record.id, pdf), { statusCode: 403 });
   const one = await f.service.awardUpload(actor, record.id, pdf), two = await f.service.awardUpload(actor, second.id, pdf);
@@ -960,4 +961,39 @@ test("verified existing shop binding opens the current eligible cabinet without 
   await assert.rejects(f.service.shopAccountOperation({ ...payload, existingBinding: false }), /Historical orders|Некорректные/);
   f.snapshot.data.collections.students[0].studentPortalBlocked = true;
   await assert.rejects(f.service.shopAccountOperation(payload), { statusCode: 403 });
+});
+
+test("award scans use the program code, type and surname with initials, preserving repeated uploads", async () => {
+  for (const [type,prefix] of [["ППП","ДипломПП"],["КПК","УдостовПК"],["ДОП","Сертификат"]]) {
+    const f=fixture(); f.snapshot.data.collections.programs[0].type=type;
+    f.snapshot.data.collections.programs[0].groupIndex="ИЛП3";
+    f.rows[0].name="Самылова Марина Викторовна";
+    await f.service.provisionOrder("101"); const record=f.snapshot.data.collections.students[0],actor={role:"manager"};
+    const first=await f.service.awardUpload(actor,record.id,pdf);
+    assert.equal(first.files[0].name,`${prefix}-ИЛП3-СамыловаМВ.pdf`);
+    const second=await f.service.awardUpload(actor,record.id,pdf);
+    assert.equal(second.files[1].name,`${prefix}-ИЛП3-СамыловаМВ (2).pdf`);
+    assert.notEqual(second.files[0].id,second.files[1].id); assert.equal(f.files.size,2);
+    assert.equal((await f.service.awardFile(actor,record.id,first.files[0].id,true)).name,first.files[0].name);
+  }
+});
+
+test("legacy scan downloads get readable names without changing their stored location or bytes", async () => {
+  const f=fixture(); await f.service.provisionOrder("101"); const record=f.snapshot.data.collections.students[0];
+  const entry={id:"legacy-scan",kind:"scan",folder:"Слушатели/ТестовТТ",name:"Документ об образовании — Старое имя — 11111111-2222-3333-4444-555555555555.pdf"};
+  record.educationDocumentFiles=[entry]; const bytes=Buffer.from("%PDF-old-scan"); f.files.set(`${entry.folder}/${entry.name}`,bytes);
+  const result=await f.service.awardFile({role:"manager"},record.id,entry.id,true);
+  assert.equal(result.name,"УдостовПК-ТК-ТестовТТ.pdf"); assert.deepEqual(result.body,bytes);
+  assert.equal(record.educationDocumentFiles[0].name,entry.name); assert.equal(f.files.size,1);
+});
+
+test("scan filename collisions retry without overwriting and missing program codes are actionable", async () => {
+  const attempts=[],f=fixture({uploadAward:async(folder,name)=>{attempts.push(name);if(attempts.length===1)throw Object.assign(Error("exists"),{code:"EEXIST"});return {storage:"local"};}});
+  await f.service.provisionOrder("101"); const record=f.snapshot.data.collections.students[0],actor={role:"manager"};
+  const result=await f.service.awardUpload(actor,record.id,{...pdf,storage:"local"});
+  assert.deepEqual(attempts,["УдостовПК-ТК-ТестовТТ.pdf","УдостовПК-ТК-ТестовТТ (2).pdf"]);
+  assert.equal(result.files[0].name,attempts[1]);
+  f.snapshot.data.collections.programs[0].groupIndex="";
+  await assert.rejects(f.service.awardUpload(actor,record.id,pdf),error=>error.statusCode===409&&/Индекс группы/.test(error.message));
+  assert.equal(attempts.length,2);
 });

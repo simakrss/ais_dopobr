@@ -11,6 +11,20 @@ function eventActive(record, key) {
 }
 const layoutAvailable = record => eventActive(record, "educationDocMaketSent") || eventActive(record, "macro_hb0dir");
 const fileRevision = entry => crypto.createHash("sha256").update(JSON.stringify([entry.id, entry.size, entry.uploadedAt])).digest("hex");
+function awardScanName(record, programs, extension) {
+  const prefix = { "ППП": "ДипломПП", "КПК": "УдостовПК", "ДОП": "Сертификат" }[text(record.educationType).toUpperCase()];
+  const normalize = value => text(value).normalize("NFKC").replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU");
+  let matches = record.programId ? programs.filter(item => String(item.id) === String(record.programId))
+    : programs.filter(item => normalize(item.name) === normalize(record.program));
+  if (!record.programId && !matches.length) matches = programs.filter(item => normalize(item.shortName) === normalize(record.program));
+  const part = value => text(value).replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "_").replace(/[. ]+$/u, "");
+  const code = matches.length === 1 ? part(matches[0].groupIndex) : "";
+  const [surname, ...names] = text(record.name).split(/\s+/u);
+  const person = part(surname + names.slice(0, 2).map(value => [...value][0]?.toLocaleUpperCase("ru-RU") || "").join(""));
+  if (!prefix || !code) fail("Для имени скана укажите код программы в поле «Индекс группы» реестра программ и проверьте связь программы со слушателем.", 409);
+  if (!person || !/^(pdf|jpe?g|png)$/iu.test(extension)) fail("Проверьте ФИО слушателя и формат скана.", 400);
+  return `${prefix}-${code}-${person}.${extension.toLowerCase()}`;
+}
 function legacyLayoutLocation(record) {
   const types = { "КПК": ["Удостоверение", "Удостоверения ПК"], "ППП": ["Диплом", "Дипломы ПП"], "ДОП": ["Сертификат", "Сертификаты мероприятия"] };
   const type = types[text(record.educationType)], name = text(record.name), number = text(record.registrationNo || record.diplomaRegistrationNo);
@@ -60,11 +74,24 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
       } else file = validateUpload({ ...body, kind: "passport" });
       const folder = await awardRoot(record), fileId = crypto.randomUUID();
       const program = text(record.program).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 75);
-      const name = `${kind === "layout" ? "Макет" : "Документ об образовании"} — ${program || "Программа"} — ${fileId}.${file.extension}`;
+      const current = kind === "scan" ? await deps.readState() : null;
+      const baseName = kind === "scan" ? awardScanName(record, current.data.collections.programs || [], file.extension)
+        : `Макет — ${program || "Программа"} — ${fileId}.${file.extension}`;
+      const existingNames = new Set((current?.data.collections.students || []).flatMap(item => item.educationDocumentFiles || [])
+        .filter(entry => entry.folder === folder).map(entry => entry.name.toLocaleLowerCase("ru-RU")));
       stage = "Загрузка файла в папку слушателя";
-      const saved = deps.uploadAward
-        ? await deps.uploadAward(folder, name, file.bytes, file.contentType, body.storage)
-        : (await deps.upload(folder, name, file.bytes, file.contentType), { storage: "yandex" });
+      let name = baseName, saved;
+      for (let number = 1; number <= 100; number++) {
+        name = number === 1 ? baseName : baseName.replace(/(\.[^.]+)$/u, ` (${number})$1`);
+        if (existingNames.has(name.toLocaleLowerCase("ru-RU"))) continue;
+        try {
+          saved = deps.uploadAward
+            ? await deps.uploadAward(folder, name, file.bytes, file.contentType, body.storage)
+            : (await deps.upload(folder, name, file.bytes, file.contentType), { storage: "yandex" });
+          break;
+        } catch (error) { if (error.code !== "EEXIST") throw error; }
+      }
+      if (!saved) fail("Не удалось подобрать свободное имя скана. Проверьте файлы в папке слушателя.", 409);
       savedStorage = saved.storage;
       const entry = { id: fileId, kind, name, folder, storage: savedStorage, size: file.bytes.length, uploadedAt: new Date().toISOString() };
       stage = "Сохранение ссылки в карточке слушателя";
@@ -169,7 +196,13 @@ function createService({ deps, context, mutate, portal, documentFolder, finances
     // The location comes exclusively from the saved, staff-owned attachment metadata.
     const file = deps.downloadAward ? await deps.downloadAward(entry) : await deps.download(entry.folder, entry.name);
     if (/\.docx$/iu.test(entry.name)) return { body: await deps.toPdf(file.body), contentType: "application/pdf", name: entry.name.replace(/\.docx$/iu, ".pdf") };
-    return { ...file, name: entry.name };
+    let name = entry.name;
+    // Older attachments retain their stored location, but download with the current readable name.
+    if (entry.kind === "scan" && /^Документ об образовании — /u.test(name)) {
+      try { name = awardScanName(record, (await deps.readState()).data.collections.programs || [], name.split(".").at(-1)); }
+      catch { /* Keep a downloadable legacy file even if its program code is missing. */ }
+    }
+    return { ...file, name };
   }
   function validateLayoutRequest(body) {
     if (typeof body?.fileId !== "string" || body.fileId.length > 128 || !/^[a-f0-9]{64}$/u.test(text(body.revision))) fail("Обновите список документов и повторите согласование.");

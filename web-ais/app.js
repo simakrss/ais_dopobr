@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.652",
-    releasedAt: "2026-11-22"
+    version: "1.7.653",
+    releasedAt: "2026-11-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.653",
+      releasedAt: "2026-11-23",
+      changes: ["Сканы документов об образовании получают имя по типу документа, коду программы и фамилии с инициалами. Длинные ссылки заменены компактной кнопкой скачивания рядом с загрузкой; при нескольких сканах доступен выбор файла. Повторные загрузки сохраняют предыдущие файлы."]
+    },
     {
       version: "1.7.652",
       releasedAt: "2026-11-22",
@@ -38427,7 +38432,8 @@ MAX - https://bizvmax.ru/zifra_plus
       });
     }
     if (!result.ok || !Array.isArray(result.files)) throw new Error("Сервер не подтвердил сохранение документа.");
-    if (record) record.educationDocumentFiles = result.files;
+    const savedRecord = state.data.collections.students.find(item => item.id === recordId);
+    if (savedRecord) savedRecord.educationDocumentFiles = result.files;
     if (state.modal?.id === recordId && state.modal.draft) state.modal.draft.educationDocumentFiles = result.files;
     return result;
   }
@@ -38440,6 +38446,11 @@ MAX - https://bizvmax.ru/zifra_plus
       }
       for (const control of new Set([button, document.querySelector("[data-action='upload-student-award-scan']")])) if (control) {
         control.disabled = busy; if (busy) control.setAttribute("aria-busy", "true"); else control.removeAttribute("aria-busy");
+      }
+      const download = document.querySelector("[data-action='download-student-award-scan']");
+      if (download) {
+        const record = state.data.collections.students.find(item => item.id === download.dataset.studentId);
+        download.disabled = busy || !(record?.educationDocumentFiles || []).some(file => file.kind === "scan");
       }
     };
     setBusy(true);
@@ -38455,6 +38466,41 @@ MAX - https://bizvmax.ru/zifra_plus
         : "Скан сохранён на Яндекс Диске в корневой папке слушателя и доступен в его кабинете.");
     } catch (error) { status(error.message || "Не удалось загрузить скан."); }
     finally { setBusy(false); }
+  }
+
+  async function downloadStudentAwardScan(event) {
+    const button = event.currentTarget, recordId = button.dataset.studentId;
+    const record = state.data.collections.students.find(item => item.id === recordId);
+    const scans = (record?.educationDocumentFiles || []).filter(file => file.kind === "scan");
+    if (!scans.length || button.disabled) return;
+    let file = scans[0];
+    if (scans.length > 1) {
+      const dialog = document.createElement("dialog");
+      dialog.className = "modal student-award-download-dialog";
+      dialog.innerHTML = `<header class="modal-head"><h2>Скачать скан документа</h2><button type="button" class="icon-button" data-close title="Закрыть" aria-label="Закрыть">×</button></header>
+        <form class="form-grid" method="dialog"><label>Скан документа<select name="file">${scans.map((entry, index) => `<option value="${escapeAttr(entry.id)}">${escapeHtml(`Скан ${index + 1} · ${entry.uploadedAt ? new Date(entry.uploadedAt).toLocaleString("ru-RU") : "Дата не указана"} · ${String(entry.name).split(".").at(-1).toUpperCase()}`)}</option>`).join("")}</select></label>
+        <footer class="modal-actions"><button class="primary-button" value="download">Скачать</button></footer></form>`;
+      dialog.querySelector("[data-close]").onclick = () => dialog.close();
+      document.body.append(dialog); dialog.showModal();
+      file = await new Promise(resolve => dialog.addEventListener("close", () => {
+        resolve(dialog.returnValue === "download" ? scans.find(entry => entry.id === dialog.querySelector("select").value) : null);
+        dialog.remove();
+      }, { once: true }));
+      if (!file) return;
+    }
+    const status = document.querySelector("[data-award-upload-status]");
+    button.disabled = true; button.setAttribute("aria-busy", "true");
+    try {
+      const url = window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(recordId)}&file=${encodeURIComponent(file.id)}`);
+      const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Не удалось скачать скан документа.");
+      }
+      downloadBlob(getDownloadFileNameFromResponse(response, file.name), await response.blob());
+      if (status?.isConnected) status.textContent = "Скан передан в загрузки браузера.";
+    } catch (error) { if (status?.isConnected) status.textContent = error.message || "Не удалось скачать скан документа."; }
+    finally { button.disabled = false; button.removeAttribute("aria-busy"); }
   }
 
   function renderStudentModal(record) {
@@ -38745,12 +38791,13 @@ MAX - https://bizvmax.ru/zifra_plus
             ${renderOrdersSdoIcon("documentText")}<span>${definition.title}</span>
           </button>`;
         }).join("")}
-        ${studentCabinetProgramAllowed(record) ? `<button class="ghost-button student-document-generate-button education-document-open-button student-award-upload-button" data-action="upload-student-award-scan" type="button" title="Загрузить скан документа об образовании. PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете." ${record.id ? "" : "disabled"}>
+        ${studentCabinetProgramAllowed(record) ? `<div class="student-award-upload-actions"><button class="ghost-button student-document-generate-button education-document-open-button student-award-upload-button" data-action="upload-student-award-scan" type="button" title="Загрузить скан документа об образовании. PDF, JPEG или PNG, до 20 МБ. Сохраняется в корневую папку слушателя и отображается по этой программе в его кабинете." ${record.id ? "" : "disabled"}>
           ${renderOrdersSdoIcon("arrowUp")}<span>Загрузить скан документа</span>
         </button>
+        <button class="icon-button student-document-generate-button education-document-open-button student-award-download-button" data-action="download-student-award-scan" data-student-id="${escapeAttr(record.id || "")}" type="button" title="Скачать скан документа об образовании" aria-label="Скачать скан документа об образовании" ${(record.educationDocumentFiles || []).some(file => file.kind === "scan") ? "" : "disabled"}>${renderOrdersSdoIcon("download")}</button></div>
         <input type="file" data-student-award-upload accept="application/pdf,image/jpeg,image/png" hidden ${record.id ? "" : "disabled"}>
         <p class="student-award-upload-status" data-award-upload-status role="status"></p>` : ""}
-        ${(record.educationDocumentFiles || []).map(file => `<a class="student-award-file-link" href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" target="_blank" rel="noopener">${escapeHtml(file.kind === "layout" ? "Макет документа" : "Скан документа")} · ${escapeHtml(file.name)}</a>`).join("")}
+        ${(record.educationDocumentFiles || []).filter(file => file.kind === "layout").map(file => `<a class="ghost-button compact-button student-award-layout-download" href="${escapeAttr(window.AIS_AUTH_API.appUrl(`api/students/education-documents?id=${encodeURIComponent(record.id)}&file=${encodeURIComponent(file.id)}`))}" title="Скачать макет документа об образовании" target="_blank" rel="noopener">${renderOrdersSdoIcon("download")} Скачать макет</a>`).join("")}
       </div>
       ${renderStudentLayoutRemarks(record)}
     `;
@@ -39069,6 +39116,7 @@ MAX - https://bizvmax.ru/zifra_plus
       chevronLeft: '<path d="m15 18-6-6 6-6"></path>',
       chevronRight: '<path d="m9 18 6-6-6-6"></path>',
       arrowUp: '<path d="m7 11 5-5 5 5"></path><path d="M12 6v12"></path>',
+      download: '<path d="M12 3v12m-5-5 5 5 5-5"></path><path d="M4 16v5h16v-5"></path>',
       clipboard: '<rect x="6" y="5" width="12" height="16" rx="2"></rect><path d="M9 5.5V3h6v2.5"></path>',
       copy: '<rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>',
       document: '<path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v5h5"></path>',
@@ -48833,6 +48881,7 @@ MAX - https://bizvmax.ru/zifra_plus
     document.querySelector("[data-action='open-student-education-document']")?.addEventListener("click", openStudentEducationDocument);
     document.querySelectorAll("[data-student-portal-menu]").forEach(button => button.addEventListener("click", openStudentPortalMenu));
     document.querySelector("[data-student-award-upload]")?.addEventListener("change", uploadStudentAwardScan);
+    document.querySelector("[data-action='download-student-award-scan']")?.addEventListener("click", downloadStudentAwardScan);
     document.querySelector("[data-action='upload-student-award-scan']")?.addEventListener("click", () => document.querySelector("[data-student-award-upload]")?.click());
     document.querySelector("[data-action='open-student-postal-envelope-document']")?.addEventListener("click", openStudentPostalEnvelopeDocument);
     document.querySelectorAll("[data-action='open-student-attestation-document']").forEach((button) => {

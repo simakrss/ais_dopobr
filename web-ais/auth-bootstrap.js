@@ -1,5 +1,5 @@
 (() => {
-  const AUTH_BUILD = "20261122-award-storage-mode";
+  const AUTH_BUILD = "20261123-award-scan-names";
   const MAX_PARTNER_PROGRAM_DESCRIPTION_HTML_LENGTH = 30000;
   const DEFAULT_PARTNER_PROGRAM_DESCRIPTION_HTML = `
     <h2>Партнерская программа учебного центра Цифровизация Плюс</h2>

@@ -25263,7 +25263,9 @@ async function uploadStudentAwardFile(folder, name, bytes, contentType, storage)
   }
   const target = resolveStudentWebDavBrowserResource(folder, name).targetPath;
   await ensureYandexDiskFolder(resolveStudentWebDavBrowserResource(folder).targetPath);
-  await requestYandexWebDav("PUT", target, { body: bytes, contentType, acceptedStatuses: [200, 201, 204] });
+  const uploaded = await requestYandexWebDav("PUT", target, { body: bytes, contentType,
+    headers: { "If-None-Match": "*" }, acceptedStatuses: [200, 201, 204, 412] });
+  if (uploaded.statusCode === 412) throw Object.assign(new Error("Файл с таким именем уже существует."), { code: "EEXIST" });
   return { storage: "yandex" };
 }
 

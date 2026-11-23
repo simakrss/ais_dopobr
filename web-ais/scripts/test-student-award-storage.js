@@ -13,7 +13,7 @@ function extract(source, name) {
   const temp = await fs.mkdtemp(path.join(parent, "case-")), root = path.join(temp, "documents");
   await fs.mkdir(root);
   try {
-    let localAvailable = true, remoteCalls = [], now = Date.now();
+    let localAvailable = true, remoteCalls = [], remoteConflict = false, now = Date.now();
     const tickets = new Map();
     const pool = { async query(sql, values = []) {
       if (sql.startsWith("CREATE TABLE")) return [{}];
@@ -31,7 +31,7 @@ function extract(source, name) {
       resolveLocalDocumentsFolder: folder => path.resolve(root, folder),
       resolveStudentWebDavBrowserResource: (folder, name = "") => ({ targetPath: "/fixture/" + folder + (name ? "/" + name : "") }),
       ensureYandexDiskFolder: async folder => remoteCalls.push(["mkdir", folder]),
-      requestYandexWebDav: async (method, target, options) => { remoteCalls.push([method, target, options.body]); return {}; },
+      requestYandexWebDav: async (method, target, options) => { remoteCalls.push([method, target, options.body, options.headers]); return { statusCode: remoteConflict ? 412 : 201 }; },
       isUnavailableDocumentPathError: error => ["ENOENT", "EACCES"].includes(error.code),
       getWebDavBrowserContentType: name => /pdf$/i.test(name) ? "application/pdf" : "image/jpeg"
     });
@@ -49,11 +49,15 @@ function extract(source, name) {
     assert.equal(remoteCalls.length, 0, "Local mode does not depend on Yandex credentials or upload a second copy");
     assert.equal((await c.uploadStudentAwardFile(folder, "Облако.pdf", bytes, "application/pdf", "yandex")).storage, "yandex");
     assert.equal(remoteCalls.length, 2); assert.equal(remoteCalls[1][0], "PUT"); assert.deepEqual(remoteCalls[1][2], bytes);
+    assert.equal(remoteCalls[1][3]["If-None-Match"], "*");
     await assert.rejects(fs.stat(path.join(root, folder, "Облако.pdf")), { code: "ENOENT" });
     localAvailable = false;
     await assert.rejects(c.uploadStudentAwardFile(folder, "Недоступно.pdf", bytes, "application/pdf", "local"), { statusCode: 503 });
     assert.equal(remoteCalls.length, 2, "Explicit local mode must not silently upload to another destination");
     assert.equal((await c.uploadStudentAwardFile(folder, "Старая версия.pdf", bytes, "application/pdf")).storage, "yandex");
+    remoteConflict = true;
+    await assert.rejects(c.uploadStudentAwardFile(folder, "Существующий.pdf", bytes, "application/pdf", "yandex"), { code: "EEXIST" });
+    remoteConflict = false;
     localAvailable = true;
     assert.equal(await c.readLocalStudentAwardFile({ folder, name: "Не синхронизирован.pdf", storage: "local" }), null);
     for (const name of ["../outside.pdf", "bad\\scan.pdf", "bad:stream.pdf", "file.exe"]) {
