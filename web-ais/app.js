@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.653",
+    version: "1.7.654",
     releasedAt: "2026-11-23"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.654",
+      releasedAt: "2026-11-23",
+      changes: ["Кнопки скачивания документов и макетов в кабинете слушателя сохраняют обычную ширину. Компактный значок скачивания применяется только в карточке слушателя у сотрудника."]
+    },
     {
       version: "1.7.653",
       releasedAt: "2026-11-23",

@@ -78,6 +78,14 @@ const server = http.createServer(async (req, res) => {
     await paymentPage.waitForURL('https://zifra-plus.ru/checkout/order-pay/701/**'); await paymentPage.close();
     await page.locator('[data-payment-refresh]').click(); await page.getByText("Сведения об оплатах обновлены.", { exact: true }).waitFor(); assert.equal(await page.locator('[data-pay]').count(), 0);
     await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
+    const checkDownloadButtonSizes = async () => {
+      const buttons = await page.locator('[data-award-download]').all(); assert.equal(buttons.length, 2);
+      for (const button of buttons) {
+        const box = await button.boundingBox();
+        assert.ok(box.width >= 100 && box.height <= 64, 'Cabinet download buttons must remain readable instead of inheriting the compact staff icon width');
+      }
+    };
+    await checkDownloadButtonSizes();
     const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Скачать макет', exact: true }).click();
     const file = await downloaded; assert.equal(file.suggestedFilename(), 'Макет диплома.pdf');
     const bytes = []; for await (const chunk of await file.createReadStream()) bytes.push(chunk); assert.deepEqual(Buffer.concat(bytes), layoutPdf);
@@ -114,6 +122,7 @@ const server = http.createServer(async (req, res) => {
     const dir = path.join(root, '.runtime/student-portal-test'); fs.mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: path.join(dir, 'mobile-correspondence.png'), fullPage: true, animations: 'disabled' });
     await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="awards"]').click(); await page.locator('.student-award-program').nth(1).waitFor();
+    await checkDownloadButtonSizes();
     await page.screenshot({ path: path.join(dir, 'mobile-awards.png'), fullPage: true, animations: 'disabled' });
     await page.locator('[data-sidebar-open]').click(); await page.locator('[data-tab="main"]').click();
     await page.locator('[name="citizenship"]').click();

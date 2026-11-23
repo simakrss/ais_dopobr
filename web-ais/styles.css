@@ -32324,7 +32324,7 @@ dialog.program-site-bulk-dialog { width: min(1380px, calc(100vw - 28px)); max-wi
 .education-document-actions [data-student-award-upload] { display: none; }
 .student-award-upload-actions { grid-column: 1 / -1; display: flex; gap: 4px; min-width: 0; }
 .student-award-upload-button { flex: 1; justify-content: center; white-space: normal; }
-.student-award-download-button { flex: 0 0 30px; width: 30px; justify-content: center; }
+.student-award-upload-actions .student-award-download-button { flex: 0 0 30px; width: 30px; justify-content: center; }
 .student-award-layout-download { grid-column: 1 / -1; justify-self: start; font-size: 11px; }
 .student-award-layout-download svg { width: 14px; height: 14px; }
 .student-award-upload-status { grid-column: 1 / -1; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
