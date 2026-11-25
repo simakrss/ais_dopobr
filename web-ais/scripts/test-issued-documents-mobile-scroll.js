@@ -39,6 +39,9 @@ const render = new Function("options", `
     program: "Тестовая образовательная программа с длинным названием", programType: "ПК"
   }));
   const getIssuedDocumentRows = () => rows, getVisibleIssuedDocumentRows = rows => rows;
+  // This layout fixture contains only documents eligible for export.
+  const isIssuedDocumentFrdoExportEligible = () => true;
+  const getMoscowCalendarDateKey = () => "2026-09-25";
   const unique = list => [...new Set(list)];
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const escapeHtml = value => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

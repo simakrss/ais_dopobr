@@ -37967,11 +37967,13 @@ function validateSharedInterfaceLayout(changes) {
   const invalid = () => { const error = new Error("Некорректные настройки компоновки интерфейса."); error.statusCode = 400; throw error; };
   if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).length > 4000) invalid();
   for (const [key, value] of Object.entries(changes)) {
-    if (!/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/.test(key)
+    if (!/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:students:showGroups|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/.test(key)
       || key.split(":").some(part => ["__proto__", "constructor", "prototype"].includes(part))) invalid();
     if (value === null) continue; // A persisted tombstone resets every copy, including old browser caches.
     if (key === "startView") {
       if (typeof value !== "string" || !/^[\w-]{1,80}$/.test(value)) invalid();
+    } else if (key === "table:students:showGroups") {
+      if (typeof value !== "boolean") invalid();
     } else if (key.includes(":width:") || key.endsWith(":pageSize")) {
       if (!Number.isFinite(value) || value < 1 || value > 10000) invalid();
     } else if (!Array.isArray(value) || value.length > 10000 || value.some(item => typeof item !== "string" || item.length > 300)) invalid();

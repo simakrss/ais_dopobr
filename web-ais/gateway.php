@@ -655,11 +655,13 @@ function gateway_validate_interface_layout(mixed $changes): array
     $invalid = static function (): never { throw new RuntimeException('Некорректные настройки компоновки интерфейса.', 400); };
     if (!is_array($changes) || count($changes) > 4000) $invalid();
     foreach ($changes as $key => $value) {
-        if (!is_string($key) || !preg_match('/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/D', $key)
+        if (!is_string($key) || !preg_match('/^(nav|dashboard|startView|tabs:[\w-]{1,80}|table:students:showGroups|table:[\w-]{1,80}:(order|pageSize|collapsedGroups|expandedGroups|width:[\w-]{1,80}))$/D', $key)
             || array_intersect(explode(':', $key), ['__proto__', 'constructor', 'prototype'])) $invalid();
         if ($value === null) continue;
         if ($key === 'startView') {
             if (!is_string($value) || !preg_match('/^[\w-]{1,80}$/D', $value)) $invalid();
+        } elseif ($key === 'table:students:showGroups') {
+            if (!is_bool($value)) $invalid();
         } elseif (str_contains($key, ':width:') || str_ends_with($key, ':pageSize')) {
             if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value) || $value < 1 || $value > 10000) $invalid();
         } elseif (!is_array($value) || !array_is_list($value) || count($value) > 10000) $invalid();

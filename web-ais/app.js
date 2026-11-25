@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.654",
-    releasedAt: "2026-11-23"
+    version: "1.7.655",
+    releasedAt: "2026-11-25"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.655",
+      releasedAt: "2026-11-25",
+      changes: ["На телефонах исправлено переполнение статусов, панелей выбора и навигации таблиц; ближайшие окончания обучения отображаются карточками со всеми полями. В опциях списка слушателей добавлен общий для сайта и локальной АИС переключатель «Показывать группы». В учёте выплат показана применяемая ставка подоходного налога."]
+    },
     {
       version: "1.7.654",
       releasedAt: "2026-11-23",
@@ -14322,7 +14327,7 @@ MAX - https://bizvmax.ru/zifra_plus
       startView: String(localStorage.getItem(START_VIEW_KEY) || "dashboard") };
     Object.entries(state.tabOrders || {}).forEach(([group, order]) => { preferences[`tabs:${group}`] = order; });
     Object.entries(state.tableSettings || {}).forEach(([id, settings]) => {
-      for (const name of ["order", "pageSize", "collapsedGroups", "expandedGroups"]) {
+      for (const name of ["order", "pageSize", "collapsedGroups", "expandedGroups", "showGroups"]) {
         if (settings[name] !== undefined) preferences[`table:${id}:${name}`] = settings[name];
       }
       Object.entries(settings.widths || {}).forEach(([column, width]) => { preferences[`table:${id}:width:${column}`] = width; });
@@ -14371,6 +14376,7 @@ MAX - https://bizvmax.ru/zifra_plus
       if (property === "width" && column && Number.isFinite(value)) (table.widths ||= {})[column] = value;
       else if (["order", "collapsedGroups", "expandedGroups"].includes(property) && Array.isArray(value)) table[property] = [...new Set(value)];
       else if (property === "pageSize" && TABLE_PAGE_SIZE_OPTIONS.includes(value)) table.pageSize = value;
+      else if (property === "showGroups" && id === "students" && typeof value === "boolean") table.showGroups = value;
     }
     const before = captureInterfaceLayout();
     state.navItemOrder = Array.isArray(values.nav) ? [...new Set(values.nav)] : [];
@@ -20819,6 +20825,7 @@ MAX - https://bizvmax.ru/zifra_plus
             balance: "Остаток",
             daysRemaining: "Срок"
           },
+          mobileCards: true,
           warningKey: "daysRemaining",
           warningBelow: 10
         })}
@@ -25966,6 +25973,9 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function bindStudentListGroups() {
+    document.querySelectorAll("[data-action='set-student-groups-visible']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => setStudentGroupsVisible(checkbox.checked));
+    });
     document.querySelectorAll("[data-action='toggle-student-group']").forEach((button) => {
       button.addEventListener("click", () => toggleStudentListGroup(button.dataset.studentGroup));
     });
@@ -26321,6 +26331,7 @@ MAX - https://bizvmax.ru/zifra_plus
             <strong>Опции таблицы</strong>
             <button class="icon-button" data-action="close-table-options" type="button" title="Закрыть">×</button>
           </div>
+          ${configId === "students" ? `<label class="ghost-button table-option-command table-option-toggle"><input type="checkbox" data-action="set-student-groups-visible" ${state.tableSettings.students?.showGroups !== false ? "checked" : ""}><span>Показывать группы</span></label>` : ""}
           ${canCopyStudentContacts ? `<button class="ghost-button table-option-command" data-action="copy-selected-student-contacts" data-config="${configId}" type="button" title="Выделите строки галочками. Копируются ФИО, телефон, email, организация и должность в формате карточки слушателя." ${selectedContactCount ? "" : "disabled"}>Копировать контакты</button>` : ""}
           ${configs[configId] ? `<button class="ghost-button table-option-command" data-action="export-csv" data-config="${configId}" type="button">Экспорт CSV</button>` : ""}
           ${isStudentApplicationsImport ? "" : `<button class="ghost-button table-option-command" data-action="refresh-table-data" data-config="${configId}" type="button">Обновить данные</button>`}
@@ -35135,7 +35146,7 @@ MAX - https://bizvmax.ru/zifra_plus
           <span><small>Агентские</small><strong data-employee-payment-summary="agencyAmount">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.agencyAmount))}</strong></span>
           <span class="${accounting.balance ? "has-balance" : ""}" data-employee-payment-balance-card><small>Остаток</small><strong data-employee-payment-summary="balance">${escapeHtml(formatEmployeePaymentSummaryAmount(accounting.balance))}</strong></span>
         </div>
-        <p class="employee-payment-formula-hint"><span data-employee-payment-summary-scope>По всему списку.</span> Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
+        <p class="employee-payment-formula-hint"><span data-employee-payment-summary-scope>По всему списку.</span> <span data-employee-payment-tax-rate>Подоходный налог: ${normalizePaymentConstantNumber("incomeTaxRate", state.data?.dictionaries?.paymentSettings?.find(item => item.key === "incomeTaxRate")?.value)}%.</span> Выплата = Услуги + Агентские. Агентские — непогашенный остаток по поступлениям слушателей; проведённые выплаты показаны отдельными строками и повторно в итог не входят.</p>
         <div class="employee-payment-group-actions" data-employee-payment-group-actions>
           <span class="employee-payment-group-count">Выбрано: <strong data-employee-payment-selected-count>0</strong></span>
           <label>
@@ -35344,6 +35355,8 @@ MAX - https://bizvmax.ru/zifra_plus
     section.querySelector("[data-employee-payment-balance-card]")
       ?.classList.toggle("has-balance", Boolean(summary.balance));
     const scope = section.querySelector("[data-employee-payment-summary-scope]");
+    const taxRateHint = section.querySelector("[data-employee-payment-tax-rate]");
+    if (taxRateHint) taxRateHint.textContent = `Подоходный налог: ${normalizePaymentConstantNumber("incomeTaxRate", paymentSettings?.find(item => item.key === "incomeTaxRate")?.value)}%.`;
     if (scope) {
       const hiddenSelected = selectedRows.filter((row) => row.hidden).length;
       scope.textContent = selectedRows.length
@@ -44425,8 +44438,16 @@ MAX - https://bizvmax.ru/zifra_plus
   }
 
   function getStudentTableGroups(rows) {
+    if (state.tableSettings.students?.showGroups === false) return null;
     const groups = getStudentListGroups(rows);
     return groups.some((group) => group.key === "pro" || group.key === "deferred-start") ? groups : null;
+  }
+
+  function setStudentGroupsVisible(visible) {
+    state.tableSettings.students = { ...state.tableSettings.students, showGroups: Boolean(visible) };
+    state.tablePages.students = 1;
+    persistTableSettings();
+    render();
   }
 
   function getStudentProgramPromoField(program) {
@@ -73381,7 +73402,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const headers = options.headers && typeof options.headers === "object" ? options.headers : null;
     const warningThreshold = Number(options.warningBelow);
     return `
-      <div class="table-wrap compact">
+      <div class="table-wrap compact${options.mobileCards ? " mobile-card-table" : ""}">
         <table class="data-table mini">
           ${headers ? `
             <thead><tr>${keys.map((key) => `<th>${escapeHtml(headers[key] || key)}</th>`).join("")}</tr></thead>
@@ -73399,7 +73420,7 @@ MAX - https://bizvmax.ru/zifra_plus
                 .join(" ");
               return `
               <tr class="${classes}" ${isLink ? `data-action="edit" data-config="${escapeAttr(config)}" data-id="${escapeAttr(row.id)}" role="button" tabindex="0" title="Открыть карточку слушателя"` : ""}>
-                ${keys.map((key) => `<td>${escapeHtml(valueForDisplay(key, row[key]))}</td>`).join("")}
+                ${keys.map((key) => `<td${options.mobileCards ? ` data-label="${escapeAttr(headers?.[key] || key)}"` : ""}>${escapeHtml(valueForDisplay(key, row[key]))}</td>`).join("")}
               </tr>
             `;
             }).join("")}

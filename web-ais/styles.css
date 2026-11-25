@@ -3848,6 +3848,21 @@ button.mobile-registry-filters-toggle {
   line-height: 1.25;
 }
 
+.table-option-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.table-option-toggle input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--teal);
+}
+
 .search-box {
   min-width: 260px;
   height: 34px;
@@ -23856,7 +23871,105 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
   }
 
   .table-pagination-navigation {
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 32px 32px minmax(0, 1fr) 32px 32px;
+    gap: 4px;
+  }
+
+  .table-pagination-current {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .table-pagination-current input {
+    width: 42px;
+  }
+
+  .table-pagination-summary {
+    white-space: normal;
+  }
+
+  .content,
+  .split-layout,
+  .panel-head > div,
+  .topbar > div {
+    min-width: 0;
+  }
+
+  .topbar h1,
+  .panel h2,
+  .source-pill {
+    overflow-wrap: anywhere;
+  }
+
+  .source-pill {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .dashboard-status-list .bar-row {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) max-content;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .dashboard-status-list .bar-row > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* Preserve every deadline field without a sideways table on phones. */
+  .mobile-card-table { scrollbar-gutter: auto; }
+
+  .mobile-card-table .data-table,
+  .mobile-card-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mobile-card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .mobile-card-table .data-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mobile-card-table .data-table tr:last-child { border-bottom: 0; }
+  .mobile-card-table .data-table tr.is-deadline-warning { background: #fff7d6; }
+
+  .mobile-card-table .data-table.mini td,
+  .mobile-card-table .data-table.mini tr.is-deadline-warning td {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 4px;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .mobile-card-table td:first-child,
+  .mobile-card-table td:nth-child(2) { grid-column: 1 / -1; }
+  .mobile-card-table td:first-child { font-weight: 600; }
+
+  .mobile-card-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
   }
 
   .table-page-size {
@@ -24028,14 +24141,11 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
 
   .bulk-toolbar {
     justify-content: flex-start;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 4px;
     min-height: 34px;
     padding: 3px 4px;
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
+    overflow: visible;
   }
 
   .bulk-toolbar > .bulk-toolbar-selection-count {
@@ -24072,7 +24182,8 @@ body.orderable-tab-dragging [data-orderable-tabs] [data-orderable-tab] {
     min-height: 28px;
     padding: 3px 7px;
     font-size: 11px;
-    white-space: nowrap;
+    max-width: 100%;
+    white-space: normal;
   }
 
   .bulk-toolbar [data-action="open-student-bulk-operations"] {

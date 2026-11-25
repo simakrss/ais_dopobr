@@ -4,6 +4,11 @@ define('AIS_GATEWAY_LIBRARY_ONLY', true);
 require_once dirname(__DIR__) . '/gateway.php';
 function check_layout(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
 gateway_validate_interface_layout(['nav'=>[], 'tabs:program-card'=>['site','main'], 'table:students:width:name'=>250]);
+gateway_validate_interface_layout(['table:students:showGroups'=>false]);
+foreach (['false', 0, []] as $value) {
+    try { gateway_validate_interface_layout(['table:students:showGroups'=>$value]); throw new LogicException('Invalid boolean accepted'); }
+    catch (RuntimeException $error) { check_layout($error->getCode() === 400, 'Invalid boolean not rejected'); }
+}
 foreach ([['password'=>'no'], ['nav'=>'students'], ['tabs:__proto__'=>[]], ['table:students:width:name'=>-1], ['table:students:width:name'=>'150']] as $invalid) {
     try { gateway_validate_interface_layout($invalid); throw new LogicException('Invalid schema accepted'); }
     catch (RuntimeException $error) { check_layout($error->getCode() === 400, 'Invalid schema not rejected'); }

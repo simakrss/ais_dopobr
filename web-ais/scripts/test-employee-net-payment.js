@@ -16,6 +16,8 @@ vm.runInContext(defaults + "\n" + [
   "getEmployeeNetPayment", "getTableKeys", "getTableCellValue", "getPaymentConstantInputAttributes"
 ].map(extract).join("\n"), c);
 assert.equal(c.getEmployeeNetPayment(10000), 8700);
+assert.equal(c.getEmployeeNetPayment(9500, [{key:"incomeTaxRate",value:"13"}]),8265);
+assert.equal(c.getEmployeeNetPayment(9500, [{key:"incomeTaxRate",value:"10"}]),8550);
 assert.equal(c.getEmployeeNetPayment("100,50"), 87.44);
 assert.equal(c.getEmployeeNetPayment(0), 0);
 assert.equal(c.getEmployeeNetPayment(-100), -87);

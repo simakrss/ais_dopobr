@@ -74,6 +74,11 @@ async function clientTests() {
   const restarted=client(shared,true,a.stored);
   shared.offline=false;await restarted.synchronizeInterfaceLayout();await b.synchronizeInterfaceLayout();
   assert.deepEqual(clone(b.state.navItemOrder),["programs","students"]);assert.deepEqual(clone(restarted.interfaceLayoutSync.pending),{});
+  a.state.tableSettings.students = {...a.state.tableSettings.students, showGroups:false};
+  a.persistTableSettings();await a.synchronizeInterfaceLayout();await b.synchronizeInterfaceLayout();
+  assert.equal(b.state.tableSettings.students.showGroups,false,"Flat list syncs to the website");
+  b.state.tableSettings.students.showGroups=true;b.persistTableSettings();await b.synchronizeInterfaceLayout();await a.synchronizeInterfaceLayout();
+  assert.equal(a.state.tableSettings.students.showGroups,true,"Grouped list syncs back to local");
   // A newer local action while a save is in flight must remain queued.
   let release;shared.hold=new Promise(resolve=>release=resolve);
   a.state.navItemOrder=["students"];a.persistNavItemOrder();
@@ -97,6 +102,9 @@ async function clientTests() {
   console.log("Browser clients: initial local migration, two-way sync, concurrent keys, hidden tabs, resets, offline/restart, live forms, drag/resize and demo isolation: OK");
 }
 function validationTests() {
+  backend.validateSharedInterfaceLayout({"table:students:showGroups":false});
+  for (const value of ["false", 0, []]) assert.throws(()=>backend.validateSharedInterfaceLayout({"table:students:showGroups":value}),e=>e.statusCode===400);
+  assert.throws(()=>backend.validateSharedInterfaceLayout({"table:programs:showGroups":true}),e=>e.statusCode===400);
   backend.validateSharedInterfaceLayout({nav:[],"tabs:student-card":["main","documents"],"table:students:width:name":150,startView:"students","table:students:expandedGroups":["pro:Программа"],"table:students:pageSize":50});
   for(const value of [[],null,{password:"secret"},{"tabs:__proto__":[]},{nav:"students"},{nav:[{}]},{startView:"https://example.test"},{"table:students:width:name":-1},{"table:students:width:name":"150"}]) {
     assert.throws(()=>backend.validateSharedInterfaceLayout(value),e=>e.statusCode===400);

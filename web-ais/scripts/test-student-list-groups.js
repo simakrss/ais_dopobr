@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(root, "app.js"), "utf8").replace(/\r\n/
 const names = ["normalizeProgramName", "normalizeEducationProgramType", "getStudentContextProgram",
   "isStudentAwaitingEnrollment", "isStudentDeferredStart",
   "getRegistryListGroupItems", "getRegistryCollapsedGroups", "saveRegistryGroupExpansion", "renderRegistryGroupControls", "setRegistryListGroupsExpanded", "bindRegistryGroupControls",
-  "getStudentListGroups", "getStudentTableGroups", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
+  "getStudentListGroups", "getStudentTableGroups", "setStudentGroupsVisible", "renderTableOptions", "getStudentCollapsedGroups", "getExpandedStudentGroupRows", "getStudentGroupPageEntries",
   "renderStudentGroupRow", "toggleStudentListGroup", "selectStudentListGroup", "bindStudentListGroups",
   "getTablePageSize", "getTablePagination", "getCurrentTablePageRows", "setTablePageForRow", "renderTablePagination",
   "isSingleLineTableValue", "getSingleLineTableColumnMinWidth", "renderTable",
@@ -38,6 +38,7 @@ var rows = ${JSON.stringify(rows)}, programs = ${JSON.stringify(programs)};
 var state = {view:"students", data:{collections:{programs,students:rows}}, tableSettings:{}, tablePages:{}, selected:{}, sort:{}};
 var configs = {students:{collection:"students", fields:[{key:"name",label:"ФИО"},{key:"program",label:"Программа"},{key:"applicationDate",label:"Дата",type:"date"},{key:"phone",label:"Телефон",type:"tel"}]}};
 var TABLE_PAGE_SIZE_OPTIONS=[50,100,250],DEFAULT_TABLE_PAGE_SIZE=50;
+var STUDENT_APPLICATIONS_IMPORT_TABLE_CONFIG_ID="studentApplicationsImport";
 var filter="", rendered=0, persisted=0;
 function render(){rendered++;}
 function persistTableSettings(){persisted++;}
@@ -209,6 +210,41 @@ context.bindRegistryGroupControls();
 bulkListeners.click();
 assert.equal(context.getExpandedStudentGroupRows(context.getStudentTableGroups(context.rows), context.getStudentCollapsedGroups()).length, 65);
 
+// Flat view preserves filters, selection, pagination and remembered expansion.
+context.filter = "";
+const expansionBefore = JSON.stringify(context.state.tableSettings.students);
+const selectedBeforeFlat = JSON.stringify(context.state.selected);
+context.state.tablePages.students = 7;
+context.setStudentGroupsVisible(false);
+assert.equal(context.state.tablePages.students, 1);
+assert.equal(context.getStudentTableGroups(context.rows), null);
+assert.equal(context.renderRegistryGroupControls("students", context.rows), "");
+html = context.renderTable(context.configs.students, context.rows, "students");
+assert.doesNotMatch(html, /student-list-group|toggle-student-group/);
+assert.equal((html.match(/data-webinar-student-id=/g) || []).length, 50);
+assert.match(html, /Показано 1–50 из 65/);
+context.setTablePageForRow("students", "s64");
+assert.equal(context.state.tablePages.students, 2);
+assert.equal(JSON.stringify(context.state.selected), selectedBeforeFlat);
+context.state.tableOptions = "students";
+assert.match(context.renderTableOptions("students"), /Показывать группы/);
+assert.doesNotMatch(context.renderTableOptions("students"), /set-student-groups-visible[^>]*checked/);
+context.filter = "61";
+html = context.renderTable(context.configs.students, context.getVisibleRows(), "students");
+assert.match(html, /data-webinar-student-id="s60"/);
+assert.doesNotMatch(html, /data-webinar-student-id="s61"/);
+context.filter = "";
+const visibilityListeners = {};
+context.document = {querySelectorAll: selector => selector.includes("set-student-groups-visible") ? [{checked:true,addEventListener:(name,fn)=>visibilityListeners[name]=fn}] : []};
+context.bindStudentListGroups();visibilityListeners.change();
+assert.equal(context.state.tableSettings.students.showGroups, true);
+assert.match(context.renderTableOptions("students"), /set-student-groups-visible[^>]*checked/);
+const {showGroups, ...restoredExpansion} = context.state.tableSettings.students;
+assert.equal(JSON.stringify(restoredExpansion), expansionBefore);
+assert.equal(JSON.stringify(context.state.selected), selectedBeforeFlat);
+context.state.tableSettings = JSON.parse(JSON.stringify(context.state.tableSettings));
+assert.ok(context.getStudentTableGroups(context.rows));
+
 // Deferred starts form a separate group even when no PRO programs are visible.
 const oldRows = context.rows;
 context.rows = [
@@ -237,7 +273,7 @@ context.filter = "";
 context.rows = oldRows;
 console.log("PASS: student grouping, sorting, pagination, filtered/nested selection, persistence, return-to-row, escaping and DOM bindings");
 
-if (process.argv.includes("--serve")) {
+if (process.argv.includes("--serve") || process.argv.includes("--browser")) {
   const http = require("node:http");
   const browserScript = setup + functions + `
     state.tableSettings=JSON.parse(localStorage.getItem("group-fixture-settings")||"{}");
@@ -246,6 +282,7 @@ if (process.argv.includes("--serve")) {
       document.querySelector("#selected").textContent="Выбрано: "+getSelected("students").length;
       document.querySelector("#group-controls").innerHTML=renderRegistryGroupControls("students",getVisibleRows());
       document.querySelector("#table").innerHTML=renderTable(configs.students,getVisibleRows(),"students");
+      document.querySelector("#options").innerHTML=renderTableOptions("students");
       bindStudentListGroups();
       bindRegistryGroupControls();
       document.querySelectorAll('[data-action="toggle-row-selection"]').forEach(el=>el.onchange=()=>toggleRowSelection("students",el.dataset.id,el.checked));
@@ -254,13 +291,39 @@ if (process.argv.includes("--serve")) {
       document.querySelector('[data-action="table-page-size"]')?.addEventListener('change',event=>{state.tableSettings.students={...state.tableSettings.students,pageSize:Number(event.target.value)};render();});
     };
     document.querySelector('#filter').oninput=event=>{filter=event.target.value;state.tablePages.students=1;render();};
+    document.querySelector('#options-button').onclick=()=>{state.tableOptions=state.tableOptions?null:"students";render();};
     render();
   `;
   const server = http.createServer((req,res)=>{
     if (req.url === "/styles.css") {res.setHeader("Content-Type","text/css");return res.end(fs.readFileSync(path.join(root,"styles.css")));}
     if (req.url === "/fixture.js") {res.setHeader("Content-Type","text/javascript");return res.end(browserScript);}
     res.setHeader("Content-Type","text/html; charset=utf-8");
-    res.end('<!doctype html><html lang="ru"><title>Группировка слушателей — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Слушатели — тестовые данные</h2><label>Поиск <input id="filter"></label><div class="bulk-toolbar"><span id="selected"></span><span id="group-controls"></span></div><section id="table" class="collection-register"></section><script src="fixture.js"></script></body></html>');
+    res.end('<!doctype html><html lang="ru"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Группировка слушателей — тест</title><link rel="stylesheet" href="styles.css"><body style="padding:16px"><h2>Слушатели — тестовые данные</h2><label>Поиск <input id="filter"></label><div class="bulk-toolbar"><span id="selected"></span><span id="group-controls"></span><button id="options-button" class="ghost-button icon-only" aria-label="Опции таблицы">⋯</button></div><div id="options"></div><section id="table" class="collection-register"></section><script src="fixture.js"></script></body></html>');
   });
-  server.listen(0,"127.0.0.1",()=>console.log(`Groups UI fixture: http://127.0.0.1:${server.address().port}/`));
+  server.listen(0,"127.0.0.1",async()=>{
+    const url=`http://127.0.0.1:${server.address().port}/`;
+    if (!process.argv.includes("--browser")) return console.log(`Groups UI fixture: ${url}`);
+    let browser;
+    try {
+      browser=await require(process.env.PLAYWRIGHT_MODULE||"playwright").chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL||"msedge"});
+      const page=await browser.newPage({viewport:{width:360,height:800}});
+      await page.goto(url);
+      await page.getByRole("button",{name:"Опции таблицы"}).click();
+      const toggle=page.getByRole("checkbox",{name:"Показывать группы"});
+      assert.equal(await toggle.isChecked(),true);
+      await toggle.uncheck();
+      assert.equal(await page.locator(".student-list-group").count(),0);
+      assert.equal(await page.locator("[data-webinar-student-id]").count(),50);
+      await page.reload();
+      assert.equal(await page.locator(".student-list-group").count(),0);
+      await page.getByRole("button",{name:"Опции таблицы"}).click();
+      assert.equal(await toggle.isChecked(),false);
+      await toggle.check();
+      assert.ok(await page.locator(".student-list-group").count()>0);
+      const bounds=await page.locator(".table-options-panel").boundingBox();
+      assert.ok(bounds.x>=0&&bounds.x+bounds.width<=360);
+      console.log("Browser: group visibility checkbox, flat pagination, reload and restoring groups: OK");
+    } catch(error) { console.error(error);process.exitCode=1; }
+    finally { await browser?.close();server.close(); }
+  });
 }
