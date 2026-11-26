@@ -5,6 +5,7 @@ param(
   [switch]$All,
   [switch]$ListDeployable,
   [switch]$ValidateProfile,
+  [switch]$ValidateProfileConnection,
   [switch]$TunnelRuntime,
   # Locate the existing local FTP shortcut without copying or exposing its secrets.
   [string]$ProfileDirectory = "",
@@ -26,6 +27,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($ValidateProfileConnection) { $ValidateProfile = $true }
 $utf8 = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
@@ -307,6 +309,18 @@ function Get-FtpProfile {
 $ftpProfile = Get-FtpProfile
 $remoteRoot = $ftpProfile.RemoteRoot
 if ($ValidateProfile) {
+  if ($ValidateProfileConnection) {
+    try {
+      $request = [Net.FtpWebRequest]::Create("ftp://$($ftpProfile.Server)$remoteRoot/index.html")
+      $request.Method = [Net.WebRequestMethods+Ftp]::GetFileSize
+      $request.Credentials = $ftpProfile.Credential
+      $request.UsePassive = $true; $request.UseBinary = $true; $request.KeepAlive = $false
+      $request.Timeout = 20000; $request.ReadWriteTimeout = 20000
+      $response = $request.GetResponse()
+      try { if ($response.ContentLength -le 0) { throw 'Empty remote entry.' } } finally { $response.Close() }
+    } catch { throw 'FTP connection check failed. Credentials were not displayed and no remote files were changed.' }
+    Write-Host 'FTP connection verified; no remote files changed.'
+  }
   Write-Host "FTP profile is valid; target: $remoteRoot (credentials were not displayed)."
   exit 0
 }

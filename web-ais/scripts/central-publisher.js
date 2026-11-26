@@ -21,6 +21,7 @@ function validateConfig(config) {
   if (config.repository !== REPOSITORY || !/^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,160}$/.test(config.branch || "") || config.branch.includes("..")) throw Error("Unapproved repository or branch.");
   for (const key of ["checkout", "git", "node", "powershell", "profileDirectory", "signingKeyPath", "stateDirectory", "localRoot"]) {
     if (!path.isAbsolute(config[key] || "")) throw Error("Missing absolute publisher path: " + key);
+    if (config.startupMode && config[key].startsWith("\\\\")) throw Error("Startup publisher requires local paths: " + key);
   }
   if (path.basename(config.checkout) !== "central-checkout" || path.resolve(config.checkout) === path.resolve(config.localRoot)) throw Error("A dedicated central-checkout is required.");
   return config;
@@ -35,7 +36,7 @@ async function fetchBytes(url) {
   if (!response.ok) throw Error("HTTP " + response.status + " at " + new URL(url).pathname);
   return Buffer.from(await response.arrayBuffer());
 }
-async function run(config, { dryRun = false } = {}) {
+async function run(config, { dryRun = false, verifyDependencies = false } = {}) {
   validateConfig(config);
   fs.mkdirSync(config.stateDirectory, { recursive: true });
   const statusPath = path.join(config.stateDirectory, "status.json");
@@ -69,7 +70,9 @@ async function run(config, { dryRun = false } = {}) {
     }
     return String(result.stdout || "").trim();
   };
-  const git = (...args) => command(config.git, ["-C", config.checkout, ...args]);
+  // The approved repository is public. Read-only fetch must not depend on a
+  // logged-in user's Credential Manager/DPAPI or start any sign-in UI.
+  const git = (...args) => command(config.git, ["-c", "credential.helper=", "-c", "core.askPass=", "-c", "credential.interactive=false", "-C", config.checkout, ...args]);
   try {
     writeStatus({ phase: "checking", branch: config.branch });
     if (git("remote", "get-url", "origin") !== REPOSITORY) throw Error("Publisher origin changed.");
@@ -81,6 +84,21 @@ async function run(config, { dryRun = false } = {}) {
     // This validator is part of the installed publisher, with the existing pinned public key.
     const update = require("../local-update.js");
     const published = update.validateEnvelope(JSON.parse(await fetchBytes(BASE + "updates/latest.json?publisher=" + Date.now())));
+    if (verifyDependencies) {
+      const key = crypto.createPrivateKey(fs.readFileSync(config.signingKeyPath));
+      if (crypto.createPublicKey(key).export({format:"der",type:"spki"}).toString("base64") !== update.PUBLIC_KEY) throw Error("Package signing key does not match the publisher.");
+      const probe = Buffer.from("AIS background publisher dependency probe");
+      if (!crypto.verify(null, probe, crypto.createPublicKey(key), crypto.sign(null, probe, key))) throw Error("Package signing probe failed.");
+      const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
+      command(config.powershell, [...args, "-File", path.join(config.checkout,"web-ais/scripts/build-standalone-launcher.ps1"), "-NoInteractiveSigning"]);
+      command(config.powershell, [...args, "-File", path.join(config.checkout,"web-ais/scripts/deploy-lms.ps1"), "-ValidateProfileConnection", "-ProfileDirectory",config.profileDirectory]);
+      const context = JSON.parse(command(config.powershell, [...args,"-Command",
+        "[pscustomobject]@{sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;interactive=[Environment]::UserInteractive;user=[Security.Principal.WindowsIdentity]::GetCurrent().Name}|ConvertTo-Json -Compress"]));
+      const proof = {updatedAt:new Date().toISOString(),...context,github:true,manifestSignature:true,packageSigning:true,installerSignature:true,ftpConnection:true,localRoot:config.localRoot};
+      fs.writeFileSync(path.join(config.stateDirectory,"background-verification.json"),JSON.stringify(proof,null,2));
+      writeStatus({phase:"verified-dependencies",publishedVersion:published.version,commit,...proof});
+      return {phase:"verified-dependencies",sessionId:context.sessionId,interactive:context.interactive};
+    }
     const newer = compareVersions(candidateVersion, published.version) > 0;
     if (!newer) {
       let localVersion = "", localPhase = "unavailable", verified = false;
@@ -147,6 +165,6 @@ module.exports = { versionFromSource, compareVersions, validateConfig, deploymen
 if (require.main === module) {
   const index = process.argv.indexOf("--config");
   if (index < 0 || !process.argv[index + 1]) throw Error("Specify --config with the local publisher configuration.");
-  run(JSON.parse(fs.readFileSync(process.argv[index + 1], "utf8").replace(/^\uFEFF/, "")), { dryRun: process.argv.includes("--check-only") })
+  run(JSON.parse(fs.readFileSync(process.argv[index + 1], "utf8").replace(/^\uFEFF/, "")), { dryRun: process.argv.includes("--check-only"), verifyDependencies:process.argv.includes("--verify-dependencies") })
     .then(result => console.log(JSON.stringify(result)), error => { console.error(error.message); process.exitCode = 1; });
 }

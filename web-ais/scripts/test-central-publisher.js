@@ -14,6 +14,7 @@ const config = {repository:"https://github.com/simakrss/ais_dopobr.git",branch:"
 for (const key of ["git","node","powershell","profileDirectory","signingKeyPath","stateDirectory","localRoot"]) config[key]=path.resolve("fixture",key);
 assert.equal(publisher.validateConfig(config),config);
 for(const changes of [{repository:"https://example.test/fork.git"},{branch:"../other"},{branch:"x; command"},{checkout:config.localRoot},{signingKeyPath:"relative.pem"}]) assert.throws(()=>publisher.validateConfig({...config,...changes}));
+assert.throws(()=>publisher.validateConfig({...config,startupMode:true,localRoot:"\\\\server\\share\\app"}));
 
 // Real Windows signature verification: use the already published, non-secret installer.
 const root=path.resolve(__dirname,".."), signed=path.join(root,"updates/launcher/install-ais.ps1");
@@ -23,6 +24,17 @@ const quote=publisher.psQuote;
 try {
   const script=`
     $ErrorActionPreference='Stop'
+    . ${quote(path.join(__dirname,"publisher-startup.ps1"))}
+    $definition=New-AisPublisherTaskDefinition -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -PowerShell "$env:WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Launcher ${quote(path.join(temp,"run.ps1"))} -WorkingDirectory ${quote(temp)} -AtStartup
+    if ([string]$definition.Principal.LogonType -ne 'S4U' -or [string]$definition.Principal.RunLevel -ne 'Limited') { throw 'Startup task must use a limited non-interactive user logon' }
+    if (@($definition.Triggers|Where-Object {$_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger'}).Count -ne 1) { throw 'Missing boot trigger' }
+    if (@($definition.Triggers|Where-Object {$_.Repetition.Interval -eq 'PT3M'}).Count -ne 1) { throw 'Missing three-minute repetition' }
+    if (@($definition.Triggers|Where-Object {$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger'}).Count) { throw 'Startup task depends on user sign-in' }
+    $fixture=Join-Path ${quote(temp)} 'fixture.txt'; [IO.File]::WriteAllText($fixture,'fixture')
+    function Get-CimInstance { param($ClassName,$Filter) if($Filter -eq "DeviceID='W:'") { [pscustomobject]@{DriveType=4;ProviderName='\\\\localhost\\fixture'} } else { [pscustomobject]@{DriveType=3} } }
+    function Get-SmbShare { param($Name) if($Name -ne 'fixture'){throw 'Unexpected share'}; [pscustomobject]@{Path=${quote(temp)}} }
+    if((Resolve-AisPublisherStartupPath 'W:\\fixture.txt') -ne $fixture){throw 'Mapped local share was not resolved to a physical path'}
+    $rejected=$false;try{Resolve-AisPublisherStartupPath '\\\\another-server\\share\\file'|Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Remote share was accepted for startup'}
     . ${quote(path.join(__dirname,"launcher-signature.ps1"))}
     $signed=${quote(signed)}; $thumb='65F97E8E8A4FD85B23624BDAA1F97541AC87ECEB'
     $text=[IO.File]::ReadAllText($signed); $body=Get-AisLauncherBody $text
@@ -40,7 +52,7 @@ try {
   assert.equal(result.status,0,result.stdout+result.stderr);console.log(result.stdout.trim());
 } finally {
   // Delete only the three explicitly created test files, never a computed directory tree.
-  for(const name of ["unsigned.ps1","tampered.ps1"]) {const file=path.join(temp,name);if(fs.existsSync(file))fs.unlinkSync(file);}
+  for(const name of ["unsigned.ps1","tampered.ps1","fixture.txt"]) {const file=path.join(temp,name);if(fs.existsSync(file))fs.unlinkSync(file);}
   fs.rmdirSync(temp);
 }
 console.log("Central publisher: release ordering, origin/branch/path restrictions and source-bound signature reuse: OK");
