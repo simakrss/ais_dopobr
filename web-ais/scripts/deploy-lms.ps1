@@ -10,6 +10,7 @@ param(
   [string]$ProfileDirectory = "",
   # Existing private key may live in the desktop application's redirected LocalAppData.
   [string]$SigningKeyPath = "",
+  [switch]$Unattended,
   [switch]$WindowsComponents,
   # Compatibility flag: ordinary releases always include the signed first-run installer.
   [switch]$StandaloneLauncher,
@@ -727,7 +728,7 @@ function Resolve-MoodleSsoRoot {
 . (Join-Path $PSScriptRoot 'release-publication.ps1')
 # Prepare both signed deliverables before any remote changes. Integration-only modes stay separate.
 $signedRelease = if (-not $MoodleSso -and -not $VituEmailExportRoot -and -not $ProgramSites -and -not $DocumentRelay -and -not $TunnelRuntime -and -not $ValidateProfile) {
-  New-AisSignedRelease -AppRoot $appRoot -SigningKeyPath $SigningKeyPath -WindowsComponents:$WindowsComponents
+  New-AisSignedRelease -AppRoot $appRoot -SigningKeyPath $SigningKeyPath -WindowsComponents:$WindowsComponents -Unattended:$Unattended
 } else { $null }
 
 $results = if ($MoodleSso) {

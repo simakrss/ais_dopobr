@@ -3,7 +3,8 @@ param(
   [string]$CertificateThumbprint = '65F97E8E8A4FD85B23624BDAA1F97541AC87ECEB',
   [string]$WixRoot = (Join-Path $env:LOCALAPPDATA 'AisDopobrPublisher\wix3141'),
   [string]$SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe',
-  [switch]$AllowUncommittedForTest
+  [switch]$AllowUncommittedForTest,
+  [switch]$NoInteractiveSigning
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -55,6 +56,7 @@ if (Test-Path -LiteralPath $previousManifest) {
   }
   if (-not $AllowUncommittedForTest -and [version]$previous.version -ge [version]$version) { throw 'Changed MSI inputs require a new application version.' }
 }
+if ($NoInteractiveSigning) { throw 'AIS_SIGNING_REQUIRED: Windows components changed; sign them interactively on the publisher computer.' }
 $stage = Join-Path $env:LOCALAPPDATA ('AisDopobrPublisher\build-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($stage)
 # Generated build metadata and package payload are outside the repository/data folders.

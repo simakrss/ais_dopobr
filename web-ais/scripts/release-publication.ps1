@@ -68,7 +68,7 @@ function New-AisBootstrapArchive([string]$AppRoot, $Release) {
   return $relative
 }
 
-function New-AisSignedRelease([string]$AppRoot, [string]$SigningKeyPath, [switch]$WindowsComponents) {
+function New-AisSignedRelease([string]$AppRoot, [string]$SigningKeyPath, [switch]$WindowsComponents, [switch]$Unattended) {
   $key = Resolve-AisReleaseSigningKey $SigningKeyPath
   $scripts = Join-Path $AppRoot 'scripts'
   $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -84,13 +84,13 @@ function New-AisSignedRelease([string]$AppRoot, [string]$SigningKeyPath, [switch
   $bootstrap = New-AisBootstrapArchive $AppRoot $release
 
   # Both signatures are mandatory, before the first site or release file is uploaded.
-  & (Join-Path $scripts 'build-standalone-launcher.ps1') | Out-Host
+  & (Join-Path $scripts 'build-standalone-launcher.ps1') -NoInteractiveSigning:$Unattended | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Не удалось подписать установщик для новых компьютеров.' }
   $nativePublisherReady = (Test-Path -LiteralPath 'Cert:\CurrentUser\My\65F97E8E8A4FD85B23624BDAA1F97541AC87ECEB') -and
     (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'AisDopobrPublisher\wix3141\candle.exe'))
   $windowsRelative = ''
   if ($WindowsComponents -or $nativePublisherReady) {
-    & (Join-Path $scripts 'build-windows-components.ps1') | Out-Host
+    & (Join-Path $scripts 'build-windows-components.ps1') -NoInteractiveSigning:$Unattended | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'Signed MSI build failed.' }
     $windowsRelease = Get-Content -LiteralPath (Join-Path $AppRoot 'updates/windows/latest.json') -Raw | ConvertFrom-Json
     if ([version]$windowsRelease.version -gt [version]$release.version -or $windowsRelease.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Windows release descriptor mismatch.' }

@@ -16,7 +16,7 @@ function powershell(source, failure = "", success = true) {
   const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(`
     $ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
     . ${ps(path.join(scripts, "release-publication.ps1"))}
-    $appRoot=${ps(app)}; $SigningKeyPath=${ps(key)}; $WindowsComponents=$false
+    $appRoot=${ps(app)}; $SigningKeyPath=${ps(key)}; $WindowsComponents=$false; $Unattended=$false
     $MoodleSso=$false; $VituEmailExportRoot=''; $ProgramSites=$false; $DocumentRelay=$false; $TunnelRuntime=$false; $ValidateProfile=$false
     $remoteRoot='/fixture'; $StandaloneLauncher=$false
     function Publish-FileTarget([string]$RelativeFile, [string]$RemotePath, [string]$Target) {
@@ -46,7 +46,10 @@ try {
     fs.writeFileSync(path.join(dir,'latest.json'),JSON.stringify({payload,signature:'fixture-signature'}));
   `);
   fs.writeFileSync(path.join(scripts, "build-standalone-launcher.ps1"), `
+    param([switch]$NoInteractiveSigning)
     Add-Content -LiteralPath $env:AIS_RELEASE_FIXTURE_TRACE -Value 'installer-sign'
+    if ($NoInteractiveSigning) { Add-Content -LiteralPath $env:AIS_RELEASE_FIXTURE_TRACE -Value 'installer-no-pin' }
+    if ($NoInteractiveSigning -and $env:AIS_RELEASE_FIXTURE_FAIL -eq 'changed-installer') { throw 'AIS_SIGNING_REQUIRED' }
     if ($env:AIS_RELEASE_FIXTURE_FAIL -eq 'certificate') { throw 'fixture certificate unavailable' }
     $global:LASTEXITCODE=0
   `);
@@ -58,6 +61,9 @@ try {
   assert.ok(uploaded.includes("upload:updates/launcher/start-ais.bat"));
   assert.equal(uploaded.at(-1), "upload:updates/latest.json", "Activate the release only after both deliverables");
   assert.deepEqual(powershell(flow), events, "Repeat publication must validate and reuse the complete ZIP");
+  const unattended = powershell(`$Unattended=$true\n${flow}`);
+  assert.ok(unattended.indexOf("installer-no-pin") < unattended.indexOf("upload:index.html"));
+  assert.ok(powershell(`$Unattended=$true\n${flow}`, "changed-installer", false).every(event => !event.startsWith("upload:")), "Unattended installer changes stop before site writes");
   for (const failure of ["package", "certificate"]) {
     assert.ok(powershell(flow, failure, false).every(event => !event.startsWith("upload:")), "Signing failure must leave the website and latest release unchanged");
   }
