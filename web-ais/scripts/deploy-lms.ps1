@@ -9,6 +9,8 @@ param(
   [switch]$TunnelRuntime,
   # Locate the existing local FTP shortcut without copying or exposing its secrets.
   [string]$ProfileDirectory = "",
+  # Use only the host confirmed in the Timeweb panel after an account migration.
+  [ValidatePattern('^(?:vh[0-9]+\.timeweb\.ru)?$')][string]$FtpServer = "",
   # Existing private key may live in the desktop application's redirected LocalAppData.
   [string]$SigningKeyPath = "",
   [switch]$Unattended,
@@ -307,6 +309,7 @@ function Get-FtpProfile {
 }
 
 $ftpProfile = Get-FtpProfile
+if ($FtpServer) { $ftpProfile.Server = $FtpServer }
 $remoteRoot = $ftpProfile.RemoteRoot
 if ($ValidateProfile) {
   if ($ValidateProfileConnection) {

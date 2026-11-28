@@ -13,6 +13,8 @@ assert.equal(publisher.psQuote("a' $(command)"), "'a'' $(command)'");
 const config = {repository:"https://github.com/simakrss/ais_dopobr.git",branch:"codex/harden-static-serving",checkout:path.resolve("central-checkout")};
 for (const key of ["git","node","powershell","profileDirectory","signingKeyPath","stateDirectory","localRoot"]) config[key]=path.resolve("fixture",key);
 assert.equal(publisher.validateConfig(config),config);
+assert.equal(publisher.validateConfig({...config,ftpServer:"vh486.timeweb.ru"}).ftpServer,"vh486.timeweb.ru");
+for(const ftpServer of ["ftp://vh486.timeweb.ru","evil.test","vh486.timeweb.ru/other","vh486.timeweb.ru; command","vh486.timeweb.ru.evil.test"]) assert.throws(()=>publisher.validateConfig({...config,ftpServer}));
 for(const changes of [{repository:"https://example.test/fork.git"},{branch:"../other"},{branch:"x; command"},{checkout:config.localRoot},{signingKeyPath:"relative.pem"}]) assert.throws(()=>publisher.validateConfig({...config,...changes}));
 assert.throws(()=>publisher.validateConfig({...config,startupMode:true,localRoot:"\\\\server\\share\\app"}));
 

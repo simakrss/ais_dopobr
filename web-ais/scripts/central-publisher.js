@@ -18,6 +18,7 @@ function compareVersions(a, b) {
   return 0;
 }
 function validateConfig(config) {
+  if (config.ftpServer && !/^vh[0-9]+\.timeweb\.ru$/.test(config.ftpServer)) throw Error("Unapproved FTP server override.");
   if (config.repository !== REPOSITORY || !/^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,160}$/.test(config.branch || "") || config.branch.includes("..")) throw Error("Unapproved repository or branch.");
   for (const key of ["checkout", "git", "node", "powershell", "profileDirectory", "signingKeyPath", "stateDirectory", "localRoot"]) {
     if (!path.isAbsolute(config[key] || "")) throw Error("Missing absolute publisher path: " + key);
@@ -91,7 +92,8 @@ async function run(config, { dryRun = false, verifyDependencies = false } = {}) 
       if (!crypto.verify(null, probe, crypto.createPublicKey(key), crypto.sign(null, probe, key))) throw Error("Package signing probe failed.");
       const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
       command(config.powershell, [...args, "-File", path.join(config.checkout,"web-ais/scripts/build-standalone-launcher.ps1"), "-NoInteractiveSigning"]);
-      command(config.powershell, [...args, "-File", path.join(config.checkout,"web-ais/scripts/deploy-lms.ps1"), "-ValidateProfileConnection", "-ProfileDirectory",config.profileDirectory]);
+      command(config.powershell, [...args, "-File", path.join(config.checkout,"web-ais/scripts/deploy-lms.ps1"), "-ValidateProfileConnection", "-ProfileDirectory",config.profileDirectory,
+        ...(config.ftpServer ? ["-FtpServer",config.ftpServer] : [])]);
       const context = JSON.parse(command(config.powershell, [...args,"-Command",
         "[pscustomobject]@{sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;interactive=[Environment]::UserInteractive;user=[Security.Principal.WindowsIdentity]::GetCurrent().Name}|ConvertTo-Json -Compress"]));
       const proof = {updatedAt:new Date().toISOString(),...context,github:true,manifestSignature:true,packageSigning:true,installerSignature:true,ftpConnection:true,localRoot:config.localRoot};
@@ -139,7 +141,7 @@ async function run(config, { dryRun = false, verifyDependencies = false } = {}) 
     // Check syntax before touching the website; release-specific tests run before the Git push.
     for (const file of files.filter(value => value.endsWith(".js"))) command(config.node, ["--check", path.join(config.checkout, "web-ais", file)]);
     writeStatus({ phase: "publishing", branch: config.branch, candidateVersion, commit, files });
-    const script = `& ${psQuote(deploy)} -Unattended -ProfileDirectory ${psQuote(config.profileDirectory)} -SigningKeyPath ${psQuote(config.signingKeyPath)} -RelativePath @(${files.map(psQuote).join(",")})`;
+    const script = `& ${psQuote(deploy)} -Unattended -ProfileDirectory ${psQuote(config.profileDirectory)} -SigningKeyPath ${psQuote(config.signingKeyPath)}${config.ftpServer ? " -FtpServer " + psQuote(config.ftpServer) : ""} -RelativePath @(${files.map(psQuote).join(",")})`;
     command(config.powershell, [...psArgs, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { timeout: 45 * 60 * 1000 });
     const current = update.validateEnvelope(JSON.parse(await fetchBytes(BASE + "updates/latest.json?publisher=" + Date.now())));
     if (current.version !== candidateVersion || current.commit !== commit) throw Error("Published manifest did not confirm the candidate commit.");

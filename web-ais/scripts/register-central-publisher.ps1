@@ -6,6 +6,7 @@ param(
   [Parameter(Mandatory=$true)][string]$LocalRoot,
   [Parameter(Mandatory=$true)][string]$NodePath,
   [string]$Branch = 'codex/harden-static-serving',
+  [ValidatePattern('^(?:vh[0-9]+\.timeweb\.ru)?$')][string]$FtpServer = '',
   [switch]$AtStartup
 )
 Set-StrictMode -Version Latest
@@ -28,6 +29,7 @@ $config = [ordered]@{
   signingKeyPath = (Resolve-Path -LiteralPath $SigningKeyPath).Path
   localRoot = (Resolve-Path -LiteralPath $LocalRoot).Path; stateDirectory = $root
   startupMode = [bool]$AtStartup
+  ftpServer = $FtpServer
 }
 if ($AtStartup) {
   foreach ($key in @('checkout','git','node','powershell','profileDirectory','signingKeyPath','localRoot','stateDirectory')) {
