@@ -18,6 +18,25 @@ for(const ftpServer of ["ftp://vh486.timeweb.ru","evil.test","vh486.timeweb.ru/o
 for(const changes of [{repository:"https://example.test/fork.git"},{branch:"../other"},{branch:"x; command"},{checkout:config.localRoot},{signingKeyPath:"relative.pem"}]) assert.throws(()=>publisher.validateConfig({...config,...changes}));
 assert.throws(()=>publisher.validateConfig({...config,startupMode:true,localRoot:"\\\\server\\share\\app"}));
 
+// A deploy-only commit must not invalidate a previously prepared immutable
+// release. Its full signed payload must still be exactly what was uploaded.
+const prepared={protocol:1,version:"1.7.656",build:"test-build",commit:"a".repeat(40),createdAt:"2026-11-28T06:14:00.000Z",files:[{path:"app.js",sha256:"1".repeat(64),size:123}],components:[{path:"component.ps1",sha256:"2".repeat(64),size:456}]};
+assert.equal(publisher.confirmPublishedRelease(structuredClone(prepared),prepared,"1.7.656").commit,prepared.commit);
+assert.throws(()=>publisher.confirmPublishedRelease(prepared,prepared,"1.7.657"));
+for(const mutation of [
+  value=>{value.version="1.7.655";},
+  value=>{value.commit="b".repeat(40);},
+  value=>{value.build="different-build";},
+  value=>{value.createdAt="2026-11-28T07:00:00.000Z";},
+  value=>{value.files[0].sha256="3".repeat(64);},
+  value=>{value.files[0].size++;},
+  value=>{value.files=[];},
+  value=>{value.components=[];}
+]) {
+  const changed=structuredClone(prepared); mutation(changed);
+  assert.throws(()=>publisher.confirmPublishedRelease(changed,prepared,"1.7.656"));
+}
+
 // Real Windows signature verification: use the already published, non-secret installer.
 const root=path.resolve(__dirname,".."), signed=path.join(root,"updates/launcher/install-ais.ps1");
 if (!fs.existsSync(signed)) throw Error("Download the published signed installer to updates/launcher before this test.");

@@ -32,6 +32,16 @@ function deploymentPaths(changed, allowed) {
   return [...new Set(changed.filter(value => value.startsWith("web-ais/"))
     .map(value => value.slice(8)).filter(value => allow.has(value) && !value.split("/").includes("..")))].sort();
 }
+function confirmPublishedRelease(current, prepared, candidateVersion) {
+  // A retry may reuse an immutable, already signed release after a deploy-only
+  // commit. Confirm the exact prepared manifest, including its original commit,
+  // rather than requiring it to name the later deployment-script commit.
+  // Both inputs must first pass the pinned-key signature validator.
+  if (prepared.version !== candidateVersion || JSON.stringify(current) !== JSON.stringify(prepared)) {
+    throw Error("Published manifest did not confirm the prepared signed release.");
+  }
+  return current;
+}
 async function fetchBytes(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(45000), cache: "no-store" });
   if (!response.ok) throw Error("HTTP " + response.status + " at " + new URL(url).pathname);
@@ -143,8 +153,10 @@ async function run(config, { dryRun = false, verifyDependencies = false } = {}) 
     writeStatus({ phase: "publishing", branch: config.branch, candidateVersion, commit, files });
     const script = `& ${psQuote(deploy)} -Unattended -ProfileDirectory ${psQuote(config.profileDirectory)} -SigningKeyPath ${psQuote(config.signingKeyPath)}${config.ftpServer ? " -FtpServer " + psQuote(config.ftpServer) : ""} -RelativePath @(${files.map(psQuote).join(",")})`;
     command(config.powershell, [...psArgs, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { timeout: 45 * 60 * 1000 });
+    const prepared = update.validateEnvelope(JSON.parse(fs.readFileSync(path.join(config.checkout, "web-ais/updates/latest.json"), "utf8")));
+    git("merge-base", "--is-ancestor", prepared.commit, commit);
     const current = update.validateEnvelope(JSON.parse(await fetchBytes(BASE + "updates/latest.json?publisher=" + Date.now())));
-    if (current.version !== candidateVersion || current.commit !== commit) throw Error("Published manifest did not confirm the candidate commit.");
+    confirmPublishedRelease(current, prepared, candidateVersion);
     for (const file of files.filter(value => /\.(?:js|css|html)$/.test(value) && ["app.js", "styles.css", "auth-bootstrap.js", "index.html"].includes(value))) {
       if (update.hash(await fetchBytes(BASE + file + "?publisher=" + Date.now())) !== update.hash(fs.readFileSync(path.join(config.checkout, "web-ais", file)))) throw Error("Published file mismatch: " + file);
     }
@@ -163,7 +175,7 @@ async function run(config, { dryRun = false, verifyDependencies = false } = {}) 
     if (fs.existsSync(lock) && JSON.parse(fs.readFileSync(lock, "utf8")).nonce === nonce) fs.unlinkSync(lock);
   }
 }
-module.exports = { versionFromSource, compareVersions, validateConfig, deploymentPaths, psQuote, run };
+module.exports = { versionFromSource, compareVersions, validateConfig, deploymentPaths, confirmPublishedRelease, psQuote, run };
 if (require.main === module) {
   const index = process.argv.indexOf("--config");
   if (index < 0 || !process.argv[index + 1]) throw Error("Specify --config with the local publisher configuration.");
