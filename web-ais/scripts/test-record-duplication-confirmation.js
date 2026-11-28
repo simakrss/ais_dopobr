@@ -65,8 +65,15 @@ async function testDialog() {
     assert.equal(dialog.isConnected, false);
   }
   assert.ok(restored >= 1);
-  const escapeSource = extract("closeTopmostWindowByEscape");
-  assert.ok(escapeSource.indexOf("cancelRecordDuplicateConfirmation") < escapeSource.indexOf("cancelUnsavedChangesDialog"));
+  let duplicateClosed = false, unsavedClosed = false;
+  const escapeContext = { document: { querySelector: selector => selector === "[data-record-duplicate-confirmation]"
+    ? {cancelRecordDuplicateConfirmation() { duplicateClosed = true; }}
+    : selector === "[data-unsaved-changes-dialog]" ? {cancelUnsavedChangesDialog() { unsavedClosed = true; }} : null }};
+  vm.createContext(escapeContext);
+  vm.runInContext(extract("closeTopmostWindowByEscape"), escapeContext);
+  assert.equal(escapeContext.closeTopmostWindowByEscape(), true);
+  assert.equal(duplicateClosed, true);
+  assert.equal(unsavedClosed, false);
 }
 
 async function testHandler(name, config, scenario = {}) {
@@ -77,6 +84,7 @@ async function testHandler(name, config, scenario = {}) {
   const form = {dataset: {config, id: "source"}};
   const context = {
     state, recordFormSavePending: false, activeRecordLock: {id: "lock"},
+    isAdminUser: () => true, isDatabaseDemoMode: () => false,
     document: {getElementById: () => form}, window: {requestAnimationFrame: () => {}},
     hasUnsavedFormChanges: () => Boolean(scenario.dirty),
     confirmRecordDuplication: async options => {
@@ -84,12 +92,12 @@ async function testHandler(name, config, scenario = {}) {
       assert.ok(options.message.includes(source.name));
       assert.ok(options.message.includes("после сохранения"));
       if (scenario.changedCard) state.modal = {config, id: "another"};
-      return scenario.confirmed !== false;
+      return scenario.confirmed === false ? false : options.programLandingChoice ? (scenario.landingMode || "shared") : true;
     },
     chooseUnsavedChangesAction: async () => { events.push("unsaved"); return scenario.decision || "save"; },
     saveRecordFormBeforeContinuation: async () => { events.push("save"); return scenario.saveFails ? "" : "source"; },
     buildStudentDuplicateDraft: () => { events.push("copy"); return {}; },
-    buildProgramDuplicateDraft: () => { events.push("copy"); return {name: "Копия"}; },
+    buildProgramDuplicateDraft: (_source, _programs, mode) => { assert.equal(mode, scenario.landingMode || "shared"); events.push("copy"); return {name: "Копия"}; },
     getProgramTrainingPlanRows: () => ["plan"],
     buildProgramDuplicateTrainingPlanRows: rows => { assert.equal(rows[0], "plan"); return ["copied-plan"]; },
     buildEmployeeContractDuplicateDraft: () => { events.push("copy"); return {contractNo: "2"}; },
@@ -129,7 +137,7 @@ async function main() {
     ["copyEmployeeForNewContract", "contracts"]
   ]) {
     for (const scenario of [{}, {confirmed: false}, {confirmed: false, dirty: true}, {dirty: true},
-      {dirty: true, decision: "discard"}, {dirty: true, decision: "cancel"}, {dirty: true, saveFails: true}, {changedCard: true}]) {
+      {dirty: true, decision: "discard"}, {dirty: true, decision: "cancel"}, {dirty: true, saveFails: true}, {changedCard: true}, {landingMode: "new"}]) {
       await testHandler(name, config, scenario);
     }
   }

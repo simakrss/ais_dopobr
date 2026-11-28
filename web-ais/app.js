@@ -196,10 +196,15 @@
     { label: "STR_TO_DATE()", insert: "STR_TO_DATE(, '%d.%m.%Y')", cursorOffset: -16, detail: "Преобразовать строку в дату", group: "function" }
   ]);
   const APPLICATION_RELEASE = Object.freeze({
-    version: "1.7.655",
-    releasedAt: "2026-11-25"
+    version: "1.7.656",
+    releasedAt: "2026-11-28"
   });
   const APPLICATION_RELEASE_HISTORY = Object.freeze([
+    {
+      version: "1.7.656",
+      releasedAt: "2026-11-28",
+      changes: ["При дублировании программы можно оставить общий лендинг или создать отдельный для новой программы либо вебинара. Для отдельного лендинга очищаются прежние ссылки и код товара; после сохранения копии открывается мастер с исходной страницей в качестве прототипа. В окно дублирования добавлена справка по обоим вариантам."]
+    },
     {
       version: "1.7.655",
       releasedAt: "2026-11-25",
@@ -10440,7 +10445,7 @@ MAX - https://bizvmax.ru/zifra_plus
     return candidate;
   }
 
-  function buildProgramDuplicateDraft(source = {}, existingPrograms = []) {
+  function buildProgramDuplicateDraft(source = {}, existingPrograms = [], landingMode = "shared") {
     const draft = {};
     PROGRAM_DUPLICATE_FIELD_KEYS.forEach((key) => {
       if (!Object.prototype.hasOwnProperty.call(source, key)) return;
@@ -10472,6 +10477,15 @@ MAX - https://bizvmax.ru/zifra_plus
     normalized.siteTemplateId = "";
     normalized.productId = "";
     normalized.siteProductPending = true;
+    if (landingMode === "new") {
+      normalized.landingCode = "";
+      normalized.promoSite = "";
+      normalized.landingUrl = "";
+      delete normalized.sitePublication;
+      delete normalized.siteSync;
+      normalized.siteProductPending = false;
+      normalized.siteCreationPending = true;
+    }
     return normalized;
   }
 
@@ -36259,6 +36273,7 @@ MAX - https://bizvmax.ru/zifra_plus
     const landingUrl = record?.landingCode ? getProgramLandingPageUrl(record.landingCode, record.type) : publication.landing?.url || getProgramPromoUrl(record);
     return `<div class="program-site-panel">
       <div class="program-site-controls">
+        ${record?.siteCreationPending ? '<p class="program-site-notice">Для этой копии выбран отдельный лендинг. Нажмите «Создать на сайте», проверьте параметры новой программы и подготовьте черновики. Исходная страница используется как прототип.</p>' : ""}
         <div class="program-site-actions">
           ${isAdminUser() ? `<button class="ghost-button compact-button" data-action="create-program-on-site" type="button" disabled>Создать на сайте</button>
           <button class="ghost-button compact-button" data-action="add-program-site-variant" type="button" disabled>Добавить вариант</button>
@@ -37317,6 +37332,7 @@ MAX - https://bizvmax.ru/zifra_plus
       const current = state.data.collections.programs.find(item => item.id === programId);
       if (!current) throw new Error("Программа удалена из базы. Черновики на сайтах сохранены; проверьте их в WordPress.");
       current.sitePublication = value;
+      if (value?.ok && ["prepared", "published"].includes(value.stage)) current.siteCreationPending = false;
       const gradeReportUrl = String(current.type || "").trim().toUpperCase() === "ПРО" && value?.type === "ПРО"
         && value.ok === true && ["prepared", "published"].includes(value.stage)
         && typeof value.gradeReportUrl === "string" && value.gradeReportUrl.startsWith("https://") ? value.gradeReportUrl : "";
@@ -37522,7 +37538,7 @@ MAX - https://bizvmax.ru/zifra_plus
                     </button>
                   ` : ""}
                   <div class="program-card-save-actions">
-                    <button class="primary-button" type="submit">Сохранить</button>
+                    <button class="primary-button" type="submit">${state.modal?.duplicateLandingMode === "new" ? "Сохранить и создать лендинг" : "Сохранить"}</button>
                     <button class="icon-button form-cancel-button" data-action="close-modal" type="button" title="Отмена" aria-label="Отмена">×</button>
                   </div>
                 </div>
@@ -49721,10 +49737,13 @@ MAX - https://bizvmax.ru/zifra_plus
     let sourceId = formElement.dataset.id || state.modal.id;
     const sourceModal = state.modal;
     const sourceName = (state.data.collections.programs || []).find((record) => record.id === sourceId)?.name || "программы";
-    if (!await confirmRecordDuplication({
+    const landingMode = await confirmRecordDuplication({
       title: "Дублировать образовательную программу?",
-      message: `Создать копию программы «${sourceName}» вместе с учебным планом? Код лендинга сохранится, код товара в магазине очистится. Для общего лендинга можно будет добавить новый вариант с отдельным товаром и образцами документов. Новая программа попадёт в базу только после сохранения.`
-    })) return;
+      message: `Создать копию программы «${sourceName}» вместе с учебным планом? Новая программа попадёт в базу только после сохранения.`,
+      programLandingChoice: true,
+      canCreateLanding: isAdminUser() && !isDatabaseDemoMode()
+    });
+    if (!landingMode) return;
     if (state.modal !== sourceModal || document.getElementById("recordForm") !== formElement || recordFormSavePending) return;
     const hasChanges = state.modal?.hasDraftChanges || hasUnsavedFormChanges(formElement);
     if (hasChanges) {
@@ -49744,7 +49763,7 @@ MAX - https://bizvmax.ru/zifra_plus
       alert("Исходная программа больше не найдена. Обновите раздел и повторите действие.");
       return;
     }
-    const draft = buildProgramDuplicateDraft(source, programs);
+    const draft = buildProgramDuplicateDraft(source, programs, landingMode);
     const duplicateTrainingPlanRows = buildProgramDuplicateTrainingPlanRows(
       getProgramTrainingPlanRows(source),
       draft.name
@@ -49758,6 +49777,7 @@ MAX - https://bizvmax.ru/zifra_plus
       id: "",
       draft,
       duplicateSourceId: sourceId,
+      duplicateLandingMode: landingMode,
       duplicateTrainingPlanRows,
       hasDraftChanges: true
     };
@@ -51860,6 +51880,19 @@ MAX - https://bizvmax.ru/zifra_plus
           <button class="icon-button" data-action="close-record-duplication" type="button" title="Отмена" aria-label="Отмена">×</button>
         </header>
         <p id="recordDuplicateMessage" class="unsaved-changes-dialog-message">${escapeHtml(options.message || "Создать копию текущей карточки?")}</p>
+        ${options.programLandingChoice ? `<div class="record-duplicate-options">
+          <div class="form-grid"><label class="field wide"><span>Лендинг копии</span>
+            <select data-duplicate-landing-mode aria-describedby="recordDuplicateHelp">
+              <option value="shared">Общий лендинг</option>
+              <option value="new" ${options.canCreateLanding ? "" : "disabled"}>Новый лендинг</option>
+            </select>
+          </label></div>
+          <details id="recordDuplicateHelp" open><summary>Справка по дублированию</summary>
+            <p><strong>Общий лендинг:</strong> для варианта того же курса, например с другим количеством часов. Адрес сохраняется. На вкладке «Сайт» выберите «Добавить вариант», чтобы создать отдельный товар на общей странице.</p>
+            <p><strong>Новый лендинг:</strong> для самостоятельной программы или нового вебинара. Прежние адрес и код лендинга очищаются. Измените название, данные и, для вебинара, дату и ссылку подключения. После сохранения откроется мастер создания отдельной страницы и товара с исходным лендингом в качестве прототипа. Подготовьте черновики, проверьте их и опубликуйте.</p>
+            <p>В обоих случаях учебный план копируется независимо, а код товара очищается. ${options.canCreateLanding ? "" : "Создание страниц доступно администратору."}</p>
+          </details>
+        </div>` : ""}
         <footer class="modal-actions unsaved-changes-dialog-actions">
           <button class="ghost-button" data-action="cancel-record-duplication" type="button">Отмена</button>
           <button class="primary-button" data-action="confirm-record-duplication" type="button">Дублировать</button>
@@ -51881,7 +51914,11 @@ MAX - https://bizvmax.ru/zifra_plus
         const button = event.target.closest?.("[data-action]");
         if (!button || !backdrop.contains(button)) return;
         if (["cancel-record-duplication", "close-record-duplication"].includes(button.dataset.action)) finish(false);
-        if (button.dataset.action === "confirm-record-duplication") finish(true);
+        if (button.dataset.action === "confirm-record-duplication") {
+          const newLanding = options.programLandingChoice && options.canCreateLanding
+            && backdrop.querySelector("[data-duplicate-landing-mode]")?.value === "new";
+          finish(options.programLandingChoice ? (newLanding ? "new" : "shared") : true);
+        }
       });
       backdrop.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
@@ -51889,7 +51926,7 @@ MAX - https://bizvmax.ru/zifra_plus
           event.stopPropagation();
           finish(false);
         } else if (event.key === "Tab") {
-          const controls = Array.from(backdrop.querySelectorAll("button:not([disabled])"));
+          const controls = Array.from(backdrop.querySelectorAll("button:not([disabled]), select:not([disabled]), summary"));
           const first = controls[0], last = controls.at(-1);
           if (event.shiftKey && document.activeElement === first) {
             event.preventDefault(); last?.focus();
@@ -55004,6 +55041,10 @@ MAX - https://bizvmax.ru/zifra_plus
     if (isProgramCard) {
       const sourcePrototype = currentRecord.sitePrototype || state.modal?.draft?.sitePrototype;
       if (sourcePrototype) values.sitePrototype = copyDuplicateFieldValue(sourcePrototype);
+      for (const key of ["siteProductPending", "siteCreationPending"]) {
+        const source = state.modal?.draft || currentRecord;
+        if (Object.prototype.hasOwnProperty.call(source, key)) values[key] = source[key] === true;
+      }
       if (formData.has("siteTemplateId")) values.siteTemplateId = String(formData.get("siteTemplateId") || "");
       if (formData.has("siteImageSourceId")) values.siteImageSourceId = String(formData.get("siteImageSourceId") || "");
       PROGRAM_LIST_FIELD_KEYS.forEach((key) => {
@@ -55483,10 +55524,30 @@ MAX - https://bizvmax.ru/zifra_plus
     return true;
   }
 
+  async function saveProgramDuplicateForSite(form) {
+    if (!isAdminUser() || isDatabaseDemoMode() || form.dataset.duplicateSiteSaving === "true") return false;
+    form.dataset.duplicateSiteSaving = "true";
+    try {
+      const modal = state.modal;
+      const savedId = await saveRecordFormBeforeContinuation(form, { flush: true });
+      if (!savedId) return false;
+      // A failed shared save keeps the copy open for retry; never create a site
+      // before the program and its independent training plan are persisted.
+      if (state.modal !== modal || !form.isConnected) return true;
+      state.programCardTab = "site";
+      await openProgramCardById(savedId);
+      if (state.modal?.id === savedId && !state.modal?.readOnly) await openProgramSiteGenerator();
+      return true;
+    } finally { delete form.dataset.duplicateSiteSaving; }
+  }
+
   async function saveRecord(event) {
     event.preventDefault();
     const form = event.currentTarget;
     if (recordFormSavePending) return false;
+    if (form.dataset.config === "programs" && state.modal?.duplicateLandingMode === "new") {
+      return saveProgramDuplicateForSite(form);
+    }
     recordFormSavePending = true;
     const submitButton = getFormSubmitButton(form);
     try {

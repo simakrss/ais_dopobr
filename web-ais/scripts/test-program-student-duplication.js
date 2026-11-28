@@ -26,7 +26,7 @@ const context = {
   ],
   PROGRAM_DUPLICATE_FIELD_KEYS: [
     "name", "nameEnglish", "shortName", "status", "price", "type", "hours", "landingCode",
-    "promoMessage1", "emailMessageTemplate", "commissionSetId", "productId"
+    "promoMessage1", "emailMessageTemplate", "commissionSetId", "productId", "promoSite", "landingUrl"
   ],
   PROGRAM_DUPLICATE_TRAINING_PLAN_FIELD_KEYS: [
     "discipline", "description", "theoryHours", "practiceHours",
@@ -188,6 +188,24 @@ const existingPrograms = [
   { name: "Копия 2 — Охрана труда", shortName: "Копия 2 — Охрана труда (72 ч)" }
 ];
 const programDraft = context.buildProgramDuplicateDraftForTest(sourceProgram, existingPrograms);
+for (const type of ["ПРО", "ДОП", "КПК", "ППП"]) {
+  const original = {...sourceProgram, type, promoSite: "https://edu-plus.ru/original/", landingUrl: "https://edu-plus.ru/original/",
+    siteSync: {landing: {id: 123, url: "https://edu-plus.ru/original/"}, product: {id: 456}}};
+  const snapshot = JSON.stringify(original);
+  const separate = context.buildProgramDuplicateDraftForTest(original, existingPrograms, "new");
+  for (const key of ["landingCode", "promoSite", "landingUrl", "productId"]) assert.equal(separate[key], "", `New landing must clear ${key} for ${type}`);
+  assert.equal(separate.sitePublication, undefined);
+  assert.equal(separate.siteSync, undefined);
+  assert.equal(separate.siteCreationPending, true);
+  assert.equal(separate.siteProductPending, false);
+  assert.equal(separate.sitePrototype.landingId, 123);
+  assert.equal(separate.sitePrototype.url, original.promoSite);
+  assert.equal(JSON.stringify(original), snapshot, "New landing must not change its prototype");
+  const shared = context.buildProgramDuplicateDraftForTest(original, existingPrograms, "shared");
+  assert.equal(shared.promoSite, original.promoSite);
+  assert.equal(shared.landingCode, original.landingCode);
+  assert.equal(shared.siteCreationPending, undefined);
+}
 
 assert.equal(programDraft.name, "Копия 3 — Охрана труда (72 ч)");
 assert.equal(programDraft.nameEnglish, sourceProgram.nameEnglish);

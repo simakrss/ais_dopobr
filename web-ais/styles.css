@@ -10288,6 +10288,13 @@ body.long-press-dragging * {
   flex-wrap: wrap;
 }
 
+.record-duplicate-options { padding: 0 16px 16px; min-width: 0; overflow-wrap: anywhere; }
+.record-duplicate-options .form-grid { grid-template-columns: minmax(0, 1fr); }
+.record-duplicate-options select { width: 100%; min-width: 0; }
+.record-duplicate-options details { margin-top: 12px; font-size: 13px; line-height: 1.5; }
+.record-duplicate-options p { margin: 8px 0 0; }
+[data-record-duplicate-confirmation] .modal { max-height: calc(100dvh - 24px); overflow-y: auto; }
+
 @media (max-width: 520px) {
   .unsaved-changes-dialog-backdrop {
     padding: 12px;
